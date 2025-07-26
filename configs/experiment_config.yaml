@@ -1,0 +1,105 @@
+# Experiment Configuration for MoE Router Study
+
+# Model Configuration
+model:
+  name: "allenai/OLMoE-1B-7B-0924"
+  device_map: "auto"
+  torch_dtype: "float16"
+  trust_remote_code: true
+  revision: null  # Set to specific checkpoint if needed
+
+# Data Configuration
+data:
+  pretraining:
+    dataset: "HuggingFaceFW/fineweb"
+    subset: "sample-10BT"
+    num_samples: 500
+    max_length: 512
+  
+  math:
+    datasets:
+      - name: "gsm8k"
+        num_samples: 200
+      - name: "math"
+        num_samples: 100
+    max_length: 512
+  
+  code:
+    datasets:
+      - name: "codeparrot/github-code-clean"
+        num_samples: 200
+      - name: "humaneval"
+        num_samples: 100
+    max_length: 512
+  
+  capabilities:
+    samples_per_category: 30
+    categories:
+      - "mathematical_reasoning"
+      - "code_generation"
+      - "logical_reasoning"
+      - "language_understanding"
+      - "factual_knowledge"
+      - "creative_writing"
+
+# Analysis Configuration
+analysis:
+  router:
+    similarity_metrics: ["cosine", "dot", "l2"]
+    subspace_components: 10
+    alignment_method: "principal_angles"
+  
+  expert:
+    weight_types: ["gate_proj", "up_proj", "down_proj"]
+    similarity_metric: "cosine"
+    specialization_threshold: 0.1
+  
+  correlation:
+    method: "pearson"
+    significance_level: 0.05
+
+# Experiment Configuration
+experiment:
+  batch_size: 8
+  max_length: 512
+  token_position: -1  # -1 for last token
+  temperature: 1.0
+  
+  # Output configuration
+  output_dir: "results"
+  save_activations: true
+  save_weights: true
+  compress_outputs: true
+  
+  # Visualization configuration
+  generate_plots: true
+  plot_formats: ["png", "pdf"]
+  interactive_plots: true
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  use_wandb: true
+  wandb_project: "moe-router-study"
+  wandb_entity: null  # Set your W&B entity if needed
+  
+  # Metrics to log
+  log_metrics:
+    - "router_similarity"
+    - "expert_usage"
+    - "routing_entropy"
+    - "load_balance"
+    - "cross_layer_correlation"
+    - "specialization_scores"
+
+# Hardware Configuration
+hardware:
+  device: "cuda"
+  mixed_precision: true
+  gradient_checkpointing: false
+  max_memory_gb: 24  # Adjust based on your GPU
+
+# Reproducibility
+seed: 42
+deterministic: true
+
