@@ -123,7 +123,7 @@ class ActivationCollector:
         max_length: int = 512,
     ) -> Dict[str, torch.Tensor]:
         """
-        Collect expert and router activations for a specific layer.
+        Collect router activations for each expert in a specific layer.
         
         Args:
             prompts: List of input prompts
