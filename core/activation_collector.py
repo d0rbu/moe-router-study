@@ -72,62 +72,47 @@ class ActivationCollector:
     
     def collect_router_activations(
         self,
-        prompts: List[str],
-        batch_size: int = 8,
-        max_length: int = 512,
+        layer_activations: Dict[str, torch.Tensor],
+        temperature: float = 1.0
     ) -> Dict[str, torch.Tensor]:
         """
-        Collect router logits and gating decisions.
+        Compute router logits from layer activations using router weights.
         
         Args:
-            prompts: List of input prompts
-            batch_size: Batch size for processing
-            max_length: Maximum sequence length
+            layer_activations: Dictionary mapping layer names to activation tensors
+            temperature: Temperature for softmax computation
             
         Returns:
-            Dictionary containing router logits per layer
+            Dictionary containing router logits and probabilities per layer
         """
-        logger.info(f"Collecting router activations for {len(prompts)} prompts")
+        logger.info(f"Computing router activations for {len(layer_activations)} layers")
         
         router_data = {}
         
-        # Process in batches
-        for i in tqdm(range(0, len(prompts), batch_size), desc="Collecting router data"):
-            batch_prompts = prompts[i:i + batch_size]
+        for layer_name, activations in layer_activations.items():
+            # Extract layer index from layer name (e.g., "layer_5" -> 5)
+            layer_idx = int(layer_name.split("_")[1])
             
-            # Tokenize batch
-            inputs = self.model_wrapper.tokenize(
-                batch_prompts, 
-                max_length=max_length,
-                truncation=True,
-                padding=True
-            )
-            
-            # Move to device
-            inputs = {k: v.to(self.nn_model.device) for k, v in inputs.items()}
-            
-            # Forward pass with router logits
-            with torch.no_grad():
-                logits, router_logits = self.model_wrapper.forward_with_router_logits(
-                    inputs["input_ids"],
-                    inputs.get("attention_mask")
-                )
-            
-            # Store router logits per layer
-            for layer_idx, layer_router_logits in enumerate(router_logits):
-                layer_key = f"layer_{layer_idx}_router"
+            try:
+                # Get router weights for this layer
+                router_weights = self.model_wrapper.get_router_weights(layer_idx)  # [num_experts, hidden_dim]
                 
-                if layer_key not in router_data:
-                    router_data[layer_key] = []
-                    
-                # Extract last token router logits
-                last_token_logits = layer_router_logits[:, -1, :]  # [batch, num_experts]
-                router_data[layer_key].append(last_token_logits.cpu())
+                # Compute router logits: activations @ router_weights.T
+                # activations: [batch_size, hidden_dim]
+                # router_weights: [num_experts, hidden_dim]
+                router_logits = torch.mm(activations, router_weights.T)  # [batch_size, num_experts]
+                
+                # Apply temperature and compute probabilities
+                router_probs = torch.softmax(router_logits / temperature, dim=-1)
+                
+                # Store results
+                router_data[f"{layer_name}_router_logits"] = router_logits
+                router_data[f"{layer_name}_router_probs"] = router_probs
+                
+            except ValueError as e:
+                logger.warning(f"Could not compute router activations for {layer_name}: {e}")
+                continue
         
-        # Concatenate batches
-        for key in router_data:
-            router_data[key] = torch.cat(router_data[key], dim=0)
-            
         return router_data
     
     def collect_expert_activations(
@@ -158,7 +143,7 @@ class ActivationCollector:
         # For now, we'll collect the combined MLP output and router decisions
         # Individual expert outputs would need more complex tracing
         
-        # Get layer activations and router logits
+        # Get layer activations
         layer_acts = self.collect_layer_activations(
             prompts, 
             layers=[layer_idx], 
@@ -166,70 +151,13 @@ class ActivationCollector:
             max_length=max_length
         )
         
-        router_acts = self.collect_router_activations(
-            prompts,
-            batch_size=batch_size, 
-            max_length=max_length
-        )
+        # Compute router activations from layer activations
+        router_acts = self.collect_router_activations(layer_acts)
         
         expert_activations[f"layer_{layer_idx}_mlp_output"] = layer_acts[f"layer_{layer_idx}"]
-        expert_activations[f"layer_{layer_idx}_router_logits"] = router_acts[f"layer_{layer_idx}_router"]
+        expert_activations[f"layer_{layer_idx}_router_logits"] = router_acts[f"layer_{layer_idx}_router_logits"]
+        expert_activations[f"layer_{layer_idx}_router_probs"] = router_acts[f"layer_{layer_idx}_router_probs"]
         
         return expert_activations
     
-    def compute_activation_correlations(
-        self,
-        activations: Dict[str, torch.Tensor],
-        method: str = "pearson"
-    ) -> torch.Tensor:
-        """
-        Compute correlations between layer activations.
-        
-        Args:
-            activations: Dictionary of layer activations
-            method: Correlation method ("pearson", "spearman")
-            
-        Returns:
-            Correlation matrix between layers
-        """
-        layer_keys = sorted([k for k in activations.keys() if k.startswith("layer_")])
-        num_layers = len(layer_keys)
-        
-        # Stack activations: [num_layers, num_samples, hidden_dim]
-        stacked_acts = torch.stack([activations[key] for key in layer_keys])
-        
-        # Flatten to [num_layers, num_samples * hidden_dim]
-        flattened_acts = stacked_acts.flatten(start_dim=1)
-        
-        if method == "pearson":
-            # Compute Pearson correlation
-            corr_matrix = torch.corrcoef(flattened_acts)
-        else:
-            raise NotImplementedError(f"Correlation method {method} not implemented")
-            
-        return corr_matrix
-    
-    def save_activations(
-        self,
-        activations: Dict[str, torch.Tensor],
-        filepath: str,
-        compress: bool = True
-    ):
-        """Save activations to disk."""
-        save_dict = {k: v.cpu().numpy() for k, v in activations.items()}
-        
-        if compress:
-            np.savez_compressed(filepath, **save_dict)
-        else:
-            np.savez(filepath, **save_dict)
-            
-        logger.info(f"Saved activations to {filepath}")
-    
-    def load_activations(self, filepath: str) -> Dict[str, torch.Tensor]:
-        """Load activations from disk."""
-        data = np.load(filepath)
-        activations = {k: torch.from_numpy(data[k]) for k in data.keys()}
-        
-        logger.info(f"Loaded activations from {filepath}")
-        return activations
 

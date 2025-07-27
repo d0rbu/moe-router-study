@@ -148,20 +148,24 @@ class BasicRoutingAnalysis:
         all_router_activations = {}
         
         for dataset_name, data in datasets.items():
-            logger.info(f"Collecting router activations for {dataset_name}")
+            logger.info(f"Collecting layer activations for {dataset_name}")
             
-            router_acts = self.activation_collector.collect_router_activations(
+            # First collect layer activations
+            layer_acts = self.activation_collector.collect_layer_activations(
                 data["texts"],
                 batch_size=8,
                 max_length=512
             )
+            
+            # Then compute router activations from layer activations
+            router_acts = self.activation_collector.collect_router_activations(layer_acts)
             
             # Store with dataset prefix
             for layer_key, activations in router_acts.items():
                 full_key = f"{dataset_name}_{layer_key}"
                 all_router_activations[full_key] = activations
                 
-            logger.info(f"Collected activations for {len(router_acts)} layers")
+            logger.info(f"Collected router activations for {len(router_acts)} layers")
         
         return all_router_activations
     
@@ -211,15 +215,18 @@ class BasicRoutingAnalysis:
         """Analyze routing patterns from activations."""
         routing_patterns = {}
         
-        # Group activations by dataset
+        # Group activations by dataset and extract router logits
         datasets = {}
         for key, activations in router_activations.items():
-            dataset_name = key.split("_layer_")[0]
-            layer_key = "layer_" + key.split("_layer_")[1]
-            
-            if dataset_name not in datasets:
-                datasets[dataset_name] = {}
-            datasets[dataset_name][layer_key] = activations
+            # Parse key format: dataset_name_layer_X_router_logits/probs
+            if "_router_logits" in key:
+                parts = key.split("_")
+                dataset_name = "_".join(parts[:-3])  # Everything before layer_X_router
+                layer_key = f"{parts[-3]}_{parts[-2]}_router"  # layer_X_router
+                
+                if dataset_name not in datasets:
+                    datasets[dataset_name] = {}
+                datasets[dataset_name][layer_key] = activations
         
         # Analyze patterns for each dataset
         for dataset_name, dataset_activations in datasets.items():
@@ -248,32 +255,44 @@ class BasicRoutingAnalysis:
         """Analyze correlations between layers and datasets."""
         correlations = {}
         
-        # Group by dataset
+        # Group by dataset and extract router logits
         datasets = {}
         for key, activations in router_activations.items():
-            dataset_name = key.split("_layer_")[0]
-            if dataset_name not in datasets:
-                datasets[dataset_name] = {}
-            datasets[dataset_name][key] = activations
+            # Parse key format: dataset_name_layer_X_router_logits/probs
+            if "_router_logits" in key:
+                parts = key.split("_")
+                dataset_name = "_".join(parts[:-3])  # Everything before layer_X_router
+                layer_name = f"{parts[-3]}_{parts[-2]}"  # layer_X
+                
+                if dataset_name not in datasets:
+                    datasets[dataset_name] = {}
+                datasets[dataset_name][layer_name] = activations
         
         # Compute correlations within each dataset
         for dataset_name, dataset_activations in datasets.items():
             logger.info(f"Computing correlations for {dataset_name}")
             
-            # Compute activation correlations
-            corr_matrix = self.activation_collector.compute_activation_correlations(
-                dataset_activations, method="pearson"
-            )
-            correlations[f"{dataset_name}_correlations"] = corr_matrix
-            
-            # Log correlation statistics
-            if self.use_wandb and corr_matrix.numel() > 0:
-                mean_corr = torch.mean(corr_matrix).item()
-                std_corr = torch.std(corr_matrix).item()
-                wandb.log({
-                    f"{dataset_name}_mean_correlation": mean_corr,
-                    f"{dataset_name}_std_correlation": std_corr,
-                })
+            # Manual correlation computation
+            layer_keys = sorted([k for k in dataset_activations.keys() if k.startswith("layer_")])
+            if len(layer_keys) > 1:
+                # Stack activations: [num_layers, num_samples, num_experts]
+                stacked_acts = torch.stack([dataset_activations[key] for key in layer_keys])
+                
+                # Flatten to [num_layers, num_samples * num_experts]
+                flattened_acts = stacked_acts.flatten(start_dim=1)
+                
+                # Compute Pearson correlation
+                corr_matrix = torch.corrcoef(flattened_acts)
+                correlations[f"{dataset_name}_correlations"] = corr_matrix
+                
+                # Log correlation statistics
+                if self.use_wandb and corr_matrix.numel() > 0:
+                    mean_corr = torch.mean(corr_matrix).item()
+                    std_corr = torch.std(corr_matrix).item()
+                    wandb.log({
+                        f"{dataset_name}_mean_correlation": mean_corr,
+                        f"{dataset_name}_std_correlation": std_corr,
+                    })
         
         # Compute cross-dataset correlations
         logger.info("Computing cross-dataset correlations")
@@ -377,4 +396,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
