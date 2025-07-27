@@ -115,7 +115,7 @@ class ActivationCollector:
         
         return router_data
     
-    def collect_expert_activations(
+    def collect_expert_router_activations(
         self,
         prompts: List[str],
         layer_idx: int,
@@ -123,8 +123,7 @@ class ActivationCollector:
         max_length: int = 512,
     ) -> Dict[str, torch.Tensor]:
         """
-        Collect individual expert activations for a specific layer.
-        This requires custom tracing since nnterp doesn't expose expert-level outputs.
+        Collect expert and router activations for a specific layer.
         
         Args:
             prompts: List of input prompts
@@ -133,15 +132,11 @@ class ActivationCollector:
             max_length: Maximum sequence length
             
         Returns:
-            Dictionary containing expert activations
+            Dictionary containing expert and router activations
         """
-        logger.info(f"Collecting expert activations for layer {layer_idx}")
+        logger.info(f"Collecting expert and router activations for layer {layer_idx}")
         
-        expert_activations = {}
-        
-        # This would require custom hooks or model modification
-        # For now, we'll collect the combined MLP output and router decisions
-        # Individual expert outputs would need more complex tracing
+        expert_router_activations = {}
         
         # Get layer activations
         layer_acts = self.collect_layer_activations(
@@ -154,10 +149,8 @@ class ActivationCollector:
         # Compute router activations from layer activations
         router_acts = self.collect_router_activations(layer_acts)
         
-        expert_activations[f"layer_{layer_idx}_mlp_output"] = layer_acts[f"layer_{layer_idx}"]
-        expert_activations[f"layer_{layer_idx}_router_logits"] = router_acts[f"layer_{layer_idx}_router_logits"]
-        expert_activations[f"layer_{layer_idx}_router_probs"] = router_acts[f"layer_{layer_idx}_router_probs"]
+        expert_router_activations[f"layer_{layer_idx}_mlp_output"] = layer_acts[f"layer_{layer_idx}"]
+        expert_router_activations[f"layer_{layer_idx}_router_logits"] = router_acts[f"layer_{layer_idx}_router_logits"]
+        expert_router_activations[f"layer_{layer_idx}_router_probs"] = router_acts[f"layer_{layer_idx}_router_probs"]
         
-        return expert_activations
-    
-
+        return expert_router_activations
