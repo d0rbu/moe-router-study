@@ -26,7 +26,7 @@ jobs:
     
     - name: Install dependencies
       run: |
-        uv sync --all-extras --dev
+        uv sync --extra dev
     
     - name: Run ruff linting
       run: |
@@ -60,7 +60,7 @@ jobs:
     
     - name: Install dependencies
       run: |
-        uv sync --all-extras --dev
+        uv sync --extra dev --extra ml
     
     - name: Run tests
       run: |
@@ -89,7 +89,7 @@ jobs:
     
     - name: Install dependencies
       run: |
-        uv sync --all-extras --dev
+        uv sync --extra dev
     
     - name: Run safety check
       run: |
@@ -100,4 +100,3 @@ jobs:
       run: |
         uv run pip install bandit
         uv run bandit -r core/ exp/ viz/ -f json || true  # Don't fail CI initially
-

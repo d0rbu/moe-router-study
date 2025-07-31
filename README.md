@@ -34,10 +34,13 @@ cd moe-router-study
 
 2. Install dependencies with uv:
 ```bash
-# Install all dependencies including dev tools
-uv sync --all-extras --dev
+# For development (includes linting, testing, etc.)
+uv sync --extra dev
 
-# Or install just the core dependencies
+# For full ML functionality (includes PyTorch, transformers, etc.)
+uv sync --extra dev --extra ml
+
+# Or install just the core dependencies (lightweight)
 uv sync
 ```
 
@@ -45,6 +48,13 @@ uv sync
 ```bash
 uv run pre-commit install
 ```
+
+### Dependency Groups
+
+- **Core**: Basic data science tools (numpy, pandas, matplotlib, etc.)
+- **ML**: Machine learning dependencies (torch, transformers, nnsight, etc.)
+- **Dev**: Development tools (ruff, mypy, pytest, etc.)
+- **Display**: Additional visualization tools (plotly, ipywidgets, etc.)
 
 ### Using nnterp
 
