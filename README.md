@@ -34,18 +34,7 @@ cd moe-router-study
 
 2. Install dependencies with uv:
 ```bash
-<<<<<<< HEAD
-# For development (includes linting, testing, etc.)
-uv sync --extra dev
-
-# For full ML functionality (includes PyTorch, transformers, etc.)
-uv sync --extra dev --extra ml
-
-# Or install just the core dependencies (lightweight)
-uv sync
-=======
 uv sync --dev
->>>>>>> f21a0d2 (Address all feedback: switch to ty, Python 3.12 only, run CI on all branches)
 ```
 
 3. Install pre-commit hooks (optional but recommended):
@@ -53,27 +42,6 @@ uv sync --dev
 uv run pre-commit install
 ```
 
-<<<<<<< HEAD
-### Dependency Groups
-
-- **Core**: Basic data science tools (numpy, pandas, matplotlib, etc.)
-- **ML**: Machine learning dependencies (torch, transformers, nnsight, etc.)
-- **Dev**: Development tools (ruff, mypy, pytest, etc.)
-- **Display**: Additional visualization tools (plotly, ipywidgets, etc.)
-
-### Using nnterp
-
-This project uses a custom fork of nnterp with additional features. The dependency is automatically installed from:
-https://github.com/d0rbu/nnterp
-
-Key features of nnterp used in this project:
-- Unified interface for all transformer models
-- Standardized naming conventions across architectures
-- Built-in mechanistic interpretability tools
-- Efficient activation collection and analysis
-
-=======
->>>>>>> f21a0d2 (Address all feedback: switch to ty, Python 3.12 only, run CI on all branches)
 ## Development
 
 ### Running Tests
