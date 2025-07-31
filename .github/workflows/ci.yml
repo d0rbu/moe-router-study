@@ -2,16 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [ main, develop ]
   pull_request:
-    branches: [ main, develop ]
 
 jobs:
   lint-and-type-check:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12"]
 
     steps:
     - uses: actions/checkout@v4
@@ -21,12 +16,16 @@ jobs:
       with:
         version: "latest"
     
-    - name: Set up Python ${{ matrix.python-version }}
-      run: uv python install ${{ matrix.python-version }}
+    - name: Set up Python 3.12
+      run: uv python install 3.12
     
     - name: Install dependencies
       run: |
+<<<<<<< HEAD
         uv sync --extra dev
+=======
+        uv sync --dev
+>>>>>>> f21a0d2 (Address all feedback: switch to ty, Python 3.12 only, run CI on all branches)
     
     - name: Run ruff linting
       run: |
@@ -36,16 +35,12 @@ jobs:
       run: |
         uv run ruff format --check .
     
-    - name: Run mypy type checking
+    - name: Run ty type checking
       run: |
-        uv run mypy core/ exp/ viz/ --ignore-missing-imports
-      continue-on-error: true  # Allow mypy to fail initially while setting up
+        uv run ty check core/ exp/ viz/
 
   test:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12"]
 
     steps:
     - uses: actions/checkout@v4
@@ -55,12 +50,16 @@ jobs:
       with:
         version: "latest"
     
-    - name: Set up Python ${{ matrix.python-version }}
-      run: uv python install ${{ matrix.python-version }}
+    - name: Set up Python 3.12
+      run: uv python install 3.12
     
     - name: Install dependencies
       run: |
+<<<<<<< HEAD
         uv sync --extra dev --extra ml
+=======
+        uv sync --dev
+>>>>>>> f21a0d2 (Address all feedback: switch to ty, Python 3.12 only, run CI on all branches)
     
     - name: Run tests
       run: |
@@ -73,6 +72,7 @@ jobs:
         flags: unittests
         name: codecov-umbrella
         fail_ci_if_error: false
+<<<<<<< HEAD
 
   security-scan:
     runs-on: ubuntu-latest
@@ -100,3 +100,5 @@ jobs:
       run: |
         uv run pip install bandit
         uv run bandit -r core/ exp/ viz/ -f json || true  # Don't fail CI initially
+=======
+>>>>>>> f21a0d2 (Address all feedback: switch to ty, Python 3.12 only, run CI on all branches)

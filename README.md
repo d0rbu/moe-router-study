@@ -21,7 +21,7 @@ This project uses [uv](https://docs.astral.sh/uv/) for fast Python package manag
 
 ### Prerequisites
 
-- Python 3.9+
+- Python 3.12
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) package manager
 
 ### Installation
@@ -34,6 +34,7 @@ cd moe-router-study
 
 2. Install dependencies with uv:
 ```bash
+<<<<<<< HEAD
 # For development (includes linting, testing, etc.)
 uv sync --extra dev
 
@@ -42,6 +43,9 @@ uv sync --extra dev --extra ml
 
 # Or install just the core dependencies (lightweight)
 uv sync
+=======
+uv sync --dev
+>>>>>>> f21a0d2 (Address all feedback: switch to ty, Python 3.12 only, run CI on all branches)
 ```
 
 3. Install pre-commit hooks (optional but recommended):
@@ -49,6 +53,7 @@ uv sync
 uv run pre-commit install
 ```
 
+<<<<<<< HEAD
 ### Dependency Groups
 
 - **Core**: Basic data science tools (numpy, pandas, matplotlib, etc.)
@@ -67,6 +72,8 @@ Key features of nnterp used in this project:
 - Built-in mechanistic interpretability tools
 - Efficient activation collection and analysis
 
+=======
+>>>>>>> f21a0d2 (Address all feedback: switch to ty, Python 3.12 only, run CI on all branches)
 ## Development
 
 ### Running Tests
@@ -92,7 +99,7 @@ uv run ruff check .
 uv run ruff format .
 
 # Run type checking
-uv run mypy core/ exp/ viz/
+uv run ty check core/ exp/ viz/
 ```
 
 ### Pre-commit Hooks
@@ -111,9 +118,8 @@ uv run pre-commit run --all-files
 
 The project uses GitHub Actions for continuous integration:
 
-- **Linting & Type Checking**: Runs ruff and mypy on Python 3.9-3.12
+- **Linting & Type Checking**: Runs ruff and ty on Python 3.12
 - **Testing**: Runs pytest with coverage reporting
-- **Security Scanning**: Runs safety and bandit security checks
 
 ## Contributing
 
