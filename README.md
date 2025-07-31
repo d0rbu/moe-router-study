@@ -67,7 +67,7 @@ uv run ruff check .
 uv run ruff format .
 
 # Run type checking
-uv run ty check core/ exp/ viz/
+uv run ty check core/ exp/ viz/ test/
 ```
 
 ### Pre-commit Hooks

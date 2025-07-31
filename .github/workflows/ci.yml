@@ -33,7 +33,7 @@ jobs:
     
     - name: Run ty type checking
       run: |
-        uv run ty check core/ exp/ viz/
+        uv run ty check core/ exp/ viz/ test/
 
   test:
     runs-on: ubuntu-latest
