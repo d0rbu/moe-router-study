@@ -1,0 +1,13 @@
+# Direct dependency on nnterp from GitHub (your fork with extra features)
+nnterp @ git+https://github.com/d0rbu/nnterp.git
+
+# Core dependencies
+torch>=2.0.0
+transformers==4.53.*
+nnsight>=0.5.0.dev13
+datasets>=2.0.0
+accelerate>=0.20.0
+einops>=0.6.0
+tqdm>=4.60.0
+matplotlib>=3.5.0
+trackio>=0.1.0
