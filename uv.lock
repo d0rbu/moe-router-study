@@ -1126,6 +1126,7 @@ dev = [
 dev = [
     { name = "pytest" },
     { name = "pytest-cov" },
+    { name = "ty" },
 ]
 
 [package.metadata]
@@ -1152,6 +1153,7 @@ provides-extras = ["dev"]
 dev = [
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "pytest-cov", specifier = ">=6.2.1" },
+    { name = "ty", specifier = ">=0.0.1a16" },
 ]
 
 [[package]]

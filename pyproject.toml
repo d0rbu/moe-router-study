@@ -57,6 +57,7 @@ allow-direct-references = true
 dev = [
     "pytest>=8.4.1",
     "pytest-cov>=6.2.1",
+    "ty>=0.0.1a16",
 ]
 
 [tool.ruff]
