@@ -19,4 +19,5 @@ def test_basic_functionality() -> None:
 def test_nnterp_import() -> None:
     """Test that nnterp can be imported (marked as slow since it's a heavy import)."""
     import nnterp
+
     assert hasattr(nnterp, "StandardizedTransformer")
