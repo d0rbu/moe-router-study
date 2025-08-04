@@ -1,7 +1,3 @@
-MODELS: dict[str, str] = {
-    "olmoe": "allenai/OLMoE-1B-7B-0924"
-}
-
 import re
 from dataclasses import dataclass, field
 from typing import Any
