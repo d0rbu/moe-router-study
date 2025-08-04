@@ -70,18 +70,6 @@ uv run ruff format .
 uv run ty check core/ exp/ viz/ test/
 ```
 
-### Pre-commit Hooks
-
-The project uses pre-commit hooks to ensure code quality:
-
-```bash
-# Install hooks
-uv run pre-commit install
-
-# Run hooks manually
-uv run pre-commit run --all-files
-```
-
 ## CI/CD
 
 The project uses GitHub Actions for continuous integration:

@@ -1,4 +1,4 @@
-# Direct dependency on nnterp from GitHub (your fork with extra features)
+# nnterp fork with moe interpretability features
 nnterp @ git+https://github.com/d0rbu/nnterp.git
 
 # Core dependencies
