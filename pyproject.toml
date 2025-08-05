@@ -38,6 +38,9 @@ dependencies = [
     "torch-pca>=1.1.0",
     "scikit-learn>=1.7.1",
     "tornado>=6.5.1",
+    "hatchling>=1.27.0",
+    "editables>=0.5",
+    "flash-attn>=2.8.2",
 ]
 
 [project.optional-dependencies]

@@ -7,14 +7,16 @@ import torch as th
 from tqdm import tqdm
 
 from core.data import DATASETS
+from core.device_map import CUSTOM_DEVICES
 from core.model import MODELS
 from exp import OUTPUT_DIR
-from exp.device_map import CUSTOM_DEVICES
 
 ROUTER_LOGITS_DIR = os.path.join(OUTPUT_DIR, "router_logits")
 
 
-def save_router_logits(router_logit_collection: list[th.Tensor], top_k: int, file_idx: int) -> None:
+def save_router_logits(
+    router_logit_collection: list[th.Tensor], top_k: int, file_idx: int
+) -> None:
     router_logits = th.cat(router_logit_collection, dim=0)
     output: dict[str, th.Tensor] = {
         "topk": top_k,
@@ -46,7 +48,9 @@ def get_router_activations(
 
     device_map = CUSTOM_DEVICES.get(device, lambda: device)()
 
-    model = StandardizedTransformer(model_config.hf_name, check_attn_probs_with_trace=False, device_map=device_map)
+    model = StandardizedTransformer(
+        model_config.hf_name, check_attn_probs_with_trace=False, device_map=device_map
+    )
     router_layers: list[int] = model.layers_with_routers
     top_k: int = model.router_probabilities.get_top_k()
 
@@ -80,7 +84,9 @@ def get_router_activations(
 
             # save the router probabilities to a file
             if router_logit_collection_size >= tokens_per_file:
-                save_router_logits(router_logit_collection, top_k, router_logit_collection_idx)
+                save_router_logits(
+                    router_logit_collection, top_k, router_logit_collection_idx
+                )
                 router_logit_collection_idx += 1
                 router_logit_collection_size = 0
                 router_logit_collection = []
@@ -88,8 +94,10 @@ def get_router_activations(
 
         # save the remaining router probabilities to a file
         if router_logit_collection_size > 0:
-            save_router_logits(router_logit_collection, top_k, router_logit_collection_idx)
+            save_router_logits(
+                router_logit_collection, top_k, router_logit_collection_idx
+            )
 
 
 if __name__ == "__main__":
-    get_router_activations()
+    arguably.run()

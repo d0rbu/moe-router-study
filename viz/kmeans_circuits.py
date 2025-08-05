@@ -142,7 +142,8 @@ def cluster_circuits(k: int | None = None, seed: int = 0) -> None:
         return
 
     centroids = kmeans_manhattan(activated_experts, k, seed=seed)
-    top_circuits, circuit_mask = get_top_circuits(centroids, num_layers, top_k)
+    # top_circuits, circuit_mask = get_top_circuits(centroids, num_layers, top_k)
+    circuit_mask = centroids > 0.5
     visualize_top_circuits(circuit_mask)
 
 

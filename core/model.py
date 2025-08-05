@@ -18,15 +18,20 @@ class Checkpoint:
     def __str__(self):
         return self.model_config.revision_format.format(self.step, self.num_tokens)
 
+
 @dataclass
 class ModelConfig:
     hf_name: str
-    branch_regex: re.Pattern
-    revision_format: str
+    branch_regex: re.Pattern | None = None
+    revision_format: str | None = None
     tokenizer_has_padding_token: bool = True
     checkpoints: list[Checkpoint] = field(default_factory=list)
 
     def __post_init__(self):
+        if self.branch_regex is None or self.revision_format is None:
+            self.checkpoints = []
+            return
+
         self.branch_regex = re.compile(self.branch_regex)
 
         refs = list_repo_refs(self.hf_name)
@@ -51,10 +56,17 @@ class ModelConfig:
 
         self.checkpoints = sorted(checkpoints, key=lambda x: x.step)
 
+
 MODELS: dict[str, ModelConfig] = {
     "olmoe": ModelConfig(
         hf_name="allenai/OLMoE-1B-7B-0924",
         branch_regex=re.compile(r"step(\d+)-tokens(\d+)B"),
         revision_format="step{}-tokens{}B",
-    )
+    ),
+    "phimoe": ModelConfig(
+        hf_name="microsoft/Phi-3.5-MoE-instruct",
+    ),
+    "q3_30b": ModelConfig(
+        hf_name="Qwen/Qwen3-30B-A3B",
+    ),
 }
