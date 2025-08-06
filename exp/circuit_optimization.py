@@ -95,17 +95,13 @@ def gradient_descent(
         )
         logger_thread.start()
 
-    for _ in tqdm(
+    for epoch_idx in tqdm(
         range(num_epochs), desc="Gradient descent", total=num_epochs, leave=False
     ):
         loss, faithfulness, complexity = circuit_loss(
             data, circuits_parameter, complexity_importance, complexity_power
         )
         loss = loss.sum()
-        loss.backward()
-        optimizer.step()
-
-        optimizer.zero_grad()
 
         # Async logging - non-blocking
         if log_queue is not None:
@@ -118,6 +114,11 @@ def gradient_descent(
                         "lr": lr,
                     }
                 )
+
+        loss.backward()
+        optimizer.step()
+
+        optimizer.zero_grad()
 
     # Clean up async logger
     if log_queue is not None:
@@ -142,6 +143,7 @@ def load_and_gradient_descent(
 
     wandb_run = wandb.init(
         project="circuit-optimization",
+        name=f"complexity_importance={complexity_importance};complexity_power={complexity_power};lr={lr};seed={seed}",
         config={
             "complexity_importance": complexity_importance,
             "complexity_power": complexity_power,
