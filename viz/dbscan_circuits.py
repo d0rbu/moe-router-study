@@ -4,7 +4,7 @@ import arguably
 from sklearn.cluster import DBSCAN
 import torch as th
 
-from viz.activations import load_activations_and_topk
+from exp.activations import load_activations_and_topk
 
 
 class Node:

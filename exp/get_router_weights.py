@@ -48,4 +48,4 @@ def get_router_weights(model_name: str = "olmoe", checkpoint_idx: int = -1) -> N
 
 
 if __name__ == "__main__":
-    get_router_weights()
+    arguably.run()

@@ -4,8 +4,8 @@ import arguably
 import matplotlib.pyplot as plt
 from torch_pca import PCA
 
+from exp.activations import load_activations
 from viz import FIGURE_DIR
-from viz.activations import load_activations
 
 FIGURE_PATH = os.path.join(FIGURE_DIR, "pca_circuits.png")
 

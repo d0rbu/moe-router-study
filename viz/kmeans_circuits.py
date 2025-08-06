@@ -8,8 +8,8 @@ import matplotlib.pyplot as plt
 import torch as th
 from tqdm import tqdm
 
+from exp.activations import load_activations_and_topk
 from viz import FIGURE_DIR
-from viz.activations import load_activations_and_topk
 
 
 def kmeans_manhattan(
