@@ -113,12 +113,23 @@ def min_logit_loss(
 def circuit_loss(
     data: th.Tensor,
     circuits_logits: th.Tensor,
+    top_k: int,
     complexity_importance: float = 1.0,
     complexity_power: float = 1.0,
 ) -> tuple[th.Tensor, th.Tensor, th.Tensor]:
     faithfulness_loss = min_logit_loss(data, circuits_logits)
-    # (..., C, L, E) -> (...)
-    complexity = th.sigmoid(circuits_logits).mean(dim=(-3, -2, -1))
+
+    # (..., C, L, E)
+    complexity = th.sigmoid(circuits_logits)
+    # sum over experts and account for top-k
+    # (..., C, L, E) -> (..., C, L)
+    complexity = complexity.sum(dim=-1) / top_k
+    # average over layers
+    # (..., C, L) -> (..., C)
+    complexity = complexity.mean(dim=-1)
+    # sum over circuits
+    # (..., C) -> (...)
+    complexity = complexity.sum(dim=-1)
 
     assert complexity_importance >= 0.0 and complexity_importance <= 1.0, "complexity_importance must be between 0.0 and 1.0"
 
