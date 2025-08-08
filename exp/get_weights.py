@@ -1,15 +1,11 @@
 import os
 
 import arguably
-from nnterp import StandardizedTransformer
 import torch as th
 from tqdm import tqdm
 
 from core.model import MODELS
-from exp import OUTPUT_DIR
-
-WEIGHT_DIR = os.path.join(OUTPUT_DIR, "weights")
-
+from exp import OUTPUT_DIR, WEIGHT_DIR
 
 @arguably.command()
 def get_weights(model_name: str = "olmoe", checkpoint_idx: int = -1) -> None:

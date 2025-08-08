@@ -4,7 +4,7 @@ import os
 import torch as th
 from tqdm import tqdm
 
-from exp.get_router_activations import ROUTER_LOGITS_DIR
+from exp import ROUTER_LOGITS_DIR
 
 
 def load_activations_and_indices_and_topk(device: str = "cuda") -> tuple[th.Tensor, th.Tensor, int]:
