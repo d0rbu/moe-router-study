@@ -1,5 +1,6 @@
 from datasets import IterableColumn, IterableDataset, load_dataset
-from typing import Callable, Generator, cast
+from typing import Callable, cast
+from collections.abc import Callable as _Callable, Generator as _Generator  # noqa: UP035
 from tqdm import tqdm
 
 

@@ -17,12 +17,13 @@ def pca_figure(device: str = "cpu") -> None:
 
     # (B, L, E) -> (B, L * E)
     activated_experts = activated_experts.view(activated_experts.shape[0], -1).float()
-    print(activated_experts.shape)
 
     # PCA to visualize the expert activations
     pca = PCA(n_components=2, svd_solver="full")
     activated_experts_pca = pca.fit_transform(activated_experts)
-    print(activated_experts_pca.shape)
+
+    # Ensure figure directory exists before saving
+    os.makedirs(FIGURE_DIR, exist_ok=True)
 
     # scatter plot the expert activations
     plt.scatter(activated_experts_pca[:, 0], activated_experts_pca[:, 1])
