@@ -2,16 +2,13 @@ from itertools import batched
 import os
 
 import arguably
-from nnterp import StandardizedTransformer
 import torch as th
 from tqdm import tqdm
 
 from core.data import DATASETS
 from core.device_map import CUSTOM_DEVICES
 from core.model import MODELS
-from exp import OUTPUT_DIR
-
-ROUTER_LOGITS_DIR = os.path.join(OUTPUT_DIR, "router_logits")
+from exp import OUTPUT_DIR, ROUTER_LOGITS_DIR
 
 
 def save_router_logits(
@@ -33,6 +30,9 @@ def get_router_activations(
     device: str = "cpu",
     tokens_per_file: int = 10_000,
 ) -> None:
+    # Import here to avoid heavy import at module import time
+    from nnterp import StandardizedTransformer
+
     model_config = MODELS.get(model_name, None)
 
     if model_config is None:

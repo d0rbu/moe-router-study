@@ -2,6 +2,43 @@ import torch as th
 import torch.nn.functional as F
 
 
+# New: factor IoU computation into a helper for direct testing
+def compute_iou(data: th.Tensor, circuits: th.Tensor) -> th.Tensor:
+    """Compute IoU between boolean data masks and circuit masks.
+
+    Args:
+        data: (B, L, E) boolean tensor
+        circuits: (..., C, L, E) boolean tensor
+
+    Returns:
+        iou: (..., B, C) float32 tensor with IoU scores per data item and circuit
+    """
+    assert data.ndim == 3, "data must be of shape (batch_size, num_layers, num_experts)"
+    assert circuits.ndim >= 3, (
+        "circuits must be of shape (*, num_circuits, num_layers, num_experts)"
+    )
+
+    batch_size, num_layers, num_experts = data.shape
+    num_circuits = circuits.shape[-3]
+    assert circuits.shape[-2] == num_layers, (
+        "circuits must have the same number of layers as data"
+    )
+    assert circuits.shape[-1] == num_experts, (
+        "circuits must have the same number of experts as data"
+    )
+    assert circuits.dtype == th.bool, "circuits must be a boolean tensor"
+
+    num_extra_dims = circuits.ndim - 3
+
+    # compute the IoU for each data point
+    data_flat = data.view(*([1] * num_extra_dims), batch_size, 1, num_layers * num_experts)
+    circuits_flat = circuits.view(*circuits.shape[:-3], 1, num_circuits, num_layers * num_experts)
+    intersection = th.sum(data_flat & circuits_flat, dim=-1)
+    union = th.sum(data_flat | circuits_flat, dim=-1)
+    iou = intersection / union
+    return iou.float()
+
+
 def max_iou_and_index(
     data: th.Tensor, circuits: th.Tensor
 ) -> tuple[th.Tensor, th.Tensor]:

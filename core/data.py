@@ -1,5 +1,6 @@
 from datasets import IterableColumn, IterableDataset, load_dataset
-from typing import Callable, Generator, cast
+from typing import Callable, cast
+from collections.abc import Callable as _Callable, Generator as _Generator  # noqa: UP035
 from tqdm import tqdm
 
 
@@ -9,8 +10,22 @@ def fineweb_10bt_text() -> IterableColumn:
     return cast(IterableColumn, fineweb["text"])
 
 
+def toy_text() -> IterableColumn:
+    """Tiny, in-repo dataset for tests and quick runs."""
+    class ToyIterable(IterableDataset):
+        def __iter__(self):
+            yield from [
+                "Tiny sample 1",
+                "Tiny sample 2", 
+                "Tiny sample 3",
+                "Tiny sample 4",
+            ]
+    return cast(IterableColumn, ToyIterable())
+
+
 DATASETS: dict[str, Callable[[], IterableColumn]] = {
     "fw": fineweb_10bt_text,
+    "toy": toy_text,
 }
 
 
