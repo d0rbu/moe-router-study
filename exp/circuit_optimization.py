@@ -247,19 +247,26 @@ def grid_search_gradient_descent(
     device: str = "cuda",
 ) -> None:
     if complexity_importances is None:
-        complexity_importances = [0.5, 0.9, 0.1, 0.99, 0.01]
+        # complexity_importances = [0.5, 0.9, 0.1, 0.99, 0.01]
+        complexity_importances = [0.5, 0.4, 0.3, 0.2, 0.1]
     if complexity_powers is None:
-        complexity_powers = [1.0, 2.0, 0.5]
+        # complexity_powers = [1.0, 2.0, 0.5]
+        complexity_powers = [1.0]
     if lrs is None:
-        lrs = [1e-1, 1e-2, 1e-3, 1e-4]
+        # lrs = [1e-1, 1e-2, 1e-3, 1e-4]
+        lrs = [0.05, 0.02, 0.01, 0.005, 0.002]
     if max_circuitses is None:
-        max_circuitses = [64, 128, 256, 512]
+        # max_circuitses = [64, 128, 256, 512]
+        max_circuitses = [64, 128, 256]
     if num_epochses is None:
-        num_epochses = [2048]
+        # num_epochses = [2048]
+        num_epochses = [4096]
     if num_warmup_epochses is None:
+        # num_warmup_epochses = [0]
         num_warmup_epochses = [0]
     if num_cooldown_epochses is None:
-        num_cooldown_epochses = [512]
+        # num_cooldown_epochses = [512]
+        num_cooldown_epochses = [1024]
 
     data = load_activations(device=device)
     loss_landscape = th.empty(
@@ -385,4 +392,4 @@ def grid_search_gradient_descent(
 
 if __name__ == "__main__":
     # arguably.run()
-    grid_search_gradient_descent(top_k=8)
+    grid_search_gradient_descent(top_k=8, num_seeds=1)
