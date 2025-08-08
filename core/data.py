@@ -1,13 +1,16 @@
+from collections.abc import Callable
+from typing import cast
+
 from datasets import IterableColumn, IterableDataset, load_dataset
-from typing import Callable, cast
-from collections.abc import Callable as _Callable, Generator as _Generator  # noqa: UP035
 from tqdm import tqdm
 
 
 def fineweb_10bt_text() -> IterableColumn:
-    fineweb = load_dataset("HuggingFaceFW/fineweb", name="sample-10BT", split="train", streaming=True)
-    
-    return cast(IterableColumn, fineweb["text"])
+    fineweb = load_dataset(
+        "HuggingFaceFW/fineweb", name="sample-10BT", split="train", streaming=True
+    )
+
+    return cast("IterableColumn", fineweb["text"])
 
 
 def toy_text() -> IterableColumn:
@@ -16,7 +19,7 @@ def toy_text() -> IterableColumn:
         def __iter__(self):
             yield from [
                 "Tiny sample 1",
-                "Tiny sample 2", 
+                "Tiny sample 2",
                 "Tiny sample 3",
                 "Tiny sample 4",
             ]
@@ -30,10 +33,14 @@ DATASETS: dict[str, Callable[[], IterableColumn]] = {
 
 
 if __name__ == "__main__":
-    for dataset_name, dataset_fn in tqdm(DATASETS.items(), desc="Loading datasets", total=len(DATASETS)):
+    for dataset_name, dataset_fn in tqdm(
+        DATASETS.items(), desc="Loading datasets", total=len(DATASETS)
+    ):
         dataset = dataset_fn()
+        log_every = 1000
 
-        for sample_idx, sample in tqdm(enumerate(dataset), desc=f"Loading {dataset_name}"):
-            pass
-
-        print(f"Sample {sample_idx} from {dataset_name}: {sample}")
+        for sample_idx, sample in tqdm(
+            enumerate(dataset), desc=f"Loading {dataset_name}"
+        ):
+            if sample_idx % log_every == 0:
+                print(f"Sample {sample_idx} from {dataset_name}: {sample}")
