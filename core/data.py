@@ -15,6 +15,7 @@ def fineweb_10bt_text() -> IterableColumn:
 
 def toy_text() -> IterableColumn:
     """Tiny, in-repo dataset for tests and quick runs."""
+
     class ToyIterable(IterableDataset):
         def __iter__(self):
             yield from [
@@ -45,3 +46,4 @@ if __name__ == "__main__":
         ):
             if sample_idx % log_every == 0:
                 print(f"Sample {sample_idx} from {dataset_name}: {sample}")
+
