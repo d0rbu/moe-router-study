@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import torch as th
 from tqdm import tqdm
 
-from exp.get_weights import WEIGHT_DIR
+from exp import WEIGHT_DIR
 from viz import FIGURE_DIR
 
 ROUTER_VIZ_DIR = os.path.join(FIGURE_DIR, "router_spaces")
