@@ -30,6 +30,9 @@ def get_router_activations(
     device: str = "cpu",
     tokens_per_file: int = 10_000,
 ) -> None:
+    # Import here to avoid heavy import at module import time
+    from nnterp import StandardizedTransformer
+
     model_config = MODELS.get(model_name, None)
 
     if model_config is None:
