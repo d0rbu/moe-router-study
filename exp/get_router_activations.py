@@ -15,12 +15,16 @@ ROUTER_LOGITS_DIR = os.path.join(OUTPUT_DIR, "router_logits")
 
 
 def save_router_logits(
-    router_logit_collection: list[th.Tensor], top_k: int, file_idx: int
+    router_logit_collection: list[th.Tensor],
+    tokenized_batch_collection: list[list[str]],
+    top_k: int,
+    file_idx: int,
 ) -> None:
     router_logits = th.cat(router_logit_collection, dim=0)
     output: dict[str, th.Tensor] = {
         "topk": top_k,
         "router_logits": router_logits,
+        "tokens": tokenized_batch_collection,
     }
     th.save(output, os.path.join(ROUTER_LOGITS_DIR, f"{file_idx}.pt"))
 
@@ -56,6 +60,7 @@ def get_router_activations(
 
     with th.no_grad():
         router_logit_collection: list[th.Tensor] = []
+        tokenized_batch_collection: list[list[str]] = []
         router_logit_collection_size: int = 0
         router_logit_collection_idx: int = 0
 
@@ -63,6 +68,8 @@ def get_router_activations(
 
         for batch in batched(dataset_fn(), batch_size):
             encoded_batch = model.tokenizer(batch, padding=True, return_tensors="pt")
+            tokenized_batch = [model.tokenizer.tokenize(text) for text in batch]
+            tokenized_batch_collection.extend(tokenized_batch)
 
             router_logits = []
 
@@ -85,7 +92,10 @@ def get_router_activations(
             # save the router probabilities to a file
             if router_logit_collection_size >= tokens_per_file:
                 save_router_logits(
-                    router_logit_collection, top_k, router_logit_collection_idx
+                    router_logit_collection,
+                    tokenized_batch_collection,
+                    top_k,
+                    router_logit_collection_idx,
                 )
                 router_logit_collection_idx += 1
                 router_logit_collection_size = 0
@@ -95,7 +105,10 @@ def get_router_activations(
         # save the remaining router probabilities to a file
         if router_logit_collection_size > 0:
             save_router_logits(
-                router_logit_collection, top_k, router_logit_collection_idx
+                router_logit_collection,
+                tokenized_batch_collection,
+                top_k,
+                router_logit_collection_idx,
             )
 
 
