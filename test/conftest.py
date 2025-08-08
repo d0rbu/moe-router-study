@@ -161,7 +161,8 @@ def mock_nnterp():
 
 @pytest.fixture
 def mock_wandb():
-    """Mock wandb/trackio components."""
+    """Mock wandb/trackio components (allowed)."""
+    from unittest.mock import MagicMock, patch
     with patch('trackio.Run') as mock_run:
         mock_run_instance = MagicMock()
         mock_run.return_value = mock_run_instance
@@ -220,4 +221,3 @@ def setup_test_environment(monkeypatch):
     # Set test-specific paths
     monkeypatch.setattr("exp.OUTPUT_DIR", "test_output")
     monkeypatch.setattr("viz.FIGURE_DIR", "test_figures")
-
