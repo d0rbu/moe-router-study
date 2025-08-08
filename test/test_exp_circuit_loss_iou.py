@@ -32,12 +32,8 @@ def test_compute_iou_basic_overlap() -> None:
     iou = compute_iou(data, circuits)
     assert iou.shape == (2, 2)
 
-    # Manual IoUs
-    # sample 0 vs circuit 0: intersection={0} -> 1, union={0,1,2} -> 3 => 1/3
-    # sample 0 vs circuit 1: intersection={2} -> 1, union={1,2} -> 2 => 1/2
-    # sample 1 vs circuit 0: intersection={1} -> 1, union={0,1,3} -> 3 => 1/3
-    # sample 1 vs circuit 1: intersection={1} -> 1, union={1,2,3} -> 3 => 1/3
-    expected = th.tensor([[1/3, 1/2], [1/3, 1/3]], dtype=th.float32)
+    # All pairs here have union of size 3 and intersection of size 1 -> IoU = 1/3
+    expected = th.tensor([[1/3, 1/3], [1/3, 1/3]], dtype=th.float32)
     assert th.allclose(iou, expected, atol=1e-6)
 
 
@@ -77,4 +73,3 @@ def test_compute_iou_shape_mismatch_raises() -> None:
     circuits = th.zeros(4, 2, 4, dtype=th.bool)  # wrong E
     with pytest.raises(AssertionError):
         compute_iou(data, circuits)
-
