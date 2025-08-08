@@ -23,6 +23,7 @@ def toy_text() -> IterableColumn:
                 "Tiny sample 3",
                 "Tiny sample 4",
             ]
+
     return cast(IterableColumn, ToyIterable())
 
 
