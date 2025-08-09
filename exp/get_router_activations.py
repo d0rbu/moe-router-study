@@ -30,7 +30,7 @@ def save_router_logits(
 @arguably.command()
 def get_router_activations(
     model_name: str = "olmoe",
-    dataset: str = "fw",
+    dataset: str = "toy",
     batch_size: int = 4,
     device: str = "cpu",
     tokens_per_file: int = 10_000,
