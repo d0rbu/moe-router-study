@@ -1,5 +1,5 @@
 from itertools import count
-from typing import Dict, List, Tuple
+from typing import Callable, Dict, List, Tuple
 
 import arguably
 import matplotlib.pyplot as plt
@@ -14,7 +14,6 @@ from exp.activations import (
     load_activations_and_topk,
     load_activations_tokens_and_topk,
 )
-from exp.get_router_activations import ROUTER_LOGITS_DIR
 
 
 def get_circuit_activations(
@@ -67,17 +66,30 @@ def _ensure_token_alignment(token_topk_mask: th.Tensor, sequences: List[List[str
         )
 
 
-def _validate_seq_mapping(seq_ids: th.Tensor, seq_lengths: th.Tensor) -> None:
-    S = int(seq_lengths.shape[0])
-    counts = th.bincount(seq_ids.cpu(), minlength=S)
-    if counts.shape[0] < S:
-        counts = th.nn.functional.pad(counts, (0, S - counts.shape[0]))
-    if not th.equal(counts.to(seq_lengths.dtype), seq_lengths.cpu()):
-        raise ValueError(
-            "Sequence ID mapping mismatch: per-sequence token counts do not match provided lengths."
-        )
-    # Assert every sequence has at least one token as per guidance
-    assert (seq_lengths > 0).all(), "Every sequence must have at least one token"
+def build_sequence_id_tensor(sequences: List[List[str]]) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
+    """Map each token to its sequence index and compute lengths/offsets.
+
+    Returns:
+      - seq_ids_per_token: (B,) long tensor mapping token index -> seq index
+      - seq_lengths: (S,) long tensor of token counts per sequence
+      - seq_offsets: (S+1,) long tensor of prefix sums, start index per sequence
+    """
+    lengths = [len(seq) for seq in sequences]
+    S = len(lengths)
+    seq_lengths = th.tensor(lengths, dtype=th.long)
+    # Prefix sums with initial 0 so we have S+1 entries
+    seq_offsets = th.empty(S + 1, dtype=th.long)
+    seq_offsets[0] = 0
+    if S > 0:
+        seq_offsets[1:] = th.cumsum(seq_lengths, dim=0)
+    B = int(seq_offsets[-1].item()) if S > 0 else 0
+    if B == 0:
+        return th.empty(0, dtype=th.long), seq_lengths, seq_offsets
+
+    seq_ids = th.empty(B, dtype=th.long)
+    for s, (start, end) in enumerate(zip(seq_offsets[:-1], seq_offsets[1:])):
+        seq_ids[start:end] = s
+    return seq_ids, seq_lengths, seq_offsets
 
 
 def _gather_top_sequences_by_max(
@@ -97,8 +109,6 @@ def _gather_top_sequences_by_max(
     idx_src = th.arange(B, device=device)
     earliest = earliest.scatter_reduce(0, seq_sorted, idx_src, reduce="amin", include_self=True)
 
-    # All sequences should have at least one token
-    # (If you want strict, keep this assert; it matches your guidance.)
     assert (earliest < B).all(), "Every sequence must have at least one token"
 
     topk = th.argsort(earliest)[:top_n]
@@ -111,23 +121,24 @@ def _gather_top_sequences_by_mean(
     seq_lengths: th.Tensor,
     top_n: int,
 ) -> List[int]:
-    """Select top sequences by mean token score.
-
-    Args:
-        token_scores: (B,) tensor for a fixed circuit
-        seq_ids: (B,) tensor mapping token -> sequence index
-        seq_lengths: (S,) tensor of token counts per sequence
-        top_n: number of unique sequences to return
-
-    Returns:
-        List of sequence indices (length == top_n) sorted by mean score desc.
-    """
     S = int(seq_lengths.shape[0])
     sums = th.zeros(S, dtype=token_scores.dtype, device=token_scores.device)
     sums = sums.index_add(0, seq_ids.to(sums.device), token_scores)
     means = sums / seq_lengths.to(sums.device)
     order = th.argsort(means, descending=True)
     return order[:top_n].tolist()
+
+
+def _validate_seq_mapping(seq_ids: th.Tensor, seq_lengths: th.Tensor) -> None:
+    S = int(seq_lengths.shape[0])
+    counts = th.bincount(seq_ids.cpu(), minlength=S)
+    if counts.shape[0] < S:
+        counts = th.nn.functional.pad(counts, (0, S - counts.shape[0]))
+    if not th.equal(counts.to(seq_lengths.dtype), seq_lengths.cpu()):
+        raise ValueError(
+            "Sequence ID mapping mismatch: per-sequence token counts do not match provided lengths."
+        )
+    assert (seq_lengths > 0).all(), "Every sequence must have at least one token"
 
 
 def _render_sequences_panel(
@@ -153,20 +164,9 @@ def _render_sequences_panel(
 
     token_scores_np = token_scores_for_circuit.detach().cpu().numpy()
     for seq_idx in seq_indices:
-        # Render one sequence as a line of colored tokens
         tokens = sequences[seq_idx]
         start = int(seq_offsets[seq_idx].item())
-        # Plot label (sequence id)
-        ax.text(
-            0.01,
-            y,
-            f"S{seq_idx}",
-            transform=ax.transAxes,
-            fontsize=8,
-            ha="left",
-            va="top",
-            color="black",
-        )
+        ax.text(0.01, y, f"S{seq_idx}", transform=ax.transAxes, fontsize=8, ha="left", va="top", color="black")
         x = 0.07
         for i, tok in enumerate(tokens):
             global_idx = start + i
@@ -184,15 +184,120 @@ def _render_sequences_panel(
                 picker=True,
             )
             artist_to_token[t] = global_idx
-            # advance x a bit; rough estimate based on token length
             x += 0.012 + 0.006 * max(1, len(tok))
             if x > 0.98:
-                break  # line overflow; avoid plotting off-canvas
+                break
         y -= line_height
         if y < 0.02:
             break
 
     return artist_to_token
+
+
+def _viz_ui(
+    circuits: th.Tensor,
+    activations: th.Tensor,
+    token_topk_mask: th.Tensor,
+    sequences: List[List[str]],
+    seq_ids: th.Tensor,
+    seq_lengths: th.Tensor,
+    seq_offsets: th.Tensor,
+    top_n: int,
+    select_sequences: Callable[[th.Tensor, th.Tensor, th.Tensor, int], List[int]],
+) -> None:
+    """Shared UI for both max- and mean-based selection.
+
+    select_sequences(token_scores, seq_ids, seq_lengths, top_n) -> List[int]
+    """
+    B, C = activations.shape
+    L, E = token_topk_mask.shape[1], token_topk_mask.shape[2]
+
+    fig: Figure
+    ax_left: Axes
+    ax_right: Axes
+    ax_slider: Axes
+    fig = plt.figure(figsize=(16, 10))
+    ax_left = fig.add_axes([0.05, 0.15, 0.6, 0.8])
+    ax_right = fig.add_axes([0.7, 0.3, 0.28, 0.65])
+    ax_slider = fig.add_axes([0.1, 0.05, 0.8, 0.04])
+
+    current_c = 0
+    per_c_vmin = activations.min(dim=0).values.detach().cpu().numpy()
+    per_c_vmax = activations.max(dim=0).values.detach().cpu().numpy()
+
+    circuit_np = circuits[current_c].detach().cpu().numpy()
+    (im_circuit,) = _render_circuit(ax_right, circuit_np)
+    overlay = ax_right.imshow(
+        np.zeros((L, E)), cmap="Reds", alpha=0.0, aspect="auto", interpolation="nearest"
+    )
+
+    token_scores_for_c = activations[:, current_c]
+    selected_sequences = select_sequences(token_scores_for_c, seq_ids, seq_lengths, top_n)
+    artist_map = _render_sequences_panel(
+        ax_left,
+        sequences,
+        selected_sequences,
+        seq_offsets,
+        token_scores_for_c,
+        vmin=float(per_c_vmin[current_c]),
+        vmax=float(per_c_vmax[current_c]),
+    )
+
+    slider = Slider(ax=ax_slider, label="Circuit", valmin=0, valmax=max(0, C - 1), valinit=current_c, valstep=1)
+
+    def update_overlay_for_token(token_idx: int | None) -> None:
+        if token_idx is None:
+            overlay.set_alpha(0.0)
+            fig.canvas.draw_idle()
+            return
+        mask = token_topk_mask[token_idx].detach().cpu().numpy().astype(np.float32)
+        overlay.set_data(mask)
+        overlay.set_alpha(0.35)
+        fig.canvas.draw_idle()
+
+    last_hovered = {"token": None}
+
+    def on_hover(event) -> None:  # type: ignore[no-redef]
+        nonlocal artist_map
+        if event.inaxes != ax_left:
+            if last_hovered["token"] is not None:
+                last_hovered["token"] = None
+                update_overlay_for_token(None)
+            return
+        for artist, token_idx in artist_map.items():
+            contains, _ = artist.contains(event)
+            if contains:
+                if last_hovered["token"] != token_idx:
+                    last_hovered["token"] = token_idx
+                    update_overlay_for_token(token_idx)
+                return
+        if last_hovered["token"] is not None:
+            last_hovered["token"] = None
+            update_overlay_for_token(None)
+
+    def on_slider_change(val) -> None:  # type: ignore[no-redef]
+        nonlocal current_c, artist_map
+        current_c = int(slider.val)
+        im_circuit.set_array(circuits[current_c].detach().cpu().numpy())
+        ax_right.set_title(f"Circuit {current_c} (L x E)")
+        token_scores = activations[:, current_c]
+        seqs = select_sequences(token_scores, seq_ids, seq_lengths, top_n)
+        artist_map = _render_sequences_panel(
+            ax_left,
+            sequences,
+            seqs,
+            seq_offsets,
+            token_scores,
+            vmin=float(per_c_vmin[current_c]),
+            vmax=float(per_c_vmax[current_c]),
+        )
+        update_overlay_for_token(None)
+        fig.canvas.draw_idle()
+
+    fig.canvas.mpl_connect("motion_notify_event", on_hover)
+    slider.on_changed(on_slider_change)
+    ax_left.set_title("Top sequences (hover token to overlay mask)")
+    plt.show()
 
 
 def _viz_common(
@@ -217,132 +322,21 @@ def _viz_common(
     seq_ids = seq_ids.to(activations.device)
     seq_lengths = seq_lengths.to(activations.device)
 
-    B, C = activations.shape
-    L, E = token_topk_mask.shape[1], token_topk_mask.shape[2]
+    # Select max-containing sequences by default
+    def select_max(scores: th.Tensor, ids: th.Tensor, lengths: th.Tensor, k: int) -> List[int]:
+        return _gather_top_sequences_by_max(scores, ids, k)
 
-    # Matplotlib setup
-    fig: Figure
-    ax_left: Axes
-    ax_right: Axes
-    ax_slider: Axes
-    fig = plt.figure(figsize=(16, 10))
-    ax_left = fig.add_axes([0.05, 0.15, 0.6, 0.8])
-    ax_right = fig.add_axes([0.7, 0.3, 0.28, 0.65])
-    ax_slider = fig.add_axes([0.1, 0.05, 0.8, 0.04])
-
-    # Initial circuit index
-    current_c = 0
-
-    # Precompute min/max for coloring per circuit
-    per_c_vmin = activations.min(dim=0).values.detach().cpu().numpy()
-    per_c_vmax = activations.max(dim=0).values.detach().cpu().numpy()
-
-    # Right panel: draw initial circuit heatmap and overlay placeholder
-    circuit_np = circuits[current_c].detach().cpu().numpy()
-    (im_circuit,) = _render_circuit(ax_right, circuit_np)
-
-    overlay = ax_right.imshow(
-        np.zeros((L, E)),
-        cmap="Reds",
-        alpha=0.0,
-        aspect="auto",
-        interpolation="nearest",
-    )
-
-    # Render left panel sequences
-    token_scores_for_c = activations[:, current_c]
-
-    selected_sequences = _gather_top_sequences_by_max(
-        token_scores_for_c, seq_ids, top_n
-    )
-
-    artist_map = _render_sequences_panel(
-        ax_left,
+    _viz_ui(
+        circuits,
+        activations,
+        token_topk_mask,
         sequences,
-        selected_sequences,
+        seq_ids,
+        seq_lengths,
         seq_offsets,
-        token_scores_for_c,
-        vmin=float(per_c_vmin[current_c]),
-        vmax=float(per_c_vmax[current_c]),
+        top_n,
+        select_sequences=select_max,
     )
-
-    slider = Slider(
-        ax=ax_slider,
-        label="Circuit",
-        valmin=0,
-        valmax=max(0, C - 1),
-        valinit=current_c,
-        valstep=1,
-    )
-
-    # State for current overlay token
-    state = {"token_idx": None}
-
-    def update_overlay_for_token(token_idx: int | None) -> None:
-        if token_idx is None:
-            overlay.set_alpha(0.0)
-            fig.canvas.draw_idle()
-            return
-        mask = token_topk_mask[token_idx].detach().cpu().numpy().astype(np.float32)
-        overlay.set_data(mask)
-        overlay.set_alpha(0.35)
-        fig.canvas.draw_idle()
-
-    # Hover instead of click: check which text artist the mouse is over
-    # Keep last to avoid redundant redraws
-    last_hovered = {"token": None}
-
-    def on_hover(event) -> None:  # type: ignore[no-redef]
-        if event.inaxes != ax_left:
-            if last_hovered["token"] is not None:
-                last_hovered["token"] = None
-                update_overlay_for_token(None)
-            return
-        # Find the first artist under the cursor
-        for artist, token_idx in artist_map.items():
-            contains, _ = artist.contains(event)
-            if contains:
-                if last_hovered["token"] != token_idx:
-                    last_hovered["token"] = token_idx
-                    update_overlay_for_token(token_idx)
-                return
-        # If none contains and previously something did, clear
-        if last_hovered["token"] is not None:
-            last_hovered["token"] = None
-            update_overlay_for_token(None)
-
-    def on_slider_change(val) -> None:  # type: ignore[no-redef]
-        nonlocal current_c, artist_map
-        current_c = int(slider.val)
-        # Update right panel circuit
-        im_circuit.set_array(circuits[current_c].detach().cpu().numpy())
-        ax_right.set_title(f"Circuit {current_c} (L x E)")
-
-        # Update left panel selection and colors
-        token_scores = activations[:, current_c]
-        seqs = _gather_top_sequences_by_max(token_scores, seq_ids, top_n)
-
-        artist_map = _render_sequences_panel(
-            ax_left,
-            sequences,
-            seqs,
-            seq_offsets,
-            token_scores,
-            vmin=float(per_c_vmin[current_c]),
-            vmax=float(per_c_vmax[current_c]),
-        )
-        # Clear overlay state
-        state["token_idx"] = None
-        update_overlay_for_token(None)
-        fig.canvas.draw_idle()
-
-    fig.canvas.mpl_connect("motion_notify_event", on_hover)
-    slider.on_changed(on_slider_change)
-
-    # Update title to reflect hover behavior
-    ax_left.set_title("Top sequences (hover token to overlay mask)")
-
-    plt.show()
 
 
 @arguably.command()
@@ -391,10 +385,20 @@ def viz_mean_activating_tokens(
     seq_ids = seq_ids.to(activations.device)
     seq_lengths = seq_lengths.to(activations.device)
 
-    # Precompute selection for the initial circuit (index 0); rest handled by slider
-    # We call into _viz_common by temporarily monkey-patching the selection inside.
-    # Simpler path: call a small helper to run the shared UI with a selector function.
-    _viz_with_selector(circuits, activations, token_topk_mask, sequences, seq_ids, seq_lengths, seq_offsets, top_n, device, mode="mean")
+    def select_mean(scores: th.Tensor, ids: th.Tensor, lengths: th.Tensor, k: int) -> List[int]:
+        return _gather_top_sequences_by_mean(scores, ids, lengths, k)
+
+    _viz_ui(
+        circuits,
+        activations,
+        token_topk_mask,
+        sequences,
+        seq_ids,
+        seq_lengths,
+        seq_offsets,
+        top_n,
+        select_sequences=select_mean,
+    )
 
 
 if __name__ == "__main__":
