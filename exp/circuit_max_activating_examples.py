@@ -9,7 +9,8 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.widgets import Slider
 
-from exp.activations import load_activations
+# Use the topk+scatter-based loader that builds a boolean activation mask
+from exp.activations import load_activations_and_topk
 from exp.get_router_activations import ROUTER_LOGITS_DIR
 
 
@@ -39,21 +40,19 @@ def get_circuit_activations(
     circuits: th.Tensor,
     device: str = "cuda",
 ) -> Tuple[th.Tensor, th.Tensor]:
-    """Compute circuit activations for every token from raw router logits.
+    """Compute circuit activations for every token from top-k activation mask.
 
     Steps:
-    1) Load raw router logits (B, L, E) and top_k
-    2) Build boolean top-k mask via topk + scatter -> (B, L, E) bool
-    3) Compute activations = einsum("ble,cle->bc", mask.float(), circuits)
+    1) Load boolean top-k activation mask (B, L, E) via topk + scatter (from exp.activations)
+    2) Compute activations = einsum("ble,cle->bc", mask.float(), circuits)
     """
-    router_logits, top_k = _load_router_logits_and_topk(device=device)
+    # Build top-k activation mask (B, L, E) via topk + scatter over last dim
+    token_topk_mask, _topk = load_activations_and_topk(device=device)
 
-    # (B, L, E) -> topk indices along last dim
-    topk_indices = th.topk(router_logits, k=top_k, dim=2).indices
-    token_topk_mask = th.zeros_like(router_logits, device=device).bool()
-    token_topk_mask.scatter_(2, topk_indices, True)
-
+    # Ensure circuits is on the same device and dtype
     circuits = circuits.to(device=device, dtype=th.float32)
+
+    # Compute per-token, per-circuit activation: dot product over (L,E)
     activations = th.einsum("ble,cle->bc", token_topk_mask.float(), circuits)
     return activations, token_topk_mask
 
