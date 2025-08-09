@@ -1,4 +1,3 @@
-from itertools import count
 from typing import Callable, Dict, List, Tuple
 
 import arguably
