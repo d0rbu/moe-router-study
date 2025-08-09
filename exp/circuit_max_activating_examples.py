@@ -49,28 +49,6 @@ def _validate_seq_mapping(seq_ids: th.Tensor, seq_lengths: th.Tensor) -> None:
         )
 
 
-def _load_router_logits_and_topk(device: str = "cuda") -> tuple[th.Tensor, int]:
-    """Load raw router logits (B, L, E) concatenated across files and top_k.
-
-    Reads files from ROUTER_LOGITS_DIR/{i}.pt and concatenates along batch/token axis.
-    """
-    logits_collection: list[th.Tensor] = []
-    top_k: int | None = None
-    for i in count():
-        path = f"{ROUTER_LOGITS_DIR}/{i}.pt"
-        try:
-            data = th.load(path)
-        except FileNotFoundError:
-            break
-        if top_k is None:
-            top_k = int(data["topk"])  # saved during collection
-        logits_collection.append(data["router_logits"].to(device))
-    if not logits_collection or top_k is None:
-        raise ValueError("No router logits found; run exp.get_router_activations first")
-    router_logits = th.cat(logits_collection, dim=0)
-    return router_logits, top_k
-
-
 def get_circuit_activations(
     circuits: th.Tensor,
     device: str = "cuda",
