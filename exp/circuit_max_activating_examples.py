@@ -14,6 +14,41 @@ from exp.activations import load_activations_and_topk
 from exp.get_router_activations import ROUTER_LOGITS_DIR
 
 
+def load_tokenized_sequences() -> List[List[str]]:
+    """Load tokenized sequences saved alongside router logits.
+
+    Each file at ROUTER_LOGITS_DIR/{i}.pt contains list[list[str]] under key "tokens".
+    Returns a single concatenated list across files, preserving order.
+    """
+    sequences: List[List[str]] = []
+    for file_idx in count():
+        path = f"{ROUTER_LOGITS_DIR}/{file_idx}.pt"
+        try:
+            data = th.load(path)
+        except FileNotFoundError:
+            break
+        toks: List[List[str]] = data.get("tokens", [])
+        sequences.extend(toks)
+    if not sequences:
+        raise ValueError(
+            "No tokenized sequences found. Please run exp.get_router_activations first."
+        )
+    return sequences
+
+
+# Add a validation helper to ensure per-sequence counts match
+def _validate_seq_mapping(seq_ids: th.Tensor, seq_lengths: th.Tensor) -> None:
+    S = int(seq_lengths.shape[0])
+    counts = th.bincount(seq_ids.cpu(), minlength=S)
+    if counts.shape[0] < S:
+        # pad to S in rare cases
+        counts = th.nn.functional.pad(counts, (0, S - counts.shape[0]))
+    if not th.equal(counts.to(seq_lengths.dtype), seq_lengths.cpu()):
+        raise ValueError(
+            "Sequence ID mapping mismatch: per-sequence token counts do not match provided lengths."
+        )
+
+
 def _load_router_logits_and_topk(device: str = "cuda") -> tuple[th.Tensor, int]:
     """Load raw router logits (B, L, E) concatenated across files and top_k.
 
@@ -57,62 +92,7 @@ def get_circuit_activations(
     return activations, token_topk_mask
 
 
-def load_tokenized_sequences() -> List[List[str]]:
-    """Load tokenized sequences saved alongside router logits.
-
-    Each file at ROUTER_LOGITS_DIR/{i}.pt contains list[list[str]] under key "tokens".
-    Returns a single concatenated list across files, preserving order.
-    """
-    sequences: List[List[str]] = []
-    for file_idx in count():
-        path = f"{ROUTER_LOGITS_DIR}/{file_idx}.pt"
-        try:
-            data = th.load(path)
-        except FileNotFoundError:
-            break
-        # Data was saved as list[list[str]]
-        toks: List[List[str]] = data.get("tokens", [])
-        sequences.extend(toks)
-    if not sequences:
-        raise ValueError(
-            "No tokenized sequences found. Please run exp.get_router_activations first."
-        )
-    return sequences
-
-
-def build_sequence_id_tensor(sequences: List[List[str]]) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
-    """Build tensor mapping each token to its originating sequence index.
-
-    Assumes the data tensors (router logits/activations) contain all tokens concatenated
-    in the same order as the provided `sequences` list.
-
-    Args:
-        sequences: list of token lists (list[list[str]])
-
-    Returns:
-        seq_ids_per_token: (B,) tensor with the sequence index for each token position
-        seq_lengths: (S,) tensor with number of tokens per sequence
-        seq_offsets: (S+1,) tensor with exclusive prefix sums (start index of each seq)
-    """
-    lengths = [len(s) for s in sequences]
-    seq_lengths = th.tensor(lengths, dtype=th.long)
-    # Compute offsets
-    seq_offsets = th.zeros(len(sequences) + 1, dtype=th.long)
-    if len(sequences) > 0:
-        seq_offsets[1:] = th.cumsum(seq_lengths, dim=0)
-
-    total_tokens = int(seq_offsets[-1].item())
-    seq_ids_per_token = th.empty(total_tokens, dtype=th.long)
-    for idx in range(len(sequences)):
-        start = int(seq_offsets[idx].item())
-        end = int(seq_offsets[idx + 1].item())
-        if end > start:
-            seq_ids_per_token[start:end] = idx
-
-    return seq_ids_per_token, seq_lengths, seq_offsets
-
-
-def _color_for_value(val: float, vmin: float, vmax: float) -> Tuple[float, float, float]:
+def _color_for_value(val: float, vmin: float = 0.0, vmax: float = 1.0) -> Tuple[float, float, float]:
     # Map activation value to color (Blues colormap)
     normalized = 0.0 if vmax <= vmin else (val - vmin) / (vmax - vmin)
     cmap = plt.get_cmap("Blues")
@@ -146,28 +126,42 @@ def _gather_top_sequences_by_max(
     seq_ids: th.Tensor,
     top_n: int,
 ) -> List[int]:
-    """Select top sequences by their highest-scoring token.
+    """Select top sequences by their highest-scoring token using earliest occurrence index.
 
-    Args:
-        token_scores: (B,) tensor for a fixed circuit
-        seq_ids: (B,) tensor mapping token -> sequence index
-        top_n: number of unique sequences to return
-
-    Returns:
-        List of sequence indices (length <= top_n) sorted by best token score desc.
+    More efficient than Python-loop dedup: compute, for each sequence, the earliest
+    index it appears in the scores-sorted list, then take the top_n sequences with
+    the smallest earliest indices.
     """
-    # Sort tokens by score descending
+    device = token_scores.device
+    B = int(token_scores.shape[0])
     order = th.argsort(token_scores, descending=True)
-    selected: List[int] = []
-    seen = set()
-    for idx in order.tolist():
-        s = int(seq_ids[idx].item())
-        if s not in seen:
-            seen.add(s)
-            selected.append(s)
-            if len(selected) >= top_n:
-                break
-    return selected
+    seq_sorted = seq_ids[order]
+
+    # Vectorized earliest index per sequence using scatter_reduce if available
+    S = int(seq_ids.max().item()) + 1 if seq_ids.numel() > 0 else 0
+    if S == 0:
+        return []
+
+    earliest = th.full((S,), B, device=device)
+    idx_src = th.arange(B, device=device)
+    if hasattr(earliest, "scatter_reduce"):
+        earliest = earliest.scatter_reduce(0, seq_sorted, idx_src, reduce="amin", include_self=True)
+    else:
+        # Fallback: simple loop (still O(B), minimal Python work)
+        for i in range(B):
+            s = int(seq_sorted[i].item())
+            if idx_src[i] < earliest[s]:
+                earliest[s] = idx_src[i]
+
+    # Now pick sequences with smallest earliest index
+    # Note: some sequences may be untouched (==B), filter them out
+    valid_mask = earliest < B
+    valid_indices = th.nonzero(valid_mask, as_tuple=False).view(-1)
+    if valid_indices.numel() == 0:
+        return []
+    valid_earliest = earliest[valid_indices]
+    topk = th.argsort(valid_earliest)[:top_n]
+    return valid_indices[topk].tolist()
 
 
 def _gather_top_sequences_by_mean(
@@ -272,6 +266,7 @@ def _viz_common(
     _ensure_token_alignment(token_topk_mask, sequences)
 
     seq_ids, seq_lengths, seq_offsets = build_sequence_id_tensor(sequences)
+    _validate_seq_mapping(seq_ids, seq_lengths)
 
     # Move ids to same device as activations for quick ops
     seq_ids = seq_ids.to(activations.device)
@@ -333,7 +328,6 @@ def _viz_common(
         vmax=float(per_c_vmax[current_c]),
     )
 
-    # Slider for circuit index
     slider = Slider(
         ax=ax_slider,
         label="Circuit",
@@ -356,12 +350,28 @@ def _viz_common(
         overlay.set_alpha(0.35)
         fig.canvas.draw_idle()
 
-    def on_pick(event) -> None:  # type: ignore[no-redef]
-        artist = event.artist
-        if artist in artist_map:
-            token_idx = artist_map[artist]
-            state["token_idx"] = token_idx
-            update_overlay_for_token(token_idx)
+    # Hover instead of click: check which text artist the mouse is over
+    # Keep last to avoid redundant redraws
+    last_hovered = {"token": None}
+
+    def on_hover(event) -> None:  # type: ignore[no-redef]
+        if event.inaxes != ax_left:
+            if last_hovered["token"] is not None:
+                last_hovered["token"] = None
+                update_overlay_for_token(None)
+            return
+        # Find the first artist under the cursor
+        for artist, token_idx in artist_map.items():
+            contains, _ = artist.contains(event)
+            if contains:
+                if last_hovered["token"] != token_idx:
+                    last_hovered["token"] = token_idx
+                    update_overlay_for_token(token_idx)
+                return
+        # If none contains and previously something did, clear
+        if last_hovered["token"] is not None:
+            last_hovered["token"] = None
+            update_overlay_for_token(None)
 
     def on_slider_change(val) -> None:  # type: ignore[no-redef]
         nonlocal current_c, artist_map
@@ -388,13 +398,16 @@ def _viz_common(
             vmin=float(per_c_vmin[current_c]),
             vmax=float(per_c_vmax[current_c]),
         )
-        # Clear overlay unless we re-click
+        # Clear overlay state
         state["token_idx"] = None
         update_overlay_for_token(None)
         fig.canvas.draw_idle()
 
-    fig.canvas.mpl_connect("pick_event", on_pick)
+    fig.canvas.mpl_connect("motion_notify_event", on_hover)
     slider.on_changed(on_slider_change)
+
+    # Update title to reflect hover behavior
+    ax_left.set_title("Top sequences (hover token to overlay mask)")
 
     plt.show()
 
