@@ -43,7 +43,12 @@ def load_activations_and_indices_and_topk(device: str = "cuda") -> tuple[th.Tens
 
 
 def load_activations_and_topk(device: str = "cuda") -> tuple[th.Tensor, int]:
-    activated_experts, _, top_k = load_activations_and_indices_and_topk(device=device)
+    """Return boolean activation mask and top_k, discarding tokens.
+
+    Delegates to load_activations_tokens_and_topk and drops tokens
+    to keep a single source of truth for loading.
+    """
+    activated_experts, _tokens, top_k = load_activations_tokens_and_topk(device=device)
     return activated_experts, top_k
 
 

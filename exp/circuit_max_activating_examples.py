@@ -10,43 +10,11 @@ from matplotlib.figure import Figure
 from matplotlib.widgets import Slider
 
 # Use the topk+scatter-based loader that builds a boolean activation mask
-from exp.activations import load_activations_tokens_and_topk
+from exp.activations import (
+    load_activations_and_topk,
+    load_activations_tokens_and_topk,
+)
 from exp.get_router_activations import ROUTER_LOGITS_DIR
-
-
-def load_tokenized_sequences() -> List[List[str]]:
-    """Load tokenized sequences saved alongside router logits.
-
-    Each file at ROUTER_LOGITS_DIR/{i}.pt contains list[list[str]] under key "tokens".
-    Returns a single concatenated list across files, preserving order.
-    """
-    sequences: List[List[str]] = []
-    for file_idx in count():
-        path = f"{ROUTER_LOGITS_DIR}/{file_idx}.pt"
-        try:
-            data = th.load(path)
-        except FileNotFoundError:
-            break
-        toks: List[List[str]] = data.get("tokens", [])
-        sequences.extend(toks)
-    if not sequences:
-        raise ValueError(
-            "No tokenized sequences found. Please run exp.get_router_activations first."
-        )
-    return sequences
-
-
-# Add a validation helper to ensure per-sequence counts match
-def _validate_seq_mapping(seq_ids: th.Tensor, seq_lengths: th.Tensor) -> None:
-    S = int(seq_lengths.shape[0])
-    counts = th.bincount(seq_ids.cpu(), minlength=S)
-    if counts.shape[0] < S:
-        # pad to S in rare cases
-        counts = th.nn.functional.pad(counts, (0, S - counts.shape[0]))
-    if not th.equal(counts.to(seq_lengths.dtype), seq_lengths.cpu()):
-        raise ValueError(
-            "Sequence ID mapping mismatch: per-sequence token counts do not match provided lengths."
-        )
 
 
 def get_circuit_activations(
@@ -99,47 +67,42 @@ def _ensure_token_alignment(token_topk_mask: th.Tensor, sequences: List[List[str
         )
 
 
+def _validate_seq_mapping(seq_ids: th.Tensor, seq_lengths: th.Tensor) -> None:
+    S = int(seq_lengths.shape[0])
+    counts = th.bincount(seq_ids.cpu(), minlength=S)
+    if counts.shape[0] < S:
+        counts = th.nn.functional.pad(counts, (0, S - counts.shape[0]))
+    if not th.equal(counts.to(seq_lengths.dtype), seq_lengths.cpu()):
+        raise ValueError(
+            "Sequence ID mapping mismatch: per-sequence token counts do not match provided lengths."
+        )
+    # Assert every sequence has at least one token as per guidance
+    assert (seq_lengths > 0).all(), "Every sequence must have at least one token"
+
+
 def _gather_top_sequences_by_max(
     token_scores: th.Tensor,
     seq_ids: th.Tensor,
     top_n: int,
 ) -> List[int]:
-    """Select top sequences by their highest-scoring token using earliest occurrence index.
-
-    More efficient than Python-loop dedup: compute, for each sequence, the earliest
-    index it appears in the scores-sorted list, then take the top_n sequences with
-    the smallest earliest indices.
-    """
     device = token_scores.device
     B = int(token_scores.shape[0])
     order = th.argsort(token_scores, descending=True)
     seq_sorted = seq_ids[order]
 
-    # Vectorized earliest index per sequence using scatter_reduce if available
     S = int(seq_ids.max().item()) + 1 if seq_ids.numel() > 0 else 0
-    if S == 0:
-        return []
+    assert S > 0, "No sequences present"
 
     earliest = th.full((S,), B, device=device)
     idx_src = th.arange(B, device=device)
-    if hasattr(earliest, "scatter_reduce"):
-        earliest = earliest.scatter_reduce(0, seq_sorted, idx_src, reduce="amin", include_self=True)
-    else:
-        # Fallback: simple loop (still O(B), minimal Python work)
-        for i in range(B):
-            s = int(seq_sorted[i].item())
-            if idx_src[i] < earliest[s]:
-                earliest[s] = idx_src[i]
+    earliest = earliest.scatter_reduce(0, seq_sorted, idx_src, reduce="amin", include_self=True)
 
-    # Now pick sequences with smallest earliest index
-    # Note: some sequences may be untouched (==B), filter them out
-    valid_mask = earliest < B
-    valid_indices = th.nonzero(valid_mask, as_tuple=False).view(-1)
-    if valid_indices.numel() == 0:
-        return []
-    valid_earliest = earliest[valid_indices]
-    topk = th.argsort(valid_earliest)[:top_n]
-    return valid_indices[topk].tolist()
+    # All sequences should have at least one token
+    # (If you want strict, keep this assert; it matches your guidance.)
+    assert (earliest < B).all(), "Every sequence must have at least one token"
+
+    topk = th.argsort(earliest)[:top_n]
+    return topk.tolist()
 
 
 def _gather_top_sequences_by_mean(
@@ -234,12 +197,10 @@ def _render_sequences_panel(
 
 def _viz_common(
     circuits: th.Tensor,
-    selector: str = "max",
     top_n: int = 64,
     device: str = "cuda",
 ) -> None:
     # Compute activations and load dataset tokens via data loader
-    token_topk_mask, tokens, _topk = None, None, None  # placeholders
     token_topk_mask, tokens, _topk = load_activations_tokens_and_topk(device=device)
     sequences = tokens
 
@@ -291,16 +252,9 @@ def _viz_common(
     # Render left panel sequences
     token_scores_for_c = activations[:, current_c]
 
-    if selector == "max":
-        selected_sequences = _gather_top_sequences_by_max(
-            token_scores_for_c, seq_ids, top_n
-        )
-    elif selector == "mean":
-        selected_sequences = _gather_top_sequences_by_mean(
-            token_scores_for_c, seq_ids, seq_lengths, top_n
-        )
-    else:
-        raise ValueError("selector must be 'max' or 'mean'")
+    selected_sequences = _gather_top_sequences_by_max(
+        token_scores_for_c, seq_ids, top_n
+    )
 
     artist_map = _render_sequences_panel(
         ax_left,
@@ -366,12 +320,7 @@ def _viz_common(
 
         # Update left panel selection and colors
         token_scores = activations[:, current_c]
-        if selector == "max":
-            seqs = _gather_top_sequences_by_max(token_scores, seq_ids, top_n)
-        else:
-            seqs = _gather_top_sequences_by_mean(
-                token_scores, seq_ids, seq_lengths, top_n
-            )
+        seqs = _gather_top_sequences_by_max(token_scores, seq_ids, top_n)
 
         artist_map = _render_sequences_panel(
             ax_left,
@@ -411,7 +360,7 @@ def viz_max_containing_tokens(
     if isinstance(circuits, dict) and "circuits" in circuits:
         circuits = circuits["circuits"]
     circuits = th.as_tensor(circuits, dtype=th.float32)
-    _viz_common(circuits, selector="max", top_n=top_n, device=device)
+    _viz_common(circuits, top_n=top_n, device=device)
 
 
 @arguably.command()
@@ -429,7 +378,23 @@ def viz_mean_activating_tokens(
     if isinstance(circuits, dict) and "circuits" in circuits:
         circuits = circuits["circuits"]
     circuits = th.as_tensor(circuits, dtype=th.float32)
-    _viz_common(circuits, selector="mean", top_n=top_n, device=device)
+
+    # Compute mask, tokens, activations
+    token_topk_mask, tokens, _ = load_activations_tokens_and_topk(device=device)
+    sequences = tokens
+    circuits = circuits.to(device=device, dtype=th.float32)
+    activations = th.einsum("ble,cle->bc", token_topk_mask.float(), circuits)
+
+    # Build ids and validate
+    seq_ids, seq_lengths, seq_offsets = build_sequence_id_tensor(sequences)
+    _validate_seq_mapping(seq_ids, seq_lengths)
+    seq_ids = seq_ids.to(activations.device)
+    seq_lengths = seq_lengths.to(activations.device)
+
+    # Precompute selection for the initial circuit (index 0); rest handled by slider
+    # We call into _viz_common by temporarily monkey-patching the selection inside.
+    # Simpler path: call a small helper to run the shared UI with a selector function.
+    _viz_with_selector(circuits, activations, token_topk_mask, sequences, seq_ids, seq_lengths, seq_offsets, top_n, device, mode="mean")
 
 
 if __name__ == "__main__":
