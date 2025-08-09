@@ -13,35 +13,48 @@ from exp.activations import load_activations
 from exp.get_router_activations import ROUTER_LOGITS_DIR
 
 
+def _load_router_logits_and_topk(device: str = "cuda") -> tuple[th.Tensor, int]:
+    """Load raw router logits (B, L, E) concatenated across files and top_k.
+
+    Reads files from ROUTER_LOGITS_DIR/{i}.pt and concatenates along batch/token axis.
+    """
+    logits_collection: list[th.Tensor] = []
+    top_k: int | None = None
+    for i in count():
+        path = f"{ROUTER_LOGITS_DIR}/{i}.pt"
+        try:
+            data = th.load(path)
+        except FileNotFoundError:
+            break
+        if top_k is None:
+            top_k = int(data["topk"])  # saved during collection
+        logits_collection.append(data["router_logits"].to(device))
+    if not logits_collection or top_k is None:
+        raise ValueError("No router logits found; run exp.get_router_activations first")
+    router_logits = th.cat(logits_collection, dim=0)
+    return router_logits, top_k
+
+
 def get_circuit_activations(
     circuits: th.Tensor,
     device: str = "cuda",
 ) -> Tuple[th.Tensor, th.Tensor]:
-    """Compute circuit activations for every token.
+    """Compute circuit activations for every token from raw router logits.
 
-    Args:
-        circuits: Tensor of shape (C, L, E) with entries in [0, 1]
-        device: device for computation
-
-    Returns:
-        activations: Tensor of shape (B, C) where B is the number of tokens
-        token_topk_mask: Boolean tensor of shape (B, L, E) representing top-k router activations
+    Steps:
+    1) Load raw router logits (B, L, E) and top_k
+    2) Build boolean top-k mask via topk + scatter -> (B, L, E) bool
+    3) Compute activations = einsum("ble,cle->bc", mask.float(), circuits)
     """
-    # Load top-k activation mask for tokens: (B, L, E) bool
-    token_topk_mask: th.Tensor = load_activations(device=device)
+    router_logits, top_k = _load_router_logits_and_topk(device=device)
 
-    if token_topk_mask.dtype != th.bool:  # safety
-        token_topk_mask = token_topk_mask.bool()
+    # (B, L, E) -> topk indices along last dim
+    topk_indices = th.topk(router_logits, k=top_k, dim=2).indices
+    token_topk_mask = th.zeros_like(router_logits, device=device).bool()
+    token_topk_mask.scatter_(2, topk_indices, True)
 
-    # Ensure circuits is on the same device and dtype
     circuits = circuits.to(device=device, dtype=th.float32)
-
-    # Compute per-token, per-circuit activation: dot product over (L,E)
-    # (B, L, E) bool -> float
-    token_mask_f = token_topk_mask.float()
-    # (B, L, E) · (C, L, E) -> (B, C)
-    activations = th.einsum("ble,cle->bc", token_mask_f, circuits)
-
+    activations = th.einsum("ble,cle->bc", token_topk_mask.float(), circuits)
     return activations, token_topk_mask
 
 
