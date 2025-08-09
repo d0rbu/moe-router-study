@@ -9,6 +9,7 @@ from core.data import DATASETS
 from core.device_map import CUSTOM_DEVICES
 from core.model import MODELS
 from exp import OUTPUT_DIR, ROUTER_LOGITS_DIR
+from nnterp import StandardizedTransformer
 
 
 def save_router_logits(

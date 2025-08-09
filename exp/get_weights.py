@@ -6,6 +6,7 @@ from tqdm import tqdm
 
 from core.model import MODELS
 from exp import OUTPUT_DIR, WEIGHT_DIR
+from nnterp import StandardizedTransformer
 
 @arguably.command()
 def get_weights(model_name: str = "olmoe", checkpoint_idx: int = -1) -> None:
