@@ -52,5 +52,36 @@ def load_activations(device: str = "cuda") -> th.Tensor:
     return activated_experts
 
 
+def load_activations_tokens_and_topk(device: str = "cuda") -> tuple[th.Tensor, List[list[str]], int]:
+    activated_experts_collection: list[th.Tensor] = []
+    tokens: List[list[str]] = []
+    top_k: int | None = None
+
+    for file_idx in tqdm(count(), desc="Loading router logits+tokens"):
+        file_path = os.path.join(ROUTER_LOGITS_DIR, f"{file_idx}.pt")
+        if not os.path.exists(file_path):
+            break
+        output = th.load(file_path)
+        if top_k is None:
+            top_k = int(output["topk"])  # saved during collection
+        router_logits: th.Tensor = output["router_logits"].to(device)
+        file_tokens: list[list[str]] = output.get("tokens", [])
+        if file_tokens:
+            tokens.extend(file_tokens)
+
+        # Build boolean activation mask via topk + scatter
+        topk_indices = th.topk(router_logits, k=top_k, dim=2).indices
+        expert_activations = th.zeros_like(router_logits, device=device).bool()
+        expert_activations.scatter_(2, topk_indices, True)
+
+        activated_experts_collection.append(expert_activations)
+
+    if top_k is None or not activated_experts_collection:
+        raise ValueError("No data files found; ensure exp.get_router_activations has been run")
+
+    activated_experts = th.cat(activated_experts_collection, dim=0)
+    return activated_experts, tokens, top_k
+
+
 if __name__ == "__main__":
     load_activations_and_topk()

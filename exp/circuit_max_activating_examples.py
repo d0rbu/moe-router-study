@@ -10,7 +10,7 @@ from matplotlib.figure import Figure
 from matplotlib.widgets import Slider
 
 # Use the topk+scatter-based loader that builds a boolean activation mask
-from exp.activations import load_activations_and_topk
+from exp.activations import load_activations_tokens_and_topk
 from exp.get_router_activations import ROUTER_LOGITS_DIR
 
 
@@ -238,9 +238,15 @@ def _viz_common(
     top_n: int = 64,
     device: str = "cuda",
 ) -> None:
-    # Compute activations and load dataset tokens
-    activations, token_topk_mask = get_circuit_activations(circuits, device=device)
-    sequences = load_tokenized_sequences()
+    # Compute activations and load dataset tokens via data loader
+    token_topk_mask, tokens, _topk = None, None, None  # placeholders
+    token_topk_mask, tokens, _topk = load_activations_tokens_and_topk(device=device)
+    sequences = tokens
+
+    # Now compute activations from the mask
+    circuits = circuits.to(device=device, dtype=th.float32)
+    activations = th.einsum("ble,cle->bc", token_topk_mask.float(), circuits)
+
     _ensure_token_alignment(token_topk_mask, sequences)
 
     seq_ids, seq_lengths, seq_offsets = build_sequence_id_tensor(sequences)
