@@ -11,7 +11,6 @@ from exp import WEIGHT_DIR
 
 @arguably.command()
 def get_weights(model_name: str = "olmoe", checkpoint_idx: int = -1) -> None:
-    # StandardizedTransformer imported at module top per review feedback
     model_config = MODELS.get(model_name, None)
 
     if model_config is None:

@@ -31,8 +31,6 @@ def get_router_activations(
     device: str = "cpu",
     tokens_per_file: int = 10_000,
 ) -> None:
-    # StandardizedTransformer imported at module top per review feedback
-
     model_config = MODELS.get(model_name, None)
 
     if model_config is None:
