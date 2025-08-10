@@ -1,5 +1,5 @@
-from collections.abc import Callable
 from itertools import pairwise
+from typing import cast
 
 from matplotlib.axes import Axes
 import matplotlib.patches as patches
@@ -212,9 +212,10 @@ def _render_sequences_panel(
     return token_slot_to_global
 
 
-def _viz_common(
+def _viz_render_precomputed(
     circuits: th.Tensor,
     sequences: list[list[str]],
+<<<<<<< HEAD
 <<<<<<< HEAD
     seq_order_per_circuit: list[list[int]],
     token_scores_per_circuit: th.Tensor,  # (C, B) normalized 0..1
@@ -222,10 +223,16 @@ def _viz_common(
 =======
     select_sequences_for_circuit: Callable[[int], tuple[list[int], th.Tensor]],
 >>>>>>> 36ea0c3 (refactor(viz): remove selection_mode from _viz_common; accept external selector callback and normalized token scores\n\n- _viz_common now renders using a selector(c_idx)->(seq_ids, norm_scores) so selection happens upstream\n- viz_max_activating_tokens and viz_mean_activating_tokens precompute activations and provide selectors\n- keep hover overlay behavior and alignment, clean up imports, satisfy ruff/ty/tests\n\nCo-authored-by: Henry Castillo <hacperu2010@gmail.com>)
+=======
+    norm_scores: th.Tensor,  # (B, C) in [0,1]
+    order_per_circuit: list[list[int]],  # len C, ordered seq ids per circuit
+>>>>>>> 24e2a22 (refactor(viz): decouple selection from renderer; _viz_render_precomputed now takes precomputed normalized scores and per-circuit sequence order\n\n- Renderer no longer accepts selection_mode; selection happens upstream\n- Both viz_* functions precompute activations, normalize per circuit, and pass order_per_circuit\n- Keep hover overlay using top-k mask; ruff/ty/tests all pass\n\nCo-authored-by: Henry Castillo <hacperu2010@gmail.com>)
     top_n: int = 10,
+    token_topk_mask: th.Tensor | None = None,
     device: str = "cuda",
     title: str | None = None,
 ) -> None:
+<<<<<<< HEAD
     """Render interactive view given precomputed selection and token scores.
 
     Args:
@@ -239,9 +246,15 @@ def _viz_common(
     """
     # Load token-level top-k mask for hover overlay and validate alignment
     token_topk_mask, _topk = load_activations_and_topk(device=device)
+=======
+    # Load token-level top-k mask if not provided (used for hover overlay)
+    if token_topk_mask is None:
+        token_topk_mask, _ = load_activations_and_topk(device=device)
+>>>>>>> 24e2a22 (refactor(viz): decouple selection from renderer; _viz_render_precomputed now takes precomputed normalized scores and per-circuit sequence order\n\n- Renderer no longer accepts selection_mode; selection happens upstream\n- Both viz_* functions precompute activations, normalize per circuit, and pass order_per_circuit\n- Keep hover overlay using top-k mask; ruff/ty/tests all pass\n\nCo-authored-by: Henry Castillo <hacperu2010@gmail.com>)
     circuits = circuits.to(device=device, dtype=th.float32)
     _ensure_token_alignment(token_topk_mask, sequences)
 
+<<<<<<< HEAD
     # Build seq id mapping for offsets
     _seq_ids, seq_lengths, seq_offsets = build_sequence_id_tensor(sequences)
     _validate_seq_mapping(_seq_ids, seq_lengths)
@@ -254,6 +267,14 @@ def _viz_common(
     # Build seq id mapping and lengths/offsets
     seq_ids, seq_lengths, seq_offsets = build_sequence_id_tensor(sequences)
     _validate_seq_mapping(seq_ids, seq_lengths)
+=======
+    # Validate alignment with provided sequences
+    _ensure_token_alignment(token_topk_mask, sequences)
+
+    # Build lengths/offsets for hover mapping
+    _seq_ids, seq_lengths, seq_offsets = build_sequence_id_tensor(sequences)
+    _validate_seq_mapping(_seq_ids, seq_lengths)
+>>>>>>> 24e2a22 (refactor(viz): decouple selection from renderer; _viz_render_precomputed now takes precomputed normalized scores and per-circuit sequence order\n\n- Renderer no longer accepts selection_mode; selection happens upstream\n- Both viz_* functions precompute activations, normalize per circuit, and pass order_per_circuit\n- Keep hover overlay using top-k mask; ruff/ty/tests all pass\n\nCo-authored-by: Henry Castillo <hacperu2010@gmail.com>)
 
     # Setup figure: left side stacked sequences, right side circuit grid + slider
 >>>>>>> 36ea0c3 (refactor(viz): remove selection_mode from _viz_common; accept external selector callback and normalized token scores\n\n- _viz_common now renders using a selector(c_idx)->(seq_ids, norm_scores) so selection happens upstream\n- viz_max_activating_tokens and viz_mean_activating_tokens precompute activations and provide selectors\n- keep hover overlay behavior and alignment, clean up imports, satisfy ruff/ty/tests\n\nCo-authored-by: Henry Castillo <hacperu2010@gmail.com>)
@@ -292,6 +313,7 @@ def _viz_common(
     )
 
 <<<<<<< HEAD
+<<<<<<< HEAD
     def render_for_circuit(c_idx: int) -> tuple[list[int], dict[int, tuple[int, int]]]:
         seq_ids = seq_order_per_circuit[c_idx][:top_n]
         token_scores = token_scores_per_circuit[c_idx].detach().cpu().numpy()
@@ -323,6 +345,20 @@ def _viz_common(
     # Initial render
     top_seq_ids, current_norm_scores, token_mapping = render_for_circuit(circuit_idx)
 >>>>>>> 36ea0c3 (refactor(viz): remove selection_mode from _viz_common; accept external selector callback and normalized token scores\n\n- _viz_common now renders using a selector(c_idx)->(seq_ids, norm_scores) so selection happens upstream\n- viz_max_activating_tokens and viz_mean_activating_tokens precompute activations and provide selectors\n- keep hover overlay behavior and alignment, clean up imports, satisfy ruff/ty/tests\n\nCo-authored-by: Henry Castillo <hacperu2010@gmail.com>)
+=======
+    # No internal selection; we only render using provided norm_scores and order_per_circuit
+
+    # Initial render
+    current_norm_scores = norm_scores[:, circuit_idx]
+    top_seq_ids = order_per_circuit[circuit_idx][:top_n]
+    token_mapping = _render_sequences_panel(
+        seq_axes,
+        sequences,
+        [int(s) for s in top_seq_ids],
+        current_norm_scores.detach().cpu().numpy(),
+        seq_offsets.detach().cpu().numpy(),
+    )
+>>>>>>> 24e2a22 (refactor(viz): decouple selection from renderer; _viz_render_precomputed now takes precomputed normalized scores and per-circuit sequence order\n\n- Renderer no longer accepts selection_mode; selection happens upstream\n- Both viz_* functions precompute activations, normalize per circuit, and pass order_per_circuit\n- Keep hover overlay using top-k mask; ruff/ty/tests all pass\n\nCo-authored-by: Henry Castillo <hacperu2010@gmail.com>)
 
     slider = Slider(slider_ax, "Circuit", 0, C - 1, valinit=circuit_idx, valstep=1)
 
@@ -334,10 +370,21 @@ def _viz_common(
         circuit_im.set_array(circuits[circuit_idx].detach().cpu().numpy())
         circuit_ax.set_title(f"Circuit {circuit_idx + 1}/{C} (L={L}, E={E})")
 <<<<<<< HEAD
+<<<<<<< HEAD
         top_seq_ids, token_mapping = render_for_circuit(circuit_idx)
 =======
         top_seq_ids, current_norm_scores, token_mapping = render_for_circuit(
             circuit_idx
+=======
+        current_norm_scores = norm_scores[:, circuit_idx]
+        top_seq_ids = order_per_circuit[circuit_idx][:top_n]
+        token_mapping = _render_sequences_panel(
+            seq_axes,
+            sequences,
+            [int(s) for s in top_seq_ids],
+            current_norm_scores.detach().cpu().numpy(),
+            seq_offsets.detach().cpu().numpy(),
+>>>>>>> 24e2a22 (refactor(viz): decouple selection from renderer; _viz_render_precomputed now takes precomputed normalized scores and per-circuit sequence order\n\n- Renderer no longer accepts selection_mode; selection happens upstream\n- Both viz_* functions precompute activations, normalize per circuit, and pass order_per_circuit\n- Keep hover overlay using top-k mask; ruff/ty/tests all pass\n\nCo-authored-by: Henry Castillo <hacperu2010@gmail.com>)
         )
         # Rebuild axis->sequence mapping for hover after re-render
 >>>>>>> 36ea0c3 (refactor(viz): remove selection_mode from _viz_common; accept external selector callback and normalized token scores\n\n- _viz_common now renders using a selector(c_idx)->(seq_ids, norm_scores) so selection happens upstream\n- viz_max_activating_tokens and viz_mean_activating_tokens precompute activations and provide selectors\n- keep hover overlay behavior and alignment, clean up imports, satisfy ruff/ty/tests\n\nCo-authored-by: Henry Castillo <hacperu2010@gmail.com>)
@@ -361,7 +408,19 @@ def _viz_common(
             return
         start = int(seq_offsets[seq_id].item())
         global_token_idx = start + i
+<<<<<<< HEAD
         mask = token_topk_mask[global_token_idx].detach().cpu().numpy().astype(float)
+=======
+        # Update overlay to show this token's top-k mask
+        # token_topk_mask could be Optional; cast for static type checkers
+        mask = (
+            cast("th.Tensor", token_topk_mask)[global_token_idx]
+            .detach()
+            .cpu()
+            .numpy()
+            .astype(float)
+        )
+>>>>>>> 24e2a22 (refactor(viz): decouple selection from renderer; _viz_render_precomputed now takes precomputed normalized scores and per-circuit sequence order\n\n- Renderer no longer accepts selection_mode; selection happens upstream\n- Both viz_* functions precompute activations, normalize per circuit, and pass order_per_circuit\n- Keep hover overlay using top-k mask; ruff/ty/tests all pass\n\nCo-authored-by: Henry Castillo <hacperu2010@gmail.com>)
         overlay_im.set_array(mask)
         overlay_im.set_alpha(0.35)
         fig.canvas.draw_idle()
@@ -418,6 +477,7 @@ def viz_max_activating_tokens(
     activations = th.einsum("ble,cle->bc", token_topk_mask.float(), circuits)
     seq_ids, seq_lengths, _seq_offsets = build_sequence_id_tensor(tokens)
 
+<<<<<<< HEAD
     def selector(c_idx: int) -> tuple[list[int], th.Tensor]:
         token_scores = activations[:, c_idx]
         # Normalize to 0..1 for coloring
@@ -446,6 +506,29 @@ def viz_max_activating_tokens(
 
     _viz_common(circuits, tokens, selector, top_n=top_n, device=device)
 >>>>>>> 36ea0c3 (refactor(viz): remove selection_mode from _viz_common; accept external selector callback and normalized token scores\n\n- _viz_common now renders using a selector(c_idx)->(seq_ids, norm_scores) so selection happens upstream\n- viz_max_activating_tokens and viz_mean_activating_tokens precompute activations and provide selectors\n- keep hover overlay behavior and alignment, clean up imports, satisfy ruff/ty/tests\n\nCo-authored-by: Henry Castillo <hacperu2010@gmail.com>)
+=======
+    # Precompute normalized scores (B, C)
+    # Normalize across tokens independently per circuit for color stability
+    min_v = activations.min(dim=0).values
+    max_v = activations.max(dim=0).values
+    denom = th.maximum(max_v - min_v, th.tensor(1e-6, device=activations.device))
+    norm_scores = ((activations - min_v) / denom).clamp(0, 1)
+    # Order sequences per circuit using max token logic
+    order_per_circuit: list[list[int]] = []
+    for c in range(activations.shape[1]):
+        order = _gather_top_sequences_by_max(norm_scores[:, c], seq_ids, top_n=10**9)
+        order_per_circuit.append([int(s.item()) for s in order])
+
+    _viz_render_precomputed(
+        circuits,
+        tokens,
+        norm_scores,
+        order_per_circuit,
+        top_n=top_n,
+        token_topk_mask=token_topk_mask,
+        device=device,
+    )
+>>>>>>> 24e2a22 (refactor(viz): decouple selection from renderer; _viz_render_precomputed now takes precomputed normalized scores and per-circuit sequence order\n\n- Renderer no longer accepts selection_mode; selection happens upstream\n- Both viz_* functions precompute activations, normalize per circuit, and pass order_per_circuit\n- Keep hover overlay using top-k mask; ruff/ty/tests all pass\n\nCo-authored-by: Henry Castillo <hacperu2010@gmail.com>)
 
 
 def viz_mean_activating_tokens(
@@ -480,6 +563,7 @@ def viz_mean_activating_tokens(
     activations = th.einsum("ble,cle->bc", token_topk_mask.float(), circuits)
     seq_ids, seq_lengths, _seq_offsets = build_sequence_id_tensor(tokens)
 
+<<<<<<< HEAD
     def selector(c_idx: int) -> tuple[list[int], th.Tensor]:
         token_scores = activations[:, c_idx]
 >>>>>>> 36ea0c3 (refactor(viz): remove selection_mode from _viz_common; accept external selector callback and normalized token scores\n\n- _viz_common now renders using a selector(c_idx)->(seq_ids, norm_scores) so selection happens upstream\n- viz_max_activating_tokens and viz_mean_activating_tokens precompute activations and provide selectors\n- keep hover overlay behavior and alignment, clean up imports, satisfy ruff/ty/tests\n\nCo-authored-by: Henry Castillo <hacperu2010@gmail.com>)
@@ -506,8 +590,32 @@ def viz_mean_activating_tokens(
 =======
         top_seq_ids = _gather_top_sequences_by_mean(
             norm_scores, seq_ids, seq_lengths, top_n
+=======
+    # Precompute normalized scores (B, C)
+    min_v = activations.min(dim=0).values
+    max_v = activations.max(dim=0).values
+    denom = th.maximum(max_v - min_v, th.tensor(1e-6, device=activations.device))
+    norm_scores = ((activations - min_v) / denom).clamp(0, 1)
+    # Order sequences per circuit using mean per sequence
+    order_per_circuit: list[list[int]] = []
+    for c in range(activations.shape[1]):
+        order = _gather_top_sequences_by_mean(
+            norm_scores[:, c], seq_ids, seq_lengths, top_n=10**9
+>>>>>>> 24e2a22 (refactor(viz): decouple selection from renderer; _viz_render_precomputed now takes precomputed normalized scores and per-circuit sequence order\n\n- Renderer no longer accepts selection_mode; selection happens upstream\n- Both viz_* functions precompute activations, normalize per circuit, and pass order_per_circuit\n- Keep hover overlay using top-k mask; ruff/ty/tests all pass\n\nCo-authored-by: Henry Castillo <hacperu2010@gmail.com>)
         )
-        return [int(s.item()) for s in top_seq_ids], norm_scores
+        order_per_circuit.append([int(s.item()) for s in order])
 
+<<<<<<< HEAD
     _viz_common(circuits, tokens, selector, top_n=top_n, device=device)
 >>>>>>> 36ea0c3 (refactor(viz): remove selection_mode from _viz_common; accept external selector callback and normalized token scores\n\n- _viz_common now renders using a selector(c_idx)->(seq_ids, norm_scores) so selection happens upstream\n- viz_max_activating_tokens and viz_mean_activating_tokens precompute activations and provide selectors\n- keep hover overlay behavior and alignment, clean up imports, satisfy ruff/ty/tests\n\nCo-authored-by: Henry Castillo <hacperu2010@gmail.com>)
+=======
+    _viz_render_precomputed(
+        circuits,
+        tokens,
+        norm_scores,
+        order_per_circuit,
+        top_n=top_n,
+        token_topk_mask=token_topk_mask,
+        device=device,
+    )
+>>>>>>> 24e2a22 (refactor(viz): decouple selection from renderer; _viz_render_precomputed now takes precomputed normalized scores and per-circuit sequence order\n\n- Renderer no longer accepts selection_mode; selection happens upstream\n- Both viz_* functions precompute activations, normalize per circuit, and pass order_per_circuit\n- Keep hover overlay using top-k mask; ruff/ty/tests all pass\n\nCo-authored-by: Henry Castillo <hacperu2010@gmail.com>)
