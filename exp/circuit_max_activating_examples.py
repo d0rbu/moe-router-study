@@ -1,13 +1,16 @@
 from itertools import pairwise
+from typing import Literal
 
 from matplotlib.axes import Axes
+import matplotlib.patches as patches
 import matplotlib.pyplot as plt
+from matplotlib.widgets import Slider
 import numpy as np
 import torch as th
 
-# Use the topk+scatter-based loader that builds a boolean activation mask
 from exp.activations import (
     load_activations_and_topk,
+    load_activations_tokens_and_topk,
 )
 
 
@@ -144,3 +147,245 @@ def _validate_seq_mapping(seq_ids: th.Tensor, seq_lengths: th.Tensor) -> None:
             "Sequence ID mapping mismatch: per-sequence token counts do not match provided lengths."
         )
     assert (seq_lengths > 0).all(), "Every sequence must have at least one token"
+
+
+def _make_token_color(val: float) -> tuple[float, float, float, float]:
+    # Return RGBA with some baseline alpha
+    r, g, b = _color_for_value(float(np.clip(val, 0.0, 1.0)))
+    return (r, g, b, 0.9)
+
+
+def _render_sequences_panel(
+    axes: list[Axes],
+    sequences: list[list[str]],
+    seq_indices: list[int],
+    token_scores: np.ndarray,
+    seq_offsets: np.ndarray,
+) -> dict[int, tuple[int, int]]:
+    """Render the left panel with selected sequences and colored tokens.
+
+    Returns a mapping from axis id + token slot to global token index for hover lookup.
+    Mapping: key is a monotonically increasing token slot id, value is (axis_idx, global_token_idx)
+    """
+    token_slot_to_global: dict[int, tuple[int, int]] = {}
+    slot_id = 0
+
+    for ax in axes:
+        ax.clear()
+
+    for ax_idx, (ax, seq_id) in enumerate(zip(axes, seq_indices, strict=False)):
+        tokens = sequences[seq_id]
+        n_tok = len(tokens)
+        ax.set_xlim(0, n_tok)
+        ax.set_ylim(0, 1)
+        ax.axis("off")
+
+        # Compute global start and end token indices for this sequence
+        start = int(seq_offsets[seq_id])
+        # draw rectangles for tokens with colors based on token_scores
+        for i, tok in enumerate(tokens):
+            global_token_idx = start + i
+            score = float(token_scores[global_token_idx])
+            rect = patches.Rectangle(
+                (i, 0.0),
+                1.0,
+                1.0,
+                facecolor=_make_token_color(score),
+                edgecolor="white",
+            )
+            ax.add_patch(rect)
+            ax.text(
+                i + 0.5,
+                0.5,
+                tok,
+                ha="center",
+                va="center",
+                fontsize=9,
+                color="black",
+                clip_on=True,
+            )
+            token_slot_to_global[slot_id] = (ax_idx, global_token_idx)
+            slot_id += 1
+
+        ax.set_title(f"Sequence {seq_id}")
+
+    return token_slot_to_global
+
+
+def _viz_common(
+    circuits: th.Tensor,
+    sequences: list[list[str]],
+    selection_mode: Literal["max", "mean"],
+    top_n: int = 10,
+    device: str = "cuda",
+) -> None:
+    # Load token-level top-k mask and compute activations per circuit
+    token_topk_mask, _topk = load_activations_and_topk(device=device)
+    circuits = circuits.to(device=device, dtype=th.float32)
+
+    # Validate alignment with provided sequences, else reload sequences alongside activations
+    try:
+        _ensure_token_alignment(token_topk_mask, sequences)
+    except ValueError:
+        # Fallback: load the sequences from disk to guarantee alignment
+        token_topk_mask, sequences, _topk = load_activations_tokens_and_topk(
+            device=device
+        )
+
+    # Compute activations per circuit per token: (B, C)
+    activations = th.einsum("ble,cle->bc", token_topk_mask.float(), circuits)
+
+    # Build seq id mapping and lengths/offsets
+    seq_ids, seq_lengths, seq_offsets = build_sequence_id_tensor(sequences)
+    _validate_seq_mapping(seq_ids, seq_lengths)
+
+    # Setup figure: left side stacked sequences, right side circuit grid + slider
+    C = int(circuits.shape[0])
+    L, E = int(circuits.shape[-2]), int(circuits.shape[-1])
+
+    # Figure layout
+    n_rows = top_n
+    fig = plt.figure(figsize=(14, 1.5 * n_rows + 4))
+    gs = fig.add_gridspec(
+        n_rows + 1, 2, width_ratios=[3, 2], height_ratios=[*([1] * n_rows), 0.2]
+    )
+
+    seq_axes: list[Axes] = [fig.add_subplot(gs[i, 0]) for i in range(n_rows)]
+    circuit_ax: Axes = fig.add_subplot(gs[:n_rows, 1])
+    slider_ax: Axes = fig.add_subplot(gs[n_rows, :])
+
+    # Initial circuit index
+    circuit_idx = 0
+
+    # Initialize circuit image and overlay
+    circuit_im = circuit_ax.imshow(
+        circuits[circuit_idx].detach().cpu().numpy(),
+        cmap="Greys",
+        aspect="auto",
+        interpolation="nearest",
+    )
+    circuit_ax.set_title(f"Circuit {circuit_idx + 1}/{C} (L={L}, E={E})")
+    circuit_ax.set_xlabel("Experts")
+    circuit_ax.set_ylabel("Layers")
+
+    overlay_im = circuit_ax.imshow(
+        np.zeros((L, E), dtype=float),
+        cmap="Reds",
+        aspect="auto",
+        interpolation="nearest",
+        alpha=0.0,
+    )
+
+    # Define a function to select sequences based on the current circuit
+    def select_sequences_for_circuit(
+        c_idx: int,
+    ) -> tuple[list[int], th.Tensor, dict[int, tuple[int, int]]]:
+        token_scores = activations[:, c_idx]
+        # Normalize token scores to 0..1 for coloring
+        min_v = float(token_scores.min().item())
+        max_v = float(token_scores.max().item())
+        denom = max(max_v - min_v, 1e-6)
+        norm_scores = ((token_scores - min_v) / denom).clamp(0, 1)
+        if selection_mode == "max":
+            top_seq_ids = _gather_top_sequences_by_max(norm_scores, seq_ids, top_n)
+        else:
+            top_seq_ids = _gather_top_sequences_by_mean(
+                norm_scores, seq_ids, seq_lengths, top_n
+            )
+        # Render sequences panel with normalized scores
+        mapping = _render_sequences_panel(
+            seq_axes,
+            sequences,
+            [int(s.item()) for s in top_seq_ids],
+            norm_scores.detach().cpu().numpy(),
+            seq_offsets.detach().cpu().numpy(),
+        )
+        # Return mapping for hover
+        return [int(s.item()) for s in top_seq_ids], norm_scores, mapping
+
+    # Initial render
+    top_seq_ids, current_norm_scores, token_mapping = select_sequences_for_circuit(
+        circuit_idx
+    )
+
+    # Slider for circuit selection
+    slider = Slider(slider_ax, "Circuit", 0, C - 1, valinit=circuit_idx, valstep=1)
+
+    # Hover handling mapping from axes to current displayed sequence IDs
+    ax_to_seq = dict(zip(seq_axes, top_seq_ids, strict=False))
+
+    def on_slider_change(val: float) -> None:
+        nonlocal circuit_idx, top_seq_ids, current_norm_scores, token_mapping, ax_to_seq
+        circuit_idx = int(val)
+        circuit_im.set_array(circuits[circuit_idx].detach().cpu().numpy())
+        circuit_ax.set_title(f"Circuit {circuit_idx + 1}/{C} (L={L}, E={E})")
+        top_seq_ids, current_norm_scores, token_mapping = select_sequences_for_circuit(
+            circuit_idx
+        )
+        # Rebuild axis->sequence mapping for hover after re-render
+        ax_to_seq = dict(zip(seq_axes, top_seq_ids, strict=False))
+        overlay_im.set_alpha(0.0)
+        fig.canvas.draw_idle()
+
+    slider.on_changed(on_slider_change)
+
+    # Hover handling: update overlay based on token under cursor
+    # Build quick lookup from axes to sequence and token index
+    # mypy/ty cannot type-infer `zip(..., strict=False)` yet; keep as dict comprehension
+    # ax_to_seq is initialized above and updated on slider changes
+
+    def on_motion(event) -> None:
+        if event.inaxes not in seq_axes:
+            return
+        ax = event.inaxes
+        seq_id = ax_to_seq.get(ax)
+        if seq_id is None or event.xdata is None:
+            return
+        # Determine token index in this sequence from x coordinate
+        i = int(event.xdata)
+        if i < 0:
+            return
+        if seq_id >= len(sequences) or i >= len(sequences[seq_id]):
+            return
+        # Compute global token index
+        start = int(seq_offsets[seq_id].item())
+        global_token_idx = start + i
+        # Update overlay to show this token's top-k mask
+        mask = token_topk_mask[global_token_idx].detach().cpu().numpy().astype(float)
+        overlay_im.set_array(mask)
+        overlay_im.set_alpha(0.35)
+        fig.canvas.draw_idle()
+
+    fig.canvas.mpl_connect("motion_notify_event", on_motion)
+
+    title = (
+        "Max-activating tokens" if selection_mode == "max" else "Mean-activating tokens"
+    )
+    fig.suptitle(title)
+    plt.tight_layout()
+    plt.show()
+
+
+def viz_max_activating_tokens(
+    circuits: th.Tensor, top_n: int = 10, device: str = "cuda"
+) -> None:
+    """Visualize top-N sequences by containing highest-activating tokens.
+
+    - Left: tokens highlighted by activation (0..1) for current circuit.
+    - Right: circuit grid with slider to switch circuits.
+    - Hover a token to see its actual top-k router activation mask overlaid as transparency.
+    """
+    # Also fetch tokens to ensure alignment; if not provided externally, they are loaded within _viz_common
+    activated_experts, tokens, _topk = load_activations_tokens_and_topk(device=device)
+    _viz_common(circuits, tokens, selection_mode="max", top_n=top_n, device=device)
+
+
+def viz_mean_activating_tokens(
+    circuits: th.Tensor, top_n: int = 10, device: str = "cuda"
+) -> None:
+    """Visualize top-N sequences by highest mean token activation.
+
+    DRY implementation shared with viz_max_activating_tokens via _viz_common.
+    """
+    activated_experts, tokens, _topk = load_activations_tokens_and_topk(device=device)
+    _viz_common(circuits, tokens, selection_mode="mean", top_n=top_n, device=device)
