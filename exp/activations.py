@@ -30,10 +30,9 @@ def _resolve_logits_dir() -> str:
     candidates: list[str] = []
     if isinstance(mod_level, str):
         candidates.append(mod_level)
-    if isinstance(pkg_level, str):
+    if isinstance(pkg_level, str) and pkg_level != mod_level:
         # avoid duplicate if same string
-        if pkg_level != mod_level:
-            candidates.append(pkg_level)
+        candidates.append(pkg_level)
     candidates.append("router_logits")
 
     for cand in candidates:

@@ -6,7 +6,6 @@ from torch_pca import PCA
 
 # Import module to allow monkeypatching in tests to work on reference
 import exp.activations as activations
-
 from viz import FIGURE_DIR
 
 FIGURE_PATH = os.path.join(FIGURE_DIR, "pca_circuits.png")
