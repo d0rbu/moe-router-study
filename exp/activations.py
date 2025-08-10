@@ -33,7 +33,6 @@ def load_activations_indices_tokens_and_topk(
             top_k = int(output["topk"])  # saved during collection
         router_logits: th.Tensor = output["router_logits"].to(device)
         file_tokens: list[list[str]] = output.get("tokens", [])
-        # Always extend; extending with [] is a no-op
         tokens.extend(file_tokens)
 
         # Build top-k indices and boolean mask via topk + scatter
@@ -47,7 +46,9 @@ def load_activations_indices_tokens_and_topk(
     if top_k is None or not activated_experts_collection:
         raise ValueError("No data files found; ensure exp.get_router_activations has been run")
 
+    # (B, L, E)
     activated_experts = th.cat(activated_experts_collection, dim=0)
+    # (B, L, topk)
     activated_expert_indices = th.cat(activated_expert_indices_collection, dim=0)
     return activated_experts, activated_expert_indices, tokens, top_k
 
@@ -58,7 +59,7 @@ def load_activations_and_indices_and_topk(device: str = "cuda") -> tuple[th.Tens
 
 
 def load_activations_and_topk(device: str = "cuda") -> tuple[th.Tensor, int]:
-    activated_experts, _indices, _tokens, top_k = load_activations_indices_tokens_and_topk(device=device)
+    activated_experts, _indices, top_k = load_activations_and_indices_and_topk(device=device)
     return activated_experts, top_k
 
 
