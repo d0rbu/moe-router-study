@@ -95,7 +95,7 @@ def _gather_top_sequences_by_max(
     token_scores: th.Tensor,
     seq_ids: th.Tensor,
     top_n: int,
-) -> List[int]:
+) -> th.Tensor:
     device = token_scores.device
     B = int(token_scores.shape[0])
     order = th.argsort(token_scores, descending=True)
@@ -111,7 +111,7 @@ def _gather_top_sequences_by_max(
     assert (earliest < B).all(), "Every sequence must have at least one token"
 
     topk = th.argsort(earliest)[:top_n]
-    return topk.tolist()
+    return topk
 
 
 def _gather_top_sequences_by_mean(
@@ -119,13 +119,13 @@ def _gather_top_sequences_by_mean(
     seq_ids: th.Tensor,
     seq_lengths: th.Tensor,
     top_n: int,
-) -> List[int]:
+) -> th.Tensor:
     S = int(seq_lengths.shape[0])
     sums = th.zeros(S, dtype=token_scores.dtype, device=token_scores.device)
     sums = sums.index_add(0, seq_ids.to(sums.device), token_scores)
     means = sums / seq_lengths.to(sums.device)
     order = th.argsort(means, descending=True)
-    return order[:top_n].tolist()
+    return order[:top_n]
 
 
 def _validate_seq_mapping(seq_ids: th.Tensor, seq_lengths: th.Tensor) -> None:
@@ -143,7 +143,7 @@ def _validate_seq_mapping(seq_ids: th.Tensor, seq_lengths: th.Tensor) -> None:
 def _render_sequences_panel(
     ax: Axes,
     sequences: List[List[str]],
-    seq_indices: List[int],
+    seq_indices: th.Tensor,
     seq_offsets: th.Tensor,
     token_scores_for_circuit: th.Tensor,
     vmin: float,
@@ -162,7 +162,7 @@ def _render_sequences_panel(
     line_height = 0.035
 
     token_scores_np = token_scores_for_circuit.detach().cpu().numpy()
-    for seq_idx in seq_indices:
+    for seq_idx in seq_indices.tolist():
         tokens = sequences[seq_idx]
         start = int(seq_offsets[seq_idx].item())
         ax.text(0.01, y, f"S{seq_idx}", transform=ax.transAxes, fontsize=8, ha="left", va="top", color="black")
@@ -202,7 +202,7 @@ def _viz_ui(
     seq_lengths: th.Tensor,
     seq_offsets: th.Tensor,
     top_n: int,
-    select_sequences: Callable[[th.Tensor, th.Tensor, th.Tensor, int], List[int]],
+    select_sequences: Callable[[th.Tensor, th.Tensor, th.Tensor, int], th.Tensor],
 ) -> None:
     """Shared UI for both max- and mean-based selection.
 
@@ -322,7 +322,7 @@ def _viz_common(
     seq_lengths = seq_lengths.to(activations.device)
 
     # Select max-containing sequences by default
-    def select_max(scores: th.Tensor, ids: th.Tensor, lengths: th.Tensor, k: int) -> List[int]:
+    def select_max(scores: th.Tensor, ids: th.Tensor, lengths: th.Tensor, k: int) -> th.Tensor:
         return _gather_top_sequences_by_max(scores, ids, k)
 
     _viz_ui(
@@ -384,7 +384,7 @@ def viz_mean_activating_tokens(
     seq_ids = seq_ids.to(activations.device)
     seq_lengths = seq_lengths.to(activations.device)
 
-    def select_mean(scores: th.Tensor, ids: th.Tensor, lengths: th.Tensor, k: int) -> List[int]:
+    def select_mean(scores: th.Tensor, ids: th.Tensor, lengths: th.Tensor, k: int) -> th.Tensor:
         return _gather_top_sequences_by_mean(scores, ids, lengths, k)
 
     _viz_ui(
