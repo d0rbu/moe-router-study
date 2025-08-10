@@ -467,6 +467,7 @@ def viz_max_activating_tokens(
     )
     for c in range(C):
         token_scores = activations[:, c]
+<<<<<<< HEAD
         # Normalize 0..1
 =======
     # Also fetch tokens to ensure alignment; if not provided externally, they are loaded within _viz_common
@@ -487,6 +488,13 @@ def viz_max_activating_tokens(
         denom = max(max_v - min_v, 1e-6)
         norm_scores = ((token_scores - min_v) / denom).clamp(0, 1)
 <<<<<<< HEAD
+=======
+        # Normalize by theoretical max: top_k * num_layers
+        _, top_k = load_activations_and_topk(device=device)
+        L = int(circuits.shape[-2])
+        denom = th.tensor(float(top_k * L), device=token_scores.device, dtype=token_scores.dtype)
+        norm_scores = (token_scores / denom).clamp(0, 1)
+>>>>>>> e25e256 (viz: normalize token activations by theoretical max (top_k * num_layers); fix ruff issues and complete viz implementation)
         token_scores_per_circuit[c] = norm_scores
         top_seq_ids = _gather_top_sequences_by_max(norm_scores, seq_ids, top_n)
         seq_order_per_circuit.append([int(s.item()) for s in top_seq_ids])
@@ -556,6 +564,7 @@ def viz_mean_activating_tokens(
     )
     for c in range(C):
         token_scores = activations[:, c]
+<<<<<<< HEAD
 =======
     activated_experts, tokens, _topk = load_activations_tokens_and_topk(device=device)
     token_topk_mask, _ = load_activations_and_topk(device=device)
@@ -572,6 +581,13 @@ def viz_mean_activating_tokens(
         denom = max(max_v - min_v, 1e-6)
         norm_scores = ((token_scores - min_v) / denom).clamp(0, 1)
 <<<<<<< HEAD
+=======
+        # Normalize by theoretical max: top_k * num_layers
+        _, top_k = load_activations_and_topk(device=device)
+        L = int(circuits.shape[-2])
+        denom = th.tensor(float(top_k * L), device=token_scores.device, dtype=token_scores.dtype)
+        norm_scores = (token_scores / denom).clamp(0, 1)
+>>>>>>> e25e256 (viz: normalize token activations by theoretical max (top_k * num_layers); fix ruff issues and complete viz implementation)
         token_scores_per_circuit[c] = norm_scores
         top_seq_ids = _gather_top_sequences_by_mean(
             norm_scores, seq_ids, seq_lengths, top_n
