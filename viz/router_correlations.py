@@ -41,20 +41,23 @@ def router_correlations() -> None:
     # (L * E, B)
     activated_experts = th.cat(activated_experts_collection, dim=-1)
     batch_size = activated_experts.shape[-1]
-    # control, random probability distributions that look similar to the router logits by shuffling the expert dimension
-    random_activated_experts = th.zeros(
-        (batch_size, num_layers, num_experts), device=activated_experts.device
+
+    # Build control by shuffling along the batch dimension per-layer to preserve within-layer statistics
+    # Reconstruct to (B, L, E)
+    activated_experts_ble = activated_experts.T.view(
+        batch_size, num_layers, num_experts
     )
-    random_activated_experts_logits = th.rand(
-        (batch_size, num_layers, num_experts), device=activated_experts.device
-    )
-    random_activated_experts_indices = th.topk(
-        random_activated_experts_logits, k=top_k, dim=2
-    ).indices
-    random_activated_experts[random_activated_experts_indices] = 1
+
+    # Initialize with a copy and shuffle batch indices independently for each layer
+    random_activated_experts_ble = activated_experts_ble.clone()
+    for layer_idx in range(num_layers):
+        perm = th.randperm(batch_size, device=activated_experts.device)
+        random_activated_experts_ble[:, layer_idx, :] = activated_experts_ble[
+            perm, layer_idx, :
+        ]
 
     # (B, L, E) -> (L * E, B)
-    random_activated_experts = random_activated_experts.reshape(-1, total_experts).T
+    random_activated_experts = random_activated_experts_ble.reshape(batch_size, -1).T
 
     # (L * E, L * E)
     correlation = th.corrcoef(activated_experts)
