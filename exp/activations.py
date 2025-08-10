@@ -1,6 +1,5 @@
 from itertools import count
 import os
-from typing import List
 
 import torch as th
 from tqdm import tqdm
@@ -10,7 +9,7 @@ from exp.get_router_activations import ROUTER_LOGITS_DIR
 
 def load_activations_indices_tokens_and_topk(
     device: str = "cuda",
-) -> tuple[th.Tensor, th.Tensor, List[list[str]], int]:
+) -> tuple[th.Tensor, th.Tensor, list[list[str]], int]:
     """Load boolean activation mask, top-k indices, tokens, and top_k.
 
     Returns:
@@ -21,7 +20,7 @@ def load_activations_indices_tokens_and_topk(
     """
     activated_expert_indices_collection: list[th.Tensor] = []
     activated_experts_collection: list[th.Tensor] = []
-    tokens: List[list[str]] = []
+    tokens: list[list[str]] = []
     top_k: int | None = None
 
     for file_idx in tqdm(count(), desc="Loading router logits+tokens"):
@@ -68,7 +67,7 @@ def load_activations(device: str = "cuda") -> th.Tensor:
     return activated_experts
 
 
-def load_activations_tokens_and_topk(device: str = "cuda") -> tuple[th.Tensor, List[list[str]], int]:
+def load_activations_tokens_and_topk(device: str = "cuda") -> tuple[th.Tensor, list[list[str]], int]:
     activated_experts, _indices, tokens, top_k = load_activations_indices_tokens_and_topk(device=device)
     return activated_experts, tokens, top_k
 

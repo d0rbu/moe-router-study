@@ -37,7 +37,7 @@ def kmeans_manhattan(
         for i in range(k):
             centroids[i] = data[clusters == i].mean(dim=0)
 
-        centroid_delta = th.norm(centroids - last_centroids, p=2)
+        # Early stop when centroids converge
         if th.allclose(centroids, last_centroids):
             break
 
@@ -119,8 +119,14 @@ def visualize_top_circuits(circuit_mask: th.Tensor) -> None:
     fig.canvas.mpl_connect("scroll_event", on_scroll)
 
     # Add instructions
-    plt.figtext(0.5, 0.02, "Use mouse scroll to navigate through circuits",
-                ha="center", fontsize=10, bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgray"))
+    plt.figtext(
+        0.5,
+        0.02,
+        "Use mouse scroll to navigate through circuits",
+        ha="center",
+        fontsize=10,
+        bbox={"boxstyle": "round,pad=0.3", "facecolor": "lightgray"},
+    )
 
     plt.tight_layout()
     plt.show()
