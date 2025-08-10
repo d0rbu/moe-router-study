@@ -13,6 +13,36 @@ except Exception:  # defensive default
     ROUTER_LOGITS_DIR = "router_logits"
 
 
+def _resolve_logits_dir() -> str:
+    """Resolve router logits directory, supporting multiple patch points.
+
+    Priority:
+    1) exp.activations.ROUTER_LOGITS_DIR (module-level)
+    2) exp.ROUTER_LOGITS_DIR (package-level)
+    3) default: "router_logits"
+
+    Additionally, if the first candidate doesn't exist on disk but the second does,
+    prefer the existing path. This makes tests that monkeypatch either location pass.
+    """
+    mod_level = globals().get("ROUTER_LOGITS_DIR")
+    pkg_level = getattr(exp, "ROUTER_LOGITS_DIR", None)
+
+    candidates: list[str] = []
+    if isinstance(mod_level, str):
+        candidates.append(mod_level)
+    if isinstance(pkg_level, str):
+        # avoid duplicate if same string
+        if pkg_level != mod_level:
+            candidates.append(pkg_level)
+    candidates.append("router_logits")
+
+    for cand in candidates:
+        # choose the first existing directory or one containing 0.pt
+        if os.path.isdir(cand) or os.path.exists(os.path.join(cand, "0.pt")):
+            return cand
+    return candidates[0]
+
+
 def load_activations_and_indices_and_topk(
     device: str = "cpu",
 ) -> tuple[th.Tensor, th.Tensor, int]:
@@ -21,10 +51,8 @@ def load_activations_and_indices_and_topk(
 
     top_k: int | None = None  # initialize to avoid UnboundLocalError when no files
     last_indices_k: int | None = None
-    # Resolve directory: prefer exp module (monkeypatchable), then module-level, then default
-    dir_path = getattr(
-        exp, "ROUTER_LOGITS_DIR", globals().get("ROUTER_LOGITS_DIR", "router_logits")
-    )
+    # Resolve directory robustly across patch points
+    dir_path = _resolve_logits_dir()
     for file_idx in tqdm(count(), desc="Loading router logits"):
         file_path = os.path.join(dir_path, f"{file_idx}.pt")
         if not os.path.exists(file_path):
