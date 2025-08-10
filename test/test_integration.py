@@ -393,7 +393,8 @@ class TestErrorPropagation:
 
             from viz.pca_circuits import pca_figure
 
-            with pytest.raises(Exception):  # propagate the mock error
+            # The exact exception message is not critical; we just need an exception to propagate
+            with pytest.raises(Exception):
                 pca_figure()
 
 

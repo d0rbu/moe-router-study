@@ -9,7 +9,7 @@ import exp  # use module so exp.ROUTER_LOGITS_DIR patches are honored
 # Provide a module-local alias that tests can patch directly as well
 try:  # pragma: no cover - trivial aliasing
     ROUTER_LOGITS_DIR = exp.ROUTER_LOGITS_DIR
-except Exception:  # noqa: BLE001 - defensive default
+except Exception:  # defensive default
     ROUTER_LOGITS_DIR = "router_logits"
 
 
@@ -30,7 +30,7 @@ def load_activations_and_indices_and_topk(
 
         try:
             output = th.load(file_path)
-        except Exception as e:  # noqa: BLE001 - surface as runtimeerror for tests/CI
+        except Exception as e:  # surface as runtimeerror for tests/CI
             raise RuntimeError(f"Failed to load router logits file: {file_path}") from e
 
         # Required keys
