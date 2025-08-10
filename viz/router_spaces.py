@@ -24,9 +24,10 @@ def router_spaces() -> None:
     o_proj_weights_data = th.load(o_proj_weight_path)
 
     router_weights = router_weights_data["weights"]
-    down_proj_weights = down_proj_weights_data["weights"]
+    # access but ignore down_proj for now
+    _ = down_proj_weights_data["weights"]
     o_proj_weights = o_proj_weights_data["weights"]
-    num_layers = len(o_proj_weights)
+    _ = len(o_proj_weights)
     router_layers = list(router_weights.keys())
     num_router_layers = len(router_layers)
     topk = router_weights_data["topk"]
@@ -43,6 +44,7 @@ def router_spaces() -> None:
     sorted_expert_routers = [
         router_weights[layer_idx] for layer_idx in sorted(router_layers)
     ]
+    # Concatenate along feature axis (dim=1): (E, H_total) with H_total = num_layers * hidden_dim
     sorted_expert_vectors = th.cat(sorted_expert_routers, dim=1)
 
     # next we concatenate the router weights and look at the spectrum
@@ -62,11 +64,14 @@ def router_spaces() -> None:
 
     # next we want to find circuits by taking the top left singular vectors
     # and getting the cosine similarity with all expert vectors
-    num_circuits = 100
+    # Note: u has shape (E_total, H), so choose num_circuits along H dimension
+    num_circuits = min(100, u.shape[1])
     circuit_vectors = u[:, :num_circuits]
-    circuit_logits = (circuit_vectors.T @ sorted_expert_vectors).view(
-        num_circuits, num_router_layers, -1
-    )
+    # Project circuits onto concatenated expert vectors
+    circuit_logits_flat = circuit_vectors.T @ sorted_expert_vectors  # (num_circuits, L * H)
+    # reshape to (num_circuits, num_router_layers, hidden_dim)
+    circuit_logits = circuit_logits_flat.view(num_circuits, num_router_layers, -1)
+
     circuit_probs = th.nn.functional.softmax(circuit_logits, dim=2)
     circuit_topk = th.topk(circuit_probs, k=topk, dim=2)
     circuit_topk_mask = th.zeros_like(circuit_probs)

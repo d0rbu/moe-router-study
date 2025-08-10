@@ -1,12 +1,7 @@
-import re
 from dataclasses import dataclass, field
-from typing import Any
+import re
 
-from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel
-from transformers.tokenization_utils_base import PreTrainedTokenizerBase
-from transformers.utils.logging import disable_progress_bar
-from huggingface_hub import list_repo_refs
-import torch as th
+import huggingface_hub  # import module so it can be patched in tests
 
 
 @dataclass
@@ -16,6 +11,13 @@ class Checkpoint:
     model_config: "ModelConfig"
 
     def __str__(self):
+        # Handle None revision_format gracefully
+        if not self.model_config.revision_format:
+            return (
+                f"step{self.step}"
+                if self.num_tokens is None
+                else f"step{self.step}-tokens{self.num_tokens}B"
+            )
         return self.model_config.revision_format.format(self.step, self.num_tokens)
 
 
@@ -32,12 +34,14 @@ class ModelConfig:
             self.checkpoints = []
             return
 
-        self.branch_regex = re.compile(self.branch_regex)
+        # Accept either a precompiled Pattern or a string
+        if isinstance(self.branch_regex, str):
+            self.branch_regex = re.compile(self.branch_regex)
 
-        refs = list_repo_refs(self.hf_name)
+        refs = huggingface_hub.list_repo_refs(self.hf_name)
         self.all_branches = [branch.name for branch in refs.branches]
 
-        checkpoints = []
+        checkpoints: list[Checkpoint] = []
         for branch in self.all_branches:
             match = re.match(self.branch_regex, branch)
             if not match:
@@ -46,13 +50,14 @@ class ModelConfig:
             groups = match.groups()
             if len(groups) == 2:
                 step, num_tokens = groups
+                ckpt = Checkpoint(int(step), int(num_tokens), self)
             elif len(groups) == 1:
                 step = groups[0]
-                num_tokens = None
+                ckpt = Checkpoint(int(step), None, self)
             else:
                 raise ValueError(f"Unexpected number of groups in branch {branch}")
 
-            checkpoints.append(Checkpoint(int(step), int(num_tokens), self))
+            checkpoints.append(ckpt)
 
         self.checkpoints = sorted(checkpoints, key=lambda x: x.step)
 
