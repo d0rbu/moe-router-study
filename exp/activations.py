@@ -4,24 +4,42 @@ import os
 import torch as th
 from tqdm import tqdm
 
-from exp import ROUTER_LOGITS_DIR
+# Import module to allow runtime access to exp.ROUTER_LOGITS_DIR (monkeypatchable)
+import exp
 
 
 def load_activations_and_indices_and_topk(device: str = "cuda") -> tuple[th.Tensor, th.Tensor, int]:
     activated_expert_indices_collection: list[th.Tensor] = []
     activated_experts_collection: list[th.Tensor] = []
 
+    top_k: int | None = None  # handle case of no files
+
     for file_idx in tqdm(count(), desc="Loading router logits"):
-        file_path = os.path.join(ROUTER_LOGITS_DIR, f"{file_idx}.pt")
+        dir_path = getattr(exp, "ROUTER_LOGITS_DIR", "router_logits")
+        file_path = os.path.join(dir_path, f"{file_idx}.pt")
         if not os.path.exists(file_path):
             break
 
-        output = th.load(file_path)
-        top_k = output["topk"]
+        try:
+            output = th.load(file_path)
+        except Exception as e:  # pragma: no cover - defensive
+            raise RuntimeError(f"Failed to load router logits file: {file_path}") from e
+
+        # Required keys
+        if "topk" not in output or "router_logits" not in output:
+            missing = [k for k in ("topk", "router_logits") if k not in output]
+            raise KeyError(f"Missing keys in logits file: {missing}")
+
+        top_k = int(output["topk"])  # normalize to python int
         router_logits = output["router_logits"].to(device)
 
+        # Validate shape
+        if router_logits.ndim != 3:
+            raise RuntimeError(
+                f"Invalid router_logits shape {tuple(router_logits.shape)}; expected (B, L, E)"
+            )
+
         # (B, L, E) -> (B, L, topk)
-        num_layers, num_experts = router_logits.shape[1], router_logits.shape[2]
         topk_indices = th.topk(router_logits, k=top_k, dim=2).indices
 
         # (B, L, topk) -> (B, L, E)
