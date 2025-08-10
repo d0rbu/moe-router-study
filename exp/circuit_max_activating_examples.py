@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from itertools import pairwise
 
 from matplotlib.axes import Axes
@@ -214,9 +215,13 @@ def _render_sequences_panel(
 def _viz_common(
     circuits: th.Tensor,
     sequences: list[list[str]],
+<<<<<<< HEAD
     seq_order_per_circuit: list[list[int]],
     token_scores_per_circuit: th.Tensor,  # (C, B) normalized 0..1
     *,
+=======
+    select_sequences_for_circuit: Callable[[int], tuple[list[int], th.Tensor]],
+>>>>>>> 36ea0c3 (refactor(viz): remove selection_mode from _viz_common; accept external selector callback and normalized token scores\n\n- _viz_common now renders using a selector(c_idx)->(seq_ids, norm_scores) so selection happens upstream\n- viz_max_activating_tokens and viz_mean_activating_tokens precompute activations and provide selectors\n- keep hover overlay behavior and alignment, clean up imports, satisfy ruff/ty/tests\n\nCo-authored-by: Henry Castillo <hacperu2010@gmail.com>)
     top_n: int = 10,
     device: str = "cuda",
     title: str | None = None,
@@ -241,6 +246,17 @@ def _viz_common(
     _seq_ids, seq_lengths, seq_offsets = build_sequence_id_tensor(sequences)
     _validate_seq_mapping(_seq_ids, seq_lengths)
 
+<<<<<<< HEAD
+=======
+    # Compute activations per circuit per token: (B, C) — left here for alignment checks if needed
+    _ = th.einsum("ble,cle->bc", token_topk_mask.float(), circuits)
+
+    # Build seq id mapping and lengths/offsets
+    seq_ids, seq_lengths, seq_offsets = build_sequence_id_tensor(sequences)
+    _validate_seq_mapping(seq_ids, seq_lengths)
+
+    # Setup figure: left side stacked sequences, right side circuit grid + slider
+>>>>>>> 36ea0c3 (refactor(viz): remove selection_mode from _viz_common; accept external selector callback and normalized token scores\n\n- _viz_common now renders using a selector(c_idx)->(seq_ids, norm_scores) so selection happens upstream\n- viz_max_activating_tokens and viz_mean_activating_tokens precompute activations and provide selectors\n- keep hover overlay behavior and alignment, clean up imports, satisfy ruff/ty/tests\n\nCo-authored-by: Henry Castillo <hacperu2010@gmail.com>)
     C = int(circuits.shape[0])
     L, E = int(circuits.shape[-2]), int(circuits.shape[-1])
 
@@ -275,6 +291,7 @@ def _viz_common(
         alpha=0.0,
     )
 
+<<<<<<< HEAD
     def render_for_circuit(c_idx: int) -> tuple[list[int], dict[int, tuple[int, int]]]:
         seq_ids = seq_order_per_circuit[c_idx][:top_n]
         token_scores = token_scores_per_circuit[c_idx].detach().cpu().numpy()
@@ -288,6 +305,24 @@ def _viz_common(
         return [int(s) for s in seq_ids], mapping
 
     top_seq_ids, token_mapping = render_for_circuit(circuit_idx)
+=======
+    # Wrapper that renders using externally-provided selection for each circuit
+    def render_for_circuit(
+        c_idx: int,
+    ) -> tuple[list[int], th.Tensor, dict[int, tuple[int, int]]]:
+        top_seq_ids, norm_scores = select_sequences_for_circuit(c_idx)
+        mapping = _render_sequences_panel(
+            seq_axes,
+            sequences,
+            [int(s) for s in top_seq_ids],
+            norm_scores.detach().cpu().numpy(),
+            seq_offsets.detach().cpu().numpy(),
+        )
+        return [int(s) for s in top_seq_ids], norm_scores, mapping
+
+    # Initial render
+    top_seq_ids, current_norm_scores, token_mapping = render_for_circuit(circuit_idx)
+>>>>>>> 36ea0c3 (refactor(viz): remove selection_mode from _viz_common; accept external selector callback and normalized token scores\n\n- _viz_common now renders using a selector(c_idx)->(seq_ids, norm_scores) so selection happens upstream\n- viz_max_activating_tokens and viz_mean_activating_tokens precompute activations and provide selectors\n- keep hover overlay behavior and alignment, clean up imports, satisfy ruff/ty/tests\n\nCo-authored-by: Henry Castillo <hacperu2010@gmail.com>)
 
     slider = Slider(slider_ax, "Circuit", 0, C - 1, valinit=circuit_idx, valstep=1)
 
@@ -298,7 +333,14 @@ def _viz_common(
         circuit_idx = int(val)
         circuit_im.set_array(circuits[circuit_idx].detach().cpu().numpy())
         circuit_ax.set_title(f"Circuit {circuit_idx + 1}/{C} (L={L}, E={E})")
+<<<<<<< HEAD
         top_seq_ids, token_mapping = render_for_circuit(circuit_idx)
+=======
+        top_seq_ids, current_norm_scores, token_mapping = render_for_circuit(
+            circuit_idx
+        )
+        # Rebuild axis->sequence mapping for hover after re-render
+>>>>>>> 36ea0c3 (refactor(viz): remove selection_mode from _viz_common; accept external selector callback and normalized token scores\n\n- _viz_common now renders using a selector(c_idx)->(seq_ids, norm_scores) so selection happens upstream\n- viz_max_activating_tokens and viz_mean_activating_tokens precompute activations and provide selectors\n- keep hover overlay behavior and alignment, clean up imports, satisfy ruff/ty/tests\n\nCo-authored-by: Henry Castillo <hacperu2010@gmail.com>)
         ax_to_seq = dict(zip(seq_axes, top_seq_ids, strict=False))
         overlay_im.set_alpha(0.0)
         fig.canvas.draw_idle()
@@ -326,7 +368,11 @@ def _viz_common(
 
     fig.canvas.mpl_connect("motion_notify_event", on_motion)
 
+<<<<<<< HEAD
     fig.suptitle(title or "Activating tokens")
+=======
+    fig.suptitle("Activating tokens viewer")
+>>>>>>> 36ea0c3 (refactor(viz): remove selection_mode from _viz_common; accept external selector callback and normalized token scores\n\n- _viz_common now renders using a selector(c_idx)->(seq_ids, norm_scores) so selection happens upstream\n- viz_max_activating_tokens and viz_mean_activating_tokens precompute activations and provide selectors\n- keep hover overlay behavior and alignment, clean up imports, satisfy ruff/ty/tests\n\nCo-authored-by: Henry Castillo <hacperu2010@gmail.com>)
     plt.tight_layout()
     plt.show()
 
@@ -340,6 +386,7 @@ def viz_max_activating_tokens(
     - Right: circuit grid with slider to switch circuits.
     - Hover a token to see its actual top-k router activation mask overlaid as transparency.
     """
+<<<<<<< HEAD
     # Load mask and tokens for alignment + scoring
     token_topk_mask, _topk = load_activations_and_topk(device=device)
     _activated_experts, tokens, _ = load_activations_tokens_and_topk(device=device)
@@ -362,10 +409,24 @@ def viz_max_activating_tokens(
     for c in range(C):
         token_scores = activations[:, c]
         # Normalize 0..1
+=======
+    # Also fetch tokens to ensure alignment; if not provided externally, they are loaded within _viz_common
+    activated_experts, tokens, _topk = load_activations_tokens_and_topk(device=device)
+    # Precompute token->circuit scores, sequence ids/lengths/offsets
+    token_topk_mask, _ = load_activations_and_topk(device=device)
+    circuits = circuits.to(device=device, dtype=th.float32)
+    activations = th.einsum("ble,cle->bc", token_topk_mask.float(), circuits)
+    seq_ids, seq_lengths, _seq_offsets = build_sequence_id_tensor(tokens)
+
+    def selector(c_idx: int) -> tuple[list[int], th.Tensor]:
+        token_scores = activations[:, c_idx]
+        # Normalize to 0..1 for coloring
+>>>>>>> 36ea0c3 (refactor(viz): remove selection_mode from _viz_common; accept external selector callback and normalized token scores\n\n- _viz_common now renders using a selector(c_idx)->(seq_ids, norm_scores) so selection happens upstream\n- viz_max_activating_tokens and viz_mean_activating_tokens precompute activations and provide selectors\n- keep hover overlay behavior and alignment, clean up imports, satisfy ruff/ty/tests\n\nCo-authored-by: Henry Castillo <hacperu2010@gmail.com>)
         min_v = float(token_scores.min().item())
         max_v = float(token_scores.max().item())
         denom = max(max_v - min_v, 1e-6)
         norm_scores = ((token_scores - min_v) / denom).clamp(0, 1)
+<<<<<<< HEAD
         token_scores_per_circuit[c] = norm_scores
         top_seq_ids = _gather_top_sequences_by_max(norm_scores, seq_ids, top_n)
         seq_order_per_circuit.append([int(s.item()) for s in top_seq_ids])
@@ -379,6 +440,12 @@ def viz_max_activating_tokens(
         device=device,
         title="Max-activating tokens",
     )
+=======
+        top_seq_ids = _gather_top_sequences_by_max(norm_scores, seq_ids, top_n)
+        return [int(s.item()) for s in top_seq_ids], norm_scores
+
+    _viz_common(circuits, tokens, selector, top_n=top_n, device=device)
+>>>>>>> 36ea0c3 (refactor(viz): remove selection_mode from _viz_common; accept external selector callback and normalized token scores\n\n- _viz_common now renders using a selector(c_idx)->(seq_ids, norm_scores) so selection happens upstream\n- viz_max_activating_tokens and viz_mean_activating_tokens precompute activations and provide selectors\n- keep hover overlay behavior and alignment, clean up imports, satisfy ruff/ty/tests\n\nCo-authored-by: Henry Castillo <hacperu2010@gmail.com>)
 
 
 def viz_mean_activating_tokens(
@@ -388,6 +455,7 @@ def viz_mean_activating_tokens(
 
     DRY implementation shared with viz_max_activating_tokens via _viz_common.
     """
+<<<<<<< HEAD
     token_topk_mask, _topk = load_activations_and_topk(device=device)
     _activated_experts, tokens, _ = load_activations_tokens_and_topk(device=device)
     _ensure_token_alignment(token_topk_mask, tokens)
@@ -405,10 +473,21 @@ def viz_mean_activating_tokens(
     )
     for c in range(C):
         token_scores = activations[:, c]
+=======
+    activated_experts, tokens, _topk = load_activations_tokens_and_topk(device=device)
+    token_topk_mask, _ = load_activations_and_topk(device=device)
+    circuits = circuits.to(device=device, dtype=th.float32)
+    activations = th.einsum("ble,cle->bc", token_topk_mask.float(), circuits)
+    seq_ids, seq_lengths, _seq_offsets = build_sequence_id_tensor(tokens)
+
+    def selector(c_idx: int) -> tuple[list[int], th.Tensor]:
+        token_scores = activations[:, c_idx]
+>>>>>>> 36ea0c3 (refactor(viz): remove selection_mode from _viz_common; accept external selector callback and normalized token scores\n\n- _viz_common now renders using a selector(c_idx)->(seq_ids, norm_scores) so selection happens upstream\n- viz_max_activating_tokens and viz_mean_activating_tokens precompute activations and provide selectors\n- keep hover overlay behavior and alignment, clean up imports, satisfy ruff/ty/tests\n\nCo-authored-by: Henry Castillo <hacperu2010@gmail.com>)
         min_v = float(token_scores.min().item())
         max_v = float(token_scores.max().item())
         denom = max(max_v - min_v, 1e-6)
         norm_scores = ((token_scores - min_v) / denom).clamp(0, 1)
+<<<<<<< HEAD
         token_scores_per_circuit[c] = norm_scores
         top_seq_ids = _gather_top_sequences_by_mean(
             norm_scores, seq_ids, seq_lengths, top_n
@@ -424,3 +503,11 @@ def viz_mean_activating_tokens(
         device=device,
         title="Mean-activating tokens",
     )
+=======
+        top_seq_ids = _gather_top_sequences_by_mean(
+            norm_scores, seq_ids, seq_lengths, top_n
+        )
+        return [int(s.item()) for s in top_seq_ids], norm_scores
+
+    _viz_common(circuits, tokens, selector, top_n=top_n, device=device)
+>>>>>>> 36ea0c3 (refactor(viz): remove selection_mode from _viz_common; accept external selector callback and normalized token scores\n\n- _viz_common now renders using a selector(c_idx)->(seq_ids, norm_scores) so selection happens upstream\n- viz_max_activating_tokens and viz_mean_activating_tokens precompute activations and provide selectors\n- keep hover overlay behavior and alignment, clean up imports, satisfy ruff/ty/tests\n\nCo-authored-by: Henry Castillo <hacperu2010@gmail.com>)
