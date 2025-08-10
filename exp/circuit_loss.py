@@ -23,8 +23,12 @@ def max_iou_and_index(
     num_extra_dims = circuits.ndim - 3
 
     # compute the max IoU for each data point
-    data_flat = data.view(*([1] * num_extra_dims), batch_size, 1, num_layers * num_experts)
-    circuits_flat = circuits.view(*circuits.shape[:-3], 1, num_circuits, num_layers * num_experts)
+    data_flat = data.view(
+        *([1] * num_extra_dims), batch_size, 1, num_layers * num_experts
+    )
+    circuits_flat = circuits.view(
+        *circuits.shape[:-3], 1, num_circuits, num_layers * num_experts
+    )
     intersection = th.sum(data_flat & circuits_flat, dim=-1)
     union = th.sum(data_flat | circuits_flat, dim=-1)
     iou = intersection / union
@@ -68,13 +72,21 @@ def min_logit_loss_and_index(
     circuits_logits: th.Tensor,
 ) -> tuple[th.Tensor, th.Tensor]:
     assert data.ndim == 3, "data must be of shape (batch_size, num_layers, num_experts)"
-    assert circuits_logits.ndim >= 3, "circuits_logits must be of shape (*, num_circuits, num_layers, num_experts)"
+    assert circuits_logits.ndim >= 3, (
+        "circuits_logits must be of shape (*, num_circuits, num_layers, num_experts)"
+    )
 
     batch_size, num_layers, num_experts = data.shape
     num_circuits = circuits_logits.shape[-3]
-    assert circuits_logits.shape[-2] == num_layers, "circuits_logits must have the same number of layers as data"
-    assert circuits_logits.shape[-1] == num_experts, "circuits_logits must have the same number of experts as data"
-    assert circuits_logits.dtype == th.float32, "circuits_logits must be a float32 tensor"
+    assert circuits_logits.shape[-2] == num_layers, (
+        "circuits_logits must have the same number of layers as data"
+    )
+    assert circuits_logits.shape[-1] == num_experts, (
+        "circuits_logits must have the same number of experts as data"
+    )
+    assert circuits_logits.dtype == th.float32, (
+        "circuits_logits must be a float32 tensor"
+    )
 
     num_extra_dims = circuits_logits.ndim - 3
 
@@ -83,7 +95,9 @@ def min_logit_loss_and_index(
 
     # get the closest circuit for each data point
     data_flat = data.view(*([1] * num_extra_dims), batch_size, num_layers * num_experts)
-    circuits_flat = circuits.view(*circuits_logits.shape[:-3], num_circuits, num_layers * num_experts)
+    circuits_flat = circuits.view(
+        *circuits_logits.shape[:-3], num_circuits, num_layers * num_experts
+    )
 
     # (..., B, C)
     circuit_distances = th.cdist(data_flat, circuits_flat, p=1)
@@ -95,7 +109,9 @@ def min_logit_loss_and_index(
     closest_circuit_logits = circuits_logits[min_distance_idx]
 
     # (..., B, L, E) -> (..., B)
-    bce_loss = F.binary_cross_entropy_with_logits(closest_circuit_logits, data, reduction="none").sum(dim=(-2, -1))
+    bce_loss = F.binary_cross_entropy_with_logits(
+        closest_circuit_logits, data, reduction="none"
+    ).sum(dim=(-2, -1))
 
     return bce_loss, min_distance_idx
 
@@ -131,10 +147,15 @@ def circuit_loss(
     # (..., C) -> (...)
     complexity = complexity.sum(dim=-1)
 
-    assert complexity_importance >= 0.0 and complexity_importance <= 1.0, "complexity_importance must be between 0.0 and 1.0"
+    assert complexity_importance >= 0.0 and complexity_importance <= 1.0, (
+        "complexity_importance must be between 0.0 and 1.0"
+    )
 
     faithfulness_importance = 1.0 - complexity_importance
 
-    loss = faithfulness_importance * faithfulness_loss + complexity_importance * complexity.pow(complexity_power)
+    loss = (
+        faithfulness_importance * faithfulness_loss
+        + complexity_importance * complexity.pow(complexity_power)
+    )
 
     return loss, faithfulness_loss, complexity
