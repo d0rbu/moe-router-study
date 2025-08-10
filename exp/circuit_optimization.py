@@ -23,9 +23,7 @@ def expand_batch(batch: dict[str, th.Tensor]) -> list[dict[str, int | float | st
         len(v) for k, v in popo_batch.items() if isinstance(batch.get(k), th.Tensor)
     ]
     assert len(tensor_list_lengths) > 0, "At least one tensor/list value is required"
-    assert (
-        len(set(tensor_list_lengths)) == 1
-    ), "All values must have the same length"
+    assert len(set(tensor_list_lengths)) == 1, "All values must have the same length"
     batch_length = tensor_list_lengths[0]
 
     def _normalize_scalar(x: object) -> int | float | str:

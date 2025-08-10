@@ -389,12 +389,15 @@ class TestErrorPropagation:
     def test_visualization_error_propagation(self):
         """Test that visualization errors propagate correctly."""
         with patch("exp.activations.load_activations") as mock_load:
-            mock_load.side_effect = Exception("Activation loading failed")
+
+            class CustomError(RuntimeError):
+                pass
+
+            mock_load.side_effect = CustomError("Activation loading failed")
 
             from viz.pca_circuits import pca_figure
 
-            # The exact exception message is not critical; we just need an exception to propagate
-            with pytest.raises(Exception):
+            with pytest.raises(CustomError):
                 pca_figure()
 
 

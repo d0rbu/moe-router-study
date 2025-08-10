@@ -68,7 +68,9 @@ def router_spaces() -> None:
     num_circuits = min(100, u.shape[1])
     circuit_vectors = u[:, :num_circuits]
     # Project circuits onto concatenated expert vectors
-    circuit_logits_flat = circuit_vectors.T @ sorted_expert_vectors  # (num_circuits, L * H)
+    circuit_logits_flat = (
+        circuit_vectors.T @ sorted_expert_vectors
+    )  # (num_circuits, L * H)
     # reshape to (num_circuits, num_router_layers, hidden_dim)
     circuit_logits = circuit_logits_flat.view(num_circuits, num_router_layers, -1)
 

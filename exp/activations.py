@@ -22,7 +22,9 @@ def load_activations_and_indices_and_topk(
     top_k: int | None = None  # initialize to avoid UnboundLocalError when no files
     last_indices_k: int | None = None
     # Resolve directory: prefer exp module (monkeypatchable), then module-level, then default
-    dir_path = getattr(exp, "ROUTER_LOGITS_DIR", globals().get("ROUTER_LOGITS_DIR", "router_logits"))
+    dir_path = getattr(
+        exp, "ROUTER_LOGITS_DIR", globals().get("ROUTER_LOGITS_DIR", "router_logits")
+    )
     for file_idx in tqdm(count(), desc="Loading router logits"):
         file_path = os.path.join(dir_path, f"{file_idx}.pt")
         if not os.path.exists(file_path):
