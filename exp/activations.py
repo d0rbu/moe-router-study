@@ -4,7 +4,8 @@ import os
 import torch as th
 from tqdm import tqdm
 
-from exp.get_router_activations import ROUTER_LOGITS_DIR
+# Import the module so ROUTER_LOGITS_DIR can be monkeypatched in tests
+from exp import get_router_activations as gra
 
 
 def load_activations_indices_tokens_and_topk(
@@ -24,7 +25,7 @@ def load_activations_indices_tokens_and_topk(
     top_k: int | None = None
 
     for file_idx in tqdm(count(), desc="Loading router logits+tokens"):
-        file_path = os.path.join(ROUTER_LOGITS_DIR, f"{file_idx}.pt")
+        file_path = os.path.join(gra.ROUTER_LOGITS_DIR, f"{file_idx}.pt")
         if not os.path.exists(file_path):
             break
         output = th.load(file_path)

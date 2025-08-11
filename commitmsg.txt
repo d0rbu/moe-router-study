@@ -1,0 +1,9 @@
+Add tests for core.data, exp.activations, viz.pca_circuits; remove unused viz clustering scripts
+
+- Add unit tests: test_core_data.py, test_exp_activations.py, test_viz_pca_circuits.py
+- Minor refactor: activations module references exp.get_router_activations.ROUTER_LOGITS_DIR so it can be monkeypatched in tests
+- Ensure pca_figure saves to FIGURE_PATH and creates parent dir
+- Delete viz/dbscan_circuits.py and viz/kmeans_circuits.py per request
+
+Co-authored-by: Henry Castillo <hacperu2010@gmail.com>
+
