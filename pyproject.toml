@@ -39,11 +39,7 @@ dependencies = [
     "scikit-learn>=1.7.1",
     "tornado>=6.5.1",
     "hatchling>=1.27.0",
-<<<<<<< HEAD
-    "editables>=0.5"
-=======
     "editables>=0.5",
->>>>>>> origin/main
 ]
 
 [project.optional-dependencies]
