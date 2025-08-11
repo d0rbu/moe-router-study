@@ -1,4 +1,5 @@
 from itertools import product
+import os
 import queue
 import threading
 
@@ -7,6 +8,7 @@ import torch as th
 from tqdm import tqdm
 import trackio as wandb
 
+from exp import OUTPUT_DIR
 from exp.activations import load_activations
 from exp.circuit_loss import circuit_loss
 
@@ -136,7 +138,7 @@ def gradient_descent(
     # simple trapezoid LR scheduler with warmup and cooldown
     def get_lr(epoch: int) -> float:
         portion_through_warmup = epoch / num_warmup_epochs if num_warmup_epochs > 0 else 1
-        distance_from_end_relative_to_cooldown = (num_epochs - epoch) / num_cooldown_epochs
+        distance_from_end_relative_to_cooldown = (num_epochs - epoch) / num_cooldown_epochs if num_cooldown_epochs > 0 else 1
 
         return lr * min(portion_through_warmup, distance_from_end_relative_to_cooldown, 1)
 
@@ -189,21 +191,21 @@ def gradient_descent(
 @arguably.command()
 def load_and_gradient_descent(
     top_k: int,
-    complexity_importance: float = 1.0,
+    complexity_importance: float = 0.4,
     complexity_power: float = 1.0,
-    lr: float = 1e-2,
-    max_circuits: int = 256,
-    num_epochs: int = 2048,
-    num_warmup_epochs: int = 128,
-    num_cooldown_epochs: int = 512,
+    lr: float = 0.05,
+    max_circuits: int = 48,
+    num_epochs: int = 4096,
+    num_warmup_epochs: int = 0,
+    num_cooldown_epochs: int = 0,
     seed: int = 0,
     device: str = "cuda",
-) -> tuple[th.Tensor, th.Tensor, th.Tensor, th.Tensor]:
+) -> None:
     data = load_activations(device=device)
 
     wandb_run = wandb.init(
         project="circuit-optimization",
-        name=f"top_k={top_k};complexity_importance={complexity_importance};complexity_power={complexity_power};lr={lr};max_circuits={max_circuits};num_epochs={num_epochs};num_warmup_epochs={num_warmup_epochs};num_cooldown_epochs={num_cooldown_epochs};seed={seed}",
+        name=f"topk={top_k};ci={complexity_importance};cp={complexity_power};lr={lr};mc={max_circuits};ne={num_epochs};nw={num_warmup_epochs};nc={num_cooldown_epochs};s={seed}",
         config={
             "top_k": top_k,
             "complexity_importance": complexity_importance,
@@ -217,7 +219,7 @@ def load_and_gradient_descent(
         },
     )
 
-    return gradient_descent(
+    circuits, loss, faithfulness, complexity = gradient_descent(
         data,
         top_k,
         complexity_importance,
@@ -231,6 +233,19 @@ def load_and_gradient_descent(
         device=device,
         wandb_run=wandb_run,
     )
+
+    out = {
+        "circuits": circuits,
+        "top_k": top_k,
+        "loss": loss,
+        "faithfulness": faithfulness,
+        "complexity": complexity,
+    }
+
+    out_path = os.path.join(OUTPUT_DIR, "circuits.pt")
+    th.save(out, out_path)
+
+    wandb.finish()
 
 
 @arguably.command()
@@ -248,25 +263,46 @@ def grid_search_gradient_descent(
 ) -> None:
     if complexity_importances is None:
         # complexity_importances = [0.5, 0.9, 0.1, 0.99, 0.01]
-        complexity_importances = [0.5, 0.4, 0.3, 0.2, 0.1]
+        # complexity_importances = [0.5, 0.4, 0.3, 0.2, 0.1]
+        # complexity_importances = [0.6, 0.5, 0.4, 0.3]
+        # complexity_importances = [0.6, 0.5, 0.4]
+        complexity_importances = [0.4, 0.3]
     if complexity_powers is None:
         # complexity_powers = [1.0, 2.0, 0.5]
+        # complexity_powers = [1.0]
+        # complexity_powers = [1.0]
+        # complexity_powers = [1.0]
         complexity_powers = [1.0]
     if lrs is None:
         # lrs = [1e-1, 1e-2, 1e-3, 1e-4]
-        lrs = [0.05, 0.02, 0.01, 0.005, 0.002]
+        # lrs = [0.05, 0.02, 0.01, 0.005, 0.002]
+        # lrs = [0.05, 0.02, 0.01]
+        # lrs = [0.05]
+        lrs = [0.05]
     if max_circuitses is None:
         # max_circuitses = [64, 128, 256, 512]
-        max_circuitses = [64, 128, 256]
+        # max_circuitses = [32, 64, 128, 256]
+        # max_circuitses = [32, 64, 128, 256]
+        # max_circuitses = [32, 48, 64]
+        max_circuitses = [32, 48, 64]
     if num_epochses is None:
         # num_epochses = [2048]
+        # num_epochses = [4096]
+        # num_epochses = [8192]
+        # num_epochses = [4096]
         num_epochses = [4096]
     if num_warmup_epochses is None:
+        # num_warmup_epochses = [0]
+        # num_warmup_epochses = [0]
+        # num_warmup_epochses = [0]
         # num_warmup_epochses = [0]
         num_warmup_epochses = [0]
     if num_cooldown_epochses is None:
         # num_cooldown_epochses = [512]
-        num_cooldown_epochses = [1024]
+        # num_cooldown_epochses = [1024]
+        # num_cooldown_epochses = [2048]
+        # num_cooldown_epochses = [0]
+        num_cooldown_epochses = [0]
 
     data = load_activations(device=device)
     loss_landscape = th.empty(
@@ -372,9 +408,6 @@ def grid_search_gradient_descent(
             seed_idx, complexity_importance_idx, complexity_power_idx, lr_idx, max_circuits_idx, num_epochs_idx, num_warmup_epochs_idx, num_cooldown_epochs_idx
         ] = complexity
 
-    print(faithfulness_landscape)
-    print(complexity_landscape)
-
     out = {
         "loss_landscape": loss_landscape,
         "faithfulness_landscape": faithfulness_landscape,
@@ -387,9 +420,11 @@ def grid_search_gradient_descent(
         "num_warmup_epochses": num_warmup_epochses,
         "num_cooldown_epochses": num_cooldown_epochses,
     }
-    th.save(out, "loss_landscape.pt")
+    th.save(out, os.path.join(OUTPUT_DIR, "loss_landscape.pt"))
+    wandb.finish()
 
 
 if __name__ == "__main__":
     # arguably.run()
-    grid_search_gradient_descent(top_k=8, num_seeds=1)
+    # grid_search_gradient_descent(top_k=8, num_seeds=3)
+    load_and_gradient_descent(top_k=8)

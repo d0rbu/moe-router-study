@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import torch as th
 from tqdm import tqdm
 
+from exp import OUTPUT_DIR
 from exp.activations import load_activations_and_topk
 from viz import FIGURE_DIR
 
@@ -81,51 +82,6 @@ def get_top_circuits(centroids: th.Tensor, num_layers: int, top_k: int) -> tuple
     return circuits.indices, circuit_mask
 
 
-def visualize_top_circuits(circuit_mask: th.Tensor) -> None:
-    circuit_mask = circuit_mask.cpu()
-    num_centroids, num_layers, num_experts = circuit_mask.shape
-
-    # matplotlib interactive mode that lets us scroll through the circuits
-    # each circuit will be shown as a num_layers x num_experts matrix
-    # where each row is a layer and each column is an expert
-    # a cell in the grid will be empty when the mask is 0 and filled when the mask is 1
-
-    plt.ion()
-    fig, ax = plt.subplots(figsize=(12, 8))
-
-    # Initialize with the first circuit
-    current_circuit = 0
-    im = ax.imshow(circuit_mask[current_circuit], cmap="Blues", aspect="auto")
-    ax.set_title(f"Circuit {current_circuit + 1}/{num_centroids}")
-    ax.set_xlabel("Expert Index")
-    ax.set_ylabel("Layer Index")
-
-    # Add colorbar
-    plt.colorbar(im, ax=ax)
-
-    def on_scroll(event):
-        nonlocal current_circuit
-        if event.button == "up" and current_circuit < num_centroids - 1:
-            current_circuit += 1
-        elif event.button == "down" and current_circuit > 0:
-            current_circuit -= 1
-
-        # Update the image
-        im.set_array(circuit_mask[current_circuit])
-        ax.set_title(f"Circuit {current_circuit + 1}/{num_centroids}")
-        fig.canvas.draw()
-
-    # Connect the scroll event
-    fig.canvas.mpl_connect("scroll_event", on_scroll)
-
-    # Add instructions
-    plt.figtext(0.5, 0.02, "Use mouse scroll to navigate through circuits",
-                ha="center", fontsize=10, bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgray"))
-
-    plt.tight_layout()
-    plt.show()
-
-
 @arguably.command()
 def cluster_circuits(k: int | None = None, seed: int = 0) -> None:
     activated_experts, top_k = load_activations_and_topk()
@@ -142,9 +98,14 @@ def cluster_circuits(k: int | None = None, seed: int = 0) -> None:
         return
 
     centroids = kmeans_manhattan(activated_experts, k, seed=seed)
-    # top_circuits, circuit_mask = get_top_circuits(centroids, num_layers, top_k)
-    circuit_mask = centroids > 0.5
-    visualize_top_circuits(circuit_mask)
+
+    # save circuits
+    out = {
+        "circuits": centroids,
+        "top_k": top_k,
+    }
+    out_path = os.path.join(OUTPUT_DIR, "kmeans_circuits.pt")
+    th.save(out, out_path)
 
 
 if __name__ == "__main__":
