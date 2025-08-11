@@ -57,8 +57,8 @@ def expert_importance(
             k_w: th.Tensor = model.self_attn[layer_idx].k_proj.weight.detach().cpu()
             o_w: th.Tensor = model.self_attn[layer_idx].out_proj.weight.detach().cpu()
 
-            # Collect results per expert
-            layer_results: dict[int, dict[str, dict[str, Any]]] = {}
+            # Flat list of entries for this layer
+            entries: list[dict[str, Any]] = []
 
             for expert_idx in range(num_experts):
                 v: th.Tensor = router_weight[expert_idx]  # (hidden_size,)
@@ -93,54 +93,105 @@ def expert_importance(
                 down_imp: th.Tensor = down_w.T @ v
                 o_imp: th.Tensor = o_w.T @ v
 
-                expert_results: dict[str, dict[str, Any]] = {
-                    f"layers.{layer_idx}.mlp.experts.{expert_idx}.up_proj.weight": {
-                        "role": "reader",
-                        "importance_vector": up_imp,
-                        "l2": _l2(up_imp),
-                    },
-                    f"layers.{layer_idx}.mlp.experts.{expert_idx}.gate_proj.weight": {
-                        "role": "reader",
-                        "importance_vector": gate_imp,
-                        "l2": _l2(gate_imp),
-                    },
-                    f"layers.{layer_idx}.self_attn.q_proj.weight": {
-                        "role": "reader",
-                        "importance_vector": q_imp,
-                        "l2": _l2(q_imp),
-                    },
-                    f"layers.{layer_idx}.self_attn.k_proj.weight": {
-                        "role": "reader",
-                        "importance_vector": k_imp,
-                        "l2": _l2(k_imp),
-                    },
-                    f"layers.{layer_idx}.mlp.experts.{expert_idx}.down_proj.weight": {
-                        "role": "writer",
-                        "importance_vector": down_imp,
-                        "l2": _l2(down_imp),
-                    },
-                    f"layers.{layer_idx}.self_attn.o_proj.weight": {
-                        "role": "writer",
-                        "importance_vector": o_imp,
-                        "l2": _l2(o_imp),
-                    },
-                }
+                # Append flat entries for each component
+                entries.extend(
+                    [
+                        {
+                            "model_name": model_name,
+                            "checkpoint_idx": checkpoint_idx,
+                            "step": checkpoint.step,
+                            "num_tokens": checkpoint.num_tokens,
+                            "layer_idx": layer_idx,
+                            "expert_idx": expert_idx,
+                            "hidden_size": hidden_size,
+                            "num_experts": num_experts,
+                            "component": "mlp.up_proj",
+                            "param_path": f"layers.{layer_idx}.mlp.experts.{expert_idx}.up_proj.weight",
+                            "role": "reader",
+                            "importance_vector": up_imp,
+                            "l2": _l2(up_imp),
+                        },
+                        {
+                            "model_name": model_name,
+                            "checkpoint_idx": checkpoint_idx,
+                            "step": checkpoint.step,
+                            "num_tokens": checkpoint.num_tokens,
+                            "layer_idx": layer_idx,
+                            "expert_idx": expert_idx,
+                            "hidden_size": hidden_size,
+                            "num_experts": num_experts,
+                            "component": "mlp.gate_proj",
+                            "param_path": f"layers.{layer_idx}.mlp.experts.{expert_idx}.gate_proj.weight",
+                            "role": "reader",
+                            "importance_vector": gate_imp,
+                            "l2": _l2(gate_imp),
+                        },
+                        {
+                            "model_name": model_name,
+                            "checkpoint_idx": checkpoint_idx,
+                            "step": checkpoint.step,
+                            "num_tokens": checkpoint.num_tokens,
+                            "layer_idx": layer_idx,
+                            "expert_idx": expert_idx,
+                            "hidden_size": hidden_size,
+                            "num_experts": num_experts,
+                            "component": "attn.q_proj",
+                            "param_path": f"layers.{layer_idx}.self_attn.q_proj.weight",
+                            "role": "reader",
+                            "importance_vector": q_imp,
+                            "l2": _l2(q_imp),
+                        },
+                        {
+                            "model_name": model_name,
+                            "checkpoint_idx": checkpoint_idx,
+                            "step": checkpoint.step,
+                            "num_tokens": checkpoint.num_tokens,
+                            "layer_idx": layer_idx,
+                            "expert_idx": expert_idx,
+                            "hidden_size": hidden_size,
+                            "num_experts": num_experts,
+                            "component": "attn.k_proj",
+                            "param_path": f"layers.{layer_idx}.self_attn.k_proj.weight",
+                            "role": "reader",
+                            "importance_vector": k_imp,
+                            "l2": _l2(k_imp),
+                        },
+                        {
+                            "model_name": model_name,
+                            "checkpoint_idx": checkpoint_idx,
+                            "step": checkpoint.step,
+                            "num_tokens": checkpoint.num_tokens,
+                            "layer_idx": layer_idx,
+                            "expert_idx": expert_idx,
+                            "hidden_size": hidden_size,
+                            "num_experts": num_experts,
+                            "component": "mlp.down_proj",
+                            "param_path": f"layers.{layer_idx}.mlp.experts.{expert_idx}.down_proj.weight",
+                            "role": "writer",
+                            "importance_vector": down_imp,
+                            "l2": _l2(down_imp),
+                        },
+                        {
+                            "model_name": model_name,
+                            "checkpoint_idx": checkpoint_idx,
+                            "step": checkpoint.step,
+                            "num_tokens": checkpoint.num_tokens,
+                            "layer_idx": layer_idx,
+                            "expert_idx": expert_idx,
+                            "hidden_size": hidden_size,
+                            "num_experts": num_experts,
+                            "component": "attn.o_proj",
+                            "param_path": f"layers.{layer_idx}.self_attn.o_proj.weight",
+                            "role": "writer",
+                            "importance_vector": o_imp,
+                            "l2": _l2(o_imp),
+                        },
+                    ]
+                )
 
-                layer_results[expert_idx] = expert_results
-
-            base_out: dict[str, Any] = {
-                "model_name": model_name,
-                "checkpoint_idx": checkpoint_idx,
-                "num_tokens": checkpoint.num_tokens,
-                "step": checkpoint.step,
-                "layer_idx": layer_idx,
-                "hidden_size": hidden_size,
-                "num_experts": num_experts,
-                "results": layer_results,
-            }
-
+            # Save flat list for this layer
             outfile = os.path.join(EXPERT_IMPORTANCE_DIR, f"layer{layer_idx}.pt")
-            th.save(base_out, outfile)
+            th.save(entries, outfile)
 
 
 if __name__ == "__main__":
