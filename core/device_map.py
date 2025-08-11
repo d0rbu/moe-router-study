@@ -1,7 +1,6 @@
 from collections.abc import Callable
 from itertools import product
 
-
 MAX_LAYERS: int = 256
 
 

@@ -38,7 +38,7 @@ def kmeans_manhattan(
         for i in range(k):
             centroids[i] = data[clusters == i].mean(dim=0)
 
-        centroid_delta = th.norm(centroids - last_centroids, p=2)
+        _centroid_delta = th.norm(centroids - last_centroids, p=2)
         if th.allclose(centroids, last_centroids):
             break
 
