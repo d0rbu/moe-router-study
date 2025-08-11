@@ -31,7 +31,9 @@ class TestLoadActivationsAndIndicesAndTopk:
 
         # Mock the ROUTER_LOGITS_DIR
         with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
-            activated_experts, activated_indices, top_k = load_activations_and_indices_and_topk()
+            activated_experts, activated_indices, top_k = (
+                load_activations_and_indices_and_topk()
+            )
 
         # Check outputs
         assert top_k == 2
@@ -66,8 +68,9 @@ class TestLoadActivationsAndIndicesAndTopk:
 
     def test_empty_directory(self, temp_dir):
         """Test behavior with empty directory."""
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)), pytest.raises(
-            ValueError, match="No data files found"
+        with (
+            patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)),
+            pytest.raises(ValueError, match="No data files found"),
         ):
             load_activations_and_indices_and_topk()
 
@@ -77,7 +80,9 @@ class TestLoadActivationsAndIndicesAndTopk:
         th.save(data, temp_dir / "0.pt")
 
         with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
-            activated_experts, activated_indices, top_k = load_activations_and_indices_and_topk()
+            activated_experts, activated_indices, top_k = (
+                load_activations_and_indices_and_topk()
+            )
 
         assert top_k == 1
         assert_tensor_shape_and_type(activated_experts, (10, 4, 12), th.bool)
@@ -97,19 +102,29 @@ class TestLoadActivationsAndIndicesAndTopk:
         th.save(data, temp_dir / "0.pt")
 
         with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
-            activated_experts, activated_indices, top_k = load_activations_and_indices_and_topk()
+            activated_experts, activated_indices, top_k = (
+                load_activations_and_indices_and_topk()
+            )
 
         # Check first sample
         assert activated_experts[0, 0, 1].is_nonzero()  # Expert 1 should be active
         assert activated_experts[0, 0, 2].is_nonzero()  # Expert 2 should be active
-        assert not activated_experts[0, 0, 0].is_nonzero()  # Expert 0 should not be active
-        assert not activated_experts[0, 0, 3].is_nonzero()  # Expert 3 should not be active
+        assert not activated_experts[
+            0, 0, 0
+        ].is_nonzero()  # Expert 0 should not be active
+        assert not activated_experts[
+            0, 0, 3
+        ].is_nonzero()  # Expert 3 should not be active
 
         # Check second sample
         assert activated_experts[1, 0, 2].is_nonzero()  # Expert 2 should be active
         assert activated_experts[1, 0, 3].is_nonzero()  # Expert 3 should be active
-        assert not activated_experts[1, 0, 0].is_nonzero()  # Expert 0 should not be active
-        assert not activated_experts[1, 0, 1].is_nonzero()  # Expert 1 should not be active
+        assert not activated_experts[
+            1, 0, 0
+        ].is_nonzero()  # Expert 0 should not be active
+        assert not activated_experts[
+            1, 0, 1
+        ].is_nonzero()  # Expert 1 should not be active
 
     def test_device_handling(self, temp_dir):
         """Test device handling in activation loading."""
@@ -146,7 +161,9 @@ class TestLoadActivationsAndIndicesAndTopk:
             th.save(data, temp_dir / f"{i}.pt")
 
         with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
-            activated_experts, activated_indices, _ = load_activations_and_indices_and_topk()
+            activated_experts, activated_indices, _ = (
+                load_activations_and_indices_and_topk()
+            )
 
         assert_tensor_shape_and_type(
             activated_experts, (total_batch_size, 3, 6), th.bool
@@ -175,7 +192,9 @@ class TestLoadActivationsAndTopk:
 
         with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
             # Call both functions
-            full_experts, full_indices, full_topk = load_activations_and_indices_and_topk()
+            full_experts, full_indices, full_topk = (
+                load_activations_and_indices_and_topk()
+            )
             wrapper_experts, wrapper_topk = load_activations_and_topk()
 
         # Should return same results
@@ -235,7 +254,10 @@ class TestActivationLoadingErrorHandling:
         corrupted_file = temp_dir / "0.pt"
         corrupted_file.write_text("corrupted data")
 
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)), pytest.raises(RuntimeError):
+        with (
+            patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)),
+            pytest.raises(RuntimeError),
+        ):
             load_activations_and_indices_and_topk()
 
     def test_missing_topk_key(self, temp_dir):
@@ -246,7 +268,10 @@ class TestActivationLoadingErrorHandling:
         }
         th.save(data, temp_dir / "0.pt")
 
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)), pytest.raises(KeyError):
+        with (
+            patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)),
+            pytest.raises(KeyError),
+        ):
             load_activations_and_indices_and_topk()
 
     def test_missing_router_logits_key(self, temp_dir):
@@ -257,7 +282,10 @@ class TestActivationLoadingErrorHandling:
         }
         th.save(data, temp_dir / "0.pt")
 
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)), pytest.raises(KeyError):
+        with (
+            patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)),
+            pytest.raises(KeyError),
+        ):
             load_activations_and_indices_and_topk()
 
     def test_inconsistent_topk_values(self, temp_dir):
@@ -269,7 +297,10 @@ class TestActivationLoadingErrorHandling:
         th.save(data1, temp_dir / "0.pt")
         th.save(data2, temp_dir / "1.pt")
 
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)), pytest.raises(KeyError):
+        with (
+            patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)),
+            pytest.raises(KeyError),
+        ):
             load_activations_and_indices_and_topk()
 
     def test_invalid_tensor_shapes(self, temp_dir):
@@ -281,7 +312,10 @@ class TestActivationLoadingErrorHandling:
         }
         th.save(data, temp_dir / "0.pt")
 
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)), pytest.raises(RuntimeError):
+        with (
+            patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)),
+            pytest.raises(RuntimeError),
+        ):
             load_activations_and_indices_and_topk()
 
     def test_zero_topk_value(self, temp_dir):
@@ -289,7 +323,10 @@ class TestActivationLoadingErrorHandling:
         data = {"topk": 0, "router_logits": th.randn(3, 2, 4)}
         th.save(data, temp_dir / "0.pt")
 
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)), pytest.raises(ValueError):
+        with (
+            patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)),
+            pytest.raises(ValueError),
+        ):
             load_activations_and_indices_and_topk()
 
     def test_topk_larger_than_experts(self, temp_dir):
@@ -300,12 +337,18 @@ class TestActivationLoadingErrorHandling:
         }
         th.save(data, temp_dir / "0.pt")
 
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)), pytest.raises(RuntimeError):
+        with (
+            patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)),
+            pytest.raises(RuntimeError),
+        ):
             load_activations_and_indices_and_topk()
 
     def test_file_not_found(self, temp_dir):
         """Test handling of file not found error."""
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)), pytest.raises(FileNotFoundError):
+        with (
+            patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)),
+            pytest.raises(FileNotFoundError),
+        ):
             load_activations_and_indices_and_topk()
 
 
@@ -329,7 +372,9 @@ class TestActivationLoadingIntegration:
             th.save(data, temp_dir / f"{i}.pt")
 
         with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
-            activated_experts, activated_indices, loaded_topk = load_activations_and_indices_and_topk()
+            activated_experts, activated_indices, loaded_topk = (
+                load_activations_and_indices_and_topk()
+            )
 
         total_tokens = num_files * tokens_per_file
         assert_tensor_shape_and_type(

@@ -1,6 +1,5 @@
 """Tests for core.device_map module."""
 
-
 from core.device_map import CUSTOM_DEVICES, MAX_LAYERS, attn_gpu, mlp_gpu
 from test.test_utils import validate_device_map
 

@@ -21,6 +21,14 @@ def mock_device() -> str:
     return "cpu"
 
 
+# Add minimal ModelConfig fixture used by tests
+@pytest.fixture
+def mock_model_config():
+    from core.model import ModelConfig
+
+    return ModelConfig(hf_name="test/model", revision_format="step{}")
+
+
 @pytest.fixture
 def sample_tensor_3d() -> th.Tensor:
     """Create a sample 3D tensor (batch=2, layers=3, experts=4)."""
