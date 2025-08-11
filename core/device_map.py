@@ -13,36 +13,28 @@ def mlp_gpu() -> dict[str, str]:
         "lm_head.weight": "cpu",
     }
     q_proj_device_map = {
-        f"model.layers.{i}.self_attn.q_proj.weight": "cpu"
-        for i in range(MAX_LAYERS)
+        f"model.layers.{i}.self_attn.q_proj.weight": "cpu" for i in range(MAX_LAYERS)
     }
     k_proj_device_map = {
-        f"model.layers.{i}.self_attn.k_proj.weight": "cpu"
-        for i in range(MAX_LAYERS)
+        f"model.layers.{i}.self_attn.k_proj.weight": "cpu" for i in range(MAX_LAYERS)
     }
     v_proj_device_map = {
-        f"model.layers.{i}.self_attn.v_proj.weight": "cpu"
-        for i in range(MAX_LAYERS)
+        f"model.layers.{i}.self_attn.v_proj.weight": "cpu" for i in range(MAX_LAYERS)
     }
     o_proj_device_map = {
-        f"model.layers.{i}.self_attn.o_proj.weight": "cpu"
-        for i in range(MAX_LAYERS)
+        f"model.layers.{i}.self_attn.o_proj.weight": "cpu" for i in range(MAX_LAYERS)
     }
     q_norm_device_map = {
-        f"model.layers.{i}.self_attn.q_norm.weight": "cpu"
-        for i in range(MAX_LAYERS)
+        f"model.layers.{i}.self_attn.q_norm.weight": "cpu" for i in range(MAX_LAYERS)
     }
     k_norm_device_map = {
-        f"model.layers.{i}.self_attn.k_norm.weight": "cpu"
-        for i in range(MAX_LAYERS)
+        f"model.layers.{i}.self_attn.k_norm.weight": "cpu" for i in range(MAX_LAYERS)
     }
     mlp_router_device_map = {
-        f"model.layers.{i}.mlp.router.weight": 0
-        for i in range(MAX_LAYERS)
+        f"model.layers.{i}.mlp.router.weight": 0 for i in range(MAX_LAYERS)
     }
     mlp_gate_device_map = {
-        f"model.layers.{i}.mlp.gate.weight": 0
-        for i in range(MAX_LAYERS)
+        f"model.layers.{i}.mlp.gate.weight": 0 for i in range(MAX_LAYERS)
     }
     mlp_gate_proj_device_map = {
         f"model.layers.{i}.mlp.experts.{j}.gate_proj.weight": 0
@@ -57,8 +49,7 @@ def mlp_gpu() -> dict[str, str]:
         for i, j in product(range(MAX_LAYERS), range(512))
     }
     input_layernorm_device_map = {
-        f"model.layers.{i}.input_layernorm.weight": "cpu"
-        for i in range(MAX_LAYERS)
+        f"model.layers.{i}.input_layernorm.weight": "cpu" for i in range(MAX_LAYERS)
     }
     post_attention_layernorm_device_map = {
         f"model.layers.{i}.post_attention_layernorm.weight": "cpu"
@@ -90,36 +81,28 @@ def attn_gpu() -> dict[str, str]:
         "lm_head.weight": 0,
     }
     q_proj_device_map = {
-        f"model.layers.{i}.self_attn.q_proj.weight": 0
-        for i in range(MAX_LAYERS)
+        f"model.layers.{i}.self_attn.q_proj.weight": 0 for i in range(MAX_LAYERS)
     }
     k_proj_device_map = {
-        f"model.layers.{i}.self_attn.k_proj.weight": 0
-        for i in range(MAX_LAYERS)
+        f"model.layers.{i}.self_attn.k_proj.weight": 0 for i in range(MAX_LAYERS)
     }
     v_proj_device_map = {
-        f"model.layers.{i}.self_attn.v_proj.weight": 0
-        for i in range(MAX_LAYERS)
+        f"model.layers.{i}.self_attn.v_proj.weight": 0 for i in range(MAX_LAYERS)
     }
     o_proj_device_map = {
-        f"model.layers.{i}.self_attn.o_proj.weight": 0
-        for i in range(MAX_LAYERS)
+        f"model.layers.{i}.self_attn.o_proj.weight": 0 for i in range(MAX_LAYERS)
     }
     q_norm_device_map = {
-        f"model.layers.{i}.self_attn.q_norm.weight": 0
-        for i in range(MAX_LAYERS)
+        f"model.layers.{i}.self_attn.q_norm.weight": 0 for i in range(MAX_LAYERS)
     }
     k_norm_device_map = {
-        f"model.layers.{i}.self_attn.k_norm.weight": 0
-        for i in range(MAX_LAYERS)
+        f"model.layers.{i}.self_attn.k_norm.weight": 0 for i in range(MAX_LAYERS)
     }
     mlp_router_device_map = {
-        f"model.layers.{i}.mlp.router.weight": 0
-        for i in range(MAX_LAYERS)
+        f"model.layers.{i}.mlp.router.weight": 0 for i in range(MAX_LAYERS)
     }
     mlp_gate_device_map = {
-        f"model.layers.{i}.mlp.gate.weight": 0
-        for i in range(MAX_LAYERS)
+        f"model.layers.{i}.mlp.gate.weight": 0 for i in range(MAX_LAYERS)
     }
     mlp_gate_proj_device_map = {
         f"model.layers.{i}.mlp.experts.{j}.gate_proj.weight": "cpu"
@@ -134,8 +117,7 @@ def attn_gpu() -> dict[str, str]:
         for i, j in product(range(MAX_LAYERS), range(512))
     }
     input_layernorm_device_map = {
-        f"model.layers.{i}.input_layernorm.weight": 0
-        for i in range(MAX_LAYERS)
+        f"model.layers.{i}.input_layernorm.weight": 0 for i in range(MAX_LAYERS)
     }
     post_attention_layernorm_device_map = {
         f"model.layers.{i}.post_attention_layernorm.weight": 0

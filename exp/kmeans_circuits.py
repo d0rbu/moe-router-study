@@ -45,7 +45,9 @@ def kmeans_manhattan(
     return centroids
 
 
-def elbow(data: th.Tensor, start: int = 32, stop: int = 1024, step: int = 32, seed: int = 0) -> None:
+def elbow(
+    data: th.Tensor, start: int = 32, stop: int = 1024, step: int = 32, seed: int = 0
+) -> None:
     assert data.ndim == 2, "Data must be of dimensions (B, D)"
 
     batch_size, dim = data.shape
@@ -54,7 +56,12 @@ def elbow(data: th.Tensor, start: int = 32, stop: int = 1024, step: int = 32, se
 
     # run kmeans for each k
     sse_collection = []
-    for k in tqdm(range(start, stop, step), desc="Running elbow method", leave=False, total=total_iters):
+    for k in tqdm(
+        range(start, stop, step),
+        desc="Running elbow method",
+        leave=False,
+        total=total_iters,
+    ):
         centroids = kmeans_manhattan(data, k, seed=seed)
 
         # compute the sum of squared manhattan distances
@@ -67,11 +74,15 @@ def elbow(data: th.Tensor, start: int = 32, stop: int = 1024, step: int = 32, se
 
     # plot the sse
     plt.plot(range(start, stop, step), sse)
-    plt.savefig(os.path.join(FIGURE_DIR, "elbow_method.png"), dpi=300, bbox_inches="tight")
+    plt.savefig(
+        os.path.join(FIGURE_DIR, "elbow_method.png"), dpi=300, bbox_inches="tight"
+    )
     plt.close()
 
 
-def get_top_circuits(centroids: th.Tensor, num_layers: int, top_k: int) -> tuple[th.Tensor, th.Tensor]:
+def get_top_circuits(
+    centroids: th.Tensor, num_layers: int, top_k: int
+) -> tuple[th.Tensor, th.Tensor]:
     num_centroids = centroids.shape[0]
     circuit_centroids = centroids.view(num_centroids, num_layers, -1)
 

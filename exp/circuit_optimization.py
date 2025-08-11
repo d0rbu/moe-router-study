@@ -20,22 +20,23 @@ def expand_batch(batch: dict[str, th.Tensor]) -> list[dict[str, int | float | st
         for key, value in batch.items()
     }
 
-    batch_lengths = {len(value) for value in popo_batch.values() if isinstance(value, list)}
+    batch_lengths = {
+        len(value) for value in popo_batch.values() if isinstance(value, list)
+    }
     assert len(batch_lengths) == 1, "All values must have the same length"
     batch_length = batch_lengths.pop()
 
     expanded_batch = [
-        {
-            key: value[i]
-            for key, value in popo_batch.items()
-        }
+        {key: value[i] for key, value in popo_batch.items()}
         for i in range(batch_length)
     ]
 
     return expanded_batch
 
 
-def _async_wandb_batch_logger(wandb_run: wandb.Run, log_queue: queue.Queue, ready_flag: threading.Event):
+def _async_wandb_batch_logger(
+    wandb_run: wandb.Run, log_queue: queue.Queue, ready_flag: threading.Event
+):
     """Background thread for async wandb batch logging."""
     # Signal that we're ready to receive the first batch
     ready_flag.set()
@@ -90,7 +91,9 @@ def gradient_descent(
         The optimal set of circuits, the loss, the faithfulness, and the complexity.
     """
 
-    assert num_warmup_epochs + num_cooldown_epochs < num_epochs, "num_warmup_epochs + num_cooldown_epochs must be less than num_epochs"
+    assert num_warmup_epochs + num_cooldown_epochs < num_epochs, (
+        "num_warmup_epochs + num_cooldown_epochs must be less than num_epochs"
+    )
     assert data.ndim == 3, "Data must be of shape (B, L, E)"
 
     batch_size, num_layers, num_experts = data.shape
@@ -124,12 +127,14 @@ def gradient_descent(
             if log_queue is None:
                 return
 
-            log_queue.put({
-                "losses": losses[:logs_accumulated],
-                "faithfulnesses": faithfulnesses[:logs_accumulated],
-                "complexities": complexities[:logs_accumulated],
-                "lrs": lrs[:logs_accumulated],
-            })
+            log_queue.put(
+                {
+                    "losses": losses[:logs_accumulated],
+                    "faithfulnesses": faithfulnesses[:logs_accumulated],
+                    "complexities": complexities[:logs_accumulated],
+                    "lrs": lrs[:logs_accumulated],
+                }
+            )
 
     circuits_logits = th.randn(max_circuits, num_layers, num_experts, device=device)
     circuits_parameter = th.nn.Parameter(circuits_logits)
@@ -137,10 +142,16 @@ def gradient_descent(
 
     # simple trapezoid LR scheduler with warmup and cooldown
     def get_lr(epoch: int) -> float:
-        portion_through_warmup = epoch / num_warmup_epochs if num_warmup_epochs > 0 else 1
-        distance_from_end_relative_to_cooldown = (num_epochs - epoch) / num_cooldown_epochs if num_cooldown_epochs > 0 else 1
+        portion_through_warmup = (
+            epoch / num_warmup_epochs if num_warmup_epochs > 0 else 1
+        )
+        distance_from_end_relative_to_cooldown = (
+            (num_epochs - epoch) / num_cooldown_epochs if num_cooldown_epochs > 0 else 1
+        )
 
-        return lr * min(portion_through_warmup, distance_from_end_relative_to_cooldown, 1)
+        return lr * min(
+            portion_through_warmup, distance_from_end_relative_to_cooldown, 1
+        )
 
     losses = th.empty(num_epochs, device=device)
     faithfulnesses = th.empty(num_epochs, device=device)
@@ -399,13 +410,34 @@ def grid_search_gradient_descent(
             wandb_run=wandb_run,
         )
         loss_landscape[
-            seed_idx, complexity_importance_idx, complexity_power_idx, lr_idx, max_circuits_idx, num_epochs_idx, num_warmup_epochs_idx, num_cooldown_epochs_idx
+            seed_idx,
+            complexity_importance_idx,
+            complexity_power_idx,
+            lr_idx,
+            max_circuits_idx,
+            num_epochs_idx,
+            num_warmup_epochs_idx,
+            num_cooldown_epochs_idx,
         ] = loss
         faithfulness_landscape[
-            seed_idx, complexity_importance_idx, complexity_power_idx, lr_idx, max_circuits_idx, num_epochs_idx, num_warmup_epochs_idx, num_cooldown_epochs_idx
+            seed_idx,
+            complexity_importance_idx,
+            complexity_power_idx,
+            lr_idx,
+            max_circuits_idx,
+            num_epochs_idx,
+            num_warmup_epochs_idx,
+            num_cooldown_epochs_idx,
         ] = faithfulness
         complexity_landscape[
-            seed_idx, complexity_importance_idx, complexity_power_idx, lr_idx, max_circuits_idx, num_epochs_idx, num_warmup_epochs_idx, num_cooldown_epochs_idx
+            seed_idx,
+            complexity_importance_idx,
+            complexity_power_idx,
+            lr_idx,
+            max_circuits_idx,
+            num_epochs_idx,
+            num_warmup_epochs_idx,
+            num_cooldown_epochs_idx,
         ] = complexity
 
     out = {
