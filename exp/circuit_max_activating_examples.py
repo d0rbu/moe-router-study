@@ -25,7 +25,11 @@ def get_circuit_activations(
     2) Compute activations = einsum("ble,cle->bc", mask.float(), circuits)
     Returns (activations, token_topk_mask).
     """
+<<<<<<< HEAD
     token_topk_mask, _ = load_activations_and_topk(device=device)
+=======
+    token_topk_mask, _topk = load_activations_and_topk(device=device)
+>>>>>>> 5769920 (chore(viz): remove duplicate viz/circuit_max_activating_examples.py and consolidate into exp/; fix merge artifacts; keep hover and slider behavior intact)
     circuits = circuits.to(device=device, dtype=th.float32)
     activations = th.einsum("ble,cle->bc", token_topk_mask.float(), circuits)
     return activations, token_topk_mask
@@ -151,8 +155,8 @@ def _render_sequences_panel(
         ax.clear()
 
     for ax_idx, (ax, seq_id) in enumerate(zip(axes, seq_indices, strict=False)):
-        tokens = sequences[seq_id]
-        n_tok = len(tokens)
+        tokens_in_seq = sequences[seq_id]
+        n_tok = len(tokens_in_seq)
         ax.set_xlim(0, n_tok)
         ax.set_ylim(0, 1)
         ax.axis("off")
@@ -160,7 +164,7 @@ def _render_sequences_panel(
         # Compute global start token index for this sequence
         start = int(seq_offsets[seq_id])
         # draw rectangles for tokens with colors based on token_scores
-        for i, tok in enumerate(tokens):
+        for i, tok in enumerate(tokens_in_seq):
             global_token_idx = start + i
             score = float(token_scores[global_token_idx])
             rect = patches.Rectangle(
@@ -213,7 +217,12 @@ def _viz_render_precomputed(
     _ensure_token_alignment(token_topk_mask, sequences)
 
     # Build lengths/offsets for hover mapping
+<<<<<<< HEAD
     _seq_ids, _seq_lengths, seq_offsets = build_sequence_id_tensor(sequences)
+=======
+    _seq_ids, seq_lengths, seq_offsets = build_sequence_id_tensor(sequences)
+    _ = seq_lengths  # kept for readability
+>>>>>>> 5769920 (chore(viz): remove duplicate viz/circuit_max_activating_examples.py and consolidate into exp/; fix merge artifacts; keep hover and slider behavior intact)
 
     # Setup figure: left side stacked sequences, right side circuit grid + slider
     C = int(circuits.shape[0])
@@ -255,7 +264,7 @@ def _viz_render_precomputed(
     # Initial render
     current_norm_scores = norm_scores[:, circuit_idx]
     top_seq_ids = order_per_circuit[circuit_idx][:top_n]
-    token_mapping = _render_sequences_panel(
+    _render_sequences_panel(
         seq_axes,
         sequences,
         [int(s) for s in top_seq_ids],
@@ -270,13 +279,17 @@ def _viz_render_precomputed(
     ax_to_seq = dict(zip(seq_axes, top_seq_ids, strict=False))
 
     def on_slider_change(val: float) -> None:
+<<<<<<< HEAD
         nonlocal circuit_idx, top_seq_ids, current_norm_scores, token_mapping, ax_to_seq
+=======
+        nonlocal circuit_idx, top_seq_ids, current_norm_scores, ax_to_seq
+>>>>>>> 5769920 (chore(viz): remove duplicate viz/circuit_max_activating_examples.py and consolidate into exp/; fix merge artifacts; keep hover and slider behavior intact)
         circuit_idx = int(val)
         circuit_im.set_array(circuits[circuit_idx].detach().cpu().numpy())
         circuit_ax.set_title(f"Circuit {circuit_idx + 1}/{C} (L={L}, E={E})")
         current_norm_scores = norm_scores[:, circuit_idx]
         top_seq_ids = order_per_circuit[circuit_idx][:top_n]
-        token_mapping = _render_sequences_panel(
+        _render_sequences_panel(
             seq_axes,
             sequences,
             [int(s) for s in top_seq_ids],
