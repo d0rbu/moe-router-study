@@ -1,8 +1,8 @@
 """Pytest configuration and shared fixtures (lean, no heavy mocking)."""
 
-import tempfile
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator
+import tempfile
 
 import pytest
 import torch as th
@@ -97,4 +97,3 @@ def mock_wandb():
         mock_run_instance = MagicMock()
         mock_run.return_value = mock_run_instance
         yield mock_run_instance
-

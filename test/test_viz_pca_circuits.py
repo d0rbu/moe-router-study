@@ -25,7 +25,7 @@ def test_pca_figure_creates_file(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("viz.FIGURE_DIR", str(fig_dir), raising=False)
 
     # 3) Call pca_figure on CPU
-    from viz.pca_circuits import pca_figure, FIGURE_PATH
+    from viz.pca_circuits import FIGURE_PATH, pca_figure
 
     pca_figure(device="cpu")
 
@@ -33,4 +33,3 @@ def test_pca_figure_creates_file(tmp_path: Path, monkeypatch) -> None:
     out_path = Path(FIGURE_PATH)
     assert out_path.exists() and out_path.is_file()
     assert out_path.stat().st_size > 0
-

@@ -15,6 +15,7 @@ def fineweb_10bt_text() -> IterableColumn:
 
 def toy_text() -> IterableColumn:
     """Tiny, in-repo dataset for tests and quick runs."""
+
     class ToyIterable(IterableDataset):
         def __iter__(self):
             yield from [
@@ -23,7 +24,8 @@ def toy_text() -> IterableColumn:
                 "Tiny sample 3",
                 "Tiny sample 4",
             ]
-    return cast(IterableColumn, ToyIterable())
+
+    return cast("IterableColumn", ToyIterable())
 
 
 DATASETS: dict[str, Callable[[], IterableColumn]] = {

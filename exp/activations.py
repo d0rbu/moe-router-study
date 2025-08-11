@@ -57,7 +57,9 @@ def load_activations_indices_tokens_and_topk(
 
         # Build top-k indices and boolean mask via topk + scatter
         topk_indices = th.topk(router_logits, k=top_k, dim=2).indices  # (B, L, topk)
-        expert_activations = th.zeros_like(router_logits, device=device).bool()  # (B, L, E)
+        expert_activations = th.zeros_like(
+            router_logits, device=device
+        ).bool()  # (B, L, E)
         expert_activations.scatter_(2, topk_indices, True)
 
         activated_expert_indices_collection.append(topk_indices)

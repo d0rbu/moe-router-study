@@ -31,8 +31,12 @@ def compute_iou(data: th.Tensor, circuits: th.Tensor) -> th.Tensor:
     num_extra_dims = circuits.ndim - 3
 
     # compute the IoU for each data point
-    data_flat = data.view(*([1] * num_extra_dims), batch_size, 1, num_layers * num_experts)
-    circuits_flat = circuits.view(*circuits.shape[:-3], 1, num_circuits, num_layers * num_experts)
+    data_flat = data.view(
+        *([1] * num_extra_dims), batch_size, 1, num_layers * num_experts
+    )
+    circuits_flat = circuits.view(
+        *circuits.shape[:-3], 1, num_circuits, num_layers * num_experts
+    )
     intersection = th.sum(data_flat & circuits_flat, dim=-1)
     union = th.sum(data_flat | circuits_flat, dim=-1)
     iou = intersection / union
