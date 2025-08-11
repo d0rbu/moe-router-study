@@ -1,3 +1,6 @@
+from itertools import pairwise
+from typing import cast
+
 from matplotlib.axes import Axes
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
@@ -12,7 +15,7 @@ from exp.activations import (
 
 
 def get_circuit_activations(
-    _circuits: th.Tensor,
+    circuits: th.Tensor,
     device: str = "cuda",
 ) -> tuple[th.Tensor, th.Tensor]:
     """Compute circuit activations for every token from top-k activation mask.
