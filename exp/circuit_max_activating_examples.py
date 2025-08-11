@@ -25,11 +25,8 @@ def get_circuit_activations(
     2) Compute activations = einsum("ble,cle->bc", mask.float(), circuits)
     Returns (activations, token_topk_mask).
     """
-<<<<<<< HEAD
+    # Resolve merge artifact: only need the mask; ignore top_k value here
     token_topk_mask, _ = load_activations_and_topk(device=device)
-=======
-    token_topk_mask, _topk = load_activations_and_topk(device=device)
->>>>>>> 5769920 (chore(viz): remove duplicate viz/circuit_max_activating_examples.py and consolidate into exp/; fix merge artifacts; keep hover and slider behavior intact)
     circuits = circuits.to(device=device, dtype=th.float32)
     activations = th.einsum("ble,cle->bc", token_topk_mask.float(), circuits)
     return activations, token_topk_mask
@@ -217,12 +214,7 @@ def _viz_render_precomputed(
     _ensure_token_alignment(token_topk_mask, sequences)
 
     # Build lengths/offsets for hover mapping
-<<<<<<< HEAD
     _seq_ids, _seq_lengths, seq_offsets = build_sequence_id_tensor(sequences)
-=======
-    _seq_ids, seq_lengths, seq_offsets = build_sequence_id_tensor(sequences)
-    _ = seq_lengths  # kept for readability
->>>>>>> 5769920 (chore(viz): remove duplicate viz/circuit_max_activating_examples.py and consolidate into exp/; fix merge artifacts; keep hover and slider behavior intact)
 
     # Setup figure: left side stacked sequences, right side circuit grid + slider
     C = int(circuits.shape[0])
@@ -279,11 +271,8 @@ def _viz_render_precomputed(
     ax_to_seq = dict(zip(seq_axes, top_seq_ids, strict=False))
 
     def on_slider_change(val: float) -> None:
-<<<<<<< HEAD
-        nonlocal circuit_idx, top_seq_ids, current_norm_scores, token_mapping, ax_to_seq
-=======
+        # Resolve merge artifact: remove unused token_mapping from nonlocal
         nonlocal circuit_idx, top_seq_ids, current_norm_scores, ax_to_seq
->>>>>>> 5769920 (chore(viz): remove duplicate viz/circuit_max_activating_examples.py and consolidate into exp/; fix merge artifacts; keep hover and slider behavior intact)
         circuit_idx = int(val)
         circuit_im.set_array(circuits[circuit_idx].detach().cpu().numpy())
         circuit_ax.set_title(f"Circuit {circuit_idx + 1}/{C} (L={L}, E={E})")
