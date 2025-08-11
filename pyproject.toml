@@ -39,7 +39,11 @@ dependencies = [
     "scikit-learn>=1.7.1",
     "tornado>=6.5.1",
     "hatchling>=1.27.0",
+<<<<<<< HEAD
     "editables>=0.5"
+=======
+    "editables>=0.5",
+>>>>>>> origin/main
 ]
 
 [project.optional-dependencies]
@@ -49,6 +53,9 @@ dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "pre-commit>=3.0.0",
+]
+flash = [
+    "flash-attn>=2.8.2",
 ]
 
 [project.urls]
