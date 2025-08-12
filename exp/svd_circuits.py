@@ -10,15 +10,17 @@ from viz import FIGURE_DIR
 
 
 @arguably.command()
-def svd_circuits(batch_size: int = 0, num_circuits: int = 64, device: str = "cpu") -> None:
+def svd_circuits(
+    batch_size: int = 0, num_circuits: int = 64, device: str = "cpu"
+) -> None:
     activated_experts, top_k = load_activations_and_topk(device=device)
 
-    activated_experts = activated_experts[:batch_size] if batch_size > 0 else activated_experts
+    activated_experts = (
+        activated_experts[:batch_size] if batch_size > 0 else activated_experts
+    )
 
     # (B, L, E) -> (B, L * E)
-    activated_experts = (
-        activated_experts.view(activated_experts.shape[0], -1).float()
-    )
+    activated_experts = activated_experts.view(activated_experts.shape[0], -1).float()
     print(activated_experts.shape)
 
     # SVD to get circuits
