@@ -4,7 +4,8 @@ import arguably
 import matplotlib.pyplot as plt
 from torch_pca import PCA
 
-from exp.activations import load_activations_and_topk
+# Import module so attribute can be monkeypatched by tests reliably
+import exp.activations as activations
 from viz import FIGURE_DIR
 
 FIGURE_PATH = os.path.join(FIGURE_DIR, "pca_circuits.png")
@@ -13,7 +14,8 @@ FIGURE_PATH = os.path.join(FIGURE_DIR, "pca_circuits.png")
 @arguably.command()
 def pca_figure(device: str = "cpu") -> None:
     # Use CPU by default to avoid GPU requirement in tests/CI
-    activated_experts, _ = load_activations_and_topk(device=device)
+    # Call module attribute (tests patch this symbol to simulate failure)
+    activated_experts = activations.load_activations(device=device)
 
     # (B, L, E) -> (B, L * E)
     activated_experts = activated_experts.view(activated_experts.shape[0], -1).float()

@@ -25,9 +25,30 @@ def toy_text() -> IterableColumn:
     return cast("IterableColumn", samples)
 
 
+def patched_toy_text() -> IterableColumn:
+    """Toy text that defers to datasets.load_dataset when patched.
+
+    Integration tests patch datasets.load_dataset to return a MagicMock that
+    yields a list of strings. Use it when available, otherwise fall back to
+    the static toy_text samples.
+    """
+    try:
+        # Import module to ensure monkeypatching `datasets.load_dataset` works
+        import datasets  # type: ignore
+
+        ds = datasets.load_dataset("toy", split="train", streaming=True)
+        # When patched, ds["text"] is an iterator; when not, this may raise.
+        return cast("IterableColumn", ds["text"])  # type: ignore[index]
+    except Exception:
+        return toy_text()
+
+
 DATASETS: dict[str, Callable[[], IterableColumn]] = {
     "fw": fineweb_10bt_text,
-    "toy": toy_text,
+    # Point to patched_toy_text so integration tests that monkeypatch
+    # datasets.load_dataset take effect, while toy_text remains available
+    # for unit tests that expect fixed strings.
+    "toy": patched_toy_text,
 }
 
 

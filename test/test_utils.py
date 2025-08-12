@@ -1,7 +1,7 @@
 """Test utilities and helper functions."""
 
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 from unittest.mock import MagicMock
 
 import torch as th
@@ -25,7 +25,7 @@ def create_mock_file_structure(base_dir: Path, files: dict[str, Any]) -> None:
 
 
 def assert_tensor_shape_and_type(
-    tensor: th.Tensor, expected_shape: tuple, expected_dtype: th.dtype = None
+    tensor: th.Tensor, expected_shape: tuple, expected_dtype: th.dtype | None = None
 ) -> None:
     """Assert tensor has expected shape and optionally dtype."""
     assert tensor.shape == expected_shape, (
@@ -46,13 +46,20 @@ def assert_tensor_close(
     )
 
 
+class SampleRouterData(TypedDict):
+    router_logits: th.Tensor
+    activated_experts: th.Tensor
+    topk_indices: th.Tensor
+    topk: int
+
+
 def create_sample_router_data(
     batch_size: int = 4,
     num_layers: int = 3,
     num_experts: int = 8,
     topk: int = 2,
     device: str = "cpu",
-) -> dict[str, th.Tensor]:
+) -> SampleRouterData:
     """Create sample router activation data for testing."""
     router_logits = th.randn(batch_size, num_layers, num_experts, device=device)
 

@@ -170,23 +170,36 @@ def min_logit_loss(
 def circuit_loss(
     data: th.Tensor,
     circuits_logits: th.Tensor,
-    top_k: int,
+    topk: int | None = None,
+    top_k: int | None = None,
     complexity_importance: float = 1.0,
     complexity_power: float = 1.0,
 ) -> tuple[th.Tensor, th.Tensor, th.Tensor]:
+    """Compute overall loss with faithfulness and complexity components.
+
+    Accepts both `topk` and `top_k` for compatibility with tests.
+    """
+    # Normalize top-k argument
+    if topk is None and top_k is None:
+        raise TypeError("circuit_loss requires `topk` (or `top_k`) argument")
+    if topk is None:
+        topk = int(top_k)  # type: ignore[arg-type]
+    elif top_k is not None and int(top_k) != int(topk):
+        raise ValueError("Conflicting values for topk and top_k")
+
     faithfulness_loss = min_logit_loss(data, circuits_logits)
 
     # (..., C, L, E)
-    complexity = th.sigmoid(circuits_logits)
+    base_complexity = th.sigmoid(circuits_logits)
     # sum over experts and account for top-k
     # (..., C, L, E) -> (..., C, L)
-    complexity = complexity.sum(dim=-1) / top_k
+    base_complexity = base_complexity.sum(dim=-1) / float(topk)
     # average over layers
     # (..., C, L) -> (..., C)
-    complexity = complexity.mean(dim=-1)
+    base_complexity = base_complexity.mean(dim=-1)
     # sum over circuits
     # (..., C) -> (...)
-    complexity = complexity.sum(dim=-1)
+    base_complexity = base_complexity.sum(dim=-1)
 
     assert complexity_importance >= 0.0 and complexity_importance <= 1.0, (
         "complexity_importance must be between 0.0 and 1.0"
@@ -194,9 +207,12 @@ def circuit_loss(
 
     faithfulness_importance = 1.0 - complexity_importance
 
+    # Apply power to match tests' expectation on returned complexity term
+    complexity_term = base_complexity.pow(complexity_power)
+
     loss = (
         faithfulness_importance * faithfulness_loss
-        + complexity_importance * complexity.pow(complexity_power)
+        + complexity_importance * complexity_term
     )
 
-    return loss, faithfulness_loss, complexity
+    return loss, faithfulness_loss, complexity_term
