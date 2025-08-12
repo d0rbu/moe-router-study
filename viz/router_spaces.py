@@ -7,10 +7,9 @@ from tqdm import tqdm
 
 # Replace unresolved import with a local default that can be overridden via env var
 from exp import OUTPUT_DIR  # provides base output directory
+from viz import FIGURE_DIR
 
 WEIGHT_DIR = os.environ.get("WEIGHT_DIR", os.path.join(OUTPUT_DIR, "weights"))
-
-from viz import FIGURE_DIR
 
 ROUTER_VIZ_DIR = os.path.join(FIGURE_DIR, "router_spaces")
 
