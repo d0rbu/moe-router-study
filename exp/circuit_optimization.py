@@ -253,7 +253,7 @@ def load_and_gradient_descent(
         "complexity": complexity,
     }
 
-    out_path = os.path.join(OUTPUT_DIR, "circuits.pt")
+    out_path = os.path.join(OUTPUT_DIR, "optimized_circuits.pt")
     th.save(out, out_path)
 
     wandb.finish()
@@ -457,6 +457,4 @@ def grid_search_gradient_descent(
 
 
 if __name__ == "__main__":
-    # arguably.run()
-    # grid_search_gradient_descent(top_k=8, num_seeds=3)
-    load_and_gradient_descent(top_k=8)
+    arguably.run()

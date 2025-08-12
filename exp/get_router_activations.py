@@ -1,3 +1,4 @@
+import gc
 from itertools import batched
 import os
 
@@ -100,7 +101,16 @@ def get_router_activations(
                 router_logit_collection_idx += 1
                 router_logit_collection_size = 0
                 router_logit_collection = []
+                tokenized_batch_collection = []
                 pbar.reset()
+
+            # clean up memory
+            del router_logits
+            del encoded_batch
+            del tokenized_batch
+            del tracer
+            gc.collect()
+            th.cuda.empty_cache()
 
         # save the remaining router probabilities to a file
         if router_logit_collection_size > 0:

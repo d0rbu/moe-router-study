@@ -14,7 +14,7 @@ EXPERT_IMPORTANCE_DIR = os.path.join(OUTPUT_DIR, "expert_importance")
 @arguably.command()
 def expert_importance(
     model_name: str = "olmoe",
-    checkpoint_idx: int = -1,
+    checkpoint_idx: int | None = None,
     device: str = "cpu",
 ) -> None:
     """Compute reader/writer importance vectors and scores for ALL experts across ALL router layers.
@@ -30,14 +30,17 @@ def expert_importance(
     if model_config is None:
         raise ValueError(f"Model {model_name} not found")
 
-    checkpoint = model_config.checkpoints[checkpoint_idx]
+    if checkpoint_idx is None:
+        revision = None
+    else:
+        revision = str(model_config.checkpoints[checkpoint_idx])
 
     os.makedirs(EXPERT_IMPORTANCE_DIR, exist_ok=True)
 
     model = StandardizedTransformer(
         model_config.hf_name,
         device_map=device,
-        revision=str(checkpoint),
+        revision=revision,
     )
 
     router_layers: list[int] = model.layers_with_routers
@@ -49,8 +52,7 @@ def expert_importance(
         common_meta: dict[str, Any] = {
             "model_name": model_name,
             "checkpoint_idx": checkpoint_idx,
-            "step": checkpoint.step,
-            "num_tokens": checkpoint.num_tokens,
+            "revision": revision,
         }
 
         for layer_idx in router_layers:
@@ -59,9 +61,9 @@ def expert_importance(
             num_experts, hidden_size = router_weight.shape
 
             # Preload attention weights for this layer
-            q_w: th.Tensor = model.self_attn[layer_idx].q_proj.weight.detach().cpu()
-            k_w: th.Tensor = model.self_attn[layer_idx].k_proj.weight.detach().cpu()
-            o_w: th.Tensor = model.self_attn[layer_idx].out_proj.weight.detach().cpu()
+            q_w: th.Tensor = model.attentions[layer_idx].q_proj.weight.detach().cpu()
+            k_w: th.Tensor = model.attentions[layer_idx].k_proj.weight.detach().cpu()
+            o_w: th.Tensor = model.attentions[layer_idx].o_proj.weight.detach().cpu()
 
             # Vectorized readers shared per layer
             # q/k: (E, Dq) = (q_w @ V^T)^T, (k_w @ V^T)^T
