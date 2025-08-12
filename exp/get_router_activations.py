@@ -71,20 +71,27 @@ def get_router_activations(
             tokenized_batch = [model.tokenizer.tokenize(text) for text in batch]
             tokenized_batch_collection.extend(tokenized_batch)
 
-            router_logits = []
-
+            # Collect proxies during trace, then materialize outside the trace
+            proxies = []
             with model.trace(batch) as tracer:
                 for layer in router_layers:
                     padding_mask: th.Tensor = encoded_batch.attention_mask.bool().view(
                         -1
                     )  # (batch_size * seq_len)
-
-                    router_logits.append(
-                        model.routers_output[layer].cpu()[padding_mask].save()
-                    )
+                    # Save proxy to router output. Avoid .cpu() inside trace to limit graph size.
+                    p = model.routers_output[layer][padding_mask].save()
+                    proxies.append(p)
                 tracer.stop()
 
-            router_logits = th.stack(router_logits, dim=1)
+            # Materialize proxies to plain tensors and drop references to the traced graph
+            router_logits_tensors = [
+                p.value.detach().cpu().contiguous() for p in proxies
+            ]
+            del proxies
+
+            router_logits = th.stack(router_logits_tensors, dim=1)
+            del router_logits_tensors
+
             router_logit_collection.append(router_logits)
             router_logit_collection_size += router_logits.shape[0]
             pbar.update(router_logits.shape[0])
@@ -100,6 +107,7 @@ def get_router_activations(
                 router_logit_collection_idx += 1
                 router_logit_collection_size = 0
                 router_logit_collection = []
+                tokenized_batch_collection = []  # reset tokens to avoid accumulation
                 pbar.reset()
 
         # save the remaining router probabilities to a file
