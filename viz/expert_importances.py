@@ -194,8 +194,8 @@ def expert_importances() -> None:
             rects[(row_idx, col_idx)] = rect
 
     # Slider axes
-    ax_layer = plt.axes([0.10, 0.08, 0.35, 0.04])
-    ax_expert = plt.axes([0.55, 0.08, 0.35, 0.04])
+    ax_layer = plt.axes((0.10, 0.08, 0.35, 0.04))  # use tuple for type-checker
+    ax_expert = plt.axes((0.55, 0.08, 0.35, 0.04))  # use tuple for type-checker
 
     # Slider ranges
     layer_slider = Slider(

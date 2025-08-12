@@ -5,7 +5,11 @@ import matplotlib.pyplot as plt
 import torch as th
 from tqdm import tqdm
 
-from exp.get_weights import WEIGHT_DIR
+# Replace unresolved import with a local default that can be overridden via env var
+from exp import OUTPUT_DIR  # provides base output directory
+
+WEIGHT_DIR = os.environ.get("WEIGHT_DIR", os.path.join(OUTPUT_DIR, "weights"))
+
 from viz import FIGURE_DIR
 
 ROUTER_VIZ_DIR = os.path.join(FIGURE_DIR, "router_spaces")
