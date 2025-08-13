@@ -11,18 +11,31 @@ import torch as th
 from exp.expert_importance import EXPERT_IMPORTANCE_DIR
 from viz import FIGURE_DIR
 
+
 # Layout configuration
-WRITER_COMPONENTS = [
-    ("mlp.down_proj", "Down (writer)"),
-    ("attn.o_proj", "Attn O (writer)"),
-]
-READER_COMPONENTS = [
-    ("attn.q_proj", "Attn Q (reader)"),
-    ("attn.k_proj", "Attn K (reader)"),
-    ("mlp.up_proj", "Up (reader)"),
-    ("mlp.gate_proj", "Gate (reader)"),
-]
-ALL_COMPONENTS = WRITER_COMPONENTS + READER_COMPONENTS
+@dataclass
+class ComponentInfo:
+    """Information about a component in the visualization."""
+
+    key: str
+    label: str
+
+
+# Writers (left side of visualization)
+WRITER_COMPONENTS = {
+    ComponentInfo("mlp.down_proj", "Down (writer)"),
+    ComponentInfo("attn.o_proj", "Attn O (writer)"),
+}
+
+# Readers (right side of visualization)
+READER_COMPONENTS = {
+    ComponentInfo("attn.q_proj", "Attn Q (reader)"),
+    ComponentInfo("attn.k_proj", "Attn K (reader)"),
+    ComponentInfo("mlp.up_proj", "Up (reader)"),
+    ComponentInfo("mlp.gate_proj", "Gate (reader)"),
+}
+
+ALL_COMPONENTS = WRITER_COMPONENTS | READER_COMPONENTS
 
 EXPERT_OWNED = {"mlp.down_proj", "mlp.up_proj", "mlp.gate_proj"}
 
@@ -66,7 +79,9 @@ def load_importance_data(path: str) -> ImportanceData:
         num_experts = int(e["num_experts"])  # type: ignore[call-arg]
 
         if layer not in layer_component_l2:
-            layer_component_l2[layer] = {c: [] for c, _ in ALL_COMPONENTS}
+            layer_component_l2[layer] = {
+                comp_info.key: [] for comp_info in ALL_COMPONENTS
+            }
         # ensure lists can be extended up to expert_idx
         comp_list = layer_component_l2[layer].setdefault(comp, [])
         if len(comp_list) <= expert_idx:
@@ -129,13 +144,18 @@ def expert_importances() -> None:
     # Figure layout
     num_rows = len(data.layers_sorted)
     # columns: writers (2) + center residual (1) + readers (4)
+    writer_info_list = sorted(WRITER_COMPONENTS, key=lambda x: x.key)
+    reader_info_list = sorted(READER_COMPONENTS, key=lambda x: x.key)
+
     col_labels = (
-        [c[1] for c in WRITER_COMPONENTS]
+        [comp_info.label for comp_info in writer_info_list]
         + ["Residual"]
-        + [c[1] for c in READER_COMPONENTS]
+        + [comp_info.label for comp_info in reader_info_list]
     )
     col_components = (
-        [c[0] for c in WRITER_COMPONENTS] + [None] + [c[0] for c in READER_COMPONENTS]
+        [comp_info.key for comp_info in writer_info_list]
+        + [None]
+        + [comp_info.key for comp_info in reader_info_list]
     )
     num_cols = len(col_labels)
 
@@ -253,7 +273,9 @@ def expert_importances() -> None:
                 # Selected layer: set intensity color based on role and l2
                 # Find role
                 role = (
-                    "writer" if comp in {c for c, _ in WRITER_COMPONENTS} else "reader"
+                    "writer"
+                    if comp in {comp_info.key for comp_info in WRITER_COMPONENTS}
+                    else "reader"
                 )
 
                 # get l2 for this layer/comp/expert
