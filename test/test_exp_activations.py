@@ -1,9 +1,11 @@
 from pathlib import Path
+import os
 
 import pytest
 import torch as th
 
 from exp import activations as act
+from exp.get_router_activations import ROUTER_LOGITS_DIR
 
 
 @pytest.mark.unit
@@ -29,10 +31,8 @@ def test_load_activations_indices_tokens_and_topk_from_tempdir(
     write_file(0)
     write_file(1)
 
-    # Monkeypatch the directory used by activations by patching the source module variable
-    from exp import get_router_activations as gra
-
-    monkeypatch.setattr(gra, "ROUTER_LOGITS_DIR", str(router_dir))
+    # Monkeypatch the directory constant directly
+    monkeypatch.setattr("exp.get_router_activations.ROUTER_LOGITS_DIR", str(router_dir))
 
     # Act
     activated_experts, indices, tokens, top_k = act.load_activations_indices_tokens_and_topk(device="cpu")
@@ -59,9 +59,7 @@ def test_load_activations_raises_on_missing_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Patch to a non-existent directory with no 0.pt file
-    from exp import get_router_activations as gra
-
-    monkeypatch.setattr(gra, "ROUTER_LOGITS_DIR", str(tmp_path / "missing"))
+    monkeypatch.setattr("exp.get_router_activations.ROUTER_LOGITS_DIR", str(tmp_path / "missing"))
 
     with pytest.raises(ValueError):
         act.load_activations_and_topk(device="cpu")
