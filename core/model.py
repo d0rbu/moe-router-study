@@ -11,9 +11,11 @@ class Checkpoint:
     model_config: "ModelConfig"
 
     def __str__(self):
-        # Handle missing format gracefully
+        # Fail explicitly if revision_format is None
         if self.model_config.revision_format is None:
-            return f"step{self.step}"
+            raise ValueError(
+                "ModelConfig.revision_format is required for string representation"
+            )
         return self.model_config.revision_format.format(self.step, self.num_tokens)
 
 

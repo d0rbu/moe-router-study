@@ -41,9 +41,9 @@ class TestCheckpoint:
         config = ModelConfig(hf_name="test/model")
         checkpoint = Checkpoint(step=1000, num_tokens=1000000, model_config=config)
 
-        # Should handle None revision_format gracefully
-        result = str(checkpoint)
-        assert isinstance(result, str)
+        # Should raise ValueError when revision_format is None
+        with pytest.raises(ValueError, match="revision_format is required"):
+            str(checkpoint)
 
 
 class TestModelConfig:

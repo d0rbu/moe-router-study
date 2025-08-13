@@ -270,19 +270,27 @@ class TestEndToEndDataFlow:
     def test_complete_pipeline_simulation(self, temp_dir):
         """Test a complete pipeline simulation with mocked components."""
         # Step 1: Mock dataset loading
-        with patch("datasets.load_dataset") as mock_load_dataset:
-            mock_dataset = MagicMock()
+        with patch("core.data.load_dataset") as mock_load_dataset:
+            # Set up the mock to raise an exception to trigger the fallback path
+            mock_load_dataset.side_effect = Exception("Simulated dataset loading error")
+
+            # Then patch the fallback function to return our test data
             mock_text_data = ["Text sample 1", "Text sample 2"]
-            mock_dataset.__getitem__.return_value = iter(mock_text_data)
-            mock_load_dataset.return_value = mock_dataset
+            with patch("core.data.toy_text") as mock_toy_text:
+                mock_toy_text.return_value = mock_text_data
 
-            from core.data import DATASETS
+                from core.data import DATASETS
 
-            # Use toy dataset to avoid loading external data
-            dataset_func = DATASETS["toy"]
-            text_data = list(dataset_func())
+                # Use toy dataset
+                dataset_func = DATASETS["toy"]
+                text_data = list(dataset_func())
 
-            assert text_data == mock_text_data
+                # Verify the mocks were used correctly
+                mock_load_dataset.assert_called_once_with(
+                    "toy", split="train", streaming=True
+                )
+                mock_toy_text.assert_called_once()
+                assert text_data == mock_text_data
 
         # Step 2: Simulate router activation extraction
         batch_size = 20
