@@ -4,88 +4,87 @@ import os
 import torch as th
 from tqdm import tqdm
 
-# Import the module so ROUTER_LOGITS_DIR can be monkeypatched in tests
-from exp import get_router_activations as gra
+# Import directly from the module
+from exp.get_router_activations import ROUTER_LOGITS_DIR
 
 
 def load_activations_indices_tokens_and_topk(
     device: str = "cuda",
 ) -> tuple[th.Tensor, th.Tensor, list[list[str]], int]:
-    """Load boolean activation mask, top-k indices, tokens, and top_k.
-
-    Returns:
-      - activated_experts: (B, L, E) boolean mask of top-k expert activations
-      - activated_expert_indices: (B, L, topk) long indices of selected experts
-      - tokens: list[list[str]] tokenized sequences aligned to batch concatenation
-      - top_k: int top-k used during collection
     """
-    activated_expert_indices_collection: list[th.Tensor] = []
-    activated_experts_collection: list[th.Tensor] = []
-    tokens: list[list[str]] = []
+    Load the router logits and tokens from the router_logits directory.
+    Returns a tuple of (activated_experts, indices, tokens, top_k).
+    activated_experts is a boolean tensor of shape (B, L, E) where B is the batch size,
+    L is the number of layers, and E is the number of experts.
+    indices is a tensor of shape (B, L, top_k) where top_k is the number of experts
+    activated per token.
+    tokens is a list of lists of strings, where each inner list is the tokens for a batch.
+    top_k is the number of experts activated per token.
+    """
+    activated_experts_list = []
+    indices_list = []
+    tokens_list = []
     top_k: int | None = None
 
     for file_idx in tqdm(count(), desc="Loading router logits+tokens"):
-        file_path = os.path.join(gra.ROUTER_LOGITS_DIR, f"{file_idx}.pt")
+        file_path = os.path.join(ROUTER_LOGITS_DIR, f"{file_idx}.pt")
         if not os.path.exists(file_path):
             break
         output = th.load(file_path)
+        router_logits = output["router_logits"]
+        tokens = output["tokens"]
         if top_k is None:
-            top_k = int(output["topk"])  # saved during collection
-        router_logits: th.Tensor = output["router_logits"].to(device)
-        file_tokens: list[list[str]] = output.get("tokens", [])
-        tokens.extend(file_tokens)
+            top_k = output["topk"]
+        else:
+            assert top_k == output["topk"], "top_k must be the same for all files"
 
-        # Build top-k indices and boolean mask via topk + scatter
-        topk_indices = th.topk(router_logits, k=top_k, dim=2).indices  # (B, L, topk)
-        expert_activations = th.zeros_like(
-            router_logits, device=device
-        ).bool()  # (B, L, E)
-        expert_activations.scatter_(2, topk_indices, True)
+        # router_logits: (B, L, E)
+        # indices: (B, L, top_k)
+        indices = th.topk(router_logits, k=top_k, dim=2).indices
+        # activated_experts: (B, L, E)
+        activated_experts = th.zeros_like(router_logits, dtype=th.bool)
+        activated_experts.scatter_(2, indices, True)
 
-        activated_expert_indices_collection.append(topk_indices)
-        activated_experts_collection.append(expert_activations)
+        activated_experts_list.append(activated_experts)
+        indices_list.append(indices)
+        tokens_list.extend(tokens)
 
-    if top_k is None or not activated_experts_collection:
-        raise ValueError(
-            "No data files found; ensure exp.get_router_activations has been run"
-        )
+    if not activated_experts_list:
+        raise ValueError(f"No router logits found in {ROUTER_LOGITS_DIR}")
 
-    # (B, L, E)
-    activated_experts = th.cat(activated_experts_collection, dim=0)
-    # (B, L, topk)
-    activated_expert_indices = th.cat(activated_expert_indices_collection, dim=0)
-    return activated_experts, activated_expert_indices, tokens, top_k
+    activated_experts = th.cat(activated_experts_list, dim=0).to(device)
+    indices = th.cat(indices_list, dim=0).to(device)
+
+    return activated_experts, indices, tokens_list, top_k
 
 
-def load_activations_and_indices_and_topk(
+def load_activations_and_topk(
     device: str = "cuda",
-) -> tuple[th.Tensor, th.Tensor, int]:
-    activated_experts, activated_expert_indices, _tokens, top_k = (
-        load_activations_indices_tokens_and_topk(device=device)
-    )
-    return activated_experts, activated_expert_indices, top_k
-
-
-def load_activations_and_topk(device: str = "cuda") -> tuple[th.Tensor, int]:
-    activated_experts, _indices, top_k = load_activations_and_indices_and_topk(
-        device=device
-    )
+) -> tuple[th.Tensor, int]:
+    """
+    Load the router logits from the router_logits directory.
+    Returns a tuple of (activated_experts, top_k).
+    activated_experts is a boolean tensor of shape (B, L, E) where B is the batch size,
+    L is the number of layers, and E is the number of experts.
+    top_k is the number of experts activated per token.
+    """
+    activated_experts, _, _, top_k = load_activations_indices_tokens_and_topk(device=device)
     return activated_experts, top_k
 
 
-def load_activations(device: str = "cuda") -> th.Tensor:
-    activated_experts, _, _ = load_activations_and_indices_and_topk(device=device)
-    return activated_experts
-
-
-def load_activations_tokens_and_topk(
+def load_activations(
     device: str = "cuda",
-) -> tuple[th.Tensor, list[list[str]], int]:
-    activated_experts, _indices, tokens, top_k = (
-        load_activations_indices_tokens_and_topk(device=device)
+) -> tuple[th.Tensor, th.Tensor, int]:
+    """
+    Load the router logits from the router_logits directory.
+    Returns a tuple of (activated_experts, indices, top_k).
+    activated_experts is a boolean tensor of shape (B, L, E) where B is the batch size,
+    L is the number of layers, and E is the number of experts.
+    indices is a tensor of shape (B, L, top_k) where top_k is the number of experts
+    activated per token.
+    top_k is the number of experts activated per token.
+    """
+    activated_experts, indices, _, top_k = load_activations_indices_tokens_and_topk(
+        device=device
     )
-    return activated_experts, tokens, top_k
-
-
-if __name__ == "__main__":
-    load_activations_and_topk()
+    return activated_experts, indices, top_k
