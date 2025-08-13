@@ -28,6 +28,45 @@ def save_router_logits(
     th.save(output, os.path.join(ROUTER_LOGITS_DIR, f"{file_idx}.pt"))
 
 
+def process_batch(
+    batch: list[str],
+    model: StandardizedTransformer,
+    router_layers: list[int],
+) -> tuple[th.Tensor, list[list[str]]]:
+    """
+    Process a single batch of data to extract router logits.
+
+    Args:
+        batch: A batch of text data
+        model: The transformer model
+        router_layers: List of layer indices with routers
+
+    Returns:
+        tuple: (router_logits, tokenized_batch)
+    """
+    encoded_batch = model.tokenizer(batch, padding=True, return_tensors="pt")
+    tokenized_batch = [model.tokenizer.tokenize(text) for text in batch]
+
+    router_logits = []
+
+    with model.trace(batch) as tracer:
+        for layer in router_layers:
+            padding_mask: th.Tensor = encoded_batch.attention_mask.bool().view(
+                -1
+            )  # (batch_size * seq_len)
+
+            router_logits.append(model.routers_output[layer].cpu()[padding_mask].save())
+        tracer.stop()
+
+    router_logits_tensor = th.stack(router_logits, dim=1)
+
+    # Clean up memory explicitly
+    del encoded_batch
+    del tracer
+
+    return router_logits_tensor, tokenized_batch
+
+
 @arguably.command()
 def get_router_activations(
     model_name: str = "olmoe",
@@ -66,25 +105,11 @@ def get_router_activations(
         pbar = tqdm(total=tokens_per_file, desc="Filling up file")
 
         for batch in batched(dataset_fn(), batch_size):
-            encoded_batch = model.tokenizer(batch, padding=True, return_tensors="pt")
-            tokenized_batch = [model.tokenizer.tokenize(text) for text in batch]
-            tokenized_batch_collection.extend(tokenized_batch)
+            # Process batch in isolated function to ensure variable cleanup
+            router_logits, tokenized_batch = process_batch(batch, model, router_layers)
 
-            router_logits = []
-
-            with model.trace(batch) as tracer:
-                for layer in router_layers:
-                    padding_mask: th.Tensor = encoded_batch.attention_mask.bool().view(
-                        -1
-                    )  # (batch_size * seq_len)
-
-                    router_logits.append(
-                        model.routers_output[layer].cpu()[padding_mask].save()
-                    )
-                tracer.stop()
-
-            router_logits = th.stack(router_logits, dim=1)
             router_logit_collection.append(router_logits)
+            tokenized_batch_collection.extend(tokenized_batch)
             router_logit_collection_size += router_logits.shape[0]
             pbar.update(router_logits.shape[0])
 
@@ -104,9 +129,7 @@ def get_router_activations(
 
             # clean up memory
             del router_logits
-            del encoded_batch
             del tokenized_batch
-            del tracer
             gc.collect()
             th.cuda.empty_cache()
 
