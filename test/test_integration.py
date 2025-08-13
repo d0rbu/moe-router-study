@@ -175,7 +175,7 @@ class TestVisualizationPipeline:
             mock_pca_class.return_value = mock_pca
 
             # Run PCA visualization
-            from viz.pca_circuits import pca_figure
+            from viz.pca_viz import pca_figure
 
             pca_figure()
 
@@ -246,7 +246,7 @@ class TestVisualizationPipeline:
 
         # Mock the visualization pipeline
         with (
-            patch("exp.get_weights.WEIGHT_DIR", str(temp_dir)),
+            patch("exp.WEIGHT_DIR", str(temp_dir)),
             patch("viz.router_spaces.WEIGHT_DIR", str(temp_dir)),
             patch("matplotlib.pyplot.plot") as mock_plot,
             patch("matplotlib.pyplot.savefig") as mock_savefig,
@@ -404,7 +404,7 @@ class TestErrorPropagation:
         with patch("exp.activations.load_activations") as mock_load:
             mock_load.side_effect = Exception("Activation loading failed")
 
-            from viz.pca_circuits import pca_figure
+            from viz.pca_viz import pca_figure
 
             with pytest.raises(Exception, match="Activation loading failed"):
                 pca_figure()

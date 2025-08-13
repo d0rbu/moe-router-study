@@ -1,4 +1,4 @@
-"""Tests for viz.pca_circuits without mocking matplotlib."""
+"""Tests for viz.pca_viz without mocking matplotlib."""
 
 from pathlib import Path
 
@@ -25,7 +25,7 @@ def test_pca_figure_creates_file(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("viz.FIGURE_DIR", str(fig_dir), raising=False)
 
     # 3) Call pca_figure on CPU
-    from viz.pca_circuits import FIGURE_PATH, pca_figure
+    from viz.pca_viz import FIGURE_PATH, pca_figure
 
     pca_figure(device="cpu")
 
