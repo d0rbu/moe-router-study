@@ -68,6 +68,7 @@ class ModelConfig:
 
 
 MODELS: dict[str, ModelConfig] = {
+    # base model
     "olmoe": ModelConfig(
         hf_name="allenai/OLMoE-1B-7B-0924",
         branch_regex=re.compile(r"step(\d+)-tokens(\d+)B"),
@@ -79,5 +80,12 @@ MODELS: dict[str, ModelConfig] = {
     ),
     "q3_30b": ModelConfig(
         hf_name="Qwen/Qwen3-30B-A3B",
+    ),
+    # posttrained model
+    "olmoe-i": ModelConfig(
+        hf_name="allenai/OLMoE-1B-7B-0125-Instruct",
+        branch_regex=re.compile(r"step_(\d+)"),
+        revision_format="step_{}",
+        eager_fetch=False,  # avoid network during import
     ),
 }

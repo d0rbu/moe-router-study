@@ -3,9 +3,10 @@ from typing import Any, cast
 
 from datasets import IterableColumn, load_dataset
 from tqdm import tqdm
+from transformers import AutoTokenizer, PreTrainedTokenizer
 
 
-def fineweb_10bt_text() -> IterableColumn:
+def fineweb_10bt_text(_tokenizer: PreTrainedTokenizer) -> IterableColumn:
     fineweb = load_dataset(
         "HuggingFaceFW/fineweb", name="sample-10BT", split="train", streaming=True
     )
@@ -13,7 +14,7 @@ def fineweb_10bt_text() -> IterableColumn:
     return cast("IterableColumn", fineweb["text"])
 
 
-def toy_text() -> IterableColumn:
+def toy_text(_tokenizer: PreTrainedTokenizer) -> IterableColumn:
     """Tiny, in-repo dataset for tests and quick runs."""
     samples = [
         "Tiny sample 1",
@@ -25,7 +26,7 @@ def toy_text() -> IterableColumn:
     return cast("IterableColumn", samples)
 
 
-def test_dataset_text() -> IterableColumn:
+def test_dataset_text(_tokenizer: PreTrainedTokenizer) -> IterableColumn:
     """Dataset specifically for testing purposes.
 
     This function is designed to be easily mocked in tests.
@@ -37,10 +38,10 @@ def test_dataset_text() -> IterableColumn:
         return cast("IterableColumn", ds["text"])
     except Exception:
         # Fall back to toy_text for non-test environments
-        return toy_text()
+        return toy_text(_tokenizer)
 
 
-def lmsys_chat_1m_text() -> IterableColumn:
+def lmsys_chat_1m_text(tokenizer: PreTrainedTokenizer) -> IterableColumn:
     """Stream and format conversations from the LMSYS Chat-1M dataset.
 
     Each conversation is formatted as a plain text transcript with "role: content" format,
@@ -53,12 +54,12 @@ def lmsys_chat_1m_text() -> IterableColumn:
 
     def _format_conversation(row: dict[str, Any]) -> str:
         conversation = row.get("conversation") or []
-        parts: list[str] = []
-        for msg in conversation:
-            role = msg.get("role", "unknown")
-            content = msg.get("content", "")
-            parts.append(f"{role}: {content}")
-        return "\n".join(parts)
+        chat = tokenizer.apply_chat_template(conversation, tokenize=False)
+
+        if not isinstance(chat, str):
+            raise ValueError(f"Expected chat to be a string, got {type(chat)}")
+
+        return chat
 
     def _iter():
         for row in ds:
@@ -73,7 +74,7 @@ def lmsys_chat_1m_text() -> IterableColumn:
     return cast("IterableColumn", _iter())
 
 
-DATASETS: dict[str, Callable[[], IterableColumn]] = {
+DATASETS: dict[str, Callable[[PreTrainedTokenizer], IterableColumn]] = {
     "fw": fineweb_10bt_text,
     # Use test_dataset_text instead of patched_toy_text to avoid monkeypatching
     "toy": test_dataset_text,
@@ -83,10 +84,12 @@ DATASETS: dict[str, Callable[[], IterableColumn]] = {
 
 
 if __name__ == "__main__":
+    tokenizer = AutoTokenizer.from_pretrained("allenai/OLMoE-1B-7B-0924")
+
     for dataset_name, dataset_fn in tqdm(
         DATASETS.items(), desc="Loading datasets", total=len(DATASETS)
     ):
-        dataset = dataset_fn()
+        dataset = dataset_fn(tokenizer)
         log_every = 1000
 
         for sample_idx, sample in tqdm(

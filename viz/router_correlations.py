@@ -28,7 +28,7 @@ def router_correlations() -> None:
         total_experts = num_layers * num_experts
         top_k_indices = th.topk(router_logits, k=top_k, dim=2).indices
         activated_experts = th.zeros_like(router_logits)
-        activated_experts[top_k_indices] = 1
+        activated_experts.scatter_(2, top_k_indices, 1)
 
         # (B, L, E) -> (L * E, B)
         activated_experts_collection.append(

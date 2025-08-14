@@ -2,34 +2,59 @@ import os
 
 import arguably
 import matplotlib.pyplot as plt
+from nnterp import StandardizedTransformer
 import torch as th
 from tqdm import tqdm
 
-from exp import WEIGHT_DIR
+from core.model import MODELS
 from viz import FIGURE_DIR
 
 ROUTER_VIZ_DIR = os.path.join(FIGURE_DIR, "router_spaces")
 
 
 @arguably.command()
-def router_spaces() -> None:
+def router_spaces(
+    model_name: str = "olmoe",
+    checkpoint_idx: int | None = None,
+    device: str = "cpu",
+    topk: int = 4,
+) -> None:
+    """Visualize router spaces directly from model weights.
+
+    This function loads the model weights directly using StandardizedTransformer
+    instead of relying on pre-extracted weight files.
+    """
     os.makedirs(ROUTER_VIZ_DIR, exist_ok=True)
 
-    router_weight_path = os.path.join(WEIGHT_DIR, "router.pt")
-    down_proj_weight_path = os.path.join(WEIGHT_DIR, "down_proj.pt")
-    o_proj_weight_path = os.path.join(WEIGHT_DIR, "o_proj.pt")
+    model_config = MODELS.get(model_name, None)
+    if model_config is None:
+        raise ValueError(f"Model {model_name} not found")
 
-    router_weights_data = th.load(router_weight_path)
-    down_proj_weights_data = th.load(down_proj_weight_path)
-    o_proj_weights_data = th.load(o_proj_weight_path)
+    if checkpoint_idx is None:
+        revision = None
+    else:
+        revision = str(model_config.checkpoints[checkpoint_idx])
 
-    router_weights = router_weights_data["weights"]
-    _down_proj_weights = down_proj_weights_data["weights"]  # unused
-    o_proj_weights = o_proj_weights_data["weights"]
-    _num_layers = len(o_proj_weights)  # unused
-    router_layers = list(router_weights.keys())
+    model = StandardizedTransformer(
+        model_config.hf_name,
+        device_map=device,
+        revision=revision,
+    )
+
+    # Extract weights directly from the model
+    router_layers = model.layers_with_routers
     num_router_layers = len(router_layers)
-    topk = router_weights_data["topk"]
+
+    # Extract router weights
+    router_weights: dict[int, th.Tensor] = {}
+    o_proj_weights: dict[int, th.Tensor] = {}
+
+    with th.no_grad():
+        for layer_idx in router_layers:
+            router_weights[layer_idx] = model.routers[layer_idx].weight.detach().cpu()
+            o_proj_weights[layer_idx] = (
+                model.attentions[layer_idx].o_proj.weight.detach().cpu()
+            )
 
     # first we get the spectra of the router weights
     for layer_idx, router_weight in router_weights.items():
