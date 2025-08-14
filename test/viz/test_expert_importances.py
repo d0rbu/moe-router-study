@@ -23,30 +23,36 @@ def mock_expert_importance_data():
     for layer_idx in range(2):
         for expert_idx in range(2):
             # Add reader components
-            entries.extend([
-                {
-                    "layer_idx": layer_idx,
-                    "component": component,
-                    "expert_idx": expert_idx,
-                    "role": "reader",
-                    "l2": 0.5 + layer_idx * 0.1 + expert_idx * 0.2,
-                    "model_name": "test_model",
-                    "checkpoint_idx": 0,
-                } for component in READER_COMPONENTS
-            ])
+            entries.extend(
+                [
+                    {
+                        "layer_idx": layer_idx,
+                        "component": component,
+                        "expert_idx": expert_idx,
+                        "role": "reader",
+                        "l2": 0.5 + layer_idx * 0.1 + expert_idx * 0.2,
+                        "model_name": "test_model",
+                        "checkpoint_idx": 0,
+                    }
+                    for component in READER_COMPONENTS
+                ]
+            )
 
             # Add writer components
-            entries.extend([
-                {
-                    "layer_idx": layer_idx,
-                    "component": component,
-                    "expert_idx": expert_idx,
-                    "role": "writer",
-                    "l2": 0.3 + layer_idx * 0.1 + expert_idx * 0.2,
-                    "model_name": "test_model",
-                    "checkpoint_idx": 0,
-                } for component in WRITER_COMPONENTS
-            ])
+            entries.extend(
+                [
+                    {
+                        "layer_idx": layer_idx,
+                        "component": component,
+                        "expert_idx": expert_idx,
+                        "role": "writer",
+                        "l2": 0.3 + layer_idx * 0.1 + expert_idx * 0.2,
+                        "model_name": "test_model",
+                        "checkpoint_idx": 0,
+                    }
+                    for component in WRITER_COMPONENTS
+                ]
+            )
 
     return entries
 
@@ -113,7 +119,7 @@ def test_expert_importances_with_custom_percentile(mock_show, temp_data_file):
     [
         "nonexistent_file.pt",
         "/path/does/not/exist/data.pt",
-    ]
+    ],
 )
 def test_expert_importances_file_not_found(invalid_path):
     """Test that expert_importances raises FileNotFoundError for invalid paths."""
