@@ -10,9 +10,7 @@ from tqdm import tqdm
 from core.data import DATASETS
 from core.device_map import CUSTOM_DEVICES
 from core.model import MODELS
-from exp import OUTPUT_DIR
-
-ROUTER_LOGITS_DIR = os.path.join(OUTPUT_DIR, "router_logits")
+from exp import OUTPUT_DIR, ROUTER_LOGITS_DIR
 
 
 def save_router_logits(
@@ -33,7 +31,7 @@ def save_router_logits(
 @arguably.command()
 def get_router_activations(
     model_name: str = "olmoe",
-    dataset: str = "fw",
+    dataset: str = "toy",
     batch_size: int = 4,
     device: str = "cpu",
     tokens_per_file: int = 10_000,
