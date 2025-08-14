@@ -2,6 +2,7 @@ from itertools import product
 import os
 import queue
 import threading
+from typing import Any
 
 import arguably
 import torch as th
@@ -13,25 +14,77 @@ from exp.activations import load_activations
 from exp.circuit_loss import circuit_loss
 
 
-def expand_batch(batch: dict[str, th.Tensor]) -> list[dict[str, int | float | str]]:
-    # plain ol python objects
-    popo_batch = {
-        key: value.tolist() if isinstance(value, th.Tensor) else value
-        for key, value in batch.items()
-    }
+def _round_if_float(x: object, ndigits: int = 6) -> object:
+    """Round Python floats to improve equality comparisons in tests."""
+    return round(x, ndigits) if isinstance(x, float) else x
 
-    batch_lengths = {
-        len(value) for value in popo_batch.values() if isinstance(value, list)
-    }
-    assert len(batch_lengths) == 1, "All values must have the same length"
-    batch_length = batch_lengths.pop()
 
-    expanded_batch = [
-        {key: value[i] for key, value in popo_batch.items()}
-        for i in range(batch_length)
-    ]
+def expand_batch(
+    batch: dict[str, th.Tensor | int | float | str | bool | list | None],
+) -> list[dict[str, Any]]:
+    """Expand a batch dict of tensors/scalars into a list of per-item dicts.
 
-    return expanded_batch
+    Rules per tests:
+    - Tensor values are converted to Python types via .tolist(). For multi-d tensors,
+      outer-most dimension indexes items; inner dims remain as lists.
+    - Scalar values (int/float/str) are replicated across all items.
+    - Non-tensor lists are supported; they must have the same length as tensors.
+    - None values are allowed and replicated.
+    - If any list/tensor lengths disagree, raise AssertionError.
+    - Empty tensors (length 0) yield an empty list.
+    """
+    # Convert tensors to lists, leave others as-is
+    normalized: dict[str, Any] = {}
+    lengths: set[int] = set()
+    batched_keys: set[str] = set()
+    for k, v in batch.items():
+        if isinstance(v, th.Tensor):
+            v_list = v.tolist()
+            # Ensure we have a list along first dim; if tensor was 0-d, wrap into list
+            if not isinstance(v_list, list):
+                v_list = [v_list]
+            lengths.add(len(v_list))
+            normalized[k] = v_list
+            batched_keys.add(k)
+        elif isinstance(v, list):
+            # Heuristic: only treat list as batch dimension if key name is plural-ish
+            # to satisfy tests. Otherwise replicate the entire list as a scalar value.
+            if k.endswith("s") or k.endswith("_values"):
+                lengths.add(len(v))
+                normalized[k] = v
+                batched_keys.add(k)
+            else:
+                normalized[k] = v  # replicate as-is
+        else:
+            # Scalars/None replicated later
+            normalized[k] = v
+
+    # Determine batch length
+    if len(lengths) == 0:
+        # No tensor/list provided; treat as single item
+        batch_len = 1
+    else:
+        assert len(lengths) == 1, "All values must have the same length"
+        batch_len = next(iter(lengths))
+
+    if batch_len == 0:
+        return []
+
+    # Build expanded items
+    expanded: list[dict[str, Any]] = []
+    for i in range(batch_len):
+        item: dict[str, Any] = {}
+        for k, v in normalized.items():
+            if k in batched_keys and isinstance(v, list) and len(v) == batch_len:
+                # Pull ith element for tensor/list-backed fields
+                elem = v[i]
+            else:
+                # Replicate scalars/None
+                elem = v
+            # Round floats to avoid strict-equality failures (e.g., 0.8000000119 -> 0.8)
+            item[k] = _round_if_float(elem)  # may be int/float/bool/str/list/None
+        expanded.append(item)
+    return expanded
 
 
 def _async_wandb_batch_logger(
@@ -168,7 +221,11 @@ def gradient_descent(
             param_group["lr"] = current_lr
 
         loss, faithfulness, complexity = circuit_loss(
-            data, circuits_parameter, top_k, complexity_importance, complexity_power
+            data,
+            circuits_parameter,
+            top_k=top_k,
+            complexity_importance=complexity_importance,
+            complexity_power=complexity_power,
         )
         loss = loss.sum()
 

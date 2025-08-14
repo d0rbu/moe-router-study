@@ -5,11 +5,8 @@ import matplotlib.pyplot as plt
 import torch as th
 from tqdm import tqdm
 
-# Replace unresolved import with a local default that can be overridden via env var
-from exp import OUTPUT_DIR  # provides base output directory
+from exp import WEIGHT_DIR
 from viz import FIGURE_DIR
-
-WEIGHT_DIR = os.environ.get("WEIGHT_DIR", os.path.join(OUTPUT_DIR, "weights"))
 
 ROUTER_VIZ_DIR = os.path.join(FIGURE_DIR, "router_spaces")
 
@@ -65,7 +62,8 @@ def router_spaces() -> None:
 
     # next we want to find circuits by taking the top left singular vectors
     # and getting the cosine similarity with all expert vectors
-    num_circuits = 100
+    # Use only available singular vectors to avoid shape errors
+    num_circuits = min(100, u.shape[1])
     circuit_vectors = u[:, :num_circuits]
     circuit_logits = (circuit_vectors.T @ sorted_expert_vectors).view(
         num_circuits, num_router_layers, -1

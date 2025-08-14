@@ -10,9 +10,7 @@ from tqdm import tqdm
 from core.data import DATASETS
 from core.device_map import CUSTOM_DEVICES
 from core.model import MODELS
-from exp import OUTPUT_DIR
-
-ROUTER_LOGITS_DIR = os.path.join(OUTPUT_DIR, "router_logits")
+from exp import OUTPUT_DIR, ROUTER_LOGITS_DIR
 
 
 def save_router_logits(
@@ -29,11 +27,65 @@ def save_router_logits(
     }
     th.save(output, os.path.join(ROUTER_LOGITS_DIR, f"{file_idx}.pt"))
 
+    # Explicitly clean up large tensors
+    del router_logits
+    del output
+
+
+def process_batch(
+    batch: list[str],
+    model: StandardizedTransformer,
+    router_layers: list[int],
+) -> tuple[th.Tensor, list[list[str]]]:
+    """
+    Process a single batch of data to extract router logits.
+
+    Args:
+        batch: A batch of text data
+        model: The transformer model
+        router_layers: List of layer indices with routers
+
+    Returns:
+        tuple: (router_logits, tokenized_batch)
+    """
+    encoded_batch = model.tokenizer(batch, padding=True, return_tensors="pt")
+    tokenized_batch = [model.tokenizer.tokenize(text) for text in batch]
+
+    router_logits = []
+
+    with model.trace(batch) as tracer:
+        for layer in router_layers:
+            padding_mask: th.Tensor = encoded_batch.attention_mask.bool().view(
+                -1
+            )  # (batch_size * seq_len)
+
+            # Get router logits and immediately detach and move to CPU
+            logits = model.routers_output[layer].cpu()[padding_mask].save()
+            # Create a copy to break reference to the original tensor
+            logits_copy = logits.clone().detach()
+            router_logits.append(logits_copy)
+
+        # Explicitly stop the tracer to clean up resources
+        tracer.stop()
+
+    # Stack the logits and create a new tensor to break references
+    router_logits_tensor = th.stack(router_logits, dim=1).clone().detach()
+
+    # Clean up memory explicitly
+    del encoded_batch
+    del router_logits
+    del tracer
+
+    # Force garbage collection to clean up any lingering references
+    gc.collect()
+
+    return router_logits_tensor, tokenized_batch
+
 
 @arguably.command()
 def get_router_activations(
     model_name: str = "olmoe",
-    dataset: str = "fw",
+    dataset: str = "toy",
     batch_size: int = 4,
     device: str = "cpu",
     tokens_per_file: int = 10_000,
@@ -68,25 +120,12 @@ def get_router_activations(
         pbar = tqdm(total=tokens_per_file, desc="Filling up file")
 
         for batch in batched(dataset_fn(), batch_size):
-            encoded_batch = model.tokenizer(batch, padding=True, return_tensors="pt")
-            tokenized_batch = [model.tokenizer.tokenize(text) for text in batch]
-            tokenized_batch_collection.extend(tokenized_batch)
+            # Process batch in isolated function to ensure variable cleanup
+            router_logits, tokenized_batch = process_batch(batch, model, router_layers)
 
-            router_logits = []
-
-            with model.trace(batch) as tracer:
-                for layer in router_layers:
-                    padding_mask: th.Tensor = encoded_batch.attention_mask.bool().view(
-                        -1
-                    )  # (batch_size * seq_len)
-
-                    router_logits.append(
-                        model.routers_output[layer].cpu()[padding_mask].save()
-                    )
-                tracer.stop()
-
-            router_logits = th.stack(router_logits, dim=1)
+            # Store weak references to avoid circular references
             router_logit_collection.append(router_logits)
+            tokenized_batch_collection.extend(tokenized_batch)
             router_logit_collection_size += router_logits.shape[0]
             pbar.update(router_logits.shape[0])
 
@@ -106,9 +145,7 @@ def get_router_activations(
 
             # clean up memory
             del router_logits
-            del encoded_batch
             del tokenized_batch
-            del tracer
             gc.collect()
             th.cuda.empty_cache()
 
@@ -120,6 +157,12 @@ def get_router_activations(
                 top_k,
                 router_logit_collection_idx,
             )
+
+        # Final cleanup
+        del router_logit_collection
+        del tokenized_batch_collection
+        gc.collect()
+        th.cuda.empty_cache()
 
 
 if __name__ == "__main__":
