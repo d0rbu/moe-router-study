@@ -52,7 +52,9 @@ def router_spaces(
     with th.no_grad():
         for layer_idx in router_layers:
             router_weights[layer_idx] = model.routers[layer_idx].weight.detach().cpu()
-            o_proj_weights[layer_idx] = model.attentions[layer_idx].o_proj.weight.detach().cpu()
+            o_proj_weights[layer_idx] = (
+                model.attentions[layer_idx].o_proj.weight.detach().cpu()
+            )
 
     # first we get the spectra of the router weights
     for layer_idx, router_weight in router_weights.items():

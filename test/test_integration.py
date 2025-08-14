@@ -199,7 +199,9 @@ class TestVisualizationPipeline:
         """Test flow from weight extraction to router space visualization."""
         # Mock the StandardizedTransformer class
         with (
-            patch("viz.router_spaces.StandardizedTransformer") as mock_transformer_class,
+            patch(
+                "viz.router_spaces.StandardizedTransformer"
+            ) as mock_transformer_class,
             patch("matplotlib.pyplot.plot") as mock_plot,
             patch("matplotlib.pyplot.savefig") as mock_savefig,
             patch("matplotlib.pyplot.close") as mock_close,
@@ -225,14 +227,18 @@ class TestVisualizationPipeline:
                 # Create mock router
                 mock_router = MagicMock()
                 mock_router.weight = MagicMock()
-                mock_router.weight.detach.return_value.cpu.return_value = th.randn(num_experts, hidden_dim)
+                mock_router.weight.detach.return_value.cpu.return_value = th.randn(
+                    num_experts, hidden_dim
+                )
                 mock_routers[layer_idx] = mock_router
 
                 # Create mock attention
                 mock_attention = MagicMock()
                 mock_attention.o_proj = MagicMock()
                 mock_attention.o_proj.weight = MagicMock()
-                mock_attention.o_proj.weight.detach.return_value.cpu.return_value = th.randn(hidden_dim, hidden_dim)
+                mock_attention.o_proj.weight.detach.return_value.cpu.return_value = (
+                    th.randn(hidden_dim, hidden_dim)
+                )
                 mock_attentions[layer_idx] = mock_attention
 
             # Assign mock routers and attentions to the transformer
