@@ -84,8 +84,8 @@ def process_batch(
 
 @arguably.command()
 def get_router_activations(
-    model_name: str = "olmoe",
-    dataset: str = "toy",
+    model_name: str = "olmoe-i",
+    dataset: str = "lmsys",
     batch_size: int = 4,
     device: str = "cpu",
     tokens_per_file: int = 10_000,
@@ -119,7 +119,7 @@ def get_router_activations(
 
         pbar = tqdm(total=tokens_per_file, desc="Filling up file")
 
-        for batch in batched(dataset_fn(), batch_size):
+        for batch in batched(dataset_fn(model.tokenizer), batch_size):
             # Process batch in isolated function to ensure variable cleanup
             router_logits, tokenized_batch = process_batch(batch, model, router_layers)
 
