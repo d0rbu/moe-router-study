@@ -17,7 +17,7 @@ from viz import FIGURE_DIR
 EXPERT_IMPORTANCES_VIZ_DIR = os.path.join(FIGURE_DIR, "expert_importances")
 
 # Component groupings
-READER_COMPONENTS = ["mlp.up_proj", "mlp.gate_proj", "attn.q_proj", "attn.k_proj"]
+READER_COMPONENTS = {"mlp.up_proj", "mlp.gate_proj", "attn.q_proj", "attn.k_proj"}
 WRITER_COMPONENTS = ["mlp.down_proj", "attn.o_proj"]
 
 # Colors
