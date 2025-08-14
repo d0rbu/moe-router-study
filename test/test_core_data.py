@@ -16,7 +16,7 @@ class TestToyText:
     def test_toy_text_basic(self):
         # Create a mock tokenizer
         mock_tokenizer = MagicMock(spec=PreTrainedTokenizer)
-        
+
         text_column = toy_text(mock_tokenizer)
         assert list(text_column) == [
             "Tiny sample 1",
@@ -28,7 +28,7 @@ class TestToyText:
     def test_toy_text_is_iterable(self):
         # Create a mock tokenizer
         mock_tokenizer = MagicMock(spec=PreTrainedTokenizer)
-        
+
         text_column = toy_text(mock_tokenizer)
         assert isinstance(text_column, Iterable)
 
@@ -60,7 +60,7 @@ class TestDatasetIntegration:
     def test_dataset_iteration_pattern(self):
         # Create a mock tokenizer
         mock_tokenizer = MagicMock(spec=PreTrainedTokenizer)
-        
+
         text_column = toy_text(mock_tokenizer)
         collected_texts = list(text_column)
         assert collected_texts == [
@@ -73,7 +73,7 @@ class TestDatasetIntegration:
     def test_multiple_dataset_calls_consistency(self):
         # Create a mock tokenizer
         mock_tokenizer = MagicMock(spec=PreTrainedTokenizer)
-        
+
         result1 = list(toy_text(mock_tokenizer))
         result2 = list(toy_text(mock_tokenizer))
         assert (
@@ -86,4 +86,3 @@ class TestDatasetIntegration:
                 "Tiny sample 4",
             ]
         )
-

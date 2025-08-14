@@ -240,7 +240,7 @@ def _viz_render_precomputed(
     sequences: list[list[str]],
     norm_scores: th.Tensor,  # (B, C) in [0,1]
     order_per_circuit: list[list[int]],  # len C, ordered seq ids per circuit
-    top_n: int = 10,
+    top_n: int = 10,  # noqa: ARG001
     token_topk_mask: th.Tensor | None = None,
     device: str = "cuda",
 ) -> None:
@@ -265,7 +265,6 @@ def _viz_render_precomputed(
     # Setup figure: left single sequence, right circuit grid + two sliders
     C = int(circuits.shape[0])
     L, E = int(circuits.shape[-2]), int(circuits.shape[-1])
-    S = len(sequences)
 
     fig = plt.figure(figsize=(14, 6.5))
     gs = fig.add_gridspec(3, 2, width_ratios=[3, 2], height_ratios=[8, 0.9, 0.9])
@@ -289,7 +288,7 @@ def _viz_render_precomputed(
     # Initial circuit and sequence index (default to top-1 for circuit 0)
     circuit_idx = 0
     allowed_seq_ids = topk_seq_ids_for_circuit(circuit_idx)
-    seq_slider_idx = 0  # 0..15 – index into allowed top-K sequences
+    seq_slider_idx = 0  # 0..15 - index into allowed top-K sequences
     seq_id = int(allowed_seq_ids[seq_slider_idx])
 
     # Circuit image and overlay

@@ -1,11 +1,10 @@
 """Tests for viz.dbscan_circuits module."""
 
-from unittest.mock import MagicMock, patch
 
-import torch as th
 
 # Since the module has been moved/deleted, we'll skip these tests
 import pytest
+
 
 @pytest.mark.skip(reason="Module viz.dbscan_circuits has been moved or deleted")
 class TestClusterCircuits:
@@ -30,4 +29,3 @@ class TestClusterCircuits:
         """Test with actual DBSCAN implementation."""
         # This test is skipped as the module has been moved or deleted
         pass
-

@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch as th
 
+from test.test_utils import assert_tensor_shape_and_type
 from viz.circuit_max_activating_examples import (
     _color_for_value,
     _ensure_token_alignment,
@@ -13,7 +14,6 @@ from viz.circuit_max_activating_examples import (
     build_sequence_id_tensor,
     get_circuit_activations,
 )
-from test.test_utils import assert_tensor_shape_and_type
 
 
 class TestGetCircuitActivations:
@@ -320,4 +320,3 @@ def test_viz_mean_activating_tokens_no_display(monkeypatch):
 
         # Check that _viz_render_precomputed was called
         mock_viz_render.assert_called_once()
-

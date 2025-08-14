@@ -1,7 +1,7 @@
 """Tests for viz.router_spaces module."""
 
 import os
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch as th
@@ -102,13 +102,13 @@ class TestRouterSpaces:
         mock_transformer.get_o_proj_weights.return_value = {
             0: th.randn(4, 4),  # 4-dim hidden
         }
-        
+
         # Set up patches
         monkeypatch.setattr("viz.router_spaces.FIGURE_DIR", str(temp_dir))
         monkeypatch.setattr(
             "viz.router_spaces.ROUTER_VIZ_DIR", os.path.join(temp_dir, "router_spaces")
         )
-        
+
         # Create a small SVD result
         u = th.randn(2, 2)  # Only 2 singular vectors
         s = th.tensor([1.0, 0.5])
@@ -240,4 +240,3 @@ class TestRouterSpaces:
 
             # Check that savefig was called multiple times
             assert mock_savefig.call_count > 0
-

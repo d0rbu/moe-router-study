@@ -1,11 +1,13 @@
 """Integration tests for the MoE router study codebase."""
 
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
 import torch as th
 from transformers import PreTrainedTokenizer
 
+from core.data import toy_text
 from test.test_utils import (
     assert_tensor_shape_and_type,
     create_sample_circuit_logits,
@@ -21,8 +23,7 @@ class TestDataToActivationsPipeline:
         """Use toy dataset to avoid external downloads/timeouts."""
         # Create a mock tokenizer
         mock_tokenizer = MagicMock(spec=PreTrainedTokenizer)
-        
-        from core.data import toy_text
+
 
         text_column = toy_text(mock_tokenizer)
         collected_texts = list(text_column)
@@ -205,21 +206,21 @@ class TestVisualizationPipeline:
         """Test flow from weight extraction to router space visualization."""
         # Mock the StandardizedTransformer
         mock_transformer = MagicMock()
-        
+
         # Router weights
         mock_transformer.get_router_weights.return_value = {
             0: th.randn(16, 512),  # 16 experts, 512-dim hidden
             2: th.randn(16, 512),
             4: th.randn(16, 512),
         }
-        
+
         # Down projection weights
         mock_transformer.get_down_proj_weights.return_value = {
             0: th.randn(16, 512, 1024),  # 16 experts, 512-dim hidden, 1024-dim MLP
             2: th.randn(16, 512, 1024),
             4: th.randn(16, 512, 1024),
         }
-        
+
         # Output projection weights
         mock_transformer.get_o_proj_weights.return_value = {
             0: th.randn(512, 512),  # 512-dim hidden
@@ -230,8 +231,14 @@ class TestVisualizationPipeline:
         # Mock the visualization pipeline
         with (
             patch("viz.router_spaces.FIGURE_DIR", str(temp_dir)),
-            patch("viz.router_spaces.ROUTER_VIZ_DIR", os.path.join(temp_dir, "router_spaces")),
-            patch("nnterp.StandardizedTransformer.from_pretrained", return_value=mock_transformer),
+            patch(
+                "viz.router_spaces.ROUTER_VIZ_DIR",
+                os.path.join(temp_dir, "router_spaces"),
+            ),
+            patch(
+                "nnterp.StandardizedTransformer.from_pretrained",
+                return_value=mock_transformer,
+            ),
             patch("matplotlib.pyplot.plot") as mock_plot,
             patch("matplotlib.pyplot.savefig") as mock_savefig,
             patch("matplotlib.pyplot.close") as mock_close,
@@ -256,7 +263,7 @@ class TestEndToEndDataFlow:
         # Step 1: Mock dataset loading
         # Create a mock tokenizer
         mock_tokenizer = MagicMock(spec=PreTrainedTokenizer)
-        
+
         with patch("core.data.load_dataset") as mock_load_dataset:
             # Set up the mock to raise an exception to trigger the fallback path
             mock_load_dataset.side_effect = Exception("Simulated dataset loading error")
@@ -494,4 +501,3 @@ class TestDataConsistency:
 
         assert_tensor_shape_and_type(loss, (batch_size,))
         assert_tensor_shape_and_type(loss_idx, (batch_size,))
-
