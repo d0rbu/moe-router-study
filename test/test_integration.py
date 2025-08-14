@@ -197,62 +197,48 @@ class TestVisualizationPipeline:
 
     def test_weights_to_router_spaces_flow(self, temp_dir):
         """Test flow from weight extraction to router space visualization."""
-        # Create mock weight files
-        num_layers = 6
-        router_layers = [0, 2, 4]
-        num_experts = 16
-        hidden_dim = 512
-
-        # Router weights
-        router_weights_data = {
-            "checkpoint_idx": 0,
-            "num_tokens": 1000000,
-            "step": 1000,
-            "topk": 4,
-            "weights": {
-                layer_idx: th.randn(num_experts, hidden_dim)
-                for layer_idx in router_layers
-            },
-        }
-        th.save(router_weights_data, temp_dir / "router.pt")
-
-        # Down projection weights
-        down_proj_weights_data = {
-            "checkpoint_idx": 0,
-            "num_tokens": 1000000,
-            "step": 1000,
-            "topk": 4,
-            "weights": {
-                layer_idx: th.randn(num_experts, hidden_dim, hidden_dim * 2)
-                if layer_idx in router_layers
-                else th.randn(hidden_dim, hidden_dim * 2)
-                for layer_idx in range(num_layers)
-            },
-        }
-        th.save(down_proj_weights_data, temp_dir / "down_proj.pt")
-
-        # Output projection weights
-        o_proj_weights_data = {
-            "checkpoint_idx": 0,
-            "num_tokens": 1000000,
-            "step": 1000,
-            "topk": 4,
-            "weights": {
-                layer_idx: th.randn(hidden_dim, hidden_dim)
-                for layer_idx in range(num_layers)
-            },
-        }
-        th.save(o_proj_weights_data, temp_dir / "o_proj.pt")
-
-        # Mock the visualization pipeline
+        # Mock the StandardizedTransformer class
         with (
-            patch("exp.WEIGHT_DIR", str(temp_dir)),
-            patch("viz.router_spaces.WEIGHT_DIR", str(temp_dir)),
+            patch("viz.router_spaces.StandardizedTransformer") as mock_transformer_class,
             patch("matplotlib.pyplot.plot") as mock_plot,
             patch("matplotlib.pyplot.savefig") as mock_savefig,
             patch("matplotlib.pyplot.close") as mock_close,
             patch("os.makedirs"),
         ):
+            # Set up the mock transformer
+            mock_transformer = MagicMock()
+            mock_transformer_class.return_value = mock_transformer
+
+            # Mock router layers
+            router_layers = [0, 2, 4]
+            mock_transformer.layers_with_routers = router_layers
+
+            # Mock router weights and o_proj weights
+            num_experts = 16
+            hidden_dim = 512
+
+            # Create mock routers and attentions
+            mock_routers = {}
+            mock_attentions = {}
+
+            for layer_idx in router_layers:
+                # Create mock router
+                mock_router = MagicMock()
+                mock_router.weight = MagicMock()
+                mock_router.weight.detach.return_value.cpu.return_value = th.randn(num_experts, hidden_dim)
+                mock_routers[layer_idx] = mock_router
+
+                # Create mock attention
+                mock_attention = MagicMock()
+                mock_attention.o_proj = MagicMock()
+                mock_attention.o_proj.weight = MagicMock()
+                mock_attention.o_proj.weight.detach.return_value.cpu.return_value = th.randn(hidden_dim, hidden_dim)
+                mock_attentions[layer_idx] = mock_attention
+
+            # Assign mock routers and attentions to the transformer
+            mock_transformer.routers = mock_routers
+            mock_transformer.attentions = mock_attentions
+
             # Run router spaces visualization
             from viz.router_spaces import router_spaces
 
@@ -262,6 +248,14 @@ class TestVisualizationPipeline:
             assert mock_plot.call_count > 0
             assert mock_savefig.call_count > 0
             assert mock_close.call_count > 0
+
+            # Verify that the transformer was initialized correctly
+            mock_transformer_class.assert_called_once()
+
+            # Verify that router weights were accessed
+            for layer_idx in router_layers:
+                assert mock_routers[layer_idx].weight.detach.called
+                assert mock_attentions[layer_idx].o_proj.weight.detach.called
 
 
 class TestEndToEndDataFlow:
