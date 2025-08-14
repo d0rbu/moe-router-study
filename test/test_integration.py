@@ -24,7 +24,6 @@ class TestDataToActivationsPipeline:
         # Create a mock tokenizer
         mock_tokenizer = MagicMock(spec=PreTrainedTokenizer)
 
-
         text_column = toy_text(mock_tokenizer)
         collected_texts = list(text_column)
 

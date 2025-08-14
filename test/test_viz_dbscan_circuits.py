@@ -1,7 +1,5 @@
 """Tests for viz.dbscan_circuits module."""
 
-
-
 # Since the module has been moved/deleted, we'll skip these tests
 import pytest
 
