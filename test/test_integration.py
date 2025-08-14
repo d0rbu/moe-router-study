@@ -20,7 +20,8 @@ class TestDataToActivationsPipeline:
         """Use toy dataset to avoid external downloads/timeouts."""
         from core.data import toy_text
 
-        text_column = toy_text()
+        mock_tokenizer = MagicMock()
+        text_column = toy_text(mock_tokenizer)
         collected_texts = list(text_column)
 
         # Verify toy dataset contents
@@ -281,9 +282,10 @@ class TestEndToEndDataFlow:
 
                 from core.data import DATASETS
 
-                # Use toy dataset
+                # Use toy dataset with a mock tokenizer
+                mock_tokenizer = MagicMock()
                 dataset_func = DATASETS["toy"]
-                text_data = list(dataset_func())
+                text_data = list(dataset_func(mock_tokenizer))
 
                 # Verify the mocks were used correctly
                 mock_load_dataset.assert_called_once_with(

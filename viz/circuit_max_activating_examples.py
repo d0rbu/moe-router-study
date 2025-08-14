@@ -34,12 +34,20 @@ def _load_circuits_tensor(
         # Try common defaults in priority order
         candidates = [
             os.path.join(OUTPUT_DIR, name)
-            for name in ("optimized_circuits.pt", "kmeans_circuits.pt", "svd_circuits.pt")
+            for name in (
+                "optimized_circuits.pt",
+                "kmeans_circuits.pt",
+                "svd_circuits.pt",
+            )
         ]
-        circuits_path = next((p for p in candidates if os.path.exists(p)), candidates[0])
+        circuits_path = next(
+            (p for p in candidates if os.path.exists(p)), candidates[0]
+        )
 
     obj = th.load(circuits_path, map_location=device)
-    circuits: th.Tensor = obj["circuits"] if isinstance(obj, dict) else cast("th.Tensor", obj)
+    circuits: th.Tensor = (
+        obj["circuits"] if isinstance(obj, dict) else cast("th.Tensor", obj)
+    )
     circuits = circuits.to(device=device, dtype=th.float32)
 
     if circuits.ndim == 3:
@@ -51,7 +59,7 @@ def _load_circuits_tensor(
         _B, L, E = token_topk_mask.shape
         C = int(circuits.shape[0])
         assert circuits.shape[1] == L * E, (
-            f"Circuits second dim {circuits.shape[1]} does not match L*E={L*E}"
+            f"Circuits second dim {circuits.shape[1]} does not match L*E={L * E}"
         )
         return circuits.view(C, L, E)
 
@@ -240,7 +248,6 @@ def _viz_render_precomputed(
     sequences: list[list[str]],
     norm_scores: th.Tensor,  # (B, C) in [0,1]
     order_per_circuit: list[list[int]],  # len C, ordered seq ids per circuit
-    top_n: int = 10,
     token_topk_mask: th.Tensor | None = None,
     device: str = "cuda",
 ) -> None:
@@ -265,7 +272,6 @@ def _viz_render_precomputed(
     # Setup figure: left single sequence, right circuit grid + two sliders
     C = int(circuits.shape[0])
     L, E = int(circuits.shape[-2]), int(circuits.shape[-1])
-    S = len(sequences)
 
     fig = plt.figure(figsize=(14, 6.5))
     gs = fig.add_gridspec(3, 2, width_ratios=[3, 2], height_ratios=[8, 0.9, 0.9])
@@ -277,6 +283,7 @@ def _viz_render_precomputed(
 
     # Helper: top-K sequences for given circuit (duplicate last if fewer exist)
     TOP_K_SEQS = 16
+
     def topk_seq_ids_for_circuit(c_idx: int, k: int = TOP_K_SEQS) -> list[int]:
         order = order_per_circuit[c_idx] if c_idx < len(order_per_circuit) else []
         if not order:
@@ -289,7 +296,7 @@ def _viz_render_precomputed(
     # Initial circuit and sequence index (default to top-1 for circuit 0)
     circuit_idx = 0
     allowed_seq_ids = topk_seq_ids_for_circuit(circuit_idx)
-    seq_slider_idx = 0  # 0..15 – index into allowed top-K sequences
+    seq_slider_idx = 0  # 0..15 - index into allowed top-K sequences
     seq_id = int(allowed_seq_ids[seq_slider_idx])
 
     # Circuit image and overlay
@@ -353,17 +360,21 @@ def _viz_render_precomputed(
         line_gap_px = 2.0
         fp = FontProperties(size=font_size)
         dpi = float(fig.dpi)
+
         def _text_width_px(s: str) -> float:
             if len(s) == 0:
                 return 0.0
             tp = TextPath((0, 0), s, prop=fp, size=font_size)
             # TextPath extents are in points; convert to pixels
             return float(tp.get_extents().width) * dpi / 72.0
+
         # Approximate line height in pixels
         line_height_px = (font_size * 1.6) * dpi / 72.0
 
         # First pass: compute layout boxes
-        boxes: list[tuple[float, float, float, float, int]] = []  # (x0,y0,x1,y1,local_idx)
+        boxes: list[
+            tuple[float, float, float, float, int]
+        ] = []  # (x0,y0,x1,y1,local_idx)
         x_px = 0.0
         y_line = 0
         for i, tok in enumerate(tokens_in_seq):
@@ -413,20 +424,40 @@ def _viz_render_precomputed(
 
     # Initial render
     current_norm_scores = norm_scores[:, circuit_idx]
-    token_boxes, global_seq_start, total_height_px = render_sequence(seq_id, current_norm_scores)
+    token_boxes, global_seq_start, total_height_px = render_sequence(
+        seq_id, current_norm_scores
+    )
 
     # Sliders: circuit (0..C-1), sequence limited to top-16 choices (index 0..15)
-    circuit_slider = Slider(circuit_slider_ax, "Circuit", 0, C - 1, valinit=circuit_idx, valstep=1)
-    seq_slider = Slider(seq_slider_ax, "Sequence (top-16)", 0, TOP_K_SEQS - 1, valinit=seq_slider_idx, valstep=1)
+    circuit_slider = Slider(
+        circuit_slider_ax, "Circuit", 0, C - 1, valinit=circuit_idx, valstep=1
+    )
+    seq_slider = Slider(
+        seq_slider_ax,
+        "Sequence (top-16)",
+        0,
+        TOP_K_SEQS - 1,
+        valinit=seq_slider_idx,
+        valstep=1,
+    )
 
     # Create a hover outline rectangle on the sequence axis
-    hover_outline = patches.Rectangle((0, 0), 0, 0, fill=False, edgecolor="red", linewidth=2.0, zorder=200)
+    hover_outline = patches.Rectangle(
+        (0, 0), 0, 0, fill=False, edgecolor="red", linewidth=2.0, zorder=200
+    )
     seq_ax.add_patch(hover_outline)
     hover_outline.set_visible(False)
 
     # Slider callbacks
     def on_circuit_change(val: float) -> None:
-        nonlocal circuit_idx, current_norm_scores, token_boxes, global_seq_start, total_height_px, allowed_seq_ids, seq_id
+        nonlocal \
+            circuit_idx, \
+            current_norm_scores, \
+            token_boxes, \
+            global_seq_start, \
+            total_height_px, \
+            allowed_seq_ids, \
+            seq_id
         circuit_idx = int(val)
         circuit_im.set_array(circuits[circuit_idx].detach().cpu().numpy())
         circuit_ax.set_title(f"Circuit {circuit_idx + 1}/{C} (L={L}, E={E})")
@@ -435,7 +466,9 @@ def _viz_render_precomputed(
         # Keep current slider index (0..15), map to actual sequence id (clamped)
         idx = int(np.clip(int(seq_slider.val), 0, len(allowed_seq_ids) - 1))
         seq_id = int(allowed_seq_ids[idx])
-        token_boxes, global_seq_start, total_height_px = render_sequence(seq_id, current_norm_scores)
+        token_boxes, global_seq_start, total_height_px = render_sequence(
+            seq_id, current_norm_scores
+        )
         hover_outline.set_visible(False)
         overlay_im.set_alpha(zeros_alpha)
         fig.canvas.draw_idle()
@@ -447,7 +480,9 @@ def _viz_render_precomputed(
         local_allowed = topk_seq_ids_for_circuit(circuit_idx)
         idx = int(np.clip(seq_slider_idx, 0, len(local_allowed) - 1))
         seq_id = int(local_allowed[idx])
-        token_boxes, global_seq_start, total_height_px = render_sequence(seq_id, current_norm_scores)
+        token_boxes, global_seq_start, total_height_px = render_sequence(
+            seq_id, current_norm_scores
+        )
         hover_outline.set_visible(False)
         overlay_im.set_alpha(zeros_alpha)
         fig.canvas.draw_idle()
@@ -473,7 +508,7 @@ def _viz_render_precomputed(
         total_h = max(ymin, ymax)
         y_inv = total_h - y
         hit_box = None
-        for (x0, y0, x1, y1, i) in token_boxes:
+        for x0, y0, x1, y1, i in token_boxes:
             if (x0 <= x <= x1) and (y0 <= y_inv <= y1):
                 hit_idx = i
                 hit_box = (x0, y0, x1, y1)
@@ -537,7 +572,9 @@ def viz_max_activating_tokens(
     C = int(activations.shape[1])
 
     # Map tokens to sequences
-    seq_ids, _seq_lengths, _seq_offsets = build_sequence_id_tensor(tokens, device=device)
+    seq_ids, _seq_lengths, _seq_offsets = build_sequence_id_tensor(
+        tokens, device=device
+    )
 
     # Normalize by theoretical max: top_k * num_layers
     _, top_k = load_activations_and_topk(device=device)
@@ -558,7 +595,6 @@ def viz_max_activating_tokens(
         tokens,
         norm_scores,
         order_per_circuit,
-        top_n=top_n,
         token_topk_mask=token_topk_mask,
         device=device,
     )
@@ -602,7 +638,6 @@ def viz_mean_activating_tokens(
         tokens,
         norm_scores,
         order_per_circuit,
-        top_n=top_n,
         token_topk_mask=token_topk_mask,
         device=device,
     )
