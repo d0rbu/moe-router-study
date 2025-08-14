@@ -42,10 +42,10 @@ def test_dataset_text() -> IterableColumn:
 
 def lmsys_chat_1m_text() -> IterableColumn:
     """Stream and format conversations from the LMSYS Chat-1M dataset.
-    
+
     Each conversation is formatted as a plain text transcript with "role: content" format,
     with each message on a new line. Redacted conversations are skipped.
-    
+
     Returns:
         IterableColumn: Stream of formatted conversation texts
     """
@@ -65,9 +65,9 @@ def lmsys_chat_1m_text() -> IterableColumn:
             # Type narrowing for static checkers
             if not isinstance(row, dict):
                 continue
-            if cast(dict[str, Any], row).get("redacted", False):
+            if cast("dict[str, Any]", row).get("redacted", False):
                 continue
-            yield _format_conversation(cast(dict[str, Any], row))
+            yield _format_conversation(cast("dict[str, Any]", row))
 
     # Cast the plain iterator of strings to IterableColumn for compatibility with callers
     return cast("IterableColumn", _iter())
