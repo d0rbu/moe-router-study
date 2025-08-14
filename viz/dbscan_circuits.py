@@ -1,8 +1,5 @@
-from typing import Optional
-
 import arguably
 from sklearn.cluster import DBSCAN
-import torch as th
 
 from exp.activations import load_activations_and_topk
 
