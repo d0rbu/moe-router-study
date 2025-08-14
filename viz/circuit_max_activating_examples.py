@@ -552,9 +552,7 @@ def _viz_render_precomputed(
     plt.show()
 
 
-def viz_max_activating_tokens(
-    circuits: th.Tensor, device: str = "cuda"
-) -> None:
+def viz_max_activating_tokens(circuits: th.Tensor, device: str = "cuda") -> None:
     """Visualize top-N sequences by containing highest-activating tokens.
 
     - Left: tokens highlighted by activation (0..1) for current circuit.
@@ -572,7 +570,9 @@ def viz_max_activating_tokens(
     C = int(activations.shape[1])
 
     # Map tokens to sequences
-    seq_ids, _seq_lengths, _seq_offsets = build_sequence_id_tensor(tokens, device=device)
+    seq_ids, _seq_lengths, _seq_offsets = build_sequence_id_tensor(
+        tokens, device=device
+    )
 
     # Normalize by theoretical max: top_k * num_layers
     _, top_k = load_activations_and_topk(device=device)
@@ -598,9 +598,7 @@ def viz_max_activating_tokens(
     )
 
 
-def viz_mean_activating_tokens(
-    circuits: th.Tensor, device: str = "cuda"
-) -> None:
+def viz_mean_activating_tokens(circuits: th.Tensor, device: str = "cuda") -> None:
     """Visualize top-N sequences by highest mean token activation.
 
     Same as viz_max_activating_tokens, but selecting sequences by mean token score.
