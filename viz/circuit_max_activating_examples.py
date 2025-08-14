@@ -553,7 +553,7 @@ def _viz_render_precomputed(
 
 
 def viz_max_activating_tokens(
-    circuits: th.Tensor, top_n: int = 10, device: str = "cuda"
+    circuits: th.Tensor, device: str = "cuda"
 ) -> None:
     """Visualize top-N sequences by containing highest-activating tokens.
 
@@ -572,9 +572,7 @@ def viz_max_activating_tokens(
     C = int(activations.shape[1])
 
     # Map tokens to sequences
-    seq_ids, _seq_lengths, _seq_offsets = build_sequence_id_tensor(
-        tokens, device=device
-    )
+    seq_ids, _seq_lengths, _seq_offsets = build_sequence_id_tensor(tokens, device=device)
 
     # Normalize by theoretical max: top_k * num_layers
     _, top_k = load_activations_and_topk(device=device)
@@ -601,7 +599,7 @@ def viz_max_activating_tokens(
 
 
 def viz_mean_activating_tokens(
-    circuits: th.Tensor, top_n: int = 10, device: str = "cuda"
+    circuits: th.Tensor, device: str = "cuda"
 ) -> None:
     """Visualize top-N sequences by highest mean token activation.
 
@@ -646,35 +644,31 @@ def viz_mean_activating_tokens(
 @arguably.command()
 def viz_max_cli(
     circuits_path: str = "",
-    top_n: int = 10,
     device: str = "cuda",
 ) -> None:
     """Run the max-activating tokens visualization from the command line.
 
     Args:
         circuits_path: Path to a .pt file containing a dict with key "circuits" or a raw tensor.
-        top_n: Number of sequences to display.
         device: Torch device for computation (e.g., "cuda" or "cpu").
     """
     circuits = _load_circuits_tensor(circuits_path, device=device)
-    viz_max_activating_tokens(circuits, top_n=top_n, device=device)
+    viz_max_activating_tokens(circuits, device=device)
 
 
 @arguably.command()
 def viz_mean_cli(
     circuits_path: str = "",
-    top_n: int = 10,
     device: str = "cuda",
 ) -> None:
     """Run the mean-activating tokens visualization from the command line.
 
     Args:
         circuits_path: Path to a .pt file containing a dict with key "circuits" or a raw tensor.
-        top_n: Number of sequences to display.
         device: Torch device for computation (e.g., "cuda" or "cpu").
     """
     circuits = _load_circuits_tensor(circuits_path, device=device)
-    viz_mean_activating_tokens(circuits, top_n=top_n, device=device)
+    viz_mean_activating_tokens(circuits, device=device)
 
 
 if __name__ == "__main__":
