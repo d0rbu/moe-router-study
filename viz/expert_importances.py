@@ -19,9 +19,14 @@ from viz import FIGURE_DIR
 
 EXPERT_IMPORTANCES_VIZ_DIR = os.path.join(FIGURE_DIR, "expert_importances")
 
-# Component groupings
+# Constants
 READER_COMPONENTS = {"mlp.up_proj", "mlp.gate_proj", "attn.q_proj", "attn.k_proj"}
 WRITER_COMPONENTS = ["mlp.down_proj", "attn.o_proj"]
+
+# Components that have multiple experts (MoE components)
+MOE_COMPONENTS = {"mlp.up_proj", "mlp.gate_proj", "mlp.down_proj"}
+# Components that have only one value (Attention components)
+ATTN_COMPONENTS = {"attn.q_proj", "attn.k_proj", "attn.o_proj"}
 
 # Colors
 READER_CMAP = "Reds"
@@ -193,7 +198,7 @@ def expert_importances(
 
             # Draw component label
             ax.text(
-                0,  # Position in the middle space
+                -middle_spacing / 2 - 0.5,
                 y_offset + height / 2,
                 component.split(".")[-1],
                 ha="right",
@@ -201,23 +206,45 @@ def expert_importances(
                 fontsize=10,  # Increased font size
             )
 
-            for derived_expert_idx in range(num_experts):
-                x_pos = -(derived_expert_idx + 1) * expert_width - middle_spacing / 2
+            # Check if this is a MoE component or Attention component
+            if component in MOE_COMPONENTS:
+                # MoE component - draw multiple rectangles for each expert
+                for derived_expert_idx in range(num_experts):
+                    x_pos = (
+                        -(derived_expert_idx + 1) * expert_width - middle_spacing / 2
+                    )
 
-                # Create rectangle with default color
-                rect = patches.Rectangle(
+                    # Create rectangle
+                    rect = plt.Rectangle(
+                        (x_pos, y_offset),
+                        expert_width,
+                        height,
+                        edgecolor="gray",
+                        facecolor="lightgray",
+                        linewidth=0.5,
+                    )
+                    ax.add_patch(rect)
+
+                    # Store rectangle for later updates
+                    rect_key = (derived_layer_idx, component, derived_expert_idx)
+                    all_rectangles[rect_key] = rect
+            else:
+                # Attention component - draw one wide rectangle
+                x_pos = -num_experts * expert_width - middle_spacing / 2
+
+                # Create rectangle
+                rect = plt.Rectangle(
                     (x_pos, y_offset),
-                    expert_width - 0.1,  # Increased width
+                    num_experts * expert_width,
                     height,
-                    facecolor="lightgray",
                     edgecolor="gray",
+                    facecolor="lightgray",
                     linewidth=0.5,
-                    zorder=2,
                 )
                 ax.add_patch(rect)
 
-                # Store rectangle for later updates
-                rect_key = (derived_layer_idx, component, derived_expert_idx)
+                # Store rectangle for later updates - use None for derived_expert_idx
+                rect_key = (derived_layer_idx, component, None)
                 all_rectangles[rect_key] = rect
 
         # Draw reader components (right side)
@@ -235,23 +262,45 @@ def expert_importances(
                 fontsize=10,  # Increased font size
             )
 
-            for derived_expert_idx in range(num_experts):
-                x_pos = derived_expert_idx * expert_width + middle_spacing / 2
+            # Check if this is a MoE component or Attention component
+            if component in MOE_COMPONENTS:
+                # MoE component - draw multiple rectangles for each expert
+                for derived_expert_idx in range(num_experts):
+                    x_pos = derived_expert_idx * expert_width + middle_spacing / 2
 
-                # Create rectangle with default color
-                rect = patches.Rectangle(
+                    # Create rectangle
+                    rect = plt.Rectangle(
+                        (x_pos, y_offset),
+                        expert_width - 0.1,  # Increased width
+                        height,
+                        edgecolor="gray",
+                        facecolor="lightgray",
+                        linewidth=0.5,
+                        zorder=2,
+                    )
+                    ax.add_patch(rect)
+
+                    # Store rectangle for later updates
+                    rect_key = (derived_layer_idx, component, derived_expert_idx)
+                    all_rectangles[rect_key] = rect
+            else:
+                # Attention component - draw one wide rectangle
+                x_pos = middle_spacing / 2
+
+                # Create rectangle
+                rect = plt.Rectangle(
                     (x_pos, y_offset),
-                    expert_width - 0.1,  # Increased width
+                    num_experts * expert_width - 0.1,
                     height,
-                    facecolor="lightgray",
                     edgecolor="gray",
+                    facecolor="lightgray",
                     linewidth=0.5,
                     zorder=2,
                 )
                 ax.add_patch(rect)
 
-                # Store rectangle for later updates
-                rect_key = (derived_layer_idx, component, derived_expert_idx)
+                # Store rectangle for later updates - use None for derived_expert_idx
+                rect_key = (derived_layer_idx, component, None)
                 all_rectangles[rect_key] = rect
 
         # Add layer index label
@@ -338,8 +387,8 @@ def expert_importances(
                     rect_key = (
                         derived_layer,
                         component,
-                        0,
-                    )  # Use first expert position for attention
+                        None,
+                    )  # Use None for attention components
 
                 if rect_key in all_rectangles:
                     rect = all_rectangles[rect_key]
@@ -353,9 +402,9 @@ def expert_importances(
                     rect.set_facecolor(color)
 
                     # Highlight the rectangle if it's in the base layer
-                    if derived_layer == current_base_layer_idx:
-                        rect.set_edgecolor(SELECTED_EXPERT_BORDER_COLOR)
-                        rect.set_linewidth(2)
+                    if derived_layer == base_layer:
+                        rect.set_edgecolor("black")
+                        rect.set_linewidth(2.0)
 
         # Update layer highlight position
         layer_idx_idx = (
