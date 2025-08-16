@@ -14,14 +14,19 @@ from viz import FIGURE_DIR
 
 
 def kmeans_manhattan(
-    data: th.Tensor, k: int, max_iters: int = 1_000, seed: int = 0
+    data: th.Tensor, k: int, batch_size: int = 0, max_iters: int = 1_000, seed: int = 0
 ) -> th.Tensor:
     th.manual_seed(seed)
     th.cuda.manual_seed(seed)
 
     assert data.ndim == 2, "Data must be of dimensions (B, D)"
 
-    batch_size, dim = data.shape
+    dataset_size, dim = data.shape
+
+    if batch_size == 0:
+        batch_size = dataset_size
+    else:
+        assert dataset_size % batch_size == 0, "Batch size must divide data size"
 
     # initialize the centroids
     centroids = data[th.randperm(batch_size)[:k]]
@@ -46,7 +51,12 @@ def kmeans_manhattan(
 
 
 def elbow(
-    data: th.Tensor, start: int = 32, stop: int = 1024, step: int = 32, seed: int = 0
+    data: th.Tensor,
+    batch_size: int = 0,
+    start: int = 32,
+    stop: int = 256,
+    step: int = 32,
+    seed: int = 0,
 ) -> None:
     assert data.ndim == 2, "Data must be of dimensions (B, D)"
 
@@ -62,13 +72,16 @@ def elbow(
         leave=False,
         total=total_iters,
     ):
-        centroids = kmeans_manhattan(data, k, seed=seed)
+        centroids = kmeans_manhattan(data, k, batch_size, seed=seed)
 
         # compute the sum of squared manhattan distances
         distances = th.cdist(data, centroids, p=1)
         clusters = th.argmin(distances, dim=1)
         sse = (data - centroids[clusters]).abs().sum(dim=1).pow(2).sum()
         sse_collection.append(sse)
+
+        del centroids, distances, clusters, sse
+        th.cuda.empty_cache()
 
     sse = th.stack(sse_collection).cpu()
 
@@ -100,9 +113,7 @@ def cluster_circuits(k: int | None = None, seed: int = 0) -> None:
     batch_size, num_layers, num_experts = activated_experts.shape
 
     # (B, L, E) -> (B, L * E)
-    activated_experts = (
-        activated_experts.view(activated_experts.shape[0], -1).float().cuda()
-    )
+    activated_experts = activated_experts.view(activated_experts.shape[0], -1).float()
 
     if k is None:
         elbow(activated_experts, seed=seed)

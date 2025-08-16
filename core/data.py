@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from typing import Any, cast
 
-from datasets import IterableColumn, load_dataset
+from datasets import Dataset, IterableColumn, load_dataset
 from tqdm import tqdm
 from transformers import AutoTokenizer, PreTrainedTokenizer
 
@@ -41,7 +41,7 @@ def test_dataset_text(_tokenizer: PreTrainedTokenizer) -> IterableColumn:
         return toy_text(_tokenizer)
 
 
-def lmsys_chat_1m_text(tokenizer: PreTrainedTokenizer) -> IterableColumn:
+def lmsys_chat_1m_text(tokenizer: PreTrainedTokenizer, start_idx: int = 0, stop_idx: int = 0, streaming: bool = True) -> IterableColumn:
     """Stream and format conversations from the LMSYS Chat-1M dataset.
 
     Each conversation is formatted as a plain text transcript with "role: content" format,
@@ -50,10 +50,21 @@ def lmsys_chat_1m_text(tokenizer: PreTrainedTokenizer) -> IterableColumn:
     Returns:
         IterableColumn: Stream of formatted conversation texts
     """
-    ds = load_dataset("lmsys/lmsys-chat-1m", split="train", streaming=True)
+    ds = load_dataset("lmsys/lmsys-chat-1m", split="train", streaming=streaming)
 
-    def _format_conversation(row: dict[str, Any]) -> str:
-        conversation = row.get("conversation") or []
+    if streaming:
+        assert start_idx == 0 and stop_idx == 0, "Streaming mode does not support start_idx and stop_idx"
+    else:
+        ds = cast("Dataset", ds)
+        assert start_idx >= 0 and stop_idx >= 0, "Non-streaming mode requires start_idx and stop_idx to be non-negative"
+        assert start_idx < stop_idx, "start_idx must be less than stop_idx"
+        assert start_idx < len(ds), "start_idx must be less than the length of the dataset"
+        assert stop_idx <= len(ds), "stop_idx must be less than or equal to the length of the dataset"
+
+        if stop_idx == 0:
+            stop_idx = len(ds)
+
+    def _format_conversation(conversation: list[dict[str, Any]]) -> str:
         chat = tokenizer.apply_chat_template(conversation, tokenize=False)
 
         if not isinstance(chat, str):
@@ -62,13 +73,16 @@ def lmsys_chat_1m_text(tokenizer: PreTrainedTokenizer) -> IterableColumn:
         return chat
 
     def _iter():
-        for row in ds:
-            # Type narrowing for static checkers
-            if not isinstance(row, dict):
-                continue
-            if cast("dict[str, Any]", row).get("redacted", False):
-                continue
-            yield _format_conversation(cast("dict[str, Any]", row))
+        conversations = ds["conversation"]
+
+        if streaming:
+            iterator = tqdm(conversations, desc="Formatting conversations")
+        else:
+            conversations = cast("Dataset", conversations)
+            iterator = tqdm(conversations[start_idx:stop_idx], desc="Formatting conversations", total=stop_idx - start_idx)
+
+        for conversation in iterator:
+            yield _format_conversation(conversation)
 
     # Cast the plain iterator of strings to IterableColumn for compatibility with callers
     return cast("IterableColumn", _iter())

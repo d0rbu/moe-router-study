@@ -5,6 +5,7 @@ import threading
 from typing import Any
 
 import arguably
+from loguru import logger
 import torch as th
 from tqdm import tqdm
 import trackio as wandb
@@ -124,6 +125,8 @@ def gradient_descent(
     num_epochs: int = 2048,
     num_warmup_epochs: int = 128,
     num_cooldown_epochs: int = 512,
+    batch_size: int = 0,
+    grad_accumulation_steps: int = 1,
     seed: int = 0,
     device: str = "cuda",
     wandb_run: wandb.Run | None = None,
@@ -149,7 +152,22 @@ def gradient_descent(
     )
     assert data.ndim == 3, "Data must be of shape (B, L, E)"
 
-    batch_size, num_layers, num_experts = data.shape
+    total_batch_size, num_layers, num_experts = data.shape
+
+    assert batch_size >= 0, "batch_size must be non-negative"
+
+    if batch_size == 0:
+        batch_size = total_batch_size
+
+    assert grad_accumulation_steps > 0, "grad_accumulation_steps must be positive"
+
+    if (leftover_batch_size := batch_size % grad_accumulation_steps) > 0:
+        logger.warning(
+            "batch_size is not divisible by grad_accumulation_steps; "
+            f"{leftover_batch_size} data points will be discarded"
+        )
+
+    minibatch_size = batch_size // grad_accumulation_steps
 
     th.manual_seed(seed)
     th.cuda.manual_seed(seed)
@@ -206,9 +224,9 @@ def gradient_descent(
             portion_through_warmup, distance_from_end_relative_to_cooldown, 1
         )
 
-    losses = th.empty(num_epochs, device=device)
-    faithfulnesses = th.empty(num_epochs, device=device)
-    complexities = th.empty(num_epochs, device=device)
+    losses = th.zeros(num_epochs, device=device)
+    faithfulnesses = th.zeros(num_epochs, device=device)
+    complexities = th.zeros(num_epochs, device=device)
     lrs = th.empty(num_epochs, device=device)
     logs_accumulated = 0
 
@@ -220,31 +238,41 @@ def gradient_descent(
         for param_group in optimizer.param_groups:
             param_group["lr"] = current_lr
 
-        loss, faithfulness, complexity = circuit_loss(
-            data,
-            circuits_parameter,
-            top_k=top_k,
-            complexity_importance=complexity_importance,
-            complexity_power=complexity_power,
-        )
-        loss = loss.sum()
+        for minibatch_idx in range(grad_accumulation_steps):
+            start_idx = minibatch_idx * minibatch_size
+            end_idx = start_idx + minibatch_size
+            batch = data[start_idx:end_idx]
 
-        if ready_flag is not None and log_queue is not None:
-            losses[logs_accumulated] = loss
-            faithfulnesses[logs_accumulated] = faithfulness
-            complexities[logs_accumulated] = complexity
-            lrs[logs_accumulated] = current_lr
-            logs_accumulated += 1
+            loss, faithfulness, complexity = circuit_loss(
+                batch,
+                circuits_parameter,
+                top_k=top_k,
+                complexity_importance=complexity_importance,
+                complexity_power=complexity_power,
+            )
+            loss = loss.sum()
 
-            # Send batch to async logger when ready
-            if ready_flag.is_set():
-                ready_flag.clear()  # Signal that we're sending a batch
-                log_batch()
-                logs_accumulated = 0
+            if ready_flag is not None and log_queue is not None:
+                losses[logs_accumulated] += loss
+                faithfulnesses[logs_accumulated] += faithfulness
+                complexities[logs_accumulated] += complexity
+                lrs[logs_accumulated] = current_lr
 
-        loss.backward()
+            loss.backward()
+
+        losses[logs_accumulated] /= grad_accumulation_steps
+        faithfulnesses[logs_accumulated] /= grad_accumulation_steps
+        complexities[logs_accumulated] /= grad_accumulation_steps
+
+        logs_accumulated += 1
+
+        # Send batch to async logger when ready
+        if ready_flag is not None and ready_flag.is_set():
+            ready_flag.clear()  # Signal that we're sending a batch
+            log_batch()
+            logs_accumulated = 0
+
         optimizer.step()
-
         optimizer.zero_grad()
 
     # Clean up async logger - send any remaining batch and stop the thread
@@ -266,6 +294,8 @@ def load_and_gradient_descent(
     num_epochs: int = 4096,
     num_warmup_epochs: int = 0,
     num_cooldown_epochs: int = 0,
+    batch_size: int = 0,
+    grad_accumulation_steps: int = 1,
     seed: int = 0,
     device: str = "cuda",
 ) -> None:
@@ -297,8 +327,10 @@ def load_and_gradient_descent(
         num_epochs,
         num_warmup_epochs,
         num_cooldown_epochs,
-        seed=seed,
+        batch_size,
+        grad_accumulation_steps,
         device=device,
+        seed=seed,
         wandb_run=wandb_run,
     )
 
@@ -326,7 +358,9 @@ def grid_search_gradient_descent(
     num_epochses: list[int] | None = None,
     num_warmup_epochses: list[int] | None = None,
     num_cooldown_epochses: list[int] | None = None,
-    num_seeds: int = 3,
+    num_seeds: int = 1,
+    batch_size: int = 0,
+    grad_accumulation_steps: int = 1,
     device: str = "cuda",
 ) -> None:
     if complexity_importances is None:
@@ -334,17 +368,20 @@ def grid_search_gradient_descent(
         # complexity_importances = [0.5, 0.4, 0.3, 0.2, 0.1]
         # complexity_importances = [0.6, 0.5, 0.4, 0.3]
         # complexity_importances = [0.6, 0.5, 0.4]
-        complexity_importances = [0.4, 0.3]
+        # complexity_importances = [0.4, 0.3]
+        complexity_importances = [0.6, 0.5, 0.4]
     if complexity_powers is None:
         # complexity_powers = [1.0, 2.0, 0.5]
         # complexity_powers = [1.0]
         # complexity_powers = [1.0]
         # complexity_powers = [1.0]
-        complexity_powers = [1.0]
+        # complexity_powers = [1.0]
+        complexity_powers = [1.0, 0.5]
     if lrs is None:
         # lrs = [1e-1, 1e-2, 1e-3, 1e-4]
         # lrs = [0.05, 0.02, 0.01, 0.005, 0.002]
         # lrs = [0.05, 0.02, 0.01]
+        # lrs = [0.05]
         # lrs = [0.05]
         lrs = [0.05]
     if max_circuitses is None:
@@ -352,14 +389,17 @@ def grid_search_gradient_descent(
         # max_circuitses = [32, 64, 128, 256]
         # max_circuitses = [32, 64, 128, 256]
         # max_circuitses = [32, 48, 64]
-        max_circuitses = [32, 48, 64]
+        # max_circuitses = [32, 48, 64]
+        max_circuitses = [64, 128, 256]
     if num_epochses is None:
         # num_epochses = [2048]
         # num_epochses = [4096]
         # num_epochses = [8192]
         # num_epochses = [4096]
+        # num_epochses = [4096]
         num_epochses = [4096]
     if num_warmup_epochses is None:
+        # num_warmup_epochses = [0]
         # num_warmup_epochses = [0]
         # num_warmup_epochses = [0]
         # num_warmup_epochses = [0]
@@ -369,6 +409,7 @@ def grid_search_gradient_descent(
         # num_cooldown_epochses = [512]
         # num_cooldown_epochses = [1024]
         # num_cooldown_epochses = [2048]
+        # num_cooldown_epochses = [0]
         # num_cooldown_epochses = [0]
         num_cooldown_epochses = [0]
 
@@ -396,6 +437,18 @@ def grid_search_gradient_descent(
         device=device,
     )
     complexity_landscape = th.empty(
+        num_seeds,
+        len(complexity_importances),
+        len(complexity_powers),
+        len(lrs),
+        len(max_circuitses),
+        len(num_epochses),
+        len(num_warmup_epochses),
+        len(num_cooldown_epochses),
+        device=device,
+    )
+    # Store the circuits themselves
+    circuits_landscape = th.empty(
         num_seeds,
         len(complexity_importances),
         len(complexity_powers),
@@ -462,8 +515,10 @@ def grid_search_gradient_descent(
             num_epochs=num_epochs,
             num_warmup_epochs=num_warmup_epochs,
             num_cooldown_epochs=num_cooldown_epochs,
-            seed=seed,
+            batch_size=batch_size,
+            grad_accumulation_steps=grad_accumulation_steps,
             device=device,
+            seed=seed,
             wandb_run=wandb_run,
         )
         loss_landscape[
@@ -496,11 +551,22 @@ def grid_search_gradient_descent(
             num_warmup_epochs_idx,
             num_cooldown_epochs_idx,
         ] = complexity
+        circuits_landscape[
+            seed_idx,
+            complexity_importance_idx,
+            complexity_power_idx,
+            lr_idx,
+            max_circuits_idx,
+            num_epochs_idx,
+            num_warmup_epochs_idx,
+            num_cooldown_epochs_idx,
+        ] = circuits
 
     out = {
         "loss_landscape": loss_landscape,
         "faithfulness_landscape": faithfulness_landscape,
         "complexity_landscape": complexity_landscape,
+        "circuits_landscape": circuits_landscape,
         "complexity_importances": complexity_importances,
         "complexity_powers": complexity_powers,
         "lrs": lrs,
@@ -514,4 +580,5 @@ def grid_search_gradient_descent(
 
 
 if __name__ == "__main__":
-    arguably.run()
+    # arguably.run()
+    grid_search_gradient_descent(top_k=8, grad_accumulation_steps=4)

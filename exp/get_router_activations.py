@@ -25,11 +25,17 @@ def save_router_logits(
         "router_logits": router_logits,
         "tokens": tokenized_batch_collection,
     }
-    th.save(output, os.path.join(ROUTER_LOGITS_DIR, f"{file_idx}.pt"))
+    output_path = os.path.join(ROUTER_LOGITS_DIR, f"{file_idx}.pt")
+    th.save(output, output_path)
 
     # Explicitly clean up large tensors
     del router_logits
     del output
+
+    # Force garbage collection
+    gc.collect()
+    if th.cuda.is_available():
+        th.cuda.empty_cache()
 
 
 def process_batch(
@@ -48,6 +54,7 @@ def process_batch(
     Returns:
         tuple: (router_logits, tokenized_batch)
     """
+
     encoded_batch = model.tokenizer(batch, padding=True, return_tensors="pt")
     tokenized_batch = [model.tokenizer.tokenize(text) for text in batch]
 
@@ -61,9 +68,7 @@ def process_batch(
 
             # Get router logits and immediately detach and move to CPU
             logits = model.routers_output[layer].cpu()[padding_mask].save()
-            # Create a copy to break reference to the original tensor
-            logits_copy = logits.clone().detach()
-            router_logits.append(logits_copy)
+            router_logits.append(logits.clone().detach())
 
         # Explicitly stop the tracer to clean up resources
         tracer.stop()
@@ -78,6 +83,8 @@ def process_batch(
 
     # Force garbage collection to clean up any lingering references
     gc.collect()
+    if th.cuda.is_available():
+        th.cuda.empty_cache()
 
     return router_logits_tensor, tokenized_batch
 
@@ -86,9 +93,11 @@ def process_batch(
 def get_router_activations(
     model_name: str = "olmoe-i",
     dataset: str = "lmsys",
+    *_args,
     batch_size: int = 4,
     device: str = "cpu",
     tokens_per_file: int = 10_000,
+    resume: bool = False,
 ) -> None:
     model_config = MODELS.get(model_name, None)
 
@@ -111,7 +120,13 @@ def get_router_activations(
     router_layers: list[int] = model.layers_with_routers
     top_k: int = model.router_probabilities.get_top_k()
 
-    with th.no_grad():
+    start_file_idx = 0
+    if resume:
+        for file in os.listdir(ROUTER_LOGITS_DIR):
+            if file.endswith(".pt"):
+                start_file_idx = max(start_file_idx, int(file.split(".")[0]))
+
+    with th.inference_mode():
         router_logit_collection: list[th.Tensor] = []
         tokenized_batch_collection: list[list[str]] = []
         router_logit_collection_size: int = 0
@@ -119,7 +134,9 @@ def get_router_activations(
 
         pbar = tqdm(total=tokens_per_file, desc="Filling up file")
 
-        for batch in batched(dataset_fn(model.tokenizer), batch_size):
+        for batch_idx, batch in enumerate(
+            tqdm(batched(dataset_fn(model.tokenizer), batch_size), desc="Processing batches")
+        ):
             # Process batch in isolated function to ensure variable cleanup
             router_logits, tokenized_batch = process_batch(batch, model, router_layers)
 
@@ -162,7 +179,8 @@ def get_router_activations(
         del router_logit_collection
         del tokenized_batch_collection
         gc.collect()
-        th.cuda.empty_cache()
+        if th.cuda.is_available():
+            th.cuda.empty_cache()
 
 
 if __name__ == "__main__":

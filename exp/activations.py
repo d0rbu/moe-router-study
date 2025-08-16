@@ -1,6 +1,7 @@
 from itertools import count
 import os
 
+from loguru import logger
 import torch as th
 from tqdm import tqdm
 
@@ -45,8 +46,22 @@ def load_activations_indices_tokens_and_topk(
     if not os.path.isdir(dir_path):
         raise FileNotFoundError(f"Activation directory not found: {dir_path}")
 
+    # get the highest file index of contiguous *.pt files
+    file_indices = [
+        int(f.split(".")[0])
+        for f in os.listdir(dir_path)
+        if f.endswith(".pt")
+    ]
+    file_indices.sort()
+    # get the highest file index that does not have a gap
+    highest_file_idx = file_indices[-1]
+    for i in range(len(file_indices) - 1):
+        if file_indices[i + 1] - file_indices[i] > 1:
+            highest_file_idx = file_indices[i]
+            break
+
     # Use the module-level, patchable directory constant
-    for file_idx in tqdm(count(), desc="Loading router logits+tokens"):
+    for file_idx in tqdm(range(highest_file_idx + 1), desc="Loading activations", total=highest_file_idx + 1):
         file_path = os.path.join(dir_path, f"{file_idx}.pt")
         if not os.path.exists(file_path):
             break
@@ -127,6 +142,7 @@ def load_activations_and_topk(device: str = "cuda") -> tuple[th.Tensor, int]:
     # Default to CPU to be CI-friendly
     device = device or "cpu"
     if device == "cuda" and not th.cuda.is_available():
+        logger.warning("CUDA not available; falling back to CPU")
         device = "cpu"
     activated_experts, _indices, top_k = load_activations_and_indices_and_topk(
         device=device
@@ -138,6 +154,7 @@ def load_activations(device: str = "cuda") -> th.Tensor:
     # Default to CPU to be CI-friendly
     device = device or "cpu"
     if device == "cuda" and not th.cuda.is_available():
+        logger.warning("CUDA not available; falling back to CPU")
         device = "cpu"
     activated_experts, _, _ = load_activations_and_indices_and_topk(device=device)
     return activated_experts
