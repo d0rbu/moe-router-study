@@ -88,6 +88,7 @@ def expert_importance(
             )  # (E, Dmlp, H)
 
             # Use batch matrix multiplication for each expert with its own router vector
+            # This ensures proper dimension matching for the matrix multiplication
             up_imp_all = th.bmm(up_w_all, V.unsqueeze(-1)).squeeze(-1)  # (E, Dmlp)
             gate_imp_all = th.bmm(gate_w_all, V.unsqueeze(-1)).squeeze(-1)  # (E, Dmlp)
 
