@@ -73,7 +73,9 @@ def process_batch(
                 case (router_scores, _router_indices):
                     logits = router_scores.cpu()[padding_mask].save()
                 case tuple():
-                    raise ValueError(f"Found tuple of length {len(router_output)} for router output at layer {layer}")
+                    raise ValueError(
+                        f"Found tuple of length {len(router_output)} for router output at layer {layer}"
+                    )
                 case router_scores:
                     logits = router_scores.cpu()[padding_mask].save()
 
