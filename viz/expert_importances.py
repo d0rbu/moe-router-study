@@ -91,7 +91,11 @@ def expert_importances(
     importance_data = {}
     for entry in entries:
         # Handle different entry types (MoE vs Attention)
-        param_type = entry.get("param_type", "")
+        param_type = entry.get("param_type")
+        if param_type not in ["moe", "attn"]:
+            raise ValueError(
+                f'Invalid or missing param_type: {param_type}. Must be "moe" or "attn".'
+            )
         base_layer_idx = entry["base_layer_idx"]
         base_expert_idx = entry["base_expert_idx"]
         component = entry["component"]
@@ -120,7 +124,7 @@ def expert_importances(
                 None,
             )
             importance_data[key] = {"role": role, "l2": l2, "param_type": param_type}
-        else:
+        else:  # This should never happen due to the check above
             # Error if param_type is not present or not one of the expected values
             raise ValueError(
                 f"Invalid param_type: {param_type}. Must be 'moe' or 'attn'."
