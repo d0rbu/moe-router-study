@@ -83,15 +83,23 @@ def expert_importance(
 
                 # Expert-specific readers: up/gate
                 # Handle experts as a list to avoid subscripting issues
-                experts = getattr(model.mlps[derived_layer_idx], "experts")
+                experts = model.mlps[derived_layer_idx].experts
 
                 up_weights = []
                 gate_weights = []
                 down_weights = []
 
                 for e in range(num_experts):
-                    # Use getattr to avoid subscripting issues
-                    expert = getattr(experts, str(e))
+                    # Handle both list-like and dict-like experts
+                    if isinstance(experts, list):
+                        expert = experts[e]
+                    else:
+                        # Try to access as an attribute or dictionary
+                        try:
+                            expert = getattr(experts, str(e))
+                        except AttributeError:
+                            expert = experts[str(e)]
+
                     up_w = cast("Tensor", expert.up_proj.weight).detach().cpu()
                     gate_w = cast("Tensor", expert.gate_proj.weight).detach().cpu()
                     # Save the transpose of down_proj weight as requested
