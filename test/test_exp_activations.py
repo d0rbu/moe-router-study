@@ -1,5 +1,6 @@
 """Tests for exp.activations module."""
 
+import os
 from unittest.mock import patch
 
 import pytest
@@ -70,10 +71,7 @@ class TestLoadActivationsAndIndicesAndTopk:
         """Test behavior with empty directory."""
         with (
             patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)),
-            pytest.raises(
-                (ValueError, FileNotFoundError),
-                match="No data files found|ensure exp.get_router_activations has been run",
-            ),
+            pytest.raises(ValueError, match="No data files found"),
         ):
             load_activations_and_indices_and_topk()
 
@@ -348,12 +346,11 @@ class TestActivationLoadingErrorHandling:
 
     def test_file_not_found(self, temp_dir):
         """Test handling of file not found error."""
-        # Create a non-existent directory path
-        non_existent_dir = temp_dir / "non_existent_dir"
-
+        # Use a non-existent directory
+        non_existent_dir = os.path.join(temp_dir, "non_existent_dir")
         with (
-            patch("exp.activations.ROUTER_LOGITS_DIR", str(non_existent_dir)),
-            pytest.raises((FileNotFoundError, ValueError)),
+            patch("exp.activations.ROUTER_LOGITS_DIR", non_existent_dir),
+            pytest.raises(FileNotFoundError),
         ):
             load_activations_and_indices_and_topk()
 

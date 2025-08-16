@@ -26,6 +26,11 @@ class TestGetRouterActivations:
         mock_model.layers_with_routers = [0, 1]
         mock_model.router_probabilities.get_top_k.return_value = 2
 
+        # Create a mock StandardizedTransformer class
+        mock_transformer_class = MagicMock()
+        mock_transformer_instance = MagicMock()
+        mock_transformer_class.return_value = mock_transformer_instance
+
         with (
             patch(
                 "exp.get_router_activations.MODELS",
@@ -41,7 +46,7 @@ class TestGetRouterActivations:
             ),
             patch(
                 "exp.get_router_activations.StandardizedTransformer",
-                return_value=mock_model,
+                mock_transformer_class,
             ),
             patch(
                 "exp.get_router_activations.process_batch",
@@ -61,9 +66,7 @@ class TestGetRouterActivations:
             )
 
             # Check that the model was created with the right parameters
-            from exp.get_router_activations import StandardizedTransformer
-
-            StandardizedTransformer.assert_called_once()
+            mock_transformer_class.assert_called_once()
 
 
 class TestProcessBatch:

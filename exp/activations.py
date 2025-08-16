@@ -50,11 +50,9 @@ def load_activations_indices_tokens_and_topk(
         int(f.split(".")[0]) for f in os.listdir(dir_path) if f.endswith(".pt")
     ]
 
-    # If no files found, raise NoDataFilesError
+    # Check if there are any files
     if not file_indices:
-        raise NoDataFilesError(
-            "No data files found; ensure exp.get_router_activations has been run"
-        )
+        raise ValueError("No data files found in directory")
 
     file_indices.sort()
     # get the highest file index that does not have a gap
