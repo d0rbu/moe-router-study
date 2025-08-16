@@ -145,7 +145,7 @@ def get_router_activations(
 
         pbar = tqdm(total=tokens_per_file, desc="Filling up file")
 
-        for batch_idx, batch in enumerate(
+        for _batch_idx, batch in enumerate(
             tqdm(
                 batched(dataset_fn(model.tokenizer), batch_size),
                 desc="Processing batches",
