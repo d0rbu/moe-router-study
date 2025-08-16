@@ -201,3 +201,10 @@ checkpoints/
 ehthumbs.db
 Thumbs.db
 
+fig/
+fig_*
+
+out/
+out_*
+
+.ruff_cache/
