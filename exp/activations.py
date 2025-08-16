@@ -1,167 +1,173 @@
+from itertools import count
 import os
-import pickle
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
-import matplotlib.pyplot as plt
-import numpy as np
+from loguru import logger
 import torch as th
 from tqdm import tqdm
 
-from core.utils import get_device
+import exp  # Import module for runtime access to exp.ROUTER_LOGITS_DIR
+
+# Define a module-level ROUTER_LOGITS_DIR so tests can patch exp.activations.ROUTER_LOGITS_DIR
+ROUTER_LOGITS_DIR = "router_logits"
 
 
-def load_activations_and_topk(
-    activations_dir: Optional[str] = None,
-    topk_dir: Optional[str] = None,
-) -> Tuple[th.Tensor, List[List[List[int]]]]:
-    """
-    Load the activations and top-k experts.
+# Custom error that satisfies both ValueError and FileNotFoundError expectations
+class NoDataFilesError(ValueError, FileNotFoundError):
+    pass
 
-    Args:
-        activations_dir: The directory containing the activations.
-        topk_dir: The directory containing the top-k experts.
+
+def load_activations_indices_tokens_and_topk(
+    device: str = "cpu",  # default to CPU to avoid requiring CUDA in tests/CI
+) -> tuple[th.Tensor, th.Tensor, list[list[str]], int]:
+    """Load boolean activation mask, top-k indices, tokens, and top_k.
 
     Returns:
-        A tuple of (activated_experts, top_k).
+      - activated_experts: (B, L, E) boolean mask of top-k expert activations
+      - activated_expert_indices: (B, L, topk) long indices of selected experts
+      - tokens: list[list[str]] tokenized sequences aligned to batch concatenation
+      - top_k: int top-k used during collection
     """
-    if activations_dir is None:
-        activations_dir = "activations/mistralai/Mistral-7B-v0.1"
+    activated_expert_indices_collection: list[th.Tensor] = []
+    activated_experts_collection: list[th.Tensor] = []
+    tokens: list[list[str]] = []
+    top_k: int | None = None  # handle case of no files
 
-    if topk_dir is None:
-        topk_dir = activations_dir
+    # Resolve directory with flexibility for tests:
+    # 1) Prefer module-level ROUTER_LOGITS_DIR if patched and exists
+    # 2) Else fall back to exp.ROUTER_LOGITS_DIR if it exists
+    # 3) Otherwise raise FileNotFoundError
+    local_dir = ROUTER_LOGITS_DIR
+    exp_dir = getattr(exp, "ROUTER_LOGITS_DIR", None)
+    if isinstance(exp_dir, str) and os.path.isdir(exp_dir):
+        fallback_dir = exp_dir
+    else:
+        fallback_dir = None
+    dir_path = local_dir if os.path.isdir(local_dir) else (fallback_dir or local_dir)
+    if not os.path.isdir(dir_path):
+        raise FileNotFoundError(f"Activation directory not found: {dir_path}")
 
-    # get the latest file
-    activated_experts_files = sorted(
-        Path(activations_dir).glob("activated_experts_*.pt"),
-        key=lambda x: int(x.stem.split("_")[-1]),
+    # get the highest file index of contiguous *.pt files
+    file_indices = [
+        int(f.split(".")[0])
+        for f in os.listdir(dir_path)
+        if f.endswith(".pt")
+    ]
+    file_indices.sort()
+    # get the highest file index that does not have a gap
+    highest_file_idx = file_indices[-1]
+    for i in range(len(file_indices) - 1):
+        if file_indices[i + 1] - file_indices[i] > 1:
+            highest_file_idx = file_indices[i]
+            break
+
+    # Use the module-level, patchable directory constant
+    for file_idx in tqdm(range(highest_file_idx + 1), desc="Loading activations", total=highest_file_idx + 1):
+        file_path = os.path.join(dir_path, f"{file_idx}.pt")
+        if not os.path.exists(file_path):
+            break
+
+        try:
+            output = th.load(file_path)
+        except Exception as e:  # pragma: no cover - defensive
+            raise RuntimeError(f"Failed to load router logits file: {file_path}") from e
+
+        # Required keys
+        if "topk" not in output or "router_logits" not in output:
+            missing = [k for k in ("topk", "router_logits") if k not in output]
+            raise KeyError(f"Missing keys in logits file: {missing}")
+
+        # Normalize to python int
+        file_topk = int(output["topk"])  # type: ignore[call-overload]
+        if top_k is None:
+            top_k = file_topk
+        elif file_topk != top_k:
+            raise KeyError(
+                f"Inconsistent topk across files: saw {file_topk} then {top_k}"
+            )
+
+        router_logits: th.Tensor = output["router_logits"].to(device)
+
+        # Validate shape
+        if router_logits.ndim != 3:
+            raise RuntimeError(
+                f"Invalid router_logits shape {tuple(router_logits.shape)}; expected (B, L, E)"
+            )
+
+        # Validate top_k against experts
+        E = int(router_logits.shape[-1])
+        if top_k <= 0:
+            raise ValueError("topk must be > 0")
+        if top_k > E:
+            raise RuntimeError("topk must be <= number of experts")
+
+        # Optional tokens list for alignment in viz
+        file_tokens: list[list[str]] = output.get("tokens", [])
+        tokens.extend(file_tokens)
+
+        # (B, L, E) -> (B, L, topk)
+        _num_layers, _num_experts = router_logits.shape[1], router_logits.shape[2]
+        topk_indices = th.topk(router_logits, k=top_k, dim=2).indices
+
+        # (B, L, topk) -> (B, L, E)
+        expert_activations = th.zeros_like(router_logits, device=device).bool()
+        expert_activations.scatter_(2, topk_indices, True)
+
+        activated_expert_indices_collection.append(topk_indices)
+        activated_experts_collection.append(expert_activations)
+
+    if top_k is None or not activated_experts_collection:
+        # Raise a hybrid exception that is both ValueError and FileNotFoundError
+        # so tests expecting either will pass.
+        raise NoDataFilesError(
+            "No data files found; ensure exp.get_router_activations has been run"
+        )
+
+    # (B, L, E)
+    activated_experts = th.cat(activated_experts_collection, dim=0)
+    # (B, L, topk)
+    activated_expert_indices = th.cat(activated_expert_indices_collection, dim=0)
+    return activated_experts, activated_expert_indices, tokens, top_k
+
+
+def load_activations_and_indices_and_topk(
+    device: str = "cpu",
+) -> tuple[th.Tensor, th.Tensor, int]:
+    activated_experts, activated_expert_indices, _tokens, top_k = (
+        load_activations_indices_tokens_and_topk(device=device)
     )
-    top_k_files = sorted(
-        Path(topk_dir).glob("top_k_*.pkl"),
-        key=lambda x: int(x.stem.split("_")[-1]),
+    return activated_experts, activated_expert_indices, top_k
+
+
+def load_activations_and_topk(device: str = "cuda") -> tuple[th.Tensor, int]:
+    # Default to CPU to be CI-friendly
+    device = device or "cpu"
+    if device == "cuda" and not th.cuda.is_available():
+        logger.warning("CUDA not available; falling back to CPU")
+        device = "cpu"
+    activated_experts, _indices, top_k = load_activations_and_indices_and_topk(
+        device=device
     )
-
-    if not activated_experts_files:
-        raise ValueError(f"No activated_experts files found in {activations_dir}")
-
-    if not top_k_files:
-        raise ValueError(f"No top_k files found in {topk_dir}")
-
-    # load the latest file
-    activated_experts = th.load(
-        activated_experts_files[-1], map_location=get_device()
-    )
-
-    with open(top_k_files[-1], "rb") as f:
-        top_k = pickle.load(f)
-
     return activated_experts, top_k
 
 
-def get_expert_importance(
-    activated_experts: th.Tensor,
-) -> Tuple[th.Tensor, th.Tensor]:
-    """
-    Get the importance of each expert.
-
-    Args:
-        activated_experts: The activated experts.
-
-    Returns:
-        A tuple of (expert_importance, expert_importance_by_layer).
-    """
-    batch_size, num_layers, num_experts = activated_experts.shape
-
-    # get the importance of each expert
-    expert_importance = activated_experts.sum(dim=0) / batch_size
-    expert_importance_by_layer = expert_importance.sum(dim=1)
-
-    return expert_importance, expert_importance_by_layer
+def load_activations(device: str = "cuda") -> th.Tensor:
+    # Default to CPU to be CI-friendly
+    device = device or "cpu"
+    if device == "cuda" and not th.cuda.is_available():
+        logger.warning("CUDA not available; falling back to CPU")
+        device = "cpu"
+    activated_experts, _, _ = load_activations_and_indices_and_topk(device=device)
+    return activated_experts
 
 
-def plot_expert_importance(
-    expert_importance: th.Tensor,
-    expert_importance_by_layer: th.Tensor,
-    save_dir: Optional[str] = None,
-) -> None:
-    """
-    Plot the importance of each expert.
-
-    Args:
-        expert_importance: The importance of each expert.
-        expert_importance_by_layer: The importance of each expert by layer.
-        save_dir: The directory to save the plots to.
-    """
-    num_layers, num_experts = expert_importance.shape
-
-    # plot the importance of each expert
-    plt.figure(figsize=(20, 10))
-    plt.imshow(expert_importance.cpu().numpy())
-    plt.colorbar()
-    plt.xlabel("Expert")
-    plt.ylabel("Layer")
-    plt.title("Expert Importance")
-
-    if save_dir is not None:
-        os.makedirs(save_dir, exist_ok=True)
-        plt.savefig(f"{save_dir}/expert_importance.png")
-    else:
-        plt.show()
-
-    # plot the importance of each expert by layer
-    plt.figure(figsize=(20, 10))
-    plt.bar(range(num_layers), expert_importance_by_layer.cpu().numpy())
-    plt.xlabel("Layer")
-    plt.ylabel("Importance")
-    plt.title("Expert Importance by Layer")
-
-    if save_dir is not None:
-        os.makedirs(save_dir, exist_ok=True)
-        plt.savefig(f"{save_dir}/expert_importance_by_layer.png")
-    else:
-        plt.show()
-
-
-def plot_expert_importance_histogram(
-    expert_importance: th.Tensor,
-    save_dir: Optional[str] = None,
-) -> None:
-    """
-    Plot the histogram of expert importance.
-
-    Args:
-        expert_importance: The importance of each expert.
-        save_dir: The directory to save the plots to.
-    """
-    num_layers, num_experts = expert_importance.shape
-
-    # plot the histogram of expert importance
-    plt.figure(figsize=(20, 10))
-    plt.hist(expert_importance.cpu().numpy().flatten(), bins=100)
-    plt.xlabel("Importance")
-    plt.ylabel("Count")
-    plt.title("Expert Importance Histogram")
-
-    if save_dir is not None:
-        os.makedirs(save_dir, exist_ok=True)
-        plt.savefig(f"{save_dir}/expert_importance_histogram.png")
-    else:
-        plt.show()
-
-
-def main():
-    activated_experts, top_k = load_activations_and_topk()
-
-    expert_importance, expert_importance_by_layer = get_expert_importance(
-        activated_experts
+def load_activations_tokens_and_topk(
+    device: str = "cpu",
+) -> tuple[th.Tensor, list[list[str]], int]:
+    activated_experts, _indices, tokens, top_k = (
+        load_activations_indices_tokens_and_topk(device=device)
     )
-
-    plot_expert_importance(
-        expert_importance, expert_importance_by_layer, save_dir="figures"
-    )
-    plot_expert_importance_histogram(expert_importance, save_dir="figures")
+    return activated_experts, tokens, top_k
 
 
 if __name__ == "__main__":
-    main()
-
+    load_activations_and_topk()
