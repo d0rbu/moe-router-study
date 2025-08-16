@@ -81,6 +81,9 @@ MODELS: dict[str, ModelConfig] = {
     "q3_30b": ModelConfig(
         hf_name="Qwen/Qwen3-30B-A3B",
     ),
+    "gpt": ModelConfig(
+        hf_name="openai/gpt-oss-20b",
+    ),
     # posttrained model
     "olmoe-i": ModelConfig(
         hf_name="allenai/OLMoE-1B-7B-0125-Instruct",
