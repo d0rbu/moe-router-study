@@ -2,6 +2,9 @@
 
 import os
 
+import matplotlib
+
+matplotlib.use("WebAgg")  # Use GTK3Agg backend for interactive plots on Pop!_OS
 import arguably
 from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
@@ -36,8 +39,8 @@ def expert_importances(
     initial_layer_idx: int = 0,
     initial_expert_idx: int = 0,
     normalize_percentile: float = 95.0,
-    figure_width: float = 12.0,
-    figure_height: float = 10.0,
+    figure_width: float = 16.0,  # Increased width
+    figure_height: float = 14.0,  # Increased height
 ) -> None:
     """Visualize expert importances with an interactive plot.
 
@@ -92,30 +95,30 @@ def expert_importances(
     reader_cmap = plt.get_cmap(READER_CMAP)
     writer_cmap = plt.get_cmap(WRITER_CMAP)
 
-    # Create figure and axes
+    # Create figure and axes with better layout
     fig, ax = plt.subplots(figsize=(figure_width, figure_height))
-    plt.subplots_adjust(bottom=0.2)  # Make room for sliders
+    plt.subplots_adjust(bottom=0.25, left=0.1, right=0.9, top=0.95)  # Better spacing
 
     # Calculate layout dimensions
     num_layers = len(layers)
     num_reader_components = len(READER_COMPONENTS)
     num_writer_components = len(WRITER_COMPONENTS)
 
-    # Height of each layer band
-    layer_height = 1.0
-    # Width of each expert block
-    expert_width = 0.8
+    # Height of each layer band - increased spacing
+    layer_height = 1.5  # Increased from 1.0
+    # Width of each expert block - 4x wider cells
+    expert_width = 1.5  # Increased from 2.5 to make cells 4x wider
     # Spacing between components
-    component_spacing = 0.2
+    component_spacing = 1.0  # Increased from 0.5 for better spacing
+    # Space in the middle for labels
+    middle_spacing = 30.0  # Increased from 2.0 for better middle spacing
 
     # Total height needed
     total_height = num_layers * layer_height
 
-    # Set axis limits
-    max_width = max(num_reader_components, num_writer_components) * (
-        expert_width * num_experts + component_spacing
-    )
-    ax.set_xlim(-max_width - 1, max_width + 1)
+    # Set axis limits with middle spacing
+    max_width = expert_width * (num_experts + component_spacing)
+    ax.set_xlim(-max_width - middle_spacing, max_width + middle_spacing)
     ax.set_ylim(-1, total_height + 1)
 
     # Draw residual stream (vertical line at x=0)
@@ -123,8 +126,8 @@ def expert_importances(
 
     # Create highlight rectangle for selected layer (initially hidden)
     layer_highlight = patches.Rectangle(
-        (-max_width - 1, 0),
-        2 * (max_width + 1),
+        (-max_width - middle_spacing, 0),
+        2 * (max_width + middle_spacing),
         layer_height,
         facecolor=HIGHLIGHT_COLOR,
         alpha=0.3,
@@ -142,20 +145,20 @@ def expert_importances(
         # Draw writer components (left side)
         for comp_idx, component in enumerate(WRITER_COMPONENTS):
             y_offset = y_base + (comp_idx * layer_height / num_writer_components)
-            height = layer_height / num_writer_components - 0.05
+            height = layer_height / num_writer_components - 0.1  # Increased height
 
             # Draw component label
             ax.text(
-                -0.5,
+                0,  # Position in the middle space
                 y_offset + height / 2,
                 component.split(".")[-1],
                 ha="right",
                 va="center",
-                fontsize=8,
+                fontsize=10,  # Increased font size
             )
 
             for expert_idx in range(num_experts):
-                x_pos = -(expert_idx + 1) * expert_width
+                x_pos = -(expert_idx + 1) * expert_width - middle_spacing/2
 
                 # Get importance value
                 key = (layer_idx, component, expert_idx)
@@ -169,7 +172,7 @@ def expert_importances(
                 # Create rectangle
                 rect = patches.Rectangle(
                     (x_pos, y_offset),
-                    expert_width - 0.05,
+                    expert_width - 0.1,  # Increased width
                     height,
                     facecolor=color,
                     edgecolor="gray",
@@ -182,20 +185,20 @@ def expert_importances(
         # Draw reader components (right side)
         for comp_idx, component in enumerate(READER_COMPONENTS):
             y_offset = y_base + (comp_idx * layer_height / num_reader_components)
-            height = layer_height / num_reader_components - 0.05
+            height = layer_height / num_reader_components - 0.1  # Increased height
 
             # Draw component label
             ax.text(
-                0.5,
+                0,  # Position in the middle space
                 y_offset + height / 2,
                 component.split(".")[-1],
                 ha="left",
                 va="center",
-                fontsize=8,
+                fontsize=10,  # Increased font size
             )
 
             for expert_idx in range(num_experts):
-                x_pos = expert_idx * expert_width
+                x_pos = expert_idx * expert_width + middle_spacing/2
 
                 # Get importance value
                 key = (layer_idx, component, expert_idx)
@@ -209,7 +212,7 @@ def expert_importances(
                 # Create rectangle
                 rect = patches.Rectangle(
                     (x_pos, y_offset),
-                    expert_width - 0.05,
+                    expert_width - 0.1,  # Increased width
                     height,
                     facecolor=color,
                     edgecolor="gray",
@@ -226,14 +229,14 @@ def expert_importances(
             f"Layer {layer_idx}",
             ha="center",
             va="center",
-            fontsize=10,
+            fontsize=12,  # Increased font size
             fontweight="bold",
             bbox={"facecolor": "white", "alpha": 0.7, "edgecolor": "none"},
         )
 
-    # Add colorbars
-    cax_writer = fig.add_axes((0.15, 0.08, 0.3, 0.03))
-    cax_reader = fig.add_axes((0.55, 0.08, 0.3, 0.03))
+    # Add colorbars with better positioning
+    cax_writer = fig.add_axes((0.15, 0.12, 0.3, 0.03))
+    cax_reader = fig.add_axes((0.55, 0.12, 0.3, 0.03))
 
     writer_sm = ScalarMappable(cmap=writer_cmap, norm=norm)
     reader_sm = ScalarMappable(cmap=reader_cmap, norm=norm)
@@ -247,9 +250,9 @@ def expert_importances(
     writer_cbar.set_label("Writer Importance (L2 Norm)")
     reader_cbar.set_label("Reader Importance (L2 Norm)")
 
-    # Add sliders for layer and expert selection
-    ax_layer = fig.add_axes((0.25, 0.02, 0.65, 0.03))
-    ax_expert = fig.add_axes((0.25, 0.05, 0.65, 0.03))
+    # Add sliders for layer and expert selection with better spacing
+    ax_layer = fig.add_axes((0.25, 0.06, 0.65, 0.03))
+    ax_expert = fig.add_axes((0.25, 0.02, 0.65, 0.03))
 
     slider_layer = Slider(
         ax=ax_layer,
@@ -274,56 +277,90 @@ def expert_importances(
     current_expert_idx = min(initial_expert_idx, num_experts - 1)
 
     # Update function for sliders
-    def update(_=None):
-        nonlocal current_layer_idx, current_expert_idx
+    def update_layer(val):
+        nonlocal current_layer_idx
 
-        # Get new values
-        new_layer_idx_idx = int(slider_layer.val)
-        new_expert_idx = int(slider_expert.val)
+        # Get new layer index
+        new_layer_idx_idx = int(val)
         new_layer_idx = layers[new_layer_idx_idx]
 
         # Update layer highlight
         y_base = new_layer_idx_idx * layer_height
         layer_highlight.set_y(y_base)
 
-        # Reset borders for previous expert
+        # Reset borders for previous expert in previous layer
         for key, rect in all_rectangles.items():
             layer, component, expert = key
-            if expert == current_expert_idx:
+            if layer == current_layer_idx and expert == current_expert_idx:
                 rect.set_edgecolor("gray")
                 rect.set_linewidth(0.5)
 
-        # Set borders for new expert
+        # Set borders for current expert in new layer
         for key, rect in all_rectangles.items():
             layer, component, expert = key
-            if expert == new_expert_idx:
+            if layer == new_layer_idx and expert == current_expert_idx:
                 rect.set_edgecolor(SELECTED_EXPERT_BORDER_COLOR)
                 rect.set_linewidth(2)
 
-        # Update current selection
+        # Update current layer
         current_layer_idx = new_layer_idx
+
+        # Update title
+        ax.set_title(
+            f"Expert Importances - Layer {new_layer_idx}, Expert {current_expert_idx}",
+            fontsize=14
+        )
+
+        # Force redraw
+        fig.canvas.draw_idle()
+
+    def update_expert(val):
+        nonlocal current_expert_idx
+
+        # Get new expert index
+        new_expert_idx = int(val)
+
+        # Reset borders for previous expert in current layer
+        for key, rect in all_rectangles.items():
+            layer, component, expert = key
+            if layer == current_layer_idx and expert == current_expert_idx:
+                rect.set_edgecolor("gray")
+                rect.set_linewidth(0.5)
+
+        # Set borders for new expert in current layer
+        for key, rect in all_rectangles.items():
+            layer, component, expert = key
+            if layer == current_layer_idx and expert == new_expert_idx:
+                rect.set_edgecolor(SELECTED_EXPERT_BORDER_COLOR)
+                rect.set_linewidth(2)
+
+        # Update current expert
         current_expert_idx = new_expert_idx
 
         # Update title
         ax.set_title(
-            f"Expert Importances - Layer {new_layer_idx}, Expert {new_expert_idx}"
+            f"Expert Importances - Layer {current_layer_idx}, Expert {new_expert_idx}",
+            fontsize=14
         )
 
+        # Force redraw
         fig.canvas.draw_idle()
 
-    # Connect sliders to update function
-    slider_layer.on_changed(update)
-    slider_expert.on_changed(update)
+    # Connect sliders to update functions
+    slider_layer.on_changed(update_layer)
+    slider_expert.on_changed(update_expert)
 
-    # Initial update
-    update()
+    # Initial update to set the starting state
+    update_layer(initial_layer_idx)
+    update_expert(initial_expert_idx)
 
-    # Set title and labels
+    # Set initial title and labels
     ax.set_title(
-        f"Expert Importances - Layer {layers[current_layer_idx]}, Expert {current_expert_idx}"
+        f"Expert Importances - Layer {layers[current_layer_idx]}, Expert {current_expert_idx}",
+        fontsize=14
     )
-    ax.set_xlabel("Residual Stream")
-    ax.set_ylabel("Layers")
+    ax.set_xlabel("Residual Stream", fontsize=12)
+    ax.set_ylabel("Layers", fontsize=12)
 
     # Hide axis ticks
     ax.set_xticks([])
@@ -340,7 +377,6 @@ def expert_importances(
     )
     ax.legend([expert_legend], ["Selected Expert"], loc="upper right")
 
-    plt.tight_layout()
     plt.show()
 
 

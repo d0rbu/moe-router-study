@@ -1,3 +1,4 @@
+from itertools import product
 import os
 from typing import Any
 
@@ -55,129 +56,154 @@ def expert_importance(
             "revision": revision,
         }
 
-        for layer_idx in router_layers:
+        for base_layer_idx in router_layers:
             # Expert directions V: rows of router weight
-            router_weight: th.Tensor = model.routers[layer_idx].weight.detach().cpu()
+            router_weight: th.Tensor = model.routers[base_layer_idx].weight.detach().cpu()
             num_experts, hidden_size = router_weight.shape
+            V = router_weight  # (E, D)
 
-            # Preload attention weights for this layer
-            q_w: th.Tensor = model.attentions[layer_idx].q_proj.weight.detach().cpu()
-            k_w: th.Tensor = model.attentions[layer_idx].k_proj.weight.detach().cpu()
-            o_w: th.Tensor = model.attentions[layer_idx].o_proj.weight.detach().cpu()
+            for derived_layer_idx in router_layers:
+                # Preload attention weights for this layer
+                q_w: th.Tensor = model.attentions[derived_layer_idx].q_proj.weight.detach().cpu()
+                k_w: th.Tensor = model.attentions[derived_layer_idx].k_proj.weight.detach().cpu()
+                o_w: th.Tensor = model.attentions[derived_layer_idx].o_proj.weight.detach().cpu()
 
-            # Vectorized readers shared per layer
-            # q/k: (E, Dq) = (q_w @ V^T)^T, (k_w @ V^T)^T
-            V = router_weight  # (E, H)
-            q_imp_all: th.Tensor = (q_w @ V.T).T  # (E, Dq)
-            k_imp_all: th.Tensor = (k_w @ V.T).T  # (E, Dq)
+                # Vectorized readers shared per layer
+                # q/k: (E, Dq) = (q_w @ V^T)^T, (k_w @ V^T)^T
+                q_imp_all: th.Tensor = V @ q_w.T  # (E, Dq)
+                k_imp_all: th.Tensor = V @ k_w.T  # (E, Dq)
 
-            # Expert-specific readers: up/gate
-            up_w_all: th.Tensor = th.stack(
-                [
-                    model.mlps[layer_idx].experts[e].up_proj.weight.detach().cpu()
-                    for e in range(num_experts)
-                ],
-                dim=0,
-            )  # (E, Dmlp, H)
-            gate_w_all: th.Tensor = th.stack(
-                [
-                    model.mlps[layer_idx].experts[e].gate_proj.weight.detach().cpu()
-                    for e in range(num_experts)
-                ],
-                dim=0,
-            )  # (E, Dmlp, H)
+                # Expert-specific readers: up/gate
+                up_w_all: th.Tensor = th.stack(
+                    [
+                        model.mlps[derived_layer_idx].experts[e].up_proj.weight.detach().cpu()
+                        for e in range(num_experts)
+                    ],
+                    dim=0,
+                )  # (E, Dmlp, D)
+                gate_w_all: th.Tensor = th.stack(
+                    [
+                        model.mlps[derived_layer_idx].experts[e].gate_proj.weight.detach().cpu()
+                        for e in range(num_experts)
+                    ],
+                    dim=0,
+                )  # (E, Dmlp, D)
+                up_imp_all: th.Tensor = V @ up_w_all.transpose(0, -1)  # (E, Dmlp, E)
+                gate_imp_all: th.Tensor = V @ gate_w_all.transpose(0, -1)  # (E, Dmlp, E)
 
-            # Use batch matrix multiplication for each expert with its own router vector
-            # This ensures proper dimension matching for the matrix multiplication
-            up_imp_all = th.bmm(up_w_all, V.unsqueeze(-1)).squeeze(-1)  # (E, Dmlp)
-            gate_imp_all = th.bmm(gate_w_all, V.unsqueeze(-1)).squeeze(-1)  # (E, Dmlp)
+                # Vectorized writers
+                down_w_all: th.Tensor = th.stack(
+                    [
+                        model.mlps[derived_layer_idx].experts[e].down_proj.weight.detach().cpu()
+                        for e in range(num_experts)
+                    ],
+                    dim=0,
+                )  # (E, Dmlp, D)
+                down_imp_all: th.Tensor = V @ down_w_all.transpose(0, -1)  # (E, Dmlp, E)
+                o_imp_all: th.Tensor = V @ o_w.T  # (E, Dq)
 
-            # Vectorized writers
-            down_w_all: th.Tensor = th.stack(
-                [
-                    model.mlps[layer_idx].experts[e].down_proj.weight.detach().cpu()
-                    for e in range(num_experts)
-                ],
-                dim=0,
-            )  # (E, H, Dmlp)
-            down_imp_all: th.Tensor = th.bmm(V.unsqueeze(1), down_w_all).squeeze(
-                1
-            )  # (E, Dmlp)
-            o_imp_all: th.Tensor = V @ o_w  # (E, H)
+                # Append entries for this layer
+                layer_meta = {
+                    "base_layer_idx": base_layer_idx,
+                    "derived_layer_idx": derived_layer_idx,
+                    "hidden_size": hidden_size,
+                    "num_experts": num_experts,
+                }
+                # Iterate over all pairs of experts to save MoE elements
+                for base_expert_idx, derived_expert_idx in product(range(num_experts), range(num_experts)):
+                    expert_meta = {"base_expert_idx": base_expert_idx, "derived_expert_idx": derived_expert_idx}
+                    base = {**common_meta, **layer_meta, **expert_meta}
 
-            # Append entries for this layer
-            layer_meta = {
-                "layer_idx": layer_idx,
-                "hidden_size": hidden_size,
-                "num_experts": num_experts,
-            }
-            for e in range(num_experts):
-                expert_meta = {"expert_idx": e}
-                base = {**common_meta, **layer_meta, **expert_meta}
+                    # Readers
+                    entries.append(
+                        {
+                            **base,
+                            "component": "mlp.up_proj",
+                            "base_expert_idx": base_expert_idx,
+                            "derived_expert_idx": derived_expert_idx,
+                            "base_param_path": f"layers.{base_layer_idx}.mlp.experts.{base_expert_idx}.up_proj.weight",
+                            "derived_param_path": f"layers.{derived_layer_idx}.mlp.experts.{derived_expert_idx}.up_proj.weight",
+                            "role": "reader",
+                            "param_type": "moe",
+                            "importance_vector": up_imp_all[base_expert_idx, :, derived_expert_idx],
+                            "l2": float(th.linalg.vector_norm(up_imp_all[base_expert_idx, :, derived_expert_idx]).item()),
+                        }
+                    )
+                    entries.append(
+                        {
+                            **base,
+                            "component": "mlp.gate_proj",
+                            "base_expert_idx": base_expert_idx,
+                            "derived_expert_idx": derived_expert_idx,
+                            "base_param_path": f"layers.{base_layer_idx}.mlp.experts.{base_expert_idx}.gate_proj.weight",
+                            "derived_param_path": f"layers.{derived_layer_idx}.mlp.experts.{derived_expert_idx}.gate_proj.weight",
+                            "role": "reader",
+                            "param_type": "moe",
+                            "importance_vector": gate_imp_all[base_expert_idx, :, derived_expert_idx],
+                            "l2": float(th.linalg.vector_norm(gate_imp_all[base_expert_idx, :, derived_expert_idx]).item()),
+                        }
+                    )
 
-                # Readers
-                entries.append(
-                    {
-                        **base,
-                        "component": "mlp.up_proj",
-                        "param_path": f"layers.{layer_idx}.mlp.experts.{e}.up_proj.weight",
-                        "role": "reader",
-                        "importance_vector": up_imp_all[e],
-                        "l2": float(th.linalg.vector_norm(up_imp_all[e]).item()),
-                    }
-                )
-                entries.append(
-                    {
-                        **base,
-                        "component": "mlp.gate_proj",
-                        "param_path": f"layers.{layer_idx}.mlp.experts.{e}.gate_proj.weight",
-                        "role": "reader",
-                        "importance_vector": gate_imp_all[e],
-                        "l2": float(th.linalg.vector_norm(gate_imp_all[e]).item()),
-                    }
-                )
-                entries.append(
-                    {
-                        **base,
-                        "component": "attn.q_proj",
-                        "param_path": f"layers.{layer_idx}.self_attn.q_proj.weight",
-                        "role": "reader",
-                        "importance_vector": q_imp_all[e],
-                        "l2": float(th.linalg.vector_norm(q_imp_all[e]).item()),
-                    }
-                )
-                entries.append(
-                    {
-                        **base,
-                        "component": "attn.k_proj",
-                        "param_path": f"layers.{layer_idx}.self_attn.k_proj.weight",
-                        "role": "reader",
-                        "importance_vector": k_imp_all[e],
-                        "l2": float(th.linalg.vector_norm(k_imp_all[e]).item()),
-                    }
-                )
+                    # Writers
+                    entries.append(
+                        {
+                            **base,
+                            "component": "mlp.down_proj",
+                            "base_expert_idx": base_expert_idx,
+                            "derived_expert_idx": derived_expert_idx,
+                            "base_param_path": f"layers.{base_layer_idx}.mlp.experts.{base_expert_idx}.down_proj.weight",
+                            "derived_param_path": f"layers.{derived_layer_idx}.mlp.experts.{derived_expert_idx}.down_proj.weight",
+                            "role": "writer",
+                            "param_type": "moe",
+                            "importance_vector": down_imp_all[base_expert_idx, :, derived_expert_idx],
+                            "l2": float(th.linalg.vector_norm(down_imp_all[base_expert_idx, :, derived_expert_idx]).item()),
+                        }
+                    )
 
-                # Writers
-                entries.append(
-                    {
-                        **base,
-                        "component": "mlp.down_proj",
-                        "param_path": f"layers.{layer_idx}.mlp.experts.{e}.down_proj.weight",
-                        "role": "writer",
-                        "importance_vector": down_imp_all[e],
-                        "l2": float(th.linalg.vector_norm(down_imp_all[e]).item()),
-                    }
-                )
-                entries.append(
-                    {
-                        **base,
-                        "component": "attn.o_proj",
-                        "param_path": f"layers.{layer_idx}.self_attn.o_proj.weight",
-                        "role": "writer",
-                        "importance_vector": o_imp_all[e],
-                        "l2": float(th.linalg.vector_norm(o_imp_all[e]).item()),
-                    }
-                )
+                # Iterate over all pairs of experts to save attention elements
+                for expert_idx in range(num_experts):
+                    expert_meta = {"base_expert_idx": expert_idx}
+                    base = {**common_meta, **layer_meta, **expert_meta}
+
+                    # Readers
+                    entries.append(
+                        {
+                            **base,
+                            "component": "attn.q_proj",
+                            "base_expert_idx": expert_idx,
+                            "base_param_path": f"layers.{base_layer_idx}.self_attn.q_proj.weight",
+                            "role": "reader",
+                            "param_type": "attn",
+                            "importance_vector": q_imp_all[expert_idx],
+                            "l2": float(th.linalg.vector_norm(q_imp_all[expert_idx]).item()),
+                        }
+                    )
+                    entries.append(
+                        {
+                            **base,
+                            "component": "attn.k_proj",
+                            "base_expert_idx": base_expert_idx,
+                            "base_param_path": f"layers.{base_layer_idx}.self_attn.k_proj.weight",
+                            "role": "reader",
+                            "param_type": "attn",
+                            "importance_vector": k_imp_all[expert_idx],
+                            "l2": float(th.linalg.vector_norm(k_imp_all[expert_idx]).item()),
+                        }
+                    )
+
+                    # Writers
+                    entries.append(
+                        {
+                            **base,
+                            "component": "attn.o_proj",
+                            "base_expert_idx": base_expert_idx,
+                            "base_param_path": f"layers.{base_layer_idx}.self_attn.o_proj.weight",
+                            "role": "writer",
+                            "param_type": "attn",
+                            "importance_vector": o_imp_all[expert_idx],
+                            "l2": float(th.linalg.vector_norm(o_imp_all[expert_idx]).item()),
+                        }
+                    )
 
         # Save a single file containing ALL entries across layers/experts
         outfile = os.path.join(EXPERT_IMPORTANCE_DIR, "all.pt")

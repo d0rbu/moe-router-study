@@ -17,7 +17,7 @@ def router_spaces(
     model_name: str = "olmoe",
     checkpoint_idx: int | None = None,
     device: str = "cpu",
-    topk: int = 4,
+    topk: int = 8,
 ) -> None:
     """Visualize router spaces directly from model weights.
 
@@ -68,7 +68,8 @@ def router_spaces(
     sorted_expert_routers = [
         router_weights[layer_idx] for layer_idx in sorted(router_layers)
     ]
-    sorted_expert_vectors = th.cat(sorted_expert_routers, dim=1)
+    # (L, E, D) -> (L * E, D)
+    sorted_expert_vectors = th.cat(sorted_expert_routers, dim=0)
 
     # next we concatenate the router weights and look at the spectrum
     u, s, vh = th.linalg.svd(sorted_expert_vectors)
@@ -78,43 +79,49 @@ def router_spaces(
     plt.close()
 
     # next we look at the cosine similarity between the expert vectors
-    expert_cosine_similarities = th.nn.functional.cosine_similarity(
-        sorted_expert_vectors, sorted_expert_vectors, dim=0
+    sorted_expert_vectors_normalized = sorted_expert_vectors / th.linalg.norm(
+        sorted_expert_vectors, dim=-1, keepdim=True
     )
-    plt.plot(expert_cosine_similarities)
+    expert_cosine_similarities = (
+        sorted_expert_vectors_normalized @ sorted_expert_vectors_normalized.T
+    )
+    # plot as a heatmap
+    plt.imshow(expert_cosine_similarities, vmin=0, vmax=1, cmap="viridis")
+    plt.colorbar()
     plt.savefig(os.path.join(ROUTER_VIZ_DIR, "expert_cosine_similarities.png"), dpi=300)
     plt.close()
 
-    # next we want to find circuits by taking the top left singular vectors
+    # next we want to find circuits by taking the top right singular vectors
     # and getting the cosine similarity with all expert vectors
     # Use only available singular vectors to avoid shape errors
-    num_circuits = min(100, u.shape[1])
-    circuit_vectors = u[:, :num_circuits]
-    circuit_logits = (circuit_vectors.T @ sorted_expert_vectors).view(
-        num_circuits, num_router_layers, -1
+    num_circuits = min(100, vh.shape[1])
+    circuit_vectors = vh[:, :num_circuits]
+    # (L * E, D) @ (D, C) -> (L * E, C) -> (L, E, C)
+    circuit_logits = (sorted_expert_vectors @ circuit_vectors).view(
+        num_router_layers, -1, num_circuits
     )
-    circuit_probs = th.nn.functional.softmax(circuit_logits, dim=2)
-    circuit_topk = th.topk(circuit_probs, k=topk, dim=2)
+    circuit_probs = th.nn.functional.softmax(circuit_logits, dim=1)
+    circuit_topk = th.topk(circuit_probs, k=topk, dim=1)
     circuit_topk_mask = th.zeros_like(circuit_probs)
-    circuit_topk_mask.scatter_(2, circuit_topk.indices, 1)
+    circuit_topk_mask.scatter_(1, circuit_topk.indices, 1)
 
     for circuit_idx in tqdm(
         range(num_circuits), desc="Plotting circuits", leave=False, total=num_circuits
     ):
-        plt.plot(circuit_topk_mask[circuit_idx])
+        plt.imshow(circuit_topk_mask[:, :, circuit_idx])
         plt.savefig(
             os.path.join(ROUTER_VIZ_DIR, f"circuit_topk_mask_{circuit_idx}.png"),
             dpi=300,
         )
         plt.close()
 
-        plt.plot(circuit_probs[circuit_idx])
+        plt.imshow(circuit_probs[:, :, circuit_idx])
         plt.savefig(
             os.path.join(ROUTER_VIZ_DIR, f"circuit_probs_{circuit_idx}.png"), dpi=300
         )
         plt.close()
 
-        plt.plot(circuit_logits[circuit_idx])
+        plt.imshow(circuit_logits[:, :, circuit_idx])
         plt.savefig(
             os.path.join(ROUTER_VIZ_DIR, f"circuit_logits_{circuit_idx}.png"), dpi=300
         )
