@@ -1,13 +1,13 @@
 """Visualization of expert importances in MoE models."""
 
 import os
+from typing import Optional
 
 import matplotlib
-
 matplotlib.use("WebAgg")  # Use GTK3Agg backend for interactive plots on Pop!_OS
 import arguably
 from matplotlib.cm import ScalarMappable
-from matplotlib.colors import Normalize
+from matplotlib import colors as mcolors
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
@@ -63,84 +63,71 @@ def expert_importances(
 
     # Load data
     if not os.path.exists(data_path):
-        raise FileNotFoundError(f"Expert importance data not found at {data_path}")
+        raise FileNotFoundError(f"Data file not found: {data_path}")
 
     entries = th.load(data_path)
-
-    # Filter entries if needed
-    if model_name is not None:
-        entries = [e for e in entries if e["model_name"] == model_name]
-    if checkpoint_idx is not None:
-        entries = [e for e in entries if e["checkpoint_idx"] == checkpoint_idx]
-
     if not entries:
-        raise ValueError("No entries found with the specified filters")
+        raise ValueError("No entries found in data file")
 
-    # Extract unique layers and number of experts
-    base_layers = sorted({e["base_layer_idx"] for e in entries})
-    derived_layers = sorted({e["derived_layer_idx"] for e in entries})
-    layers = sorted(set(base_layers) | set(derived_layers))
-    num_experts = (
-        max(
-            max(e.get("base_expert_idx", 0) for e in entries),
-            max(
-                e.get("derived_expert_idx", 0)
-                for e in entries
-                if "derived_expert_idx" in e
-            ),
+    # Filter entries by model_name and checkpoint_idx if provided
+    filtered_entries = []
+    for entry in entries:
+        if model_name is not None and entry["model_name"] != model_name:
+            continue
+        if checkpoint_idx is not None and entry["checkpoint_idx"] != checkpoint_idx:
+            continue
+        filtered_entries.append(entry)
+
+    if not filtered_entries:
+        raise ValueError(
+            f"No entries found for model_name={model_name}, checkpoint_idx={checkpoint_idx}"
         )
-        + 1
-    )
+
+    # Extract unique layers and experts
+    base_layers = sorted(set(entry["base_layer_idx"] for entry in filtered_entries))
+    derived_layers = sorted(set(entry["derived_layer_idx"] for entry in filtered_entries))
+    layers = sorted(set(base_layers + derived_layers))
+    
+    # Get the number of experts from the data
+    num_experts = max(
+        max(entry.get("base_expert_idx", 0) for entry in filtered_entries),
+        max(entry.get("derived_expert_idx", 0) for entry in filtered_entries if "derived_expert_idx" in entry),
+    ) + 1
 
     # Create lookup dictionary for fast access
     importance_data = {}
-    for entry in entries:
-        # Handle different entry types (MoE vs Attention)
+    for entry in filtered_entries:
+        # Get the param_type to determine if it's MoE or Attention
         param_type = entry.get("param_type")
         if param_type not in ["moe", "attn"]:
-            raise ValueError(
-                f'Invalid or missing param_type: {param_type}. Must be "moe" or "attn".'
-            )
-        base_layer_idx = entry["base_layer_idx"]
-        base_expert_idx = entry["base_expert_idx"]
+            raise ValueError(f"Invalid or missing param_type: {param_type}. Must be \"moe\" or \"attn\".")
+            
+        base_layer = entry["base_layer_idx"]
+        base_expert = entry["base_expert_idx"]
+        derived_layer = entry["derived_layer_idx"]
         component = entry["component"]
-        role = entry["role"]
-        l2 = entry["l2"]
-
+        
+        # For MoE components, we have derived_expert_idx
         if param_type == "moe":
-            # MoE components have both base and derived experts
-            derived_layer_idx = entry["derived_layer_idx"]
-            derived_expert_idx = entry["derived_expert_idx"]
-            key = (
-                base_layer_idx,
-                base_expert_idx,
-                derived_layer_idx,
-                component,
-                derived_expert_idx,
-            )
-            importance_data[key] = {"role": role, "l2": l2, "param_type": param_type}
-        elif param_type == "attn":
-            # Attention components only have base expert
-            key = (
-                base_layer_idx,
-                base_expert_idx,
-                entry["derived_layer_idx"],
-                component,
-                None,
-            )
-            importance_data[key] = {"role": role, "l2": l2, "param_type": param_type}
-        else:  # This should never happen due to the check above
-            # Error if param_type is not present or not one of the expected values
-            raise ValueError(
-                f"Invalid param_type: {param_type}. Must be 'moe' or 'attn'."
-            )
+            derived_expert = entry["derived_expert_idx"]
+        else:  # For Attention components, derived_expert is None
+            derived_expert = None
+            
+        key = (base_layer, base_expert, derived_layer, component, derived_expert)
+        importance_data[key] = {
+            "role": entry["role"],
+            "l2": entry["l2"],
+        }
 
     # Compute color normalization
-    all_l2_values = [entry["l2"] for entry in entries]
-    vmin = 0
-    vmax = float(np.percentile(all_l2_values, normalize_percentile))
+    all_l2_values = [entry["l2"] for entry in filtered_entries]
+    if not all_l2_values:
+        raise ValueError("No L2 values found in filtered data")
 
-    norm = Normalize(vmin=vmin, vmax=vmax)
+    # Use percentile for normalization to avoid outliers
+    max_l2 = np.percentile(all_l2_values, normalize_percentile)
+    norm = mcolors.Normalize(vmin=0, vmax=max_l2)
+
     reader_cmap = plt.get_cmap(READER_CMAP)
     writer_cmap = plt.get_cmap(WRITER_CMAP)
 
