@@ -67,7 +67,18 @@ def process_batch(
             )  # (batch_size * seq_len)
 
             # Get router logits and immediately detach and move to CPU
-            logits = model.routers_output[layer].cpu()[padding_mask].save()
+            router_output = model.routers_output[layer]
+
+            match router_output:
+                case (router_scores, _router_indices):
+                    logits = router_scores.cpu()[padding_mask].save()
+                case tuple():
+                    raise ValueError(
+                        f"Found tuple of length {len(router_output)} for router output at layer {layer}"
+                    )
+                case router_scores:
+                    logits = router_scores.cpu()[padding_mask].save()
+
             router_logits.append(logits.clone().detach())
 
         # Explicitly stop the tracer to clean up resources
@@ -91,7 +102,7 @@ def process_batch(
 
 @arguably.command()
 def get_router_activations(
-    model_name: str = "olmoe-i",
+    model_name: str = "gpt",
     dataset: str = "lmsys",
     *_args,
     batch_size: int = 4,
@@ -134,7 +145,7 @@ def get_router_activations(
 
         pbar = tqdm(total=tokens_per_file, desc="Filling up file")
 
-        for _, batch in enumerate(
+        for batch_idx, batch in enumerate(
             tqdm(
                 batched(dataset_fn(model.tokenizer), batch_size),
                 desc="Processing batches",
