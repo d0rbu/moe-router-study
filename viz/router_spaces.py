@@ -1,9 +1,11 @@
 import os
+from typing import cast
 
 import arguably
 import matplotlib.pyplot as plt
 from nnterp import StandardizedTransformer
 import torch as th
+from torch import Tensor
 from tqdm import tqdm
 
 from core.model import MODELS
@@ -51,10 +53,11 @@ def router_spaces(
 
     with th.no_grad():
         for layer_idx in router_layers:
-            router_weights[layer_idx] = model.routers[layer_idx].weight.detach().cpu()
-            o_proj_weights[layer_idx] = (
-                model.attentions[layer_idx].o_proj.weight.detach().cpu()
-            )
+            router_w = cast("Tensor", model.routers[layer_idx].weight)
+            router_weights[layer_idx] = router_w.detach().cpu()
+
+            o_proj_w = cast("Tensor", model.attentions[layer_idx].o_proj.weight)
+            o_proj_weights[layer_idx] = o_proj_w.detach().cpu()
 
     # first we get the spectra of the router weights
     for layer_idx, router_weight in router_weights.items():

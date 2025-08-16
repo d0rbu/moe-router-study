@@ -1,10 +1,11 @@
 from itertools import product
 import os
-from typing import Any
+from typing import Any, cast
 
 import arguably
 from nnterp import StandardizedTransformer
 import torch as th
+from torch import Tensor
 
 from core.model import MODELS
 from exp import OUTPUT_DIR
@@ -58,23 +59,21 @@ def expert_importance(
 
         for base_layer_idx in router_layers:
             # Expert directions V: rows of router weight
-            router_weight: th.Tensor = (
-                model.routers[base_layer_idx].weight.detach().cpu()
-            )
+            router_weight = cast("Tensor", model.routers[base_layer_idx].weight)
+            router_weight = router_weight.detach().cpu()
             num_experts, hidden_size = router_weight.shape
             V = router_weight  # (E, D)
 
             for derived_layer_idx in router_layers:
                 # Preload attention weights for this layer
-                q_w: th.Tensor = (
-                    model.attentions[derived_layer_idx].q_proj.weight.detach().cpu()
-                )
-                k_w: th.Tensor = (
-                    model.attentions[derived_layer_idx].k_proj.weight.detach().cpu()
-                )
-                o_w: th.Tensor = (
-                    model.attentions[derived_layer_idx].o_proj.weight.detach().cpu()
-                )
+                q_w = cast("Tensor", model.attentions[derived_layer_idx].q_proj.weight)
+                q_w = q_w.detach().cpu()
+
+                k_w = cast("Tensor", model.attentions[derived_layer_idx].k_proj.weight)
+                k_w = k_w.detach().cpu()
+
+                o_w = cast("Tensor", model.attentions[derived_layer_idx].o_proj.weight)
+                o_w = o_w.detach().cpu()
 
                 # Vectorized readers shared per layer
                 # q/k: (E, Dq) = (q_w @ V^T)^T, (k_w @ V^T)^T
@@ -82,42 +81,31 @@ def expert_importance(
                 k_imp_all: th.Tensor = V @ k_w.T  # (E, Dq)
 
                 # Expert-specific readers: up/gate
-                up_w_all: th.Tensor = th.stack(
-                    [
-                        model.mlps[derived_layer_idx]
-                        .experts[e]
-                        .up_proj.weight.detach()
-                        .cpu()
-                        for e in range(num_experts)
-                    ],
-                    dim=0,
-                )  # (E, Dmlp, D)
-                gate_w_all: th.Tensor = th.stack(
-                    [
-                        model.mlps[derived_layer_idx]
-                        .experts[e]
-                        .gate_proj.weight.detach()
-                        .cpu()
-                        for e in range(num_experts)
-                    ],
-                    dim=0,
-                )  # (E, Dmlp, D)
+                # Handle experts as a list to avoid subscripting issues
+                experts = model.mlps[derived_layer_idx].experts
+
+                up_weights = []
+                gate_weights = []
+                down_weights = []
+
+                for e in range(num_experts):
+                    expert = experts[e]
+                    up_w = cast("Tensor", expert.up_proj.weight).detach().cpu()
+                    gate_w = cast("Tensor", expert.gate_proj.weight).detach().cpu()
+                    down_w = cast("Tensor", expert.down_proj.weight).detach().cpu()
+
+                    up_weights.append(up_w)
+                    gate_weights.append(gate_w)
+                    down_weights.append(down_w)
+
+                up_w_all: th.Tensor = th.stack(up_weights, dim=0)  # (E, Dmlp, D)
+                gate_w_all: th.Tensor = th.stack(gate_weights, dim=0)  # (E, Dmlp, D)
+                down_w_all: th.Tensor = th.stack(down_weights, dim=0)  # (E, D, Dmlp)
+
                 up_imp_all: th.Tensor = V @ up_w_all.transpose(0, -1)  # (E, Dmlp, E)
                 gate_imp_all: th.Tensor = V @ gate_w_all.transpose(
                     0, -1
                 )  # (E, Dmlp, E)
-
-                # Vectorized writers
-                down_w_all: th.Tensor = th.stack(
-                    [
-                        model.mlps[derived_layer_idx]
-                        .experts[e]
-                        .down_proj.weight.detach()
-                        .cpu()
-                        for e in range(num_experts)
-                    ],
-                    dim=0,
-                )  # (E, Dmlp, D)
                 down_imp_all: th.Tensor = V @ down_w_all.transpose(
                     0, -1
                 )  # (E, Dmlp, E)
