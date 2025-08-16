@@ -21,7 +21,7 @@ EXPERT_IMPORTANCES_VIZ_DIR = os.path.join(FIGURE_DIR, "expert_importances")
 
 # Constants
 READER_COMPONENTS = {"mlp.up_proj", "mlp.gate_proj", "attn.q_proj", "attn.k_proj"}
-WRITER_COMPONENTS = ["mlp.down_proj", "attn.o_proj"]
+WRITER_COMPONENTS = {"mlp.down_proj", "attn.o_proj"}
 
 # Components that have multiple experts (MoE components)
 MOE_COMPONENTS = {"mlp.up_proj", "mlp.gate_proj", "mlp.down_proj"}
