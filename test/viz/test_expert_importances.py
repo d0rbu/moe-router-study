@@ -8,8 +8,6 @@ import pytest
 import torch as th
 
 from viz.expert_importances import (
-    READER_COMPONENTS,
-    WRITER_COMPONENTS,
     expert_importances,
 )
 
@@ -36,13 +34,15 @@ def mock_expert_importance_data():
                                 "component": component,
                                 "role": "reader",
                                 "param_type": "moe",
-                                "l2": 0.5 + base_layer_idx * 0.1 + base_expert_idx * 0.2,
+                                "l2": 0.5
+                                + base_layer_idx * 0.1
+                                + base_expert_idx * 0.2,
                                 "model_name": "test_model",
                                 "checkpoint_idx": 0,
                                 "importance_vector": th.randn(16),
                             }
                         )
-                    
+
                     # Add MoE writer component
                     entries.append(
                         {
@@ -59,7 +59,7 @@ def mock_expert_importance_data():
                             "importance_vector": th.randn(16),
                         }
                     )
-                
+
                 # Add Attention components (without derived_expert_idx)
                 # Add attention reader components
                 for component in ["attn.q_proj", "attn.k_proj"]:
@@ -77,7 +77,7 @@ def mock_expert_importance_data():
                             "importance_vector": th.randn(16),
                         }
                     )
-                
+
                 # Add attention writer component
                 entries.append(
                     {

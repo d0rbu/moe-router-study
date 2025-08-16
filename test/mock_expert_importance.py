@@ -1,21 +1,29 @@
 """Mock implementation of expert_importance for testing."""
 
-import os
 from itertools import product
+import os
 from typing import Any
 
 import torch as th
-from unittest.mock import MagicMock
+
 
 def mock_expert_importance(
-    mock_transformer,
-    model_name: str = "test_model",
+    transformer: Any,
+    model_name: str,
     checkpoint_idx: int = 0,
-    revision: str = None,
-    output_dir: str = None,
+    revision: str | None = None,
+    output_dir: str = ".",
 ) -> None:
-    """Mock implementation of expert_importance for testing."""
-    router_layers: list[int] = mock_transformer.layers_with_routers
+    """Mock implementation of expert_importance for testing.
+
+    Args:
+        transformer: The transformer model
+        model_name: Name of the model
+        checkpoint_idx: Index of the checkpoint to use
+        revision: Revision of the model to use
+        output_dir: Directory to save the output
+    """
+    router_layers: list[int] = transformer.layers_with_routers
 
     with th.no_grad():
         # Accumulate a single flat list across ALL layers and experts
@@ -30,7 +38,7 @@ def mock_expert_importance(
         for base_layer_idx in router_layers:
             # Expert directions V: rows of router weight
             router_weight: th.Tensor = (
-                mock_transformer.routers[base_layer_idx].weight.detach().cpu()
+                transformer.routers[base_layer_idx].weight.detach().cpu()
             )
             num_experts, hidden_size = router_weight.shape
             V = router_weight  # (E, D)
@@ -38,13 +46,19 @@ def mock_expert_importance(
             for derived_layer_idx in router_layers:
                 # Preload attention weights for this layer
                 q_w: th.Tensor = (
-                    mock_transformer.attentions[derived_layer_idx].q_proj.weight.detach().cpu()
+                    transformer.attentions[derived_layer_idx]
+                    .q_proj.weight.detach()
+                    .cpu()
                 )
                 k_w: th.Tensor = (
-                    mock_transformer.attentions[derived_layer_idx].k_proj.weight.detach().cpu()
+                    transformer.attentions[derived_layer_idx]
+                    .k_proj.weight.detach()
+                    .cpu()
                 )
                 o_w: th.Tensor = (
-                    mock_transformer.attentions[derived_layer_idx].o_proj.weight.detach().cpu()
+                    transformer.attentions[derived_layer_idx]
+                    .o_proj.weight.detach()
+                    .cpu()
                 )
 
                 # Vectorized readers shared per layer
@@ -55,7 +69,7 @@ def mock_expert_importance(
                 # Expert-specific readers: up/gate
                 up_w_all: th.Tensor = th.stack(
                     [
-                        mock_transformer.mlps[derived_layer_idx]
+                        transformer.mlps[derived_layer_idx]
                         .experts[e]
                         .up_proj.weight.detach()
                         .cpu()
@@ -65,7 +79,7 @@ def mock_expert_importance(
                 )  # (E, Dmlp, D)
                 gate_w_all: th.Tensor = th.stack(
                     [
-                        mock_transformer.mlps[derived_layer_idx]
+                        transformer.mlps[derived_layer_idx]
                         .experts[e]
                         .gate_proj.weight.detach()
                         .cpu()
@@ -81,7 +95,7 @@ def mock_expert_importance(
                 # Vectorized writers
                 down_w_all: th.Tensor = th.stack(
                     [
-                        mock_transformer.mlps[derived_layer_idx]
+                        transformer.mlps[derived_layer_idx]
                         .experts[e]
                         .down_proj.weight.detach()
                         .cpu()
@@ -229,4 +243,3 @@ def mock_expert_importance(
         # Save a single file containing ALL entries across layers/experts
         outfile = os.path.join(output_dir, "all.pt")
         th.save(entries, outfile)
-

@@ -10,6 +10,44 @@ from exp.expert_importance import expert_importance
 from test.mock_expert_importance import mock_expert_importance
 
 
+class MockStandardizedTransformer:
+    """Mock for StandardizedTransformer class."""
+
+    def __init__(self, *args, **kwargs):
+        self.layers_with_routers = [0, 1]
+        self.routers = {}
+        self.attentions = {}
+        self.mlps = {}
+
+        # Setup mock router weights
+        for layer_idx in self.layers_with_routers:
+            # Router weights: (num_experts, hidden_size)
+            self.routers[layer_idx] = MagicMock()
+            self.routers[layer_idx].weight = th.randn(4, 16)
+
+            # Attention weights
+            self.attentions[layer_idx] = MagicMock()
+            self.attentions[layer_idx].q_proj = MagicMock()
+            self.attentions[layer_idx].q_proj.weight = th.randn(16, 16)
+            self.attentions[layer_idx].k_proj = MagicMock()
+            self.attentions[layer_idx].k_proj.weight = th.randn(16, 16)
+            self.attentions[layer_idx].o_proj = MagicMock()
+            self.attentions[layer_idx].o_proj.weight = th.randn(16, 16)
+
+            # MLP experts
+            self.mlps[layer_idx] = MagicMock()
+            self.mlps[layer_idx].experts = []
+            for _ in range(4):  # 4 experts
+                expert = MagicMock()
+                expert.up_proj = MagicMock()
+                expert.up_proj.weight = th.randn(64, 16)  # (Dmlp, H)
+                expert.gate_proj = MagicMock()
+                expert.gate_proj.weight = th.randn(64, 16)  # (Dmlp, H)
+                expert.down_proj = MagicMock()
+                expert.down_proj.weight = th.randn(16, 64)  # (H, Dmlp)
+                self.mlps[layer_idx].experts.append(expert)
+
+
 @pytest.mark.skip(reason="Tests need to be updated for new expert importance format")
 class TestExpertImportance:
     """Test expert_importance function."""
@@ -41,10 +79,10 @@ class TestExpertImportance:
         ):
             # Instead of calling the real function, use our mock implementation
             mock_expert_importance(
-                mock_transformer, 
-                model_name="test_model", 
-                checkpoint_idx=0, 
-                output_dir=str(temp_dir)
+                mock_transformer,
+                model_name="test_model",
+                checkpoint_idx=0,
+                output_dir=str(temp_dir),
             )
 
             # Check that output file was created
@@ -172,9 +210,7 @@ class TestExpertImportance:
         ):
             # Use our mock implementation
             mock_expert_importance(
-                mock_transformer, 
-                model_name="test_model", 
-                output_dir=str(temp_dir)
+                mock_transformer, model_name="test_model", output_dir=str(temp_dir)
             )
 
             # Load and verify the output
@@ -184,8 +220,8 @@ class TestExpertImportance:
             # Find specific entries to check calculations
             for entry in entries:
                 if (
-                    entry["base_expert_idx"] == 0 
-                    and entry["derived_expert_idx"] == 0 
+                    entry["base_expert_idx"] == 0
+                    and entry["derived_expert_idx"] == 0
                     and entry["component"] == "mlp.up_proj"
                 ):
                     # Expert 0, up_proj should have importance vector [5.0, 0.0]
@@ -196,7 +232,7 @@ class TestExpertImportance:
                     assert pytest.approx(entry["l2"]) == 5.0
 
                 if (
-                    entry["base_expert_idx"] == 1 
+                    entry["base_expert_idx"] == 1
                     and entry["component"] == "attn.q_proj"
                 ):
                     # Expert 1, q_proj should have importance vector [0.0, 2.0]
@@ -233,11 +269,11 @@ class TestExpertImportance:
         ):
             # Use our mock implementation
             mock_expert_importance(
-                mock_transformer, 
-                model_name="test_model", 
-                checkpoint_idx=1, 
+                mock_transformer,
+                model_name="test_model",
+                checkpoint_idx=1,
                 revision="step2000",
-                output_dir=str(temp_dir)
+                output_dir=str(temp_dir),
             )
 
             # Check that StandardizedTransformer was called with correct revision

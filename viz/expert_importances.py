@@ -1,18 +1,18 @@
 """Visualization of expert importances in MoE models."""
 
 import os
-from typing import Optional
 
-import matplotlib
-matplotlib.use("WebAgg")  # Use GTK3Agg backend for interactive plots on Pop!_OS
 import arguably
-from matplotlib.cm import ScalarMappable
+import matplotlib
 from matplotlib import colors as mcolors
+from matplotlib.cm import ScalarMappable
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
 import numpy as np
 import torch as th
+
+matplotlib.use("WebAgg")  # Use WebAgg backend for interactive plots
 
 from exp.expert_importance import EXPERT_IMPORTANCE_DIR
 from viz import FIGURE_DIR
@@ -84,15 +84,22 @@ def expert_importances(
         )
 
     # Extract unique layers and experts
-    base_layers = sorted(set(entry["base_layer_idx"] for entry in filtered_entries))
-    derived_layers = sorted(set(entry["derived_layer_idx"] for entry in filtered_entries))
+    base_layers = sorted({entry["base_layer_idx"] for entry in filtered_entries})
+    derived_layers = sorted({entry["derived_layer_idx"] for entry in filtered_entries})
     layers = sorted(set(base_layers + derived_layers))
-    
+
     # Get the number of experts from the data
-    num_experts = max(
-        max(entry.get("base_expert_idx", 0) for entry in filtered_entries),
-        max(entry.get("derived_expert_idx", 0) for entry in filtered_entries if "derived_expert_idx" in entry),
-    ) + 1
+    num_experts = (
+        max(
+            max(entry.get("base_expert_idx", 0) for entry in filtered_entries),
+            max(
+                entry.get("derived_expert_idx", 0)
+                for entry in filtered_entries
+                if "derived_expert_idx" in entry
+            ),
+        )
+        + 1
+    )
 
     # Create lookup dictionary for fast access
     importance_data = {}
@@ -100,19 +107,18 @@ def expert_importances(
         # Get the param_type to determine if it's MoE or Attention
         param_type = entry.get("param_type")
         if param_type not in ["moe", "attn"]:
-            raise ValueError(f"Invalid or missing param_type: {param_type}. Must be \"moe\" or \"attn\".")
-            
+            raise ValueError(
+                f'Invalid or missing param_type: {param_type}. Must be "moe" or "attn".'
+            )
+
         base_layer = entry["base_layer_idx"]
         base_expert = entry["base_expert_idx"]
         derived_layer = entry["derived_layer_idx"]
         component = entry["component"]
-        
+
         # For MoE components, we have derived_expert_idx
-        if param_type == "moe":
-            derived_expert = entry["derived_expert_idx"]
-        else:  # For Attention components, derived_expert is None
-            derived_expert = None
-            
+        derived_expert = entry["derived_expert_idx"] if param_type == "moe" else None
+
         key = (base_layer, base_expert, derived_layer, component, derived_expert)
         importance_data[key] = {
             "role": entry["role"],
@@ -125,7 +131,7 @@ def expert_importances(
         raise ValueError("No L2 values found in filtered data")
 
     # Use percentile for normalization to avoid outliers
-    max_l2 = np.percentile(all_l2_values, normalize_percentile)
+    max_l2 = float(np.percentile(all_l2_values, normalize_percentile))
     norm = mcolors.Normalize(vmin=0, vmax=max_l2)
 
     reader_cmap = plt.get_cmap(READER_CMAP)
