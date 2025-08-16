@@ -311,7 +311,7 @@ def expert_importances(
     # Update function for sliders
     def update_visualization():
         # Reset all rectangles to default color
-        for rect_key, rect in all_rectangles.items():
+        for rect in all_rectangles.values():
             rect.set_facecolor("lightgray")
             rect.set_edgecolor("gray")
             rect.set_linewidth(0.5)
