@@ -158,7 +158,7 @@ def expert_importances(
             )
 
             for expert_idx in range(num_experts):
-                x_pos = -(expert_idx + 1) * expert_width - middle_spacing/2
+                x_pos = -(expert_idx + 1) * expert_width - middle_spacing / 2
 
                 # Get importance value
                 key = (layer_idx, component, expert_idx)
@@ -198,7 +198,7 @@ def expert_importances(
             )
 
             for expert_idx in range(num_experts):
-                x_pos = expert_idx * expert_width + middle_spacing/2
+                x_pos = expert_idx * expert_width + middle_spacing / 2
 
                 # Get importance value
                 key = (layer_idx, component, expert_idx)
@@ -308,7 +308,7 @@ def expert_importances(
         # Update title
         ax.set_title(
             f"Expert Importances - Layer {new_layer_idx}, Expert {current_expert_idx}",
-            fontsize=14
+            fontsize=14,
         )
 
         # Force redraw
@@ -340,7 +340,7 @@ def expert_importances(
         # Update title
         ax.set_title(
             f"Expert Importances - Layer {current_layer_idx}, Expert {new_expert_idx}",
-            fontsize=14
+            fontsize=14,
         )
 
         # Force redraw
@@ -357,7 +357,7 @@ def expert_importances(
     # Set initial title and labels
     ax.set_title(
         f"Expert Importances - Layer {layers[current_layer_idx]}, Expert {current_expert_idx}",
-        fontsize=14
+        fontsize=14,
     )
     ax.set_xlabel("Residual Stream", fontsize=12)
     ax.set_ylabel("Layers", fontsize=12)
