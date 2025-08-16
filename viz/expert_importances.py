@@ -121,12 +121,10 @@ def expert_importances(
             )
             importance_data[key] = {"role": role, "l2": l2, "param_type": param_type}
         else:
-            # Handle legacy format if needed
-            if "layer_idx" in entry and "expert_idx" in entry:
-                layer_idx = entry["layer_idx"]
-                expert_idx = entry["expert_idx"]
-                key = (layer_idx, expert_idx, layer_idx, component, expert_idx)
-                importance_data[key] = {"role": role, "l2": l2, "param_type": "legacy"}
+            # Error if param_type is not present or not one of the expected values
+            raise ValueError(
+                f"Invalid param_type: {param_type}. Must be 'moe' or 'attn'."
+            )
 
     # Compute color normalization
     all_l2_values = [entry["l2"] for entry in entries]
