@@ -70,7 +70,10 @@ class TestLoadActivationsAndIndicesAndTopk:
         """Test behavior with empty directory."""
         with (
             patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)),
-            pytest.raises((ValueError, FileNotFoundError), match="No data files found|ensure exp.get_router_activations has been run"),
+            pytest.raises(
+                (ValueError, FileNotFoundError),
+                match="No data files found|ensure exp.get_router_activations has been run",
+            ),
         ):
             load_activations_and_indices_and_topk()
 
@@ -347,13 +350,12 @@ class TestActivationLoadingErrorHandling:
         """Test handling of file not found error."""
         # Create a non-existent directory path
         non_existent_dir = temp_dir / "non_existent_dir"
-        
+
         with (
             patch("exp.activations.ROUTER_LOGITS_DIR", str(non_existent_dir)),
             pytest.raises((FileNotFoundError, ValueError)),
         ):
             load_activations_and_indices_and_topk()
-
 
 
 class TestActivationLoadingIntegration:

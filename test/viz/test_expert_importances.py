@@ -24,24 +24,24 @@ def mock_expert_importance_data():
                 # Add MoE components (with derived_expert_idx)
                 for derived_expert_idx in range(2):
                     # Add MoE reader components
-                    for component in ["mlp.up_proj", "mlp.gate_proj"]:
-                        entries.append(
-                            {
-                                "base_layer_idx": base_layer_idx,
-                                "base_expert_idx": base_expert_idx,
-                                "derived_layer_idx": derived_layer_idx,
-                                "derived_expert_idx": derived_expert_idx,
-                                "component": component,
-                                "role": "reader",
-                                "param_type": "moe",
-                                "l2": 0.5
-                                + base_layer_idx * 0.1
-                                + base_expert_idx * 0.2,
-                                "model_name": "test_model",
-                                "checkpoint_idx": 0,
-                                "importance_vector": th.randn(16),
-                            }
-                        )
+                    entries.extend([
+                        {
+                            "base_layer_idx": base_layer_idx,
+                            "base_expert_idx": base_expert_idx,
+                            "derived_layer_idx": derived_layer_idx,
+                            "derived_expert_idx": derived_expert_idx,
+                            "component": component,
+                            "role": "reader",
+                            "param_type": "moe",
+                            "l2": 0.5
+                            + base_layer_idx * 0.1
+                            + base_expert_idx * 0.2,
+                            "model_name": "test_model",
+                            "checkpoint_idx": 0,
+                            "importance_vector": th.randn(16),
+                        }
+                        for component in ["mlp.up_proj", "mlp.gate_proj"]
+                    ])
 
                     # Add MoE writer component
                     entries.append(
@@ -62,21 +62,21 @@ def mock_expert_importance_data():
 
                 # Add Attention components (without derived_expert_idx)
                 # Add attention reader components
-                for component in ["attn.q_proj", "attn.k_proj"]:
-                    entries.append(
-                        {
-                            "base_layer_idx": base_layer_idx,
-                            "base_expert_idx": base_expert_idx,
-                            "derived_layer_idx": derived_layer_idx,
-                            "component": component,
-                            "role": "reader",
-                            "param_type": "attn",
-                            "l2": 0.5 + base_layer_idx * 0.1 + base_expert_idx * 0.2,
-                            "model_name": "test_model",
-                            "checkpoint_idx": 0,
-                            "importance_vector": th.randn(16),
-                        }
-                    )
+                entries.extend([
+                    {
+                        "base_layer_idx": base_layer_idx,
+                        "base_expert_idx": base_expert_idx,
+                        "derived_layer_idx": derived_layer_idx,
+                        "component": component,
+                        "role": "reader",
+                        "param_type": "attn",
+                        "l2": 0.5 + base_layer_idx * 0.1 + base_expert_idx * 0.2,
+                        "model_name": "test_model",
+                        "checkpoint_idx": 0,
+                        "importance_vector": th.randn(16),
+                    }
+                    for component in ["attn.q_proj", "attn.k_proj"]
+                ])
 
                 # Add attention writer component
                 entries.append(
