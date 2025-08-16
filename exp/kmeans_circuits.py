@@ -14,16 +14,33 @@ from viz import FIGURE_DIR
 
 
 def kmeans_manhattan(
-    data: th.Tensor, k: int, batch_size: int = 0, max_iters: int = 1_000, seed: int = 0
-) -> th.Tensor:
-    th.manual_seed(seed)
-    th.cuda.manual_seed(seed)
+    data: th.Tensor,
+    k: int,
+    max_iters: int = 100,
+    batch_size: int | None = None,
+) -> tuple[th.Tensor, th.Tensor, th.Tensor]:
+    """
+    Perform k-means clustering with Manhattan distance.
+
+    Args:
+        data: Data to cluster, shape (N, D)
+        k: Number of clusters
+        max_iters: Maximum number of iterations
+        batch_size: Batch size for processing data. If None, process all data at once.
+
+    Returns:
+        centroids: Cluster centroids, shape (k, D)
+        assignments: Cluster assignments, shape (N,)
+        losses: Loss at each iteration, shape (num_iters,)
+    """
+    th.manual_seed(0)
+    th.cuda.manual_seed(0)
 
     assert data.ndim == 2, "Data must be of dimensions (B, D)"
 
     dataset_size, dim = data.shape
 
-    if batch_size == 0:
+    if batch_size is None:
         batch_size = dataset_size
     else:
         assert batch_size > 0 and batch_size < dataset_size, (
