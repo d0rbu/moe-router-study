@@ -73,7 +73,8 @@ def expert_importance(
                 k_w = k_w.detach().cpu()
 
                 o_w = cast("Tensor", model.attentions[derived_layer_idx].o_proj.weight)
-                o_w = o_w.detach().cpu()
+                # Transpose the o_proj weight as requested
+                o_w = o_w.T.detach().cpu()
 
                 # Vectorized readers shared per layer
                 # q/k: (E, Dq) = (q_w @ V^T)^T, (k_w @ V^T)^T
@@ -93,7 +94,8 @@ def expert_importance(
                     expert = getattr(experts, str(e))
                     up_w = cast("Tensor", expert.up_proj.weight).detach().cpu()
                     gate_w = cast("Tensor", expert.gate_proj.weight).detach().cpu()
-                    down_w = cast("Tensor", expert.down_proj.weight).detach().cpu()
+                    # Save the transpose of down_proj weight as requested
+                    down_w = cast("Tensor", expert.down_proj.weight.T).detach().cpu()
 
                     up_weights.append(up_w)
                     gate_weights.append(gate_w)
