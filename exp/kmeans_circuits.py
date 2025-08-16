@@ -18,6 +18,7 @@ def kmeans_manhattan(
     k: int,
     max_iters: int = 100,
     batch_size: int | None = None,
+    seed: int = 0,
 ) -> tuple[th.Tensor, th.Tensor, th.Tensor]:
     """
     Perform k-means clustering with Manhattan distance.
@@ -27,14 +28,15 @@ def kmeans_manhattan(
         k: Number of clusters
         max_iters: Maximum number of iterations
         batch_size: Batch size for processing data. If None, process all data at once.
+        seed: Random seed for initialization
 
     Returns:
         centroids: Cluster centroids, shape (k, D)
         assignments: Cluster assignments, shape (N,)
         losses: Loss at each iteration, shape (num_iters,)
     """
-    th.manual_seed(0)
-    th.cuda.manual_seed(0)
+    th.manual_seed(seed)
+    th.cuda.manual_seed(seed)
 
     assert data.ndim == 2, "Data must be of dimensions (B, D)"
 
@@ -54,6 +56,12 @@ def kmeans_manhattan(
     # Initialize cluster sizes for weighted updates
     cluster_sizes = th.zeros(k, device=data.device)
 
+    # Track losses for each iteration
+    losses = []
+
+    # Track assignments for final return
+    assignments = th.zeros(dataset_size, dtype=th.long, device=data.device)
+
     # run kmeans
     for _ in tqdm(range(max_iters), desc="Running kmeans", leave=False):
         last_centroids = centroids.clone()
@@ -63,6 +71,9 @@ def kmeans_manhattan(
 
         # Create new centroids tensor filled with zeros
         new_centroids = th.zeros_like(centroids)
+
+        # Track loss for this iteration
+        current_loss = 0.0
 
         # Process data in batches
         num_batches = (dataset_size + batch_size - 1) // batch_size
@@ -75,6 +86,15 @@ def kmeans_manhattan(
             # assign each point to the nearest centroid
             distances = th.cdist(batch_data, centroids, p=1)
             batch_clusters = th.argmin(distances, dim=1)
+
+            # Store assignments for this batch
+            assignments[start_idx:end_idx] = batch_clusters
+
+            # Calculate loss for this batch (sum of distances to assigned centroids)
+            batch_loss = (
+                th.gather(distances, 1, batch_clusters.unsqueeze(1)).sum().item()
+            )
+            current_loss += batch_loss
 
             # update the centroids and cluster sizes for this batch
             for i in range(k):
@@ -93,11 +113,14 @@ def kmeans_manhattan(
             if cluster_sizes[i] > 0:
                 centroids[i] = new_centroids[i] / cluster_sizes[i]
 
+        # Record loss for this iteration
+        losses.append(current_loss)
+
         # Check for convergence
         if th.allclose(centroids, last_centroids):
             break
 
-    return centroids
+    return centroids, assignments, th.tensor(losses)
 
 
 def elbow(
@@ -122,7 +145,9 @@ def elbow(
         leave=False,
         total=total_iters,
     ):
-        centroids = kmeans_manhattan(data, k, batch_size, seed=seed)
+        centroids, assignments, _ = kmeans_manhattan(
+            data, k, batch_size=batch_size, seed=seed
+        )
 
         # compute the sum of squared manhattan distances in batches
         sse = 0.0
@@ -136,17 +161,20 @@ def elbow(
             start_idx = batch_idx * batch_size
             end_idx = min((batch_idx + 1) * batch_size, dataset_size)
             batch_data = data[start_idx:end_idx]
+            batch_assignments = assignments[start_idx:end_idx]
 
-            distances = th.cdist(batch_data, centroids, p=1)
-            batch_clusters = th.argmin(distances, dim=1)
             batch_sse = (
-                (batch_data - centroids[batch_clusters]).abs().sum(dim=1).pow(2).sum()
+                (batch_data - centroids[batch_assignments])
+                .abs()
+                .sum(dim=1)
+                .pow(2)
+                .sum()
             )
             sse += batch_sse.item()
 
         sse_collection.append(sse)
 
-        del centroids, distances, batch_clusters
+        del centroids, assignments
         th.cuda.empty_cache()
 
     sse = th.tensor(sse_collection).cpu()
@@ -185,7 +213,9 @@ def cluster_circuits(k: int | None = None, seed: int = 0, batch_size: int = 0) -
         elbow(activated_experts, batch_size=batch_size, seed=seed)
         return
 
-    centroids = kmeans_manhattan(activated_experts, k, batch_size=batch_size, seed=seed)
+    centroids, _, _ = kmeans_manhattan(
+        activated_experts, k, batch_size=batch_size, seed=seed
+    )
 
     # save circuits
     out = {
