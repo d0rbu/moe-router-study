@@ -31,7 +31,9 @@ class TestKmeansManhattan:
         k = 2
 
         # Run kmeans
-        centroids, assignments, losses = kmeans_manhattan(data, k, max_iters=100, seed=42)
+        centroids, assignments, losses = kmeans_manhattan(
+            data, k, max_iters=100, seed=42
+        )
 
         # Check output shape
         assert centroids.shape == (k, 2)
