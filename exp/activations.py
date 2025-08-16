@@ -1,4 +1,3 @@
-from itertools import count
 import os
 
 from loguru import logger
@@ -48,10 +47,13 @@ def load_activations_indices_tokens_and_topk(
 
     # get the highest file index of contiguous *.pt files
     file_indices = [
-        int(f.split(".")[0])
-        for f in os.listdir(dir_path)
-        if f.endswith(".pt")
+        int(f.split(".")[0]) for f in os.listdir(dir_path) if f.endswith(".pt")
     ]
+
+    # Check if there are any files
+    if not file_indices:
+        raise ValueError("No data files found in directory")
+
     file_indices.sort()
     # get the highest file index that does not have a gap
     highest_file_idx = file_indices[-1]
@@ -61,7 +63,11 @@ def load_activations_indices_tokens_and_topk(
             break
 
     # Use the module-level, patchable directory constant
-    for file_idx in tqdm(range(highest_file_idx + 1), desc="Loading activations", total=highest_file_idx + 1):
+    for file_idx in tqdm(
+        range(highest_file_idx + 1),
+        desc="Loading activations",
+        total=highest_file_idx + 1,
+    ):
         file_path = os.path.join(dir_path, f"{file_idx}.pt")
         if not os.path.exists(file_path):
             break
