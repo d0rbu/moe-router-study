@@ -41,7 +41,12 @@ def test_dataset_text(_tokenizer: PreTrainedTokenizer) -> IterableColumn:
         return toy_text(_tokenizer)
 
 
-def lmsys_chat_1m_text(tokenizer: PreTrainedTokenizer, start_idx: int = 0, stop_idx: int = 0, streaming: bool = True) -> IterableColumn:
+def lmsys_chat_1m_text(
+    tokenizer: PreTrainedTokenizer,
+    start_idx: int = 0,
+    stop_idx: int = 0,
+    streaming: bool = True,
+) -> IterableColumn:
     """Stream and format conversations from the LMSYS Chat-1M dataset.
 
     Each conversation is formatted as a plain text transcript with "role: content" format,
@@ -53,13 +58,21 @@ def lmsys_chat_1m_text(tokenizer: PreTrainedTokenizer, start_idx: int = 0, stop_
     ds = load_dataset("lmsys/lmsys-chat-1m", split="train", streaming=streaming)
 
     if streaming:
-        assert start_idx == 0 and stop_idx == 0, "Streaming mode does not support start_idx and stop_idx"
+        assert start_idx == 0 and stop_idx == 0, (
+            "Streaming mode does not support start_idx and stop_idx"
+        )
     else:
         ds = cast("Dataset", ds)
-        assert start_idx >= 0 and stop_idx >= 0, "Non-streaming mode requires start_idx and stop_idx to be non-negative"
+        assert start_idx >= 0 and stop_idx >= 0, (
+            "Non-streaming mode requires start_idx and stop_idx to be non-negative"
+        )
         assert start_idx < stop_idx, "start_idx must be less than stop_idx"
-        assert start_idx < len(ds), "start_idx must be less than the length of the dataset"
-        assert stop_idx <= len(ds), "stop_idx must be less than or equal to the length of the dataset"
+        assert start_idx < len(ds), (
+            "start_idx must be less than the length of the dataset"
+        )
+        assert stop_idx <= len(ds), (
+            "stop_idx must be less than or equal to the length of the dataset"
+        )
 
         if stop_idx == 0:
             stop_idx = len(ds)
@@ -79,7 +92,11 @@ def lmsys_chat_1m_text(tokenizer: PreTrainedTokenizer, start_idx: int = 0, stop_
             iterator = tqdm(conversations, desc="Formatting conversations")
         else:
             conversations = cast("Dataset", conversations)
-            iterator = tqdm(conversations[start_idx:stop_idx], desc="Formatting conversations", total=stop_idx - start_idx)
+            iterator = tqdm(
+                conversations[start_idx:stop_idx],
+                desc="Formatting conversations",
+                total=stop_idx - start_idx,
+            )
 
         for conversation in iterator:
             yield _format_conversation(conversation)
