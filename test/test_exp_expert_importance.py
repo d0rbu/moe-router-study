@@ -13,7 +13,7 @@ class MockStandardizedTransformer:
     """Mock for StandardizedTransformer class."""
 
     def __init__(self, *args, **kwargs):
-        self.layers_with_routers = [0, 1]
+        self.layers_with_routers = [0]
         self.routers = {}
         self.attentions = {}
         self.mlps = {}
@@ -22,7 +22,7 @@ class MockStandardizedTransformer:
         for layer_idx in self.layers_with_routers:
             # Router weights: (num_experts, hidden_size)
             self.routers[layer_idx] = MagicMock()
-            self.routers[layer_idx].weight = th.randn(4, 16)
+            self.routers[layer_idx].weight = th.randn(2, 16)
 
             # Attention weights
             self.attentions[layer_idx] = MagicMock()
@@ -36,14 +36,14 @@ class MockStandardizedTransformer:
             # MLP experts
             self.mlps[layer_idx] = MagicMock()
             self.mlps[layer_idx].experts = []
-            for _ in range(4):  # 4 experts
+            for _ in range(2):  # 2 experts
                 expert = MagicMock()
                 expert.up_proj = MagicMock()
-                expert.up_proj.weight = th.randn(64, 16)  # (Dmlp, H)
+                expert.up_proj.weight = th.randn(16, 16)  # (Dmlp, D)
                 expert.gate_proj = MagicMock()
-                expert.gate_proj.weight = th.randn(64, 16)  # (Dmlp, H)
+                expert.gate_proj.weight = th.randn(16, 16)  # (Dmlp, D)
                 expert.down_proj = MagicMock()
-                expert.down_proj.weight = th.randn(16, 64)  # (H, Dmlp)
+                expert.down_proj.weight = th.randn(16, 16)  # (D, Dmlp)
                 self.mlps[layer_idx].experts.append(expert)
 
 
@@ -95,13 +95,14 @@ class TestExpertImportance:
                 assert "model_name" in entry
                 assert "checkpoint_idx" in entry
                 assert "revision" in entry
-                assert "layer_idx" in entry
-                assert "expert_idx" in entry
+                assert "base_layer_idx" in entry
+                assert "derived_layer_idx" in entry
+                assert "base_expert_idx" in entry
                 assert "component" in entry
-                assert "param_path" in entry
                 assert "role" in entry
                 assert "importance_vector" in entry
                 assert "l2" in entry
+                assert "param_type" in entry
 
                 # Check that importance_vector is a tensor
                 assert isinstance(entry["importance_vector"], th.Tensor)
@@ -111,6 +112,17 @@ class TestExpertImportance:
 
                 # Check that role is either "reader" or "writer"
                 assert entry["role"] in ["reader", "writer"]
+
+                # Check that param_type is either "moe" or "attn"
+                assert entry["param_type"] in ["moe", "attn"]
+
+                # Check that the appropriate path fields exist
+                if entry["param_type"] == "moe":
+                    assert "derived_expert_idx" in entry
+                    assert "base_param_path" in entry
+                    assert "derived_param_path" in entry
+                else:  # attn
+                    assert "base_param_path" in entry
 
     def test_expert_importance_invalid_model(self):
         """Test expert_importance with invalid model name."""
@@ -205,7 +217,13 @@ class TestExpertImportance:
 
             # Find specific entries to check calculations
             for entry in entries:
-                if entry["expert_idx"] == 0 and entry["component"] == "mlp.up_proj":
+                # Check MoE entries
+                if (
+                    entry.get("param_type") == "moe"
+                    and entry.get("base_expert_idx") == 0
+                    and entry.get("derived_expert_idx") == 0
+                    and entry.get("component") == "mlp.up_proj"
+                ):
                     # Expert 0, up_proj should have importance vector [5.0, 0.0]
                     assert th.allclose(
                         entry["importance_vector"], th.tensor([5.0, 0.0])
@@ -213,7 +231,12 @@ class TestExpertImportance:
                     # L2 norm should be 5.0
                     assert pytest.approx(entry["l2"]) == 5.0
 
-                if entry["expert_idx"] == 1 and entry["component"] == "attn.q_proj":
+                # Check attention entries
+                if (
+                    entry.get("param_type") == "attn"
+                    and entry.get("base_expert_idx") == 1
+                    and entry.get("component") == "attn.q_proj"
+                ):
                     # Expert 1, q_proj should have importance vector [0.0, 2.0]
                     assert th.allclose(
                         entry["importance_vector"], th.tensor([0.0, 2.0])

@@ -1,10 +1,11 @@
 from itertools import product
 import os
-from typing import Any
+from typing import Any, cast
 
 import arguably
 from nnterp import StandardizedTransformer
 import torch as th
+from torch import Tensor
 
 from core.model import MODELS
 from exp import OUTPUT_DIR
@@ -58,15 +59,22 @@ def expert_importance(
 
         for base_layer_idx in router_layers:
             # Expert directions V: rows of router weight
-            router_weight: th.Tensor = model.routers[base_layer_idx].weight.detach().cpu()
+            router_weight = cast("Tensor", model.routers[base_layer_idx].weight)
+            router_weight = router_weight.detach().cpu()
             num_experts, hidden_size = router_weight.shape
             V = router_weight  # (E, D)
 
             for derived_layer_idx in router_layers:
                 # Preload attention weights for this layer
-                q_w: th.Tensor = model.attentions[derived_layer_idx].q_proj.weight.detach().cpu()
-                k_w: th.Tensor = model.attentions[derived_layer_idx].k_proj.weight.detach().cpu()
-                o_w: th.Tensor = model.attentions[derived_layer_idx].o_proj.weight.detach().cpu()
+                q_w = cast("Tensor", model.attentions[derived_layer_idx].q_proj.weight)
+                q_w = q_w.detach().cpu()
+
+                k_w = cast("Tensor", model.attentions[derived_layer_idx].k_proj.weight)
+                k_w = k_w.detach().cpu()
+
+                o_w = cast("Tensor", model.attentions[derived_layer_idx].o_proj.weight)
+                # Transpose the o_proj weight as requested
+                o_w = o_w.T.detach().cpu()
 
                 # Vectorized readers shared per layer
                 # q/k: (E, Dq) = (q_w @ V^T)^T, (k_w @ V^T)^T
@@ -74,32 +82,44 @@ def expert_importance(
                 k_imp_all: th.Tensor = V @ k_w.T  # (E, Dq)
 
                 # Expert-specific readers: up/gate
-                up_w_all: th.Tensor = th.stack(
-                    [
-                        model.mlps[derived_layer_idx].experts[e].up_proj.weight.detach().cpu()
-                        for e in range(num_experts)
-                    ],
-                    dim=0,
-                )  # (E, Dmlp, D)
-                gate_w_all: th.Tensor = th.stack(
-                    [
-                        model.mlps[derived_layer_idx].experts[e].gate_proj.weight.detach().cpu()
-                        for e in range(num_experts)
-                    ],
-                    dim=0,
-                )  # (E, Dmlp, D)
-                up_imp_all: th.Tensor = V @ up_w_all.transpose(0, -1)  # (E, Dmlp, E)
-                gate_imp_all: th.Tensor = V @ gate_w_all.transpose(0, -1)  # (E, Dmlp, E)
+                # Handle experts as a list to avoid subscripting issues
+                experts = model.mlps[derived_layer_idx].experts
 
-                # Vectorized writers
-                down_w_all: th.Tensor = th.stack(
-                    [
-                        model.mlps[derived_layer_idx].experts[e].down_proj.weight.detach().cpu()
-                        for e in range(num_experts)
-                    ],
-                    dim=0,
-                )  # (E, Dmlp, D)
-                down_imp_all: th.Tensor = V @ down_w_all.transpose(0, -1)  # (E, Dmlp, E)
+                up_weights = []
+                gate_weights = []
+                down_weights = []
+
+                for e in range(num_experts):
+                    # Handle both list-like and dict-like experts
+                    if isinstance(experts, list):
+                        expert = experts[e]
+                    else:
+                        # Try to access as an attribute or dictionary
+                        try:
+                            expert = getattr(experts, str(e))
+                        except AttributeError:
+                            expert = experts[str(e)]
+
+                    up_w = cast("Tensor", expert.up_proj.weight).detach().cpu()
+                    gate_w = cast("Tensor", expert.gate_proj.weight).detach().cpu()
+                    # Save the transpose of down_proj weight as requested
+                    down_w = cast("Tensor", expert.down_proj.weight.T).detach().cpu()
+
+                    up_weights.append(up_w)
+                    gate_weights.append(gate_w)
+                    down_weights.append(down_w)
+
+                up_w_all: th.Tensor = th.stack(up_weights, dim=0)  # (E, Dmlp, D)
+                gate_w_all: th.Tensor = th.stack(gate_weights, dim=0)  # (E, Dmlp, D)
+                down_w_all: th.Tensor = th.stack(down_weights, dim=0)  # (E, D, Dmlp)
+
+                up_imp_all: th.Tensor = V @ up_w_all.transpose(0, -1)  # (E, Dmlp, E)
+                gate_imp_all: th.Tensor = V @ gate_w_all.transpose(
+                    0, -1
+                )  # (E, Dmlp, E)
+                down_imp_all: th.Tensor = V @ down_w_all.transpose(
+                    0, -1
+                )  # (E, Dmlp, E)
                 o_imp_all: th.Tensor = V @ o_w.T  # (E, Dq)
 
                 # Append entries for this layer
@@ -110,8 +130,13 @@ def expert_importance(
                     "num_experts": num_experts,
                 }
                 # Iterate over all pairs of experts to save MoE elements
-                for base_expert_idx, derived_expert_idx in product(range(num_experts), range(num_experts)):
-                    expert_meta = {"base_expert_idx": base_expert_idx, "derived_expert_idx": derived_expert_idx}
+                for base_expert_idx, derived_expert_idx in product(
+                    range(num_experts), range(num_experts)
+                ):
+                    expert_meta = {
+                        "base_expert_idx": base_expert_idx,
+                        "derived_expert_idx": derived_expert_idx,
+                    }
                     base = {**common_meta, **layer_meta, **expert_meta}
 
                     # Readers
@@ -125,8 +150,14 @@ def expert_importance(
                             "derived_param_path": f"layers.{derived_layer_idx}.mlp.experts.{derived_expert_idx}.up_proj.weight",
                             "role": "reader",
                             "param_type": "moe",
-                            "importance_vector": up_imp_all[base_expert_idx, :, derived_expert_idx],
-                            "l2": float(th.linalg.vector_norm(up_imp_all[base_expert_idx, :, derived_expert_idx]).item()),
+                            "importance_vector": up_imp_all[
+                                base_expert_idx, :, derived_expert_idx
+                            ],
+                            "l2": float(
+                                th.linalg.vector_norm(
+                                    up_imp_all[base_expert_idx, :, derived_expert_idx]
+                                ).item()
+                            ),
                         }
                     )
                     entries.append(
@@ -139,8 +170,14 @@ def expert_importance(
                             "derived_param_path": f"layers.{derived_layer_idx}.mlp.experts.{derived_expert_idx}.gate_proj.weight",
                             "role": "reader",
                             "param_type": "moe",
-                            "importance_vector": gate_imp_all[base_expert_idx, :, derived_expert_idx],
-                            "l2": float(th.linalg.vector_norm(gate_imp_all[base_expert_idx, :, derived_expert_idx]).item()),
+                            "importance_vector": gate_imp_all[
+                                base_expert_idx, :, derived_expert_idx
+                            ],
+                            "l2": float(
+                                th.linalg.vector_norm(
+                                    gate_imp_all[base_expert_idx, :, derived_expert_idx]
+                                ).item()
+                            ),
                         }
                     )
 
@@ -155,8 +192,14 @@ def expert_importance(
                             "derived_param_path": f"layers.{derived_layer_idx}.mlp.experts.{derived_expert_idx}.down_proj.weight",
                             "role": "writer",
                             "param_type": "moe",
-                            "importance_vector": down_imp_all[base_expert_idx, :, derived_expert_idx],
-                            "l2": float(th.linalg.vector_norm(down_imp_all[base_expert_idx, :, derived_expert_idx]).item()),
+                            "importance_vector": down_imp_all[
+                                base_expert_idx, :, derived_expert_idx
+                            ],
+                            "l2": float(
+                                th.linalg.vector_norm(
+                                    down_imp_all[base_expert_idx, :, derived_expert_idx]
+                                ).item()
+                            ),
                         }
                     )
 
@@ -175,7 +218,9 @@ def expert_importance(
                             "role": "reader",
                             "param_type": "attn",
                             "importance_vector": q_imp_all[expert_idx],
-                            "l2": float(th.linalg.vector_norm(q_imp_all[expert_idx]).item()),
+                            "l2": float(
+                                th.linalg.vector_norm(q_imp_all[expert_idx]).item()
+                            ),
                         }
                     )
                     entries.append(
@@ -187,7 +232,9 @@ def expert_importance(
                             "role": "reader",
                             "param_type": "attn",
                             "importance_vector": k_imp_all[expert_idx],
-                            "l2": float(th.linalg.vector_norm(k_imp_all[expert_idx]).item()),
+                            "l2": float(
+                                th.linalg.vector_norm(k_imp_all[expert_idx]).item()
+                            ),
                         }
                     )
 
@@ -201,7 +248,9 @@ def expert_importance(
                             "role": "writer",
                             "param_type": "attn",
                             "importance_vector": o_imp_all[expert_idx],
-                            "l2": float(th.linalg.vector_norm(o_imp_all[expert_idx]).item()),
+                            "l2": float(
+                                th.linalg.vector_norm(o_imp_all[expert_idx]).item()
+                            ),
                         }
                     )
 

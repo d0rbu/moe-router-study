@@ -73,7 +73,9 @@ def process_batch(
                 case (router_scores, _router_indices):
                     logits = router_scores.cpu()[padding_mask].save()
                 case tuple():
-                    raise ValueError(f"Found tuple of length {len(router_output)} for router output at layer {layer}")
+                    raise ValueError(
+                        f"Found tuple of length {len(router_output)} for router output at layer {layer}"
+                    )
                 case router_scores:
                     logits = router_scores.cpu()[padding_mask].save()
 
@@ -143,8 +145,11 @@ def get_router_activations(
 
         pbar = tqdm(total=tokens_per_file, desc="Filling up file")
 
-        for batch_idx, batch in enumerate(
-            tqdm(batched(dataset_fn(model.tokenizer), batch_size), desc="Processing batches")
+        for _batch_idx, batch in enumerate(
+            tqdm(
+                batched(dataset_fn(model.tokenizer), batch_size),
+                desc="Processing batches",
+            )
         ):
             # Process batch in isolated function to ensure variable cleanup
             router_logits, tokenized_batch = process_batch(batch, model, router_layers)
