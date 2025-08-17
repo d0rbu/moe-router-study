@@ -2,26 +2,31 @@
 
 import os
 
-import matplotlib
-
-matplotlib.use("WebAgg")  # Use GTK3Agg backend for interactive plots on Pop!_OS
 import arguably
+import matplotlib
+from matplotlib import colors as mcolors
 from matplotlib.cm import ScalarMappable
-from matplotlib.colors import Normalize
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
 import numpy as np
 import torch as th
 
+matplotlib.use("WebAgg")  # Use WebAgg backend for interactive plots
+
 from exp.expert_importance import EXPERT_IMPORTANCE_DIR
 from viz import FIGURE_DIR
 
 EXPERT_IMPORTANCES_VIZ_DIR = os.path.join(FIGURE_DIR, "expert_importances")
 
-# Component groupings
+# Constants
 READER_COMPONENTS = {"mlp.up_proj", "mlp.gate_proj", "attn.q_proj", "attn.k_proj"}
-WRITER_COMPONENTS = ["mlp.down_proj", "attn.o_proj"]
+WRITER_COMPONENTS = {"mlp.down_proj", "attn.o_proj"}
+
+# Components that have multiple experts (MoE components)
+MOE_COMPONENTS = {"mlp.up_proj", "mlp.gate_proj", "mlp.down_proj"}
+# Components that have only one value (Attention components)
+ATTN_COMPONENTS = {"attn.q_proj", "attn.k_proj", "attn.o_proj"}
 
 # Colors
 READER_CMAP = "Reds"
@@ -36,8 +41,8 @@ def expert_importances(
     data_path: str = os.path.join(EXPERT_IMPORTANCE_DIR, "all.pt"),
     model_name: str | None = None,
     checkpoint_idx: int | None = None,
-    initial_layer_idx: int = 0,
-    initial_expert_idx: int = 0,
+    initial_base_layer_idx: int = 0,
+    initial_base_expert_idx: int = 0,
     normalize_percentile: float = 95.0,
     figure_width: float = 16.0,  # Increased width
     figure_height: float = 14.0,  # Increased height
@@ -48,8 +53,8 @@ def expert_importances(
         data_path: Path to the expert importance data file
         model_name: Filter by model name (None for no filter)
         checkpoint_idx: Filter by checkpoint index (None for no filter)
-        initial_layer_idx: Initial layer index to highlight
-        initial_expert_idx: Initial expert index to highlight
+        initial_base_layer_idx: Initial base layer index to highlight
+        initial_base_expert_idx: Initial base expert index to highlight
         normalize_percentile: Percentile for color normalization (0-100)
         figure_width: Width of the figure in inches
         figure_height: Height of the figure in inches
@@ -58,40 +63,77 @@ def expert_importances(
 
     # Load data
     if not os.path.exists(data_path):
-        raise FileNotFoundError(f"Expert importance data not found at {data_path}")
+        raise FileNotFoundError(f"Data file not found: {data_path}")
 
     entries = th.load(data_path)
-
-    # Filter entries if needed
-    if model_name is not None:
-        entries = [e for e in entries if e["model_name"] == model_name]
-    if checkpoint_idx is not None:
-        entries = [e for e in entries if e["checkpoint_idx"] == checkpoint_idx]
-
     if not entries:
-        raise ValueError("No entries found with the specified filters")
+        raise ValueError("No entries found in data file")
 
-    # Extract unique layers and number of experts
-    layers = sorted({e["layer_idx"] for e in entries})
-    num_experts = max(e["expert_idx"] for e in entries) + 1
+    # Filter entries by model_name and checkpoint_idx if provided
+    filtered_entries = []
+    for entry in entries:
+        if model_name is not None and entry["model_name"] != model_name:
+            continue
+        if checkpoint_idx is not None and entry["checkpoint_idx"] != checkpoint_idx:
+            continue
+        filtered_entries.append(entry)
+
+    if not filtered_entries:
+        raise ValueError(
+            f"No entries found for model_name={model_name}, checkpoint_idx={checkpoint_idx}"
+        )
+
+    # Extract unique layers and experts
+    base_layers = sorted({entry["base_layer_idx"] for entry in filtered_entries})
+    derived_layers = sorted({entry["derived_layer_idx"] for entry in filtered_entries})
+    layers = sorted(set(base_layers + derived_layers))
+
+    # Get the number of experts from the data
+    num_experts = (
+        max(
+            max(entry.get("base_expert_idx", 0) for entry in filtered_entries),
+            max(
+                entry.get("derived_expert_idx", 0)
+                for entry in filtered_entries
+                if "derived_expert_idx" in entry
+            ),
+        )
+        + 1
+    )
 
     # Create lookup dictionary for fast access
     importance_data = {}
-    for entry in entries:
-        layer_idx = entry["layer_idx"]
-        component = entry["component"]
-        expert_idx = entry["expert_idx"]
-        role = entry["role"]
-        l2 = entry["l2"]
+    for entry in filtered_entries:
+        # Get the param_type to determine if it's MoE or Attention
+        param_type = entry.get("param_type")
+        if param_type not in ["moe", "attn"]:
+            raise ValueError(
+                f'Invalid or missing param_type: {param_type}. Must be "moe" or "attn".'
+            )
 
-        importance_data[(layer_idx, component, expert_idx)] = {"role": role, "l2": l2}
+        base_layer = entry["base_layer_idx"]
+        base_expert = entry["base_expert_idx"]
+        derived_layer = entry["derived_layer_idx"]
+        component = entry["component"]
+
+        # For MoE components, we have derived_expert_idx
+        derived_expert = entry["derived_expert_idx"] if param_type == "moe" else None
+
+        key = (base_layer, base_expert, derived_layer, component, derived_expert)
+        importance_data[key] = {
+            "role": entry["role"],
+            "l2": entry["l2"],
+        }
 
     # Compute color normalization
-    all_l2_values = [entry["l2"] for entry in entries]
-    vmin = 0
-    vmax = float(np.percentile(all_l2_values, normalize_percentile))
+    all_l2_values = [entry["l2"] for entry in filtered_entries]
+    if not all_l2_values:
+        raise ValueError("No L2 values found in filtered data")
 
-    norm = Normalize(vmin=vmin, vmax=vmax)
+    # Use percentile for normalization to avoid outliers
+    max_l2 = float(np.percentile(all_l2_values, normalize_percentile))
+    norm = mcolors.Normalize(vmin=0, vmax=max_l2)
+
     reader_cmap = plt.get_cmap(READER_CMAP)
     writer_cmap = plt.get_cmap(WRITER_CMAP)
 
@@ -139,7 +181,7 @@ def expert_importances(
     all_rectangles = {}
 
     # Draw all component blocks
-    for layer_idx_idx, layer_idx in enumerate(layers):
+    for layer_idx_idx, derived_layer_idx in enumerate(layers):
         y_base = layer_idx_idx * layer_height
 
         # Draw writer components (left side)
@@ -149,7 +191,7 @@ def expert_importances(
 
             # Draw component label
             ax.text(
-                0,  # Position in the middle space
+                -middle_spacing / 2 - 0.5,
                 y_offset + height / 2,
                 component.split(".")[-1],
                 ha="right",
@@ -157,30 +199,46 @@ def expert_importances(
                 fontsize=10,  # Increased font size
             )
 
-            for expert_idx in range(num_experts):
-                x_pos = -(expert_idx + 1) * expert_width - middle_spacing / 2
+            # Check if this is a MoE component or Attention component
+            if component in MOE_COMPONENTS:
+                # MoE component - draw multiple rectangles for each expert
+                for derived_expert_idx in range(num_experts):
+                    x_pos = (
+                        -(derived_expert_idx + 1) * expert_width - middle_spacing / 2
+                    )
 
-                # Get importance value
-                key = (layer_idx, component, expert_idx)
-                if key in importance_data:
-                    l2 = importance_data[key]["l2"]
-                    color = writer_cmap(norm(l2))
-                else:
-                    l2 = 0
-                    color = "lightgray"
+                    # Create rectangle
+                    rect = plt.Rectangle(
+                        (x_pos, y_offset),
+                        expert_width,
+                        height,
+                        edgecolor="gray",
+                        facecolor="lightgray",
+                        linewidth=0.5,
+                    )
+                    ax.add_patch(rect)
+
+                    # Store rectangle for later updates
+                    rect_key = (derived_layer_idx, component, derived_expert_idx)
+                    all_rectangles[rect_key] = rect
+            else:
+                # Attention component - draw one wide rectangle
+                x_pos = -num_experts * expert_width - middle_spacing / 2
 
                 # Create rectangle
-                rect = patches.Rectangle(
+                rect = plt.Rectangle(
                     (x_pos, y_offset),
-                    expert_width - 0.1,  # Increased width
+                    num_experts * expert_width,
                     height,
-                    facecolor=color,
                     edgecolor="gray",
+                    facecolor="lightgray",
                     linewidth=0.5,
-                    zorder=2,
                 )
                 ax.add_patch(rect)
-                all_rectangles[key] = rect
+
+                # Store rectangle for later updates - use None for derived_expert_idx
+                rect_key = (derived_layer_idx, component, None)
+                all_rectangles[rect_key] = rect
 
         # Draw reader components (right side)
         for comp_idx, component in enumerate(READER_COMPONENTS):
@@ -197,36 +255,52 @@ def expert_importances(
                 fontsize=10,  # Increased font size
             )
 
-            for expert_idx in range(num_experts):
-                x_pos = expert_idx * expert_width + middle_spacing / 2
+            # Check if this is a MoE component or Attention component
+            if component in MOE_COMPONENTS:
+                # MoE component - draw multiple rectangles for each expert
+                for derived_expert_idx in range(num_experts):
+                    x_pos = derived_expert_idx * expert_width + middle_spacing / 2
 
-                # Get importance value
-                key = (layer_idx, component, expert_idx)
-                if key in importance_data:
-                    l2 = importance_data[key]["l2"]
-                    color = reader_cmap(norm(l2))
-                else:
-                    l2 = 0
-                    color = "lightgray"
+                    # Create rectangle
+                    rect = plt.Rectangle(
+                        (x_pos, y_offset),
+                        expert_width - 0.1,  # Increased width
+                        height,
+                        edgecolor="gray",
+                        facecolor="lightgray",
+                        linewidth=0.5,
+                        zorder=2,
+                    )
+                    ax.add_patch(rect)
+
+                    # Store rectangle for later updates
+                    rect_key = (derived_layer_idx, component, derived_expert_idx)
+                    all_rectangles[rect_key] = rect
+            else:
+                # Attention component - draw one wide rectangle
+                x_pos = middle_spacing / 2
 
                 # Create rectangle
-                rect = patches.Rectangle(
+                rect = plt.Rectangle(
                     (x_pos, y_offset),
-                    expert_width - 0.1,  # Increased width
+                    num_experts * expert_width - 0.1,
                     height,
-                    facecolor=color,
                     edgecolor="gray",
+                    facecolor="lightgray",
                     linewidth=0.5,
                     zorder=2,
                 )
                 ax.add_patch(rect)
-                all_rectangles[key] = rect
+
+                # Store rectangle for later updates - use None for derived_expert_idx
+                rect_key = (derived_layer_idx, component, None)
+                all_rectangles[rect_key] = rect
 
         # Add layer index label
         ax.text(
             0,
             y_base + layer_height / 2,
-            f"Layer {layer_idx}",
+            f"Layer {derived_layer_idx}",
             ha="center",
             va="center",
             fontsize=12,  # Increased font size
@@ -250,113 +324,128 @@ def expert_importances(
     writer_cbar.set_label("Writer Importance (L2 Norm)")
     reader_cbar.set_label("Reader Importance (L2 Norm)")
 
-    # Add sliders for layer and expert selection with better spacing
+    # Add sliders for base layer and base expert selection with better spacing
     ax_layer = fig.add_axes((0.25, 0.06, 0.65, 0.03))
     ax_expert = fig.add_axes((0.25, 0.02, 0.65, 0.03))
 
     slider_layer = Slider(
         ax=ax_layer,
-        label="Layer Index",
+        label="Base Layer Index",
         valmin=0,
-        valmax=len(layers) - 1,
-        valinit=min(initial_layer_idx, len(layers) - 1),
+        valmax=len(base_layers) - 1,
+        valinit=min(initial_base_layer_idx, len(base_layers) - 1),
         valstep=1,
     )
 
     slider_expert = Slider(
         ax=ax_expert,
-        label="Expert Index",
+        label="Base Expert Index",
         valmin=0,
         valmax=num_experts - 1,
-        valinit=min(initial_expert_idx, num_experts - 1),
+        valinit=min(initial_base_expert_idx, num_experts - 1),
         valstep=1,
     )
 
     # Current selection state
-    current_layer_idx = min(initial_layer_idx, len(layers) - 1)
-    current_expert_idx = min(initial_expert_idx, num_experts - 1)
+    current_base_layer_idx = base_layers[
+        min(initial_base_layer_idx, len(base_layers) - 1)
+    ]
+    current_base_expert_idx = min(initial_base_expert_idx, num_experts - 1)
 
     # Update function for sliders
-    def update_layer(val):
-        nonlocal current_layer_idx
+    def update_visualization():
+        # Reset all rectangles to default color
+        for rect in all_rectangles.values():
+            rect.set_facecolor("lightgray")
+            rect.set_edgecolor("gray")
+            rect.set_linewidth(0.5)
 
-        # Get new layer index
-        new_layer_idx_idx = int(val)
-        new_layer_idx = layers[new_layer_idx_idx]
+        # Update colors based on current base layer and expert
+        for key, data in importance_data.items():
+            base_layer, base_expert, derived_layer, component, derived_expert = key
 
-        # Update layer highlight
-        y_base = new_layer_idx_idx * layer_height
+            if (
+                base_layer == current_base_layer_idx
+                and base_expert == current_base_expert_idx
+            ):
+                role = data["role"]
+                l2 = data["l2"]
+
+                # Get the correct rectangle
+                if derived_expert is not None:
+                    # MoE component
+                    rect_key = (derived_layer, component, derived_expert)
+                else:
+                    # Attention component
+                    rect_key = (
+                        derived_layer,
+                        component,
+                        None,
+                    )  # Use None for attention components
+
+                if rect_key in all_rectangles:
+                    rect = all_rectangles[rect_key]
+
+                    # Set color based on role
+                    if role == "reader":
+                        color = reader_cmap(norm(l2))
+                    else:  # writer
+                        color = writer_cmap(norm(l2))
+
+                    rect.set_facecolor(color)
+
+                    # Highlight the rectangle if it's in the base layer
+                    if derived_layer == base_layer:
+                        rect.set_edgecolor("black")
+                        rect.set_linewidth(2.0)
+
+        # Update layer highlight position
+        layer_idx_idx = (
+            layers.index(current_base_layer_idx)
+            if current_base_layer_idx in layers
+            else 0
+        )
+        y_base = layer_idx_idx * layer_height
         layer_highlight.set_y(y_base)
 
-        # Reset borders for previous expert in previous layer
-        for key, rect in all_rectangles.items():
-            layer, component, expert = key
-            if layer == current_layer_idx and expert == current_expert_idx:
-                rect.set_edgecolor("gray")
-                rect.set_linewidth(0.5)
-
-        # Set borders for current expert in new layer
-        for key, rect in all_rectangles.items():
-            layer, component, expert = key
-            if layer == new_layer_idx and expert == current_expert_idx:
-                rect.set_edgecolor(SELECTED_EXPERT_BORDER_COLOR)
-                rect.set_linewidth(2)
-
-        # Update current layer
-        current_layer_idx = new_layer_idx
-
         # Update title
         ax.set_title(
-            f"Expert Importances - Layer {new_layer_idx}, Expert {current_expert_idx}",
+            f"Expert Importances - Base Layer {current_base_layer_idx}, Base Expert {current_base_expert_idx}",
             fontsize=14,
         )
 
         # Force redraw
         fig.canvas.draw_idle()
+
+    def update_layer(val):
+        nonlocal current_base_layer_idx
+        # Get new base layer index
+        new_base_layer_idx_idx = int(val)
+        new_base_layer_idx = base_layers[new_base_layer_idx_idx]
+        # Update current base layer
+        current_base_layer_idx = new_base_layer_idx
+        # Update visualization
+        update_visualization()
 
     def update_expert(val):
-        nonlocal current_expert_idx
-
-        # Get new expert index
-        new_expert_idx = int(val)
-
-        # Reset borders for previous expert in current layer
-        for key, rect in all_rectangles.items():
-            layer, component, expert = key
-            if layer == current_layer_idx and expert == current_expert_idx:
-                rect.set_edgecolor("gray")
-                rect.set_linewidth(0.5)
-
-        # Set borders for new expert in current layer
-        for key, rect in all_rectangles.items():
-            layer, component, expert = key
-            if layer == current_layer_idx and expert == new_expert_idx:
-                rect.set_edgecolor(SELECTED_EXPERT_BORDER_COLOR)
-                rect.set_linewidth(2)
-
-        # Update current expert
-        current_expert_idx = new_expert_idx
-
-        # Update title
-        ax.set_title(
-            f"Expert Importances - Layer {current_layer_idx}, Expert {new_expert_idx}",
-            fontsize=14,
-        )
-
-        # Force redraw
-        fig.canvas.draw_idle()
+        nonlocal current_base_expert_idx
+        # Get new base expert index
+        new_base_expert_idx = int(val)
+        # Update current base expert
+        current_base_expert_idx = new_base_expert_idx
+        # Update visualization
+        update_visualization()
 
     # Connect sliders to update functions
     slider_layer.on_changed(update_layer)
     slider_expert.on_changed(update_expert)
 
     # Initial update to set the starting state
-    update_layer(initial_layer_idx)
-    update_expert(initial_expert_idx)
+    update_visualization()
 
     # Set initial title and labels
     ax.set_title(
-        f"Expert Importances - Layer {layers[current_layer_idx]}, Expert {current_expert_idx}",
+        f"Expert Importances - Base Layer {current_base_layer_idx}, Base Expert {current_base_expert_idx}",
         fontsize=14,
     )
     ax.set_xlabel("Residual Stream", fontsize=12)
