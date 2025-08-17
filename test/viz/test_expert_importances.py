@@ -8,8 +8,6 @@ import pytest
 import torch as th
 
 from viz.expert_importances import (
-    READER_COMPONENTS,
-    WRITER_COMPONENTS,
     expert_importances,
 )
 
@@ -20,39 +18,85 @@ def mock_expert_importance_data():
     entries = []
 
     # Create test data for 2 layers, 2 experts
-    for layer_idx in range(2):
-        for expert_idx in range(2):
-            # Add reader components
-            entries.extend(
-                [
-                    {
-                        "layer_idx": layer_idx,
-                        "component": component,
-                        "expert_idx": expert_idx,
-                        "role": "reader",
-                        "l2": 0.5 + layer_idx * 0.1 + expert_idx * 0.2,
-                        "model_name": "test_model",
-                        "checkpoint_idx": 0,
-                    }
-                    for component in READER_COMPONENTS
-                ]
-            )
+    for base_layer_idx in range(2):
+        for base_expert_idx in range(2):
+            for derived_layer_idx in range(2):
+                # Add MoE components (with derived_expert_idx)
+                for derived_expert_idx in range(2):
+                    # Add MoE reader components
+                    entries.extend(
+                        [
+                            {
+                                "base_layer_idx": base_layer_idx,
+                                "base_expert_idx": base_expert_idx,
+                                "derived_layer_idx": derived_layer_idx,
+                                "derived_expert_idx": derived_expert_idx,
+                                "component": component,
+                                "role": "reader",
+                                "param_type": "moe",
+                                "l2": 0.5
+                                + base_layer_idx * 0.1
+                                + base_expert_idx * 0.2,
+                                "model_name": "test_model",
+                                "checkpoint_idx": 0,
+                                "importance_vector": th.randn(16),
+                            }
+                            for component in ["mlp.up_proj", "mlp.gate_proj"]
+                        ]
+                    )
 
-            # Add writer components
-            entries.extend(
-                [
+                    # Add MoE writer component
+                    entries.append(
+                        {
+                            "base_layer_idx": base_layer_idx,
+                            "base_expert_idx": base_expert_idx,
+                            "derived_layer_idx": derived_layer_idx,
+                            "derived_expert_idx": derived_expert_idx,
+                            "component": "mlp.down_proj",
+                            "role": "writer",
+                            "param_type": "moe",
+                            "l2": 0.3 + base_layer_idx * 0.1 + base_expert_idx * 0.2,
+                            "model_name": "test_model",
+                            "checkpoint_idx": 0,
+                            "importance_vector": th.randn(16),
+                        }
+                    )
+
+                # Add Attention components (without derived_expert_idx)
+                # Add attention reader components
+                entries.extend(
+                    [
+                        {
+                            "base_layer_idx": base_layer_idx,
+                            "base_expert_idx": base_expert_idx,
+                            "derived_layer_idx": derived_layer_idx,
+                            "component": component,
+                            "role": "reader",
+                            "param_type": "attn",
+                            "l2": 0.5 + base_layer_idx * 0.1 + base_expert_idx * 0.2,
+                            "model_name": "test_model",
+                            "checkpoint_idx": 0,
+                            "importance_vector": th.randn(16),
+                        }
+                        for component in ["attn.q_proj", "attn.k_proj"]
+                    ]
+                )
+
+                # Add attention writer component
+                entries.append(
                     {
-                        "layer_idx": layer_idx,
-                        "component": component,
-                        "expert_idx": expert_idx,
+                        "base_layer_idx": base_layer_idx,
+                        "base_expert_idx": base_expert_idx,
+                        "derived_layer_idx": derived_layer_idx,
+                        "component": "attn.o_proj",
                         "role": "writer",
-                        "l2": 0.3 + layer_idx * 0.1 + expert_idx * 0.2,
+                        "param_type": "attn",
+                        "l2": 0.3 + base_layer_idx * 0.1 + base_expert_idx * 0.2,
                         "model_name": "test_model",
                         "checkpoint_idx": 0,
+                        "importance_vector": th.randn(16),
                     }
-                    for component in WRITER_COMPONENTS
-                ]
-            )
+                )
 
     return entries
 
@@ -77,8 +121,8 @@ def test_expert_importances_loads_data(mock_show, temp_data_file):
         data_path=temp_data_file,
         model_name="test_model",
         checkpoint_idx=0,
-        initial_layer_idx=0,
-        initial_expert_idx=0,
+        initial_base_layer_idx=0,
+        initial_base_expert_idx=0,
     )
 
     # Verify that plt.show() was called, indicating the visualization was created
@@ -93,8 +137,8 @@ def test_expert_importances_with_filters(mock_show, temp_data_file):
         data_path=temp_data_file,
         model_name="test_model",
         checkpoint_idx=0,
-        initial_layer_idx=1,
-        initial_expert_idx=1,
+        initial_base_layer_idx=1,
+        initial_base_expert_idx=1,
     )
 
     # Verify that plt.show() was called
