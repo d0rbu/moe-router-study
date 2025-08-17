@@ -1,6 +1,7 @@
 import os
 
 import arguably
+from loguru import logger
 import matplotlib
 
 matplotlib.use("WebAgg")  # Use GTK3Agg backend for interactive plots on Pop!_OS
@@ -16,8 +17,8 @@ from viz import FIGURE_DIR
 def kmeans_manhattan(
     data: th.Tensor,
     k: int,
+    minibatch_size: int,
     max_iters: int = 100,
-    batch_size: int | None = None,
     seed: int = 0,
 ) -> tuple[th.Tensor, th.Tensor, th.Tensor]:
     """
@@ -27,7 +28,7 @@ def kmeans_manhattan(
         data: Data to cluster, shape (N, D)
         k: Number of clusters
         max_iters: Maximum number of iterations
-        batch_size: Batch size for processing data. If None, process all data at once.
+        minibatch_size: Batch size for processing data. If None, process all data at once.
         seed: Random seed for initialization
 
     Returns:
@@ -42,15 +43,12 @@ def kmeans_manhattan(
 
     dataset_size, dim = data.shape
 
-    if batch_size is None:
-        batch_size = dataset_size
-    else:
-        assert batch_size > 0 and batch_size < dataset_size, (
-            "Batch size must be > 0 and < dataset_size"
-        )
+    assert minibatch_size > 0 and minibatch_size <= dataset_size, (
+        "Batch size must be > 0 and <= dataset_size"
+    )
 
     # initialize the centroids - use first batch to initialize
-    first_batch = data[: min(batch_size, dataset_size)]
+    first_batch = data[: min(minibatch_size, dataset_size)]
     centroids = first_batch[th.randperm(first_batch.size(0))[:k]]
 
     # Initialize cluster sizes for weighted updates
@@ -76,11 +74,11 @@ def kmeans_manhattan(
         current_loss = 0.0
 
         # Process data in batches
-        num_batches = (dataset_size + batch_size - 1) // batch_size
+        num_batches = (dataset_size + minibatch_size - 1) // minibatch_size
 
-        for batch_idx in range(num_batches):
-            start_idx = batch_idx * batch_size
-            end_idx = min((batch_idx + 1) * batch_size, dataset_size)
+        for batch_idx in tqdm(range(num_batches), desc="Processing minibatches", leave=False, total=num_batches):
+            start_idx = batch_idx * minibatch_size
+            end_idx = min((batch_idx + 1) * minibatch_size, dataset_size)
             batch_data = data[start_idx:end_idx]
 
             # assign each point to the nearest centroid
@@ -125,9 +123,9 @@ def kmeans_manhattan(
 
 def elbow(
     data: th.Tensor,
-    batch_size: int = 0,
+    minibatch_size: int,
     start: int = 32,
-    stop: int = 256,
+    stop: int = 1024,
     step: int = 32,
     seed: int = 0,
 ) -> None:
@@ -146,7 +144,7 @@ def elbow(
         total=total_iters,
     ):
         centroids, assignments, _ = kmeans_manhattan(
-            data, k, batch_size=batch_size, seed=seed
+            data, k, minibatch_size=minibatch_size, seed=seed
         )
 
         # compute the sum of squared manhattan distances in batches
@@ -154,12 +152,12 @@ def elbow(
 
         # Process in batches to avoid OOM
         num_batches = (
-            (dataset_size + batch_size - 1) // batch_size if batch_size > 0 else 1
+            (dataset_size + minibatch_size - 1) // minibatch_size if minibatch_size > 0 else 1
         )
 
         for batch_idx in range(num_batches):
-            start_idx = batch_idx * batch_size
-            end_idx = min((batch_idx + 1) * batch_size, dataset_size)
+            start_idx = batch_idx * minibatch_size
+            end_idx = min((batch_idx + 1) * minibatch_size, dataset_size)
             batch_data = data[start_idx:end_idx]
             batch_assignments = assignments[start_idx:end_idx]
 
@@ -201,20 +199,37 @@ def get_top_circuits(
 
 
 @arguably.command()
-def cluster_circuits(k: int | None = None, seed: int = 0, batch_size: int = 0) -> None:
+def cluster_circuits(
+    *_args,
+    k: int | None = None,
+    seed: int = 0,
+    minibatch_size: int | None = None,
+) -> None:
     activated_experts, top_k = load_activations_and_topk()
 
     batch_size, num_layers, num_experts = activated_experts.shape
+
+    if minibatch_size is None:
+        minibatch_size = batch_size
+    else:
+        assert minibatch_size > 0 and minibatch_size <= batch_size, (
+            "Batch size must be > 0 and <= batch_size"
+        )
+
+        if (num_leftover_samples := batch_size % minibatch_size) > 0:
+            logger.warning(f"Batch size {batch_size} is not divisible by minibatch size {minibatch_size}, {num_leftover_samples} samples will be discarded")
+            activated_experts = activated_experts[:-num_leftover_samples]
+            batch_size -= num_leftover_samples
 
     # (B, L, E) -> (B, L * E)
     activated_experts = activated_experts.view(activated_experts.shape[0], -1).float()
 
     if k is None:
-        elbow(activated_experts, batch_size=batch_size, seed=seed)
+        elbow(activated_experts, minibatch_size=minibatch_size, seed=seed)
         return
 
     centroids, _, _ = kmeans_manhattan(
-        activated_experts, k, batch_size=batch_size, seed=seed
+        activated_experts, k, minibatch_size=minibatch_size, seed=seed
     )
 
     # save circuits
