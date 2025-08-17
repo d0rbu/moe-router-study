@@ -1363,7 +1363,7 @@ requires-dist = [
     { name = "tornado", specifier = ">=6.5.1" },
     { name = "tqdm", specifier = ">=4.60.0" },
     { name = "trackio", specifier = ">=0.1.0" },
-    { name = "transformers", specifier = ">=4.55.1" },
+    { name = "transformers", git = "https://github.com/huggingface/transformers.git" },
     { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.1a16" },
 ]
 provides-extras = ["dev", "flash"]
@@ -2816,8 +2816,8 @@ wheels = [
 
 [[package]]
 name = "transformers"
-version = "4.55.1"
-source = { registry = "https://pypi.org/simple" }
+version = "4.56.0.dev0"
+source = { git = "https://github.com/huggingface/transformers.git#cd22550692cabffb037b7e5a956e8da3cbbb2b67" }
 dependencies = [
     { name = "filelock" },
     { name = "huggingface-hub" },
@@ -2829,10 +2829,6 @@ dependencies = [
     { name = "safetensors" },
     { name = "tokenizers" },
     { name = "tqdm" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/fd/f4/5227c3275b3ea92df639a763d819ade8726d6a23fe6b1f497d989ebd8931/transformers-4.55.1.tar.gz", hash = "sha256:0de83246bdc4abdff6475302cd2fbd19f1c9f7ae7c1d7ec580e06df2f0ae93aa", size = 9571228 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/09/a2/5b840892d7ec3b91d2bc57f503ee91cb37d6d4d0b1720ccbe661f35b48db/transformers-4.55.1-py3-none-any.whl", hash = "sha256:9e936d9c106924579f509f63da66aa899401e2d1fb4a4f964a3c494476b5110f", size = 11269726 },
 ]
 
 [[package]]

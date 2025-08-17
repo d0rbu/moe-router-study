@@ -155,7 +155,7 @@ def elbow(
             (dataset_size + minibatch_size - 1) // minibatch_size if minibatch_size > 0 else 1
         )
 
-        for batch_idx in range(num_batches):
+        for batch_idx in tqdm(range(num_batches), desc="Processing minibatches", leave=False, total=num_batches):
             start_idx = batch_idx * minibatch_size
             end_idx = min((batch_idx + 1) * minibatch_size, dataset_size)
             batch_data = data[start_idx:end_idx]
