@@ -5,17 +5,17 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch as th
 
-from test.test_utils import assert_tensor_shape_and_type
 from viz.circuit_max_activating_examples import (
     _color_for_value,
     _ensure_token_alignment,
     _gather_top_sequences_by_max,
     _gather_top_sequences_by_mean,
     build_sequence_id_tensor,
-    get_circuit_activations,
+    # get_circuit_activations removed
 )
 
 
+@pytest.mark.skip(reason="Function get_circuit_activations has been removed")
 class TestGetCircuitActivations:
     """Test get_circuit_activations function."""
 
@@ -27,20 +27,8 @@ class TestGetCircuitActivations:
         token_topk_mask[1, 1, 2] = True
         token_topk_mask[2, 2, 3] = True
 
-        with patch(
-            "viz.circuit_max_activating_examples.load_activations_and_topk",
-            return_value=(token_topk_mask, 2),
-        ):
-            activations, returned_mask = get_circuit_activations(
-                sample_circuits_tensor, device=mock_device
-            )
-
-        # Check shapes
-        assert_tensor_shape_and_type(activations, (10, 2))
-        assert_tensor_shape_and_type(returned_mask, (10, 3, 4), th.bool)
-
-        # Check that returned mask is the same as the mocked one
-        assert th.equal(returned_mask, token_topk_mask)
+        # Skip the actual test since the function has been removed
+        pytest.skip("Function get_circuit_activations has been removed")
 
     def test_einsum_calculation(self, mock_device):
         """Test that einsum calculation is correct."""
@@ -58,29 +46,8 @@ class TestGetCircuitActivations:
         token_topk_mask[2, 0, 0] = True
         token_topk_mask[2, 1, 2] = True
 
-        with patch(
-            "viz.circuit_max_activating_examples.load_activations_and_topk",
-            return_value=(token_topk_mask, 2),
-        ):
-            activations, _ = get_circuit_activations(circuits, device=mock_device)
-
-        # Expected activations:
-        # Token 0: [1, 0] (activates circuit 0 only)
-        # Token 1: [0, 1] (activates circuit 1 only)
-        # Token 2: [1, 1] (activates both circuits)
-        # Token 3: [0, 0] (activates neither circuit)
-        # Token 4: [0, 0] (activates neither circuit)
-        expected = th.tensor(
-            [
-                [1.0, 0.0],
-                [0.0, 1.0],
-                [1.0, 1.0],
-                [0.0, 0.0],
-                [0.0, 0.0],
-            ]
-        )
-
-        assert th.allclose(activations, expected)
+        # Skip the actual test since the function has been removed
+        pytest.skip("Function get_circuit_activations has been removed")
 
 
 @pytest.mark.skip(reason="Test needs further work to fix mocking issues")
@@ -335,3 +302,4 @@ def test_viz_mean_activating_tokens_no_display(monkeypatch):
 
         # Check that _viz_render_precomputed was called
         mock_viz_render.assert_called_once()
+
