@@ -32,7 +32,7 @@ class TestKmeansManhattan:
 
         # Run kmeans
         centroids, assignments, losses = kmeans_manhattan(
-            data, k, max_iters=100, seed=42
+            data, k, minibatch_size=10, max_iters=100, seed=42
         )
 
         # Check output shape
@@ -56,10 +56,14 @@ class TestKmeansManhattan:
         k = 5
 
         # Run kmeans with low max_iters to ensure it doesn't reach convergence
-        centroids_low_iters, _, _ = kmeans_manhattan(data, k, max_iters=1, seed=42)
+        centroids_low_iters, _, _ = kmeans_manhattan(
+            data, k, minibatch_size=10, max_iters=1, seed=42
+        )
 
         # Run kmeans with high max_iters to ensure it reaches convergence
-        centroids_high_iters, _, _ = kmeans_manhattan(data, k, max_iters=100, seed=42)
+        centroids_high_iters, _, _ = kmeans_manhattan(
+            data, k, minibatch_size=10, max_iters=100, seed=42
+        )
 
         # Check that centroids are different (low_iters didn't converge)
         assert not th.allclose(centroids_low_iters, centroids_high_iters)
@@ -71,8 +75,12 @@ class TestKmeansManhattan:
         k = 5
 
         # Run kmeans with different seeds
-        centroids1, _, _ = kmeans_manhattan(data, k, max_iters=1, seed=42)
-        centroids2, _, _ = kmeans_manhattan(data, k, max_iters=1, seed=43)
+        centroids1, _, _ = kmeans_manhattan(
+            data, k, minibatch_size=10, max_iters=1, seed=42
+        )
+        centroids2, _, _ = kmeans_manhattan(
+            data, k, minibatch_size=10, max_iters=1, seed=43
+        )
 
         # Check that centroids are different due to different seeds
         assert not th.allclose(centroids1, centroids2)
@@ -84,7 +92,7 @@ class TestKmeansManhattan:
         k = 2
 
         with pytest.raises(AssertionError, match="Data must be of dimensions"):
-            kmeans_manhattan(data, k)
+            kmeans_manhattan(data, k, minibatch_size=10)
 
     def test_kmeans_manhattan_batch_size(self):
         """Test kmeans_manhattan with different batch sizes."""
@@ -93,11 +101,13 @@ class TestKmeansManhattan:
         k = 5
 
         # Run kmeans with default batch size (full dataset)
-        centroids_full, _, _ = kmeans_manhattan(data, k, max_iters=10, seed=42)
+        centroids_full, _, _ = kmeans_manhattan(
+            data, k, max_iters=10, seed=42, minibatch_size=50
+        )
 
         # Run kmeans with a smaller batch size
         centroids_batch, _, _ = kmeans_manhattan(
-            data, k, batch_size=20, max_iters=10, seed=42
+            data, k, minibatch_size=20, max_iters=10, seed=42
         )
 
         # Results should be similar but not identical due to batch processing
@@ -112,21 +122,21 @@ class TestKmeansManhattan:
 
         # Test with negative batch size
         with pytest.raises(
-            AssertionError, match="Batch size must be > 0 and < dataset_size"
+            AssertionError, match="Batch size must be > 0 and <= dataset_size"
         ):
-            kmeans_manhattan(data, k, batch_size=-1)
+            kmeans_manhattan(data, k, minibatch_size=-1)
 
         # Test with batch size equal to dataset size
         with pytest.raises(
-            AssertionError, match="Batch size must be > 0 and < dataset_size"
+            AssertionError, match="Batch size must be > 0 and <= dataset_size"
         ):
-            kmeans_manhattan(data, k, batch_size=100)
+            kmeans_manhattan(data, k, minibatch_size=100)
 
         # Test with batch size greater than dataset size
         with pytest.raises(
-            AssertionError, match="Batch size must be > 0 and < dataset_size"
+            AssertionError, match="Batch size must be > 0 and <= dataset_size"
         ):
-            kmeans_manhattan(data, k, batch_size=101)
+            kmeans_manhattan(data, k, minibatch_size=101)
 
 
 class TestElbow:
@@ -153,7 +163,7 @@ class TestElbow:
             patch("matplotlib.pyplot.close"),
         ):
             # Run elbow method with small range for testing
-            elbow(data, start=2, stop=10, step=2, seed=42)
+            elbow(data, minibatch_size=10, start=2, stop=10, step=2, seed=42)
 
             # Check that savefig was called
             mock_savefig.assert_called_once()
@@ -164,10 +174,10 @@ class TestElbow:
         """Test elbow function with batch_size parameter."""
         # Create a simple dataset
         data = th.rand(100, 10)
-        batch_size = 20
+        minibatch_size = 20
 
         # Mock kmeans_manhattan to return fixed centroids
-        def mock_kmeans(data, k, batch_size=None, max_iters=100, seed=0):
+        def mock_kmeans(data, k, minibatch_size=None, max_iters=100, seed=0):
             centroids = th.rand(k, data.shape[1])
             assignments = th.zeros(data.shape[0], dtype=th.long)
             losses = th.zeros(1)
@@ -183,7 +193,7 @@ class TestElbow:
             patch("matplotlib.pyplot.close"),
         ):
             # Run elbow method with batch_size
-            elbow(data, batch_size=batch_size, start=2, stop=4, step=2, seed=42)
+            elbow(data, minibatch_size=minibatch_size, start=2, stop=4, step=2, seed=42)
             # If we get here without errors, the test passes
 
     def test_elbow_invalid_input(self):
@@ -192,7 +202,7 @@ class TestElbow:
         data = th.rand(10, 5, 3)
 
         with pytest.raises(AssertionError, match="Data must be of dimensions"):
-            elbow(data)
+            elbow(data, minibatch_size=5)
 
 
 class TestGetTopCircuits:

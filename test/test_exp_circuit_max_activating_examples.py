@@ -245,9 +245,12 @@ def test_viz_render_precomputed_no_display(monkeypatch):
         sequences = [["token1", "token2"], ["token3"]]
         norm_scores = th.tensor([0.1, 0.5, 0.9])
         order_per_circuit = [[0, 1], [1, 0]]
+        token_topk_mask = th.zeros(3, 3, 4, dtype=th.bool)  # Added token_topk_mask
 
         # Call the function
-        _viz_render_precomputed(circuits, sequences, norm_scores, order_per_circuit)
+        _viz_render_precomputed(
+            circuits, sequences, norm_scores, order_per_circuit, token_topk_mask
+        )
 
         # Check that the figure was created and text was added
         mock_axes.text.assert_called()
@@ -282,7 +285,13 @@ def test_viz_max_activating_tokens_no_display(monkeypatch):
 
         # Call the function
         circuits = th.zeros(2, 3, 4, dtype=th.bool)
-        viz_max_activating_tokens(circuits, device="cpu")
+        viz_max_activating_tokens(
+            circuits,
+            th.zeros(10, 3, 4, dtype=th.bool),
+            [["token1"], ["token2", "token3"]],
+            2,
+            device="cpu",
+        )
 
         # Check that _viz_render_precomputed was called
         mock_viz_render.assert_called_once()
@@ -316,7 +325,13 @@ def test_viz_mean_activating_tokens_no_display(monkeypatch):
 
         # Call the function
         circuits = th.zeros(2, 3, 4, dtype=th.bool)
-        viz_mean_activating_tokens(circuits, device="cpu")
+        viz_mean_activating_tokens(
+            circuits,
+            th.zeros(10, 3, 4, dtype=th.bool),
+            [["token1"], ["token2", "token3"]],
+            2,
+            device="cpu",
+        )
 
         # Check that _viz_render_precomputed was called
         mock_viz_render.assert_called_once()
