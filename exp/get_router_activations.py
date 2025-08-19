@@ -107,7 +107,7 @@ def get_router_activations(
     *_args,
     batch_size: int = 4,
     device: str = "cpu",
-    tokens_per_file: int = 10_000,
+    tokens_per_file: int = 2_000,
     resume: bool = False,
 ) -> None:
     model_config = MODELS.get(model_name, None)

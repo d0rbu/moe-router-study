@@ -49,15 +49,11 @@ def router_spaces(
 
     # Extract router weights
     router_weights: dict[int, th.Tensor] = {}
-    o_proj_weights: dict[int, th.Tensor] = {}
 
     with th.no_grad():
         for layer_idx in router_layers:
             router_w = cast("Tensor", model.routers[layer_idx].weight)
             router_weights[layer_idx] = router_w.detach().cpu()
-
-            o_proj_w = cast("Tensor", model.attentions[layer_idx].o_proj.weight)
-            o_proj_weights[layer_idx] = o_proj_w.detach().cpu()
 
     # first we get the spectra of the router weights
     for layer_idx, router_weight in router_weights.items():

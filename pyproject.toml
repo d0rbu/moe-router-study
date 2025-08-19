@@ -175,5 +175,5 @@ exclude_lines = [
 ]
 
 [tool.uv.sources]
-nnterp = { git = "https://github.com/d0rbu/nnterp.git" }
 transformers = { git = "https://github.com/huggingface/transformers.git" }
+nnterp = { git = "https://github.com/d0rbu/nnterp.git" }

@@ -6,6 +6,7 @@ import arguably
 from nnterp import StandardizedTransformer
 import torch as th
 from torch import Tensor
+from tqdm import tqdm
 
 from core.model import MODELS
 from exp import OUTPUT_DIR
@@ -57,14 +58,14 @@ def expert_importance(
             "revision": revision,
         }
 
-        for base_layer_idx in router_layers:
+        for base_layer_idx in tqdm(router_layers, desc="Base layers", leave=False):
             # Expert directions V: rows of router weight
             router_weight = cast("Tensor", model.routers[base_layer_idx].weight)
             router_weight = router_weight.detach().cpu()
             num_experts, hidden_size = router_weight.shape
             V = router_weight  # (E, D)
 
-            for derived_layer_idx in router_layers:
+            for derived_layer_idx in tqdm(router_layers, desc="Derived layers", leave=False):
                 # Preload attention weights for this layer
                 q_w = cast("Tensor", model.attentions[derived_layer_idx].q_proj.weight)
                 q_w = q_w.detach().cpu()
@@ -73,13 +74,15 @@ def expert_importance(
                 k_w = k_w.detach().cpu()
 
                 o_w = cast("Tensor", model.attentions[derived_layer_idx].o_proj.weight)
-                # Transpose the o_proj weight as requested
-                o_w = o_w.T.detach().cpu()
+                o_w = o_w.detach().cpu()
 
                 # Vectorized readers shared per layer
                 # q/k: (E, Dq) = (q_w @ V^T)^T, (k_w @ V^T)^T
                 q_imp_all: th.Tensor = V @ q_w.T  # (E, Dq)
                 k_imp_all: th.Tensor = V @ k_w.T  # (E, Dq)
+
+                # Vectorized writers shared per layer
+                o_imp_all: th.Tensor = V @ o_w  # (E, Dv)
 
                 # Expert-specific readers: up/gate
                 # Handle experts as a list to avoid subscripting issues
@@ -102,7 +105,6 @@ def expert_importance(
 
                     up_w = cast("Tensor", expert.up_proj.weight).detach().cpu()
                     gate_w = cast("Tensor", expert.gate_proj.weight).detach().cpu()
-                    # Save the transpose of down_proj weight as requested
                     down_w = cast("Tensor", expert.down_proj.weight.T).detach().cpu()
 
                     up_weights.append(up_w)
@@ -111,16 +113,17 @@ def expert_importance(
 
                 up_w_all: th.Tensor = th.stack(up_weights, dim=0)  # (E, Dmlp, D)
                 gate_w_all: th.Tensor = th.stack(gate_weights, dim=0)  # (E, Dmlp, D)
-                down_w_all: th.Tensor = th.stack(down_weights, dim=0)  # (E, D, Dmlp)
+                down_w_all: th.Tensor = th.stack(down_weights, dim=0)  # (E, Dmlp, D)
 
-                up_imp_all: th.Tensor = V @ up_w_all.transpose(0, -1)  # (E, Dmlp, E)
-                gate_imp_all: th.Tensor = V @ gate_w_all.transpose(
-                    0, -1
-                )  # (E, Dmlp, E)
-                down_imp_all: th.Tensor = V @ down_w_all.transpose(
-                    0, -1
-                )  # (E, Dmlp, E)
-                o_imp_all: th.Tensor = V @ o_w.T  # (E, Dq)
+                up_imp_all: th.Tensor = (V @ up_w_all.transpose(-1, -2)).transpose(
+                    0, 1
+                )  # (E_source, E_target, Dmlp)
+                gate_imp_all: th.Tensor = (V @ gate_w_all.transpose(-1, -2)).transpose(
+                    0, 1
+                )  # (E_source, E_target, Dmlp)
+                down_imp_all: th.Tensor = (V @ down_w_all.transpose(-1, -2)).transpose(
+                    0, 1
+                )  # (E_source, E_target, Dmlp)
 
                 # Append entries for this layer
                 layer_meta = {

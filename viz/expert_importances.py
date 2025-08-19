@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
 import numpy as np
 import torch as th
+from tqdm import tqdm
 
 matplotlib.use("WebAgg")  # Use WebAgg backend for interactive plots
 
@@ -65,13 +66,14 @@ def expert_importances(
     if not os.path.exists(data_path):
         raise FileNotFoundError(f"Data file not found: {data_path}")
 
+    print(f"Loading data from {data_path}...")
     entries = th.load(data_path)
     if not entries:
         raise ValueError("No entries found in data file")
 
     # Filter entries by model_name and checkpoint_idx if provided
     filtered_entries = []
-    for entry in entries:
+    for entry in tqdm(entries, desc="Filtering entries"):
         if model_name is not None and entry["model_name"] != model_name:
             continue
         if checkpoint_idx is not None and entry["checkpoint_idx"] != checkpoint_idx:
@@ -103,7 +105,7 @@ def expert_importances(
 
     # Create lookup dictionary for fast access
     importance_data = {}
-    for entry in filtered_entries:
+    for entry in tqdm(filtered_entries, desc="Creating importance data"):
         # Get the param_type to determine if it's MoE or Attention
         param_type = entry.get("param_type")
         if param_type not in ["moe", "attn"]:
@@ -191,7 +193,7 @@ def expert_importances(
 
             # Draw component label
             ax.text(
-                -middle_spacing / 2 - 0.5,
+                -0.5,
                 y_offset + height / 2,
                 component.split(".")[-1],
                 ha="right",
@@ -204,7 +206,7 @@ def expert_importances(
                 # MoE component - draw multiple rectangles for each expert
                 for derived_expert_idx in range(num_experts):
                     x_pos = (
-                        -(derived_expert_idx + 1) * expert_width - middle_spacing / 2
+                        (-num_experts * expert_width - middle_spacing / 2) + (derived_expert_idx * expert_width)
                     )
 
                     # Create rectangle
@@ -247,7 +249,7 @@ def expert_importances(
 
             # Draw component label
             ax.text(
-                0,  # Position in the middle space
+                0.5,
                 y_offset + height / 2,
                 component.split(".")[-1],
                 ha="left",
@@ -355,13 +357,13 @@ def expert_importances(
     # Update function for sliders
     def update_visualization():
         # Reset all rectangles to default color
-        for rect in all_rectangles.values():
-            rect.set_facecolor("lightgray")
-            rect.set_edgecolor("gray")
-            rect.set_linewidth(0.5)
+        # for rect in all_rectangles.values():
+        #     rect.set_facecolor("lightgray")
+        #     rect.set_edgecolor("gray")
+        #     rect.set_linewidth(0.5)
 
         # Update colors based on current base layer and expert
-        for key, data in importance_data.items():
+        for key, data in tqdm(importance_data.items(), desc="Updating colors", leave=False):
             base_layer, base_expert, derived_layer, component, derived_expert = key
 
             if (
@@ -394,10 +396,13 @@ def expert_importances(
 
                     rect.set_facecolor(color)
 
-                    # Highlight the rectangle if it's in the base layer
-                    if derived_layer == base_layer:
-                        rect.set_edgecolor("black")
-                        rect.set_linewidth(2.0)
+                    # Highlight the selected expert
+                    if derived_layer == base_layer and base_expert == current_base_expert_idx:
+                        rect.set_edgecolor(SELECTED_EXPERT_BORDER_COLOR)
+                        rect.set_linewidth(1.0)
+                    else:
+                        rect.set_edgecolor("gray")
+                        rect.set_linewidth(0.5)
 
         # Update layer highlight position
         layer_idx_idx = (
