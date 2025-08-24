@@ -11,7 +11,6 @@ from viz.circuit_max_activating_examples import (
     _gather_top_sequences_by_max,
     _gather_top_sequences_by_mean,
     build_sequence_id_tensor,
-    # get_circuit_activations removed
 )
 
 
