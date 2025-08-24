@@ -154,4 +154,3 @@ def test_compute_max_activating_examples_input_types(input_type):
     assert isinstance(top_indices, list)
     assert norm_scores.shape == (5,)
     assert len(top_indices) <= 3
-
