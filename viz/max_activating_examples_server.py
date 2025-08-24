@@ -8,10 +8,10 @@ from viz.circuit_max_activating_examples import (
 
 def max_activating_examples_server(
     circuits_path: str = "",
-    _top_n: int = 64,  # Renamed to _top_n since it's unused
+    _top_n: int = 64,
     *_args,
     device: str = "cuda",
-    _minibatch_size: int | None = None,  # Renamed to _minibatch_size since it's unused
+    _minibatch_size: int | None = None,
 ) -> None:
     """Run the max-activating tokens visualization from the command line.
 
