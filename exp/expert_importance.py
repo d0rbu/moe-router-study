@@ -65,7 +65,9 @@ def expert_importance(
             num_experts, hidden_size = router_weight.shape
             V = router_weight  # (E, D)
 
-            for derived_layer_idx in tqdm(router_layers, desc="Derived layers", leave=False):
+            for derived_layer_idx in tqdm(
+                router_layers, desc="Derived layers", leave=False
+            ):
                 # Preload attention weights for this layer
                 q_w = cast("Tensor", model.attentions[derived_layer_idx].q_proj.weight)
                 q_w = q_w.detach().cpu()

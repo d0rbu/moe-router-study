@@ -89,4 +89,3 @@ def temp_dir():
     """Create a temporary directory for testing."""
     with tempfile.TemporaryDirectory() as tmpdirname:
         yield tmpdirname
-

@@ -22,11 +22,12 @@ def max_activating_examples_server(
         _minibatch_size: Size of the minibatch for the computation.
     """
     # Load all data once at the top level
-    token_topk_mask, _activated_expert_indices, tokens, top_k = load_activations_indices_tokens_and_topk(device=device)
+    token_topk_mask, _activated_expert_indices, tokens, top_k = (
+        load_activations_indices_tokens_and_topk(device=device)
+    )
     # Removed unused circuits variable
     _load_circuits_tensor(circuits_path, device=device, token_topk_mask=token_topk_mask)
 
 
 if __name__ == "__main__":
     max_activating_examples_server()
-

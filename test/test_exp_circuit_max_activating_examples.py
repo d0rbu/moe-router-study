@@ -301,4 +301,3 @@ def test_viz_mean_activating_tokens_no_display(monkeypatch):
 
         # Check that _viz_render_precomputed was called
         mock_viz_render.assert_called_once()
-

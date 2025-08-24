@@ -76,7 +76,12 @@ def kmeans_manhattan(
         # Process data in batches
         num_batches = (dataset_size + minibatch_size - 1) // minibatch_size
 
-        for batch_idx in tqdm(range(num_batches), desc="Processing minibatches", leave=False, total=num_batches):
+        for batch_idx in tqdm(
+            range(num_batches),
+            desc="Processing minibatches",
+            leave=False,
+            total=num_batches,
+        ):
             start_idx = batch_idx * minibatch_size
             end_idx = min((batch_idx + 1) * minibatch_size, dataset_size)
             batch_data = data[start_idx:end_idx]
@@ -152,10 +157,17 @@ def elbow(
 
         # Process in batches to avoid OOM
         num_batches = (
-            (dataset_size + minibatch_size - 1) // minibatch_size if minibatch_size > 0 else 1
+            (dataset_size + minibatch_size - 1) // minibatch_size
+            if minibatch_size > 0
+            else 1
         )
 
-        for batch_idx in tqdm(range(num_batches), desc="Processing minibatches", leave=False, total=num_batches):
+        for batch_idx in tqdm(
+            range(num_batches),
+            desc="Processing minibatches",
+            leave=False,
+            total=num_batches,
+        ):
             start_idx = batch_idx * minibatch_size
             end_idx = min((batch_idx + 1) * minibatch_size, dataset_size)
             batch_data = data[start_idx:end_idx]
@@ -217,7 +229,9 @@ def cluster_circuits(
         )
 
         if (num_leftover_samples := batch_size % minibatch_size) > 0:
-            logger.warning(f"Batch size {batch_size} is not divisible by minibatch size {minibatch_size}, {num_leftover_samples} samples will be discarded")
+            logger.warning(
+                f"Batch size {batch_size} is not divisible by minibatch size {minibatch_size}, {num_leftover_samples} samples will be discarded"
+            )
             activated_experts = activated_experts[:-num_leftover_samples]
             batch_size -= num_leftover_samples
 

@@ -205,8 +205,8 @@ def expert_importances(
             if component in MOE_COMPONENTS:
                 # MoE component - draw multiple rectangles for each expert
                 for derived_expert_idx in range(num_experts):
-                    x_pos = (
-                        (-num_experts * expert_width - middle_spacing / 2) + (derived_expert_idx * expert_width)
+                    x_pos = (-num_experts * expert_width - middle_spacing / 2) + (
+                        derived_expert_idx * expert_width
                     )
 
                     # Create rectangle
@@ -363,7 +363,9 @@ def expert_importances(
         #     rect.set_linewidth(0.5)
 
         # Update colors based on current base layer and expert
-        for key, data in tqdm(importance_data.items(), desc="Updating colors", leave=False):
+        for key, data in tqdm(
+            importance_data.items(), desc="Updating colors", leave=False
+        ):
             base_layer, base_expert, derived_layer, component, derived_expert = key
 
             if (
@@ -397,7 +399,10 @@ def expert_importances(
                     rect.set_facecolor(color)
 
                     # Highlight the selected expert
-                    if derived_layer == base_layer and base_expert == current_base_expert_idx:
+                    if (
+                        derived_layer == base_layer
+                        and base_expert == current_base_expert_idx
+                    ):
                         rect.set_edgecolor(SELECTED_EXPERT_BORDER_COLOR)
                         rect.set_linewidth(1.0)
                     else:
