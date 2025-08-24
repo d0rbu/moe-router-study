@@ -58,7 +58,9 @@ def _load_circuits_tensor(
     if circuits.ndim == 2:
         # Infer (L, E) from activations - use provided data if available
         if token_topk_mask is None:
-            token_topk_mask, _indices, _tokens, _top_k = load_activations_indices_tokens_and_topk(device=device)
+            token_topk_mask, _indices, _tokens, _top_k = (
+                load_activations_indices_tokens_and_topk(device=device)
+            )
         _B, L, E = token_topk_mask.shape
         C = int(circuits.shape[0])
         assert circuits.shape[1] == L * E, (
@@ -349,11 +351,14 @@ def _viz_render_precomputed(
             try:
                 # Use TextPath for accurate text measurement
                 from matplotlib.textpath import TextPath
+
                 tp = TextPath((0, 0), s, prop=fp, size=font_size)
                 # TextPath extents are in points; convert to pixels
                 return float(tp.get_extents().width) * dpi / 72.0
             except Exception as e:
-                logger.warning(f"TextPath measurement failed for '{s}': {e}, using fallback")
+                logger.warning(
+                    f"TextPath measurement failed for '{s}': {e}, using fallback"
+                )
                 # Fallback to character count approximation
                 char_width_approx = font_size * 0.6
                 return len(s) * char_width_approx
@@ -512,13 +517,7 @@ def _viz_render_precomputed(
             _clear_hover()
             return
         global_token_idx = global_seq_start + int(hit_idx)
-        mask = (
-            token_topk_mask[global_token_idx]
-            .detach()
-            .cpu()
-            .numpy()
-            .astype(float)
-        )
+        mask = token_topk_mask[global_token_idx].detach().cpu().numpy().astype(float)
         # Show only activated experts by using the mask as per-pixel alpha
         overlay_im.set_array(np.zeros_like(mask, dtype=float))
         overlay_im.set_alpha(np.clip(1.0 - mask, 0.0, 1.0))
@@ -554,7 +553,7 @@ def viz_max_activating_tokens(
     top_k: int,
     top_n: int = 10,
     device: str = "cuda",
-    minibatch_size: int | None = None
+    minibatch_size: int | None = None,
 ) -> None:
     """Visualize top-N sequences by containing highest-activating tokens.
 
@@ -575,7 +574,9 @@ def viz_max_activating_tokens(
         )
 
         if (num_leftover_samples := batch_size % minibatch_size) > 0:
-            logger.warning(f"Batch size {batch_size} is not divisible by minibatch size {minibatch_size}, {num_leftover_samples} samples will be discarded")
+            logger.warning(
+                f"Batch size {batch_size} is not divisible by minibatch size {minibatch_size}, {num_leftover_samples} samples will be discarded"
+            )
             token_topk_mask = token_topk_mask[:-num_leftover_samples]
             batch_size -= num_leftover_samples
 
@@ -583,9 +584,16 @@ def viz_max_activating_tokens(
 
     # Compute per-token, per-circuit activations (B, C)
     activations = th.empty(batch_size, num_circuits, device=device)
-    for start_idx in tqdm(range(0, batch_size, minibatch_size), desc="Computing activations", leave=False, total=batch_size // minibatch_size):
+    for start_idx in tqdm(
+        range(0, batch_size, minibatch_size),
+        desc="Computing activations",
+        leave=False,
+        total=batch_size // minibatch_size,
+    ):
         stop_idx = min(start_idx + minibatch_size, batch_size)
-        activations[start_idx:stop_idx] = th.einsum("ble,cle->bc", token_topk_mask[start_idx:stop_idx].float(), circuits)
+        activations[start_idx:stop_idx] = th.einsum(
+            "ble,cle->bc", token_topk_mask[start_idx:stop_idx].float(), circuits
+        )
 
     # Map tokens to sequences
     seq_ids, _seq_lengths, _seq_offsets = build_sequence_id_tensor(
@@ -601,8 +609,15 @@ def viz_max_activating_tokens(
 
     # Build ordered sequence list per circuit by max token criteria
     order_per_circuit: list[list[int]] = []
-    for circuit_idx in tqdm(range(num_circuits), desc="Building ordered sequence list", leave=False, total=num_circuits):
-        order = _gather_top_sequences_by_max(norm_scores[:, circuit_idx], seq_ids, top_n=10**9)
+    for circuit_idx in tqdm(
+        range(num_circuits),
+        desc="Building ordered sequence list",
+        leave=False,
+        total=num_circuits,
+    ):
+        order = _gather_top_sequences_by_max(
+            norm_scores[:, circuit_idx], seq_ids, top_n=10**9
+        )
         order_per_circuit.append([int(s.item()) for s in order])
 
     _viz_render_precomputed(
@@ -623,7 +638,7 @@ def viz_mean_activating_tokens(
     top_k: int,
     top_n: int = 10,
     device: str = "cuda",
-    minibatch_size: int | None = None
+    minibatch_size: int | None = None,
 ) -> None:
     """Visualize top-N sequences by highest mean token activation.
 
@@ -642,7 +657,9 @@ def viz_mean_activating_tokens(
         )
 
         if (num_leftover_samples := batch_size % minibatch_size) > 0:
-            logger.warning(f"Batch size {batch_size} is not divisible by minibatch size {minibatch_size}, {num_leftover_samples} samples will be discarded")
+            logger.warning(
+                f"Batch size {batch_size} is not divisible by minibatch size {minibatch_size}, {num_leftover_samples} samples will be discarded"
+            )
             token_topk_mask = token_topk_mask[:-num_leftover_samples]
             batch_size -= num_leftover_samples
 
@@ -650,9 +667,16 @@ def viz_mean_activating_tokens(
 
     # Compute per-token, per-circuit activations (B, C)
     activations = th.empty(batch_size, num_circuits, device=device)
-    for start_idx in tqdm(range(0, batch_size, minibatch_size), desc="Computing activations", leave=False, total=batch_size // minibatch_size):
+    for start_idx in tqdm(
+        range(0, batch_size, minibatch_size),
+        desc="Computing activations",
+        leave=False,
+        total=batch_size // minibatch_size,
+    ):
         stop_idx = min(start_idx + minibatch_size, batch_size)
-        activations[start_idx:stop_idx] = th.einsum("ble,cle->bc", token_topk_mask[start_idx:stop_idx].float(), circuits)
+        activations[start_idx:stop_idx] = th.einsum(
+            "ble,cle->bc", token_topk_mask[start_idx:stop_idx].float(), circuits
+        )
 
     seq_ids, seq_lengths, _seq_offsets = build_sequence_id_tensor(tokens, device=device)
 
@@ -665,7 +689,12 @@ def viz_mean_activating_tokens(
 
     # Order sequences per circuit using mean per sequence
     order_per_circuit: list[list[int]] = []
-    for circuit_idx in tqdm(range(num_circuits), desc="Building ordered sequence list", leave=False, total=num_circuits):
+    for circuit_idx in tqdm(
+        range(num_circuits),
+        desc="Building ordered sequence list",
+        leave=False,
+        total=num_circuits,
+    ):
         order = _gather_top_sequences_by_mean(
             norm_scores[:, circuit_idx], seq_ids, seq_lengths, top_n=10**9
         )
@@ -698,9 +727,21 @@ def viz_max_cli(
         device: Torch device for computation (e.g., "cuda" or "cpu").
     """
     # Load all data once at the top level
-    token_topk_mask, _activated_expert_indices, tokens, top_k = load_activations_indices_tokens_and_topk(device=device)
-    circuits = _load_circuits_tensor(circuits_path, device=device, token_topk_mask=token_topk_mask)
-    viz_max_activating_tokens(circuits, token_topk_mask, tokens, top_k, top_n=top_n, device=device, minibatch_size=minibatch_size)
+    token_topk_mask, _activated_expert_indices, tokens, top_k = (
+        load_activations_indices_tokens_and_topk(device=device)
+    )
+    circuits = _load_circuits_tensor(
+        circuits_path, device=device, token_topk_mask=token_topk_mask
+    )
+    viz_max_activating_tokens(
+        circuits,
+        token_topk_mask,
+        tokens,
+        top_k,
+        top_n=top_n,
+        device=device,
+        minibatch_size=minibatch_size,
+    )
 
 
 @arguably.command()
@@ -719,9 +760,21 @@ def viz_mean_cli(
         device: Torch device for computation (e.g., "cuda" or "cpu").
     """
     # Load all data once at the top level
-    token_topk_mask, _activated_expert_indices, tokens, top_k = load_activations_indices_tokens_and_topk(device=device)
-    circuits = _load_circuits_tensor(circuits_path, device=device, token_topk_mask=token_topk_mask)
-    viz_mean_activating_tokens(circuits, token_topk_mask, tokens, top_k, top_n=top_n, device=device, minibatch_size=minibatch_size)
+    token_topk_mask, _activated_expert_indices, tokens, top_k = (
+        load_activations_indices_tokens_and_topk(device=device)
+    )
+    circuits = _load_circuits_tensor(
+        circuits_path, device=device, token_topk_mask=token_topk_mask
+    )
+    viz_mean_activating_tokens(
+        circuits,
+        token_topk_mask,
+        tokens,
+        top_k,
+        top_n=top_n,
+        device=device,
+        minibatch_size=minibatch_size,
+    )
 
 
 if __name__ == "__main__":
