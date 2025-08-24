@@ -43,7 +43,7 @@ def generate_random_mask(num_layers: int, num_experts: int, top_k: int) -> th.Te
 
 
 def compute_max_activating_examples(
-    circuit: th.Tensor,
+    circuit,  # Removed type annotation to accept different input types
     token_topk_mask: th.Tensor,
     top_k: int,
     device: str = "cpu",
