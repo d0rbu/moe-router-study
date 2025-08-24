@@ -6,21 +6,23 @@ import torch as th
 from exp.activations import load_activations_indices_tokens_and_topk
 
 # Constants
-CIRCUITS_PATH = "saved_circuits/circuits.pt"
+CIRCUITS_PATH = "out/saved_circuits.pt"
 
 
-def save_circuits(circuits_dict: dict):
+def save_circuits(circuits_dict: dict, circuits_path: str = ""):
     """Save all circuits to a single file."""
-    os.makedirs(os.path.dirname(CIRCUITS_PATH), exist_ok=True)
-    th.save(circuits_dict, CIRCUITS_PATH)
+    path = circuits_path if circuits_path else CIRCUITS_PATH
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    th.save(circuits_dict, path)
 
 
-def load_circuits() -> dict:
+def load_circuits(circuits_path: str = "") -> dict:
     """Load all circuits from the single file."""
-    if not os.path.exists(CIRCUITS_PATH):
+    path = circuits_path if circuits_path else CIRCUITS_PATH
+    if not os.path.exists(path):
         return {"circuits": th.zeros((0, 0, 0)), "names": []}
 
-    return th.load(CIRCUITS_PATH)
+    return th.load(path)
 
 
 def generate_random_mask(num_layers: int, num_experts: int, top_k: int) -> th.Tensor:
@@ -94,7 +96,7 @@ def render_element_product(_token_mask: th.Tensor, _circuit: th.Tensor) -> objec
 
 
 def max_activating_examples_server(
-    _circuits_path: str = "",
+    circuits_path: str = "",
     top_n: int = 64,
     *_args,
     device: str = "cuda",
@@ -103,7 +105,7 @@ def max_activating_examples_server(
     """Run the max-activating tokens visualization from the command line.
 
     Args:
-        _circuits_path: Path to a .pt file containing a dict with key "circuits" or a raw tensor.
+        circuits_path: Path to a .pt file containing a dict with key "circuits" or a raw tensor.
         top_n: Number of sequences to display.
         device: Torch device for computation (e.g., "cuda" or "cpu").
         _minibatch_size: Size of the minibatch for the computation.
@@ -122,7 +124,7 @@ def max_activating_examples_server(
     # Initialize session state
     if "circuits_dict" not in st.session_state:
         # Try to load existing circuits
-        circuits_dict = load_circuits()
+        circuits_dict = load_circuits(circuits_path)
 
         st.session_state.circuits_dict = circuits_dict
         st.session_state.current_circuit_idx = -1  # Always start with no selection
@@ -135,6 +137,7 @@ def max_activating_examples_server(
         st.session_state.selected_cell = None
         st.session_state.norm_scores = None
         st.session_state.top_indices = []
+        st.session_state.circuits_path = circuits_path
 
     # Page title
     st.title("Max Activating Examples Server")
@@ -212,7 +215,9 @@ def max_activating_examples_server(
                 )
 
             # Save to disk
-            save_circuits(st.session_state.circuits_dict)
+            save_circuits(
+                st.session_state.circuits_dict, st.session_state.circuits_path
+            )
 
             st.success(f"Circuit saved as: {circuit_name}")
             st.rerun()  # Refresh to update the dropdown
