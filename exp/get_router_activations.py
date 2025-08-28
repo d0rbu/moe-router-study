@@ -1,6 +1,8 @@
 import gc
 from itertools import batched
 import os
+import yaml
+from typing import Optional, Dict, Any
 
 import arguably
 from nnterp import StandardizedTransformer
@@ -10,14 +12,68 @@ from tqdm import tqdm
 from core.data import DATASETS
 from core.device_map import CUSTOM_DEVICES
 from core.model import MODELS
-from exp import OUTPUT_DIR, ROUTER_LOGITS_DIR
+from exp import OUTPUT_DIR
 
+# New helper functions for experiment management
+def get_experiment_name(model_name: str, dataset: str, **kwargs) -> str:
+    """Generate a unique experiment name based on configuration parameters."""
+    # Create a string with the most important parameters
+    base_name = f"{model_name}_{dataset}"
+    
+    # Add any additional parameters that might affect the experiment
+    param_str = "_".join(f"{k}={v}" for k, v in sorted(kwargs.items()) 
+                        if k not in ['device', 'resume'] and not k.startswith('_'))
+    
+    if param_str:
+        base_name = f"{base_name}_{param_str}"
+        
+    return base_name
+
+def get_experiment_dir(name: str) -> str:
+    """Get the directory for a specific experiment."""
+    return os.path.join(OUTPUT_DIR, name)
+
+def get_router_logits_dir(name: str) -> str:
+    """Get the router logits directory for a specific experiment."""
+    return os.path.join(get_experiment_dir(name), "router_logits")
+
+def save_config(config: Dict[str, Any], experiment_dir: str) -> None:
+    """Save experiment configuration to a YAML file."""
+    config_path = os.path.join(experiment_dir, "config.yaml")
+    with open(config_path, "w") as f:
+        yaml.dump(config, f, default_flow_style=False)
+
+def verify_config(config: Dict[str, Any], experiment_dir: str) -> None:
+    """Verify that the current configuration matches the saved one."""
+    config_path = os.path.join(experiment_dir, "config.yaml")
+    
+    if not os.path.exists(config_path):
+        return
+    
+    with open(config_path, "r") as f:
+        saved_config = yaml.safe_load(f)
+    
+    # Check for mismatches
+    mismatches = {}
+    for key, value in config.items():
+        if key in saved_config and saved_config[key] != value:
+            mismatches[key] = (saved_config[key], value)
+    
+    if mismatches:
+        mismatch_str = "\n".join(
+            f"  - {key}: saved={saved} vs current={current}"
+            for key, (saved, current) in mismatches.items()
+        )
+        raise ValueError(
+            f"Configuration mismatch with existing experiment:\n{mismatch_str}"
+        )
 
 def save_router_logits(
     router_logit_collection: list[th.Tensor],
     tokenized_batch_collection: list[list[str]],
     top_k: int,
     file_idx: int,
+    experiment_name: str,
 ) -> None:
     router_logits = th.cat(router_logit_collection, dim=0)
     output: dict[str, th.Tensor] = {
@@ -25,7 +81,8 @@ def save_router_logits(
         "router_logits": router_logits,
         "tokens": tokenized_batch_collection,
     }
-    output_path = os.path.join(ROUTER_LOGITS_DIR, f"{file_idx}.pt")
+    router_logits_dir = get_router_logits_dir(experiment_name)
+    output_path = os.path.join(router_logits_dir, f"{file_idx}.pt")
     th.save(output, output_path)
 
     # Explicitly clean up large tensors
@@ -109,6 +166,7 @@ def get_router_activations(
     device: str = "cpu",
     tokens_per_file: int = 2_000,
     resume: bool = False,
+    name: Optional[str] = None,
 ) -> None:
     model_config = MODELS.get(model_name, None)
 
@@ -120,8 +178,31 @@ def get_router_activations(
     if dataset_fn is None:
         raise ValueError(f"Dataset {dataset} not found")
 
+    # Create experiment configuration
+    config = {
+        "model_name": model_name,
+        "dataset": dataset,
+        "batch_size": batch_size,
+        "tokens_per_file": tokens_per_file,
+    }
+    
+    # Generate experiment name if not provided
+    if name is None:
+        name = get_experiment_name(**config)
+    
+    # Create experiment directories
+    experiment_dir = get_experiment_dir(name)
+    router_logits_dir = get_router_logits_dir(name)
+    
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    os.makedirs(ROUTER_LOGITS_DIR, exist_ok=True)
+    os.makedirs(experiment_dir, exist_ok=True)
+    os.makedirs(router_logits_dir, exist_ok=True)
+    
+    # Verify configuration against existing one (if any)
+    verify_config(config, experiment_dir)
+    
+    # Save configuration
+    save_config(config, experiment_dir)
 
     device_map = CUSTOM_DEVICES.get(device, lambda: device)()
 
@@ -133,7 +214,7 @@ def get_router_activations(
 
     start_file_idx = 0
     if resume:
-        for file in os.listdir(ROUTER_LOGITS_DIR):
+        for file in os.listdir(router_logits_dir):
             if file.endswith(".pt"):
                 start_file_idx = max(start_file_idx, int(file.split(".")[0]))
 
@@ -167,6 +248,7 @@ def get_router_activations(
                     tokenized_batch_collection,
                     top_k,
                     router_logit_collection_idx,
+                    name,
                 )
                 router_logit_collection_idx += 1
                 router_logit_collection_size = 0
@@ -187,6 +269,7 @@ def get_router_activations(
                 tokenized_batch_collection,
                 top_k,
                 router_logit_collection_idx,
+                name,
             )
 
         # Final cleanup
