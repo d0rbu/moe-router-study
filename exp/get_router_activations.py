@@ -15,8 +15,8 @@ from core.device_map import CUSTOM_DEVICES
 from core.model import MODELS
 from exp import OUTPUT_DIR
 
-# Define constants
 CONFIG_FILENAME = "config.yaml"
+ROUTER_LOGITS_DIRNAME = "router_logits"
 
 
 def get_experiment_name(model_name: str, dataset_name: str, **kwargs) -> str:
@@ -48,16 +48,6 @@ def get_experiment_name(model_name: str, dataset_name: str, **kwargs) -> str:
         base_name = f"{base_name}_{param_str}"
 
     return base_name
-
-
-def get_experiment_dir(name: str) -> str:
-    """Get the directory for a specific experiment."""
-    return os.path.join(OUTPUT_DIR, name)
-
-
-def get_router_logits_dir(name: str) -> str:
-    """Get the router logits directory for a specific experiment."""
-    return os.path.join(get_experiment_dir(name), "router_logits")
 
 
 def save_config(config: dict[str, Any], experiment_dir: str) -> None:
@@ -106,9 +96,7 @@ def save_router_logits(
         "router_logits": router_logits,
         "tokens": tokenized_batch_collection,
     }
-    router_logits_dir = os.path.join(
-        os.path.join(OUTPUT_DIR, experiment_name), "router_logits"
-    )
+    router_logits_dir = os.path.join(OUTPUT_DIR, experiment_name, ROUTER_LOGITS_DIRNAME)
     output_path = os.path.join(router_logits_dir, f"{file_idx}.pt")
     th.save(output, output_path)
 
@@ -224,7 +212,7 @@ def get_router_activations(
 
     # Create experiment directories
     experiment_dir = os.path.join(OUTPUT_DIR, name)
-    router_logits_dir = os.path.join(experiment_dir, "router_logits")
+    router_logits_dir = os.path.join(experiment_dir, ROUTER_LOGITS_DIRNAME)
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     os.makedirs(experiment_dir, exist_ok=True)
