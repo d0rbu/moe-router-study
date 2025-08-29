@@ -30,10 +30,13 @@ class TestLoadActivationsAndIndicesAndTopk:
             th.save(data, file_path)
             test_data.append(data)
 
-        # Mock the ROUTER_LOGITS_DIR
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
+        # Mock the necessary functions and paths
+        with (
+            patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
+            patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
+        ):
             activated_experts, activated_indices, top_k = (
-                load_activations_and_indices_and_topk()
+                load_activations_and_indices_and_topk(experiment_name="test_experiment")
             )
 
         # Check outputs
@@ -62,27 +65,34 @@ class TestLoadActivationsAndIndicesAndTopk:
             data = {"topk": 3, "router_logits": th.randn(4, 2, 6)}
             th.save(data, temp_dir / f"{i}.pt")
 
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
-            _, _, top_k = load_activations_and_indices_and_topk()
+        with (
+            patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
+            patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
+        ):
+            _, _, top_k = load_activations_and_indices_and_topk(experiment_name="test_experiment")
 
         assert top_k == 3
 
     def test_empty_directory(self, temp_dir):
         """Test behavior with empty directory."""
         with (
-            patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)),
+            patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
+            patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
             pytest.raises(ValueError, match="No data files found"),
         ):
-            load_activations_and_indices_and_topk()
+            load_activations_and_indices_and_topk(experiment_name="test_experiment")
 
     def test_single_file(self, temp_dir):
         """Test loading from single file."""
         data = {"topk": 1, "router_logits": th.randn(10, 4, 12)}
         th.save(data, temp_dir / "0.pt")
 
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
+        with (
+            patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
+            patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
+        ):
             activated_experts, activated_indices, top_k = (
-                load_activations_and_indices_and_topk()
+                load_activations_and_indices_and_topk(experiment_name="test_experiment")
             )
 
         assert top_k == 1
@@ -102,9 +112,12 @@ class TestLoadActivationsAndIndicesAndTopk:
         data = {"topk": 2, "router_logits": router_logits}
         th.save(data, temp_dir / "0.pt")
 
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
+        with (
+            patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
+            patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
+        ):
             activated_experts, activated_indices, top_k = (
-                load_activations_and_indices_and_topk()
+                load_activations_and_indices_and_topk(experiment_name="test_experiment")
             )
 
         # Check first sample
@@ -132,10 +145,13 @@ class TestLoadActivationsAndIndicesAndTopk:
         data = {"topk": 2, "router_logits": th.randn(3, 2, 4)}
         th.save(data, temp_dir / "0.pt")
 
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
+        with (
+            patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
+            patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
+        ):
             # Test with CPU device
             activated_experts, _, _ = load_activations_and_indices_and_topk(
-                device="cpu"
+                experiment_name="test_experiment", device="cpu"
             )
             assert activated_experts.device.type == "cpu"
 
@@ -146,8 +162,11 @@ class TestLoadActivationsAndIndicesAndTopk:
             data = {"topk": 2, "router_logits": th.randn(3, 2, 4)}
             th.save(data, temp_dir / f"{i}.pt")
 
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
-            activated_experts, _, _ = load_activations_and_indices_and_topk()
+        with (
+            patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
+            patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
+        ):
+            activated_experts, _, _ = load_activations_and_indices_and_topk(experiment_name="test_experiment")
 
         # Should only load file 0.pt (stops at first missing file)
         assert_tensor_shape_and_type(activated_experts, (3, 2, 4), th.bool)
@@ -161,9 +180,12 @@ class TestLoadActivationsAndIndicesAndTopk:
             data = {"topk": 2, "router_logits": th.randn(batch_size, 3, 6)}
             th.save(data, temp_dir / f"{i}.pt")
 
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
+        with (
+            patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
+            patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
+        ):
             activated_experts, activated_indices, _ = (
-                load_activations_and_indices_and_topk()
+                load_activations_and_indices_and_topk(experiment_name="test_experiment")
             )
 
         assert_tensor_shape_and_type(
@@ -180,8 +202,11 @@ class TestLoadActivationsAndTopk:
         data = {"topk": 3, "router_logits": th.randn(4, 2, 8)}
         th.save(data, temp_dir / "0.pt")
 
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
-            activated_experts, top_k = load_activations_and_topk()
+        with (
+            patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
+            patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
+        ):
+            activated_experts, top_k = load_activations_and_topk(experiment_name="test_experiment")
 
         assert top_k == 3
         assert_tensor_shape_and_type(activated_experts, (4, 2, 8), th.bool)
@@ -191,12 +216,15 @@ class TestLoadActivationsAndTopk:
         data = {"topk": 2, "router_logits": th.randn(5, 3, 6)}
         th.save(data, temp_dir / "0.pt")
 
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
+        with (
+            patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
+            patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
+        ):
             # Call both functions
             full_experts, full_indices, full_topk = (
-                load_activations_and_indices_and_topk()
+                load_activations_and_indices_and_topk(experiment_name="test_experiment")
             )
-            wrapper_experts, wrapper_topk = load_activations_and_topk()
+            wrapper_experts, wrapper_topk = load_activations_and_topk(experiment_name="test_experiment")
 
         # Should return same results
         assert th.equal(full_experts, wrapper_experts)
@@ -207,8 +235,13 @@ class TestLoadActivationsAndTopk:
         data = {"topk": 2, "router_logits": th.randn(3, 2, 4)}
         th.save(data, temp_dir / "0.pt")
 
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
-            activated_experts, _ = load_activations_and_topk(device="cpu")
+        with (
+            patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
+            patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
+        ):
+            activated_experts, _ = load_activations_and_topk(
+                experiment_name="test_experiment", device="cpu"
+            )
             assert activated_experts.device.type == "cpu"
 
 
@@ -220,8 +253,11 @@ class TestLoadActivations:
         data = {"topk": 2, "router_logits": th.randn(6, 4, 10)}
         th.save(data, temp_dir / "0.pt")
 
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
-            activated_experts = load_activations()
+        with (
+            patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
+            patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
+        ):
+            activated_experts = load_activations(experiment_name="test_experiment")
 
         assert_tensor_shape_and_type(activated_experts, (6, 4, 10), th.bool)
 
@@ -230,9 +266,12 @@ class TestLoadActivations:
         data = {"topk": 3, "router_logits": th.randn(4, 3, 8)}
         th.save(data, temp_dir / "0.pt")
 
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
-            full_experts, _, _ = load_activations_and_indices_and_topk()
-            simple_experts = load_activations()
+        with (
+            patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
+            patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
+        ):
+            full_experts, _, _ = load_activations_and_indices_and_topk(experiment_name="test_experiment")
+            simple_experts = load_activations(experiment_name="test_experiment")
 
         assert th.equal(full_experts, simple_experts)
 
@@ -241,8 +280,13 @@ class TestLoadActivations:
         data = {"topk": 1, "router_logits": th.randn(2, 2, 4)}
         th.save(data, temp_dir / "0.pt")
 
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
-            activated_experts = load_activations(device="cpu")
+        with (
+            patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
+            patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
+        ):
+            activated_experts = load_activations(
+                experiment_name="test_experiment", device="cpu"
+            )
             assert activated_experts.device.type == "cpu"
 
 
@@ -256,10 +300,11 @@ class TestActivationLoadingErrorHandling:
         corrupted_file.write_text("corrupted data")
 
         with (
-            patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)),
+            patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
+            patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
             pytest.raises(RuntimeError),
         ):
-            load_activations_and_indices_and_topk()
+            load_activations_and_indices_and_topk(experiment_name="test_experiment")
 
     def test_missing_topk_key(self, temp_dir):
         """Test handling of missing topk key in data."""
@@ -270,10 +315,11 @@ class TestActivationLoadingErrorHandling:
         th.save(data, temp_dir / "0.pt")
 
         with (
-            patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)),
+            patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
+            patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
             pytest.raises(KeyError),
         ):
-            load_activations_and_indices_and_topk()
+            load_activations_and_indices_and_topk(experiment_name="test_experiment")
 
     def test_missing_router_logits_key(self, temp_dir):
         """Test handling of missing router_logits key in data."""
@@ -284,10 +330,11 @@ class TestActivationLoadingErrorHandling:
         th.save(data, temp_dir / "0.pt")
 
         with (
-            patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)),
+            patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
+            patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
             pytest.raises(KeyError),
         ):
-            load_activations_and_indices_and_topk()
+            load_activations_and_indices_and_topk(experiment_name="test_experiment")
 
     def test_inconsistent_topk_values(self, temp_dir):
         """Test handling of inconsistent topk values across files."""
@@ -299,10 +346,11 @@ class TestActivationLoadingErrorHandling:
         th.save(data2, temp_dir / "1.pt")
 
         with (
-            patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)),
-            pytest.raises(KeyError),
+            patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
+            patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
+            pytest.raises(ValueError, match="Inconsistent topk values"),
         ):
-            load_activations_and_indices_and_topk()
+            load_activations_and_indices_and_topk(experiment_name="test_experiment")
 
     def test_invalid_tensor_shapes(self, temp_dir):
         """Test handling of invalid tensor shapes."""
@@ -314,10 +362,11 @@ class TestActivationLoadingErrorHandling:
         th.save(data, temp_dir / "0.pt")
 
         with (
-            patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)),
-            pytest.raises(RuntimeError),
+            patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
+            patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
+            pytest.raises(ValueError, match="Expected 3D tensor"),
         ):
-            load_activations_and_indices_and_topk()
+            load_activations_and_indices_and_topk(experiment_name="test_experiment")
 
     def test_zero_topk_value(self, temp_dir):
         """Test handling of zero topk value."""
@@ -325,10 +374,11 @@ class TestActivationLoadingErrorHandling:
         th.save(data, temp_dir / "0.pt")
 
         with (
-            patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)),
-            pytest.raises(ValueError),
+            patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
+            patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
+            pytest.raises(ValueError, match="Invalid topk value"),
         ):
-            load_activations_and_indices_and_topk()
+            load_activations_and_indices_and_topk(experiment_name="test_experiment")
 
     def test_topk_larger_than_experts(self, temp_dir):
         """Test handling of topk larger than number of experts."""
@@ -339,20 +389,22 @@ class TestActivationLoadingErrorHandling:
         th.save(data, temp_dir / "0.pt")
 
         with (
-            patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)),
-            pytest.raises(RuntimeError),
+            patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
+            patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
+            pytest.raises(ValueError, match="topk cannot be larger than"),
         ):
-            load_activations_and_indices_and_topk()
+            load_activations_and_indices_and_topk(experiment_name="test_experiment")
 
     def test_file_not_found(self, temp_dir):
         """Test handling of file not found error."""
         # Use a non-existent directory
         non_existent_dir = os.path.join(temp_dir, "non_existent_dir")
         with (
-            patch("exp.activations.ROUTER_LOGITS_DIR", non_existent_dir),
+            patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
+            patch("exp.activations.get_router_logits_dir", return_value=non_existent_dir),
             pytest.raises(FileNotFoundError),
         ):
-            load_activations_and_indices_and_topk()
+            load_activations_and_indices_and_topk(experiment_name="test_experiment")
 
 
 class TestActivationLoadingIntegration:
@@ -374,9 +426,12 @@ class TestActivationLoadingIntegration:
             }
             th.save(data, temp_dir / f"{i}.pt")
 
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
+        with (
+            patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
+            patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
+        ):
             activated_experts, activated_indices, loaded_topk = (
-                load_activations_and_indices_and_topk()
+                load_activations_and_indices_and_topk(experiment_name="test_experiment")
             )
 
         total_tokens = num_files * tokens_per_file
@@ -401,9 +456,12 @@ class TestActivationLoadingIntegration:
             data = {"topk": 2, "router_logits": th.randn(100, 6, 16)}
             th.save(data, temp_dir / f"{i}.pt")
 
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
+        with (
+            patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
+            patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
+        ):
             # Should complete without memory errors
-            activated_experts, _, _ = load_activations_and_indices_and_topk()
+            activated_experts, _, _ = load_activations_and_indices_and_topk(experiment_name="test_experiment")
 
             # Verify final shape
             assert_tensor_shape_and_type(activated_experts, (1000, 6, 16), th.bool)
@@ -427,8 +485,11 @@ class TestActivationLoadingIntegration:
             }
             th.save(data, temp_dir / "0.pt")
 
-            with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
-                activated_experts, _, _ = load_activations_and_indices_and_topk()
+            with (
+                patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
+                patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
+            ):
+                activated_experts, _, _ = load_activations_and_indices_and_topk(experiment_name="test_experiment")
                 assert_tensor_shape_and_type(
                     activated_experts, (50, num_layers, num_experts), th.bool
                 )

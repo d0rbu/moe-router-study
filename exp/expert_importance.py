@@ -1,6 +1,6 @@
 from itertools import product
 import os
-from typing import Any, cast
+from typing import Any, cast, Optional
 
 import arguably
 from nnterp import StandardizedTransformer
@@ -9,9 +9,7 @@ from torch import Tensor
 from tqdm import tqdm
 
 from core.model import MODELS
-from exp import OUTPUT_DIR
-
-EXPERT_IMPORTANCE_DIR = os.path.join(OUTPUT_DIR, "expert_importance")
+from exp import get_experiment_dir
 
 
 @arguably.command()
@@ -19,6 +17,7 @@ def expert_importance(
     model_name: str = "olmoe",
     checkpoint_idx: int | None = None,
     device: str = "cpu",
+    experiment_name: Optional[str] = None,
 ) -> None:
     """Compute reader/writer importance vectors and scores for ALL experts across ALL router layers.
 
@@ -38,7 +37,10 @@ def expert_importance(
     else:
         revision = str(model_config.checkpoints[checkpoint_idx])
 
-    os.makedirs(EXPERT_IMPORTANCE_DIR, exist_ok=True)
+    # Get experiment directory
+    experiment_dir = get_experiment_dir(name=experiment_name)
+    expert_importance_dir = os.path.join(experiment_dir, "expert_importance")
+    os.makedirs(expert_importance_dir, exist_ok=True)
 
     model = StandardizedTransformer(
         model_config.hf_name,
@@ -260,9 +262,10 @@ def expert_importance(
                     )
 
         # Save a single file containing ALL entries across layers/experts
-        outfile = os.path.join(EXPERT_IMPORTANCE_DIR, "all.pt")
+        outfile = os.path.join(expert_importance_dir, "all.pt")
         th.save(entries, outfile)
 
 
 if __name__ == "__main__":
     arguably.run()
+

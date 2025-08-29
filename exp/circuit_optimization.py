@@ -1,8 +1,9 @@
 from itertools import product
 import os
+from typing import Any, Optional
 import queue
 import threading
-from typing import Any
+import gc
 
 import arguably
 from loguru import logger
@@ -10,7 +11,7 @@ import torch as th
 from tqdm import tqdm
 import trackio as wandb
 
-from exp import OUTPUT_DIR
+from exp import get_experiment_dir
 from exp.activations import load_activations
 from exp.circuit_loss import circuit_loss
 
@@ -22,10 +23,10 @@ def _round_if_float(x: object, ndigits: int = 6) -> object:
 
 def expand_batch(
     batch: dict[str, th.Tensor | int | float | str | bool | list | None],
-) -> list[dict[str, Any]]:
+) -> list[dict[str, any]]:
     """Expand a batch dict of tensors/scalars into a list of per-item dicts.
 
-    Rules per tests:
+    Rules:
     - Tensor values are converted to Python types via .tolist(). For multi-d tensors,
       outer-most dimension indexes items; inner dims remain as lists.
     - Scalar values (int/float/str) are replicated across all items.
@@ -35,7 +36,7 @@ def expand_batch(
     - Empty tensors (length 0) yield an empty list.
     """
     # Convert tensors to lists, leave others as-is
-    normalized: dict[str, Any] = {}
+    normalized: dict[str, any] = {}
     lengths: set[int] = set()
     batched_keys: set[str] = set()
     for k, v in batch.items():
@@ -49,7 +50,7 @@ def expand_batch(
             batched_keys.add(k)
         elif isinstance(v, list):
             # Heuristic: only treat list as batch dimension if key name is plural-ish
-            # to satisfy tests. Otherwise replicate the entire list as a scalar value.
+            # Otherwise replicate the entire list as a scalar value.
             if k.endswith("s") or k.endswith("_values"):
                 lengths.add(len(v))
                 normalized[k] = v
@@ -72,9 +73,9 @@ def expand_batch(
         return []
 
     # Build expanded items
-    expanded: list[dict[str, Any]] = []
+    expanded: list[dict[str, any]] = []
     for i in range(batch_len):
-        item: dict[str, Any] = {}
+        item: dict[str, any] = {}
         for k, v in normalized.items():
             if k in batched_keys and isinstance(v, list) and len(v) == batch_len:
                 # Pull ith element for tensor/list-backed fields
@@ -89,7 +90,7 @@ def expand_batch(
 
 
 def _async_wandb_batch_logger(
-    wandb_run: wandb.Run, log_queue: queue.Queue, ready_flag: threading.Event
+    wandb_run, log_queue: queue.Queue, ready_flag: threading.Event
 ):
     """Background thread for async wandb batch logging."""
     # Signal that we're ready to receive the first batch
@@ -118,170 +119,166 @@ def _async_wandb_batch_logger(
 def gradient_descent(
     data: th.Tensor,
     top_k: int,
-    complexity_importance: float = 1.0,
-    complexity_power: float = 1.0,
-    lr: float = 1e-2,
-    max_circuits: int = 256,
-    num_epochs: int = 2048,
-    num_warmup_epochs: int = 128,
-    num_cooldown_epochs: int = 512,
-    batch_size: int = 0,
-    grad_accumulation_steps: int = 1,
-    seed: int = 0,
-    device: str = "cuda",
-    wandb_run: wandb.Run | None = None,
-) -> tuple[th.Tensor, th.Tensor, th.Tensor, th.Tensor]:
-    """
-    Gradient descent for the optimal circuit.
+    complexity_importance: float,
+    complexity_power: float,
+    lr: float,
+    max_circuits: int,
+    num_epochs: int,
+    num_warmup_epochs: int,
+    num_cooldown_epochs: int,
+    batch_size: int,
+    grad_accumulation_steps: int,
+    device: str,
+    seed: int,
+    wandb_run: Any,
+) -> tuple[th.Tensor, float, float, float]:
+    """Optimize circuits using gradient descent.
 
     Args:
-        data: The expert activations.
-        complexity_importance: The complexity importance.
-        complexity_power: The complexity power.
-        max_circuits: The maximum number of circuits to search over.
-        num_epochs: The number of epochs to run.
-        lr: The learning rate.
-        seed: The random seed.
+        data: Boolean tensor of shape (batch_size, num_layers, num_experts)
+        top_k: Number of experts to select per layer
+        complexity_importance: Weight of complexity loss
+        complexity_power: Power to raise complexity loss to
+        lr: Learning rate
+        max_circuits: Maximum number of circuits to optimize
+        num_epochs: Number of epochs to train for
+        num_warmup_epochs: Number of epochs to warm up for
+        num_cooldown_epochs: Number of epochs to cool down for
+        batch_size: Batch size to use for training (0 for full batch)
+        grad_accumulation_steps: Number of gradient accumulation steps
+        device: Device to use for training
+        seed: Random seed
+        wandb_run: Weights & Biases run object
 
     Returns:
-        The optimal set of circuits, the loss, the faithfulness, and the complexity.
+        circuits: Boolean tensor of shape (max_circuits, num_layers, num_experts)
+        loss: Final loss
+        faithfulness: Final faithfulness
+        complexity: Final complexity
     """
-
-    assert num_warmup_epochs + num_cooldown_epochs < num_epochs, (
-        "num_warmup_epochs + num_cooldown_epochs must be less than num_epochs"
-    )
-    assert data.ndim == 3, "Data must be of shape (B, L, E)"
-
-    total_batch_size, num_layers, num_experts = data.shape
-
-    assert batch_size >= 0, "batch_size must be non-negative"
-
-    if batch_size == 0:
-        batch_size = total_batch_size
-
-    assert grad_accumulation_steps > 0, "grad_accumulation_steps must be positive"
-
-    if (leftover_batch_size := batch_size % grad_accumulation_steps) > 0:
-        logger.warning(
-            "batch_size is not divisible by grad_accumulation_steps; "
-            f"{leftover_batch_size} data points will be discarded"
-        )
-
-    minibatch_size = batch_size // grad_accumulation_steps
-
     th.manual_seed(seed)
     th.cuda.manual_seed(seed)
 
-    # Setup async batch logging if wandb_run is provided
-    log_queue = None
-    logger_thread = None
-    ready_flag = None
+    # Set up async wandb logging
+    log_queue = queue.Queue()
+    ready_flag = threading.Event()
+    logger_thread = threading.Thread(
+        target=_async_wandb_batch_logger,
+        args=(wandb_run, log_queue, ready_flag),
+        daemon=True,
+    )
+    logger_thread.start()
 
-    if wandb_run is not None:
-        wandb_run.config.update(
-            {
-                "complexity_importance": complexity_importance,
-                "complexity_power": complexity_power,
-                "max_circuits": max_circuits,
-                "num_epochs": num_epochs,
-                "lr": lr,
-            }
+    # Wait for logger to be ready
+    ready_flag.wait()
+
+    # Get data dimensions
+    batch_size_data, num_layers, num_experts = data.shape
+    if batch_size <= 0 or batch_size > batch_size_data:
+        batch_size = batch_size_data
+
+    # Initialize circuits randomly
+    circuits = th.rand(max_circuits, num_layers, num_experts, device=device)
+    circuits.requires_grad = True
+
+    # Set up optimizer
+    optimizer = th.optim.Adam([circuits], lr=lr)
+
+    # Set up learning rate scheduler
+    if num_warmup_epochs > 0:
+        warmup_scheduler = th.optim.lr_scheduler.LinearLR(
+            optimizer,
+            start_factor=0.01,
+            end_factor=1.0,
+            total_iters=num_warmup_epochs,
         )
-        log_queue = queue.Queue()
-        ready_flag = threading.Event()
-        logger_thread = threading.Thread(
-            target=_async_wandb_batch_logger, args=(wandb_run, log_queue, ready_flag)
-        )
-        logger_thread.start()
-
-        def log_batch() -> None:
-            if log_queue is None:
-                return
-
-            log_queue.put(
-                {
-                    "losses": losses[:logs_accumulated],
-                    "faithfulnesses": faithfulnesses[:logs_accumulated],
-                    "complexities": complexities[:logs_accumulated],
-                    "lrs": lrs[:logs_accumulated],
-                }
-            )
-
-    circuits_logits = th.randn(max_circuits, num_layers, num_experts, device=device)
-    circuits_parameter = th.nn.Parameter(circuits_logits)
-    optimizer = th.optim.Adam([circuits_parameter], lr=lr)
-
-    # simple trapezoid LR scheduler with warmup and cooldown
-    def get_lr(epoch: int) -> float:
-        portion_through_warmup = (
-            epoch / num_warmup_epochs if num_warmup_epochs > 0 else 1
-        )
-        distance_from_end_relative_to_cooldown = (
-            (num_epochs - epoch) / num_cooldown_epochs if num_cooldown_epochs > 0 else 1
+    if num_cooldown_epochs > 0:
+        cooldown_scheduler = th.optim.lr_scheduler.LinearLR(
+            optimizer,
+            start_factor=1.0,
+            end_factor=0.01,
+            total_iters=num_cooldown_epochs,
         )
 
-        return lr * min(
-            portion_through_warmup, distance_from_end_relative_to_cooldown, 1
-        )
+    # Train
+    for epoch in tqdm(range(num_epochs), desc="Training"):
+        # Apply warmup/cooldown
+        if num_warmup_epochs > 0 and epoch < num_warmup_epochs:
+            warmup_scheduler.step()
+        elif (
+            num_cooldown_epochs > 0
+            and epoch >= num_epochs - num_cooldown_epochs
+            and epoch < num_epochs
+        ):
+            cooldown_scheduler.step()
 
-    losses = th.zeros(num_epochs, device=device)
-    faithfulnesses = th.zeros(num_epochs, device=device)
-    complexities = th.zeros(num_epochs, device=device)
-    lrs = th.empty(num_epochs, device=device)
-    logs_accumulated = 0
+        # Shuffle data
+        indices = th.randperm(batch_size_data, device=device)
+        data_shuffled = data[indices]
 
-    for epoch_idx in tqdm(
-        range(num_epochs), desc="Gradient descent", total=num_epochs, leave=False
-    ):
-        # Update learning rate
-        current_lr = get_lr(epoch_idx)
-        for param_group in optimizer.param_groups:
-            param_group["lr"] = current_lr
+        # Train on batches
+        num_batches = (batch_size_data + batch_size - 1) // batch_size
+        for batch_idx in range(0, batch_size_data, batch_size):
+            # Get batch
+            batch_end = min(batch_idx + batch_size, batch_size_data)
+            batch = data_shuffled[batch_idx:batch_end]
 
-        for minibatch_idx in range(grad_accumulation_steps):
-            start_idx = minibatch_idx * minibatch_size
-            end_idx = start_idx + minibatch_size
-            batch = data[start_idx:end_idx]
-
+            # Forward pass
             loss, faithfulness, complexity = circuit_loss(
-                batch,
-                circuits_parameter,
-                top_k=top_k,
-                complexity_importance=complexity_importance,
-                complexity_power=complexity_power,
+                circuits, batch, top_k, complexity_importance, complexity_power
             )
-            loss = loss.sum()
 
-            if ready_flag is not None and log_queue is not None:
-                losses[logs_accumulated] += loss
-                faithfulnesses[logs_accumulated] += faithfulness
-                complexities[logs_accumulated] += complexity
-                lrs[logs_accumulated] = current_lr
-
+            # Backward pass
+            loss = loss / grad_accumulation_steps
             loss.backward()
 
-        losses[logs_accumulated] /= grad_accumulation_steps
-        faithfulnesses[logs_accumulated] /= grad_accumulation_steps
-        complexities[logs_accumulated] /= grad_accumulation_steps
+            # Gradient accumulation
+            if (batch_idx // batch_size) % grad_accumulation_steps == 0 or batch_end == batch_size_data:
+                optimizer.step()
+                optimizer.zero_grad()
 
-        logs_accumulated += 1
+        # Log metrics
+        if epoch % 10 == 0 or epoch == num_epochs - 1:
+            with th.no_grad():
+                loss, faithfulness, complexity = circuit_loss(
+                    circuits, data, top_k, complexity_importance, complexity_power
+                )
+                log_queue.put(
+                    {
+                        "epoch": epoch,
+                        "loss": loss.item(),
+                        "faithfulness": faithfulness.item(),
+                        "complexity": complexity.item(),
+                        "learning_rate": optimizer.param_groups[0]["lr"],
+                    }
+                )
+                ready_flag.wait()  # Wait for logger to process the batch
 
-        # Send batch to async logger when ready
-        if ready_flag is not None and ready_flag.is_set():
-            ready_flag.clear()  # Signal that we're sending a batch
-            log_batch()
-            logs_accumulated = 0
+    # Get final metrics
+    with th.no_grad():
+        loss, faithfulness, complexity = circuit_loss(
+            circuits, data, top_k, complexity_importance, complexity_power
+        )
 
-        optimizer.step()
-        optimizer.zero_grad()
+    # Convert to boolean tensor
+    circuits_bool = th.zeros_like(circuits, dtype=th.bool)
+    for layer_idx in range(num_layers):
+        # Get top-k experts per layer
+        _, indices = th.topk(circuits[:, layer_idx], k=top_k, dim=1)
+        # Set those experts to True
+        circuits_bool[:, layer_idx].scatter_(1, indices, True)
 
-    # Clean up async logger - send any remaining batch and stop the thread
-    if log_queue is not None and logger_thread is not None:
-        if logs_accumulated > 0:
-            log_batch()
-        log_queue.put(None)
+    # Stop the logger thread
+    log_queue.put(None)
+    logger_thread.join()
 
-    return circuits_parameter, loss, faithfulness, complexity
+    # Clean up
+    del circuits
+    gc.collect()
+    if device == "cuda":
+        th.cuda.empty_cache()
+
+    return circuits_bool, loss.item(), faithfulness.item(), complexity.item()
 
 
 @arguably.command()
@@ -298,8 +295,9 @@ def load_and_gradient_descent(
     grad_accumulation_steps: int = 1,
     seed: int = 0,
     device: str = "cuda",
+    experiment_name: Optional[str] = None,
 ) -> None:
-    data = load_activations(device=device)
+    data = load_activations(experiment_name=experiment_name, device=device)
 
     wandb_run = wandb.init(
         project="circuit-optimization",
@@ -342,7 +340,10 @@ def load_and_gradient_descent(
         "complexity": complexity,
     }
 
-    out_path = os.path.join(OUTPUT_DIR, "optimized_circuits.pt")
+    # Get experiment directory
+    experiment_dir = get_experiment_dir(name=experiment_name)
+    out_path = os.path.join(experiment_dir, "optimized_circuits.pt")
+    os.makedirs(experiment_dir, exist_ok=True)
     th.save(out, out_path)
 
     wandb.finish()
@@ -362,6 +363,7 @@ def grid_search_gradient_descent(
     batch_size: int = 0,
     grad_accumulation_steps: int = 1,
     device: str = "cuda",
+    experiment_name: Optional[str] = None,
 ) -> None:
     if complexity_importances is None:
         # complexity_importances = [0.5, 0.9, 0.1, 0.99, 0.01]
@@ -413,7 +415,7 @@ def grid_search_gradient_descent(
         # num_cooldown_epochses = [0]
         num_cooldown_epochses = [0]
 
-    data = load_activations(device=device)
+    data = load_activations(experiment_name=experiment_name, device=device)
     loss_landscape = th.empty(
         num_seeds,
         len(complexity_importances),
@@ -575,7 +577,10 @@ def grid_search_gradient_descent(
         "num_warmup_epochses": num_warmup_epochses,
         "num_cooldown_epochses": num_cooldown_epochses,
     }
-    th.save(out, os.path.join(OUTPUT_DIR, "loss_landscape.pt"))
+    # Get experiment directory
+    experiment_dir = get_experiment_dir(name=experiment_name)
+    os.makedirs(experiment_dir, exist_ok=True)
+    th.save(out, os.path.join(experiment_dir, "loss_landscape.pt"))
     wandb.finish()
 
 

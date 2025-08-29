@@ -1,5 +1,5 @@
 import os
-from typing import cast
+from typing import cast, Optional
 
 import arguably
 import matplotlib.pyplot as plt
@@ -9,9 +9,7 @@ from torch import Tensor
 from tqdm import tqdm
 
 from core.model import MODELS
-from viz import FIGURE_DIR
-
-ROUTER_VIZ_DIR = os.path.join(FIGURE_DIR, "router_spaces")
+from viz import get_figure_dir
 
 
 @arguably.command()
@@ -20,13 +18,17 @@ def router_spaces(
     checkpoint_idx: int | None = None,
     device: str = "cpu",
     topk: int = 8,
+    experiment_name: Optional[str] = None,
 ) -> None:
     """Visualize router spaces directly from model weights.
 
     This function loads the model weights directly using StandardizedTransformer
     instead of relying on pre-extracted weight files.
     """
-    os.makedirs(ROUTER_VIZ_DIR, exist_ok=True)
+    # Get figure directory for this experiment
+    figure_dir = get_figure_dir(experiment_name)
+    router_viz_dir = os.path.join(figure_dir, "router_spaces")
+    os.makedirs(router_viz_dir, exist_ok=True)
 
     model_config = MODELS.get(model_name, None)
     if model_config is None:
@@ -60,7 +62,7 @@ def router_spaces(
         router_spectrum = th.linalg.svdvals(router_weight)
         plt.plot(router_spectrum)
         plt.savefig(
-            os.path.join(ROUTER_VIZ_DIR, f"router_spectrum_{layer_idx}.png"), dpi=300
+            os.path.join(router_viz_dir, f"router_spectrum_{layer_idx}.png"), dpi=300
         )
         plt.close()
 
@@ -74,7 +76,7 @@ def router_spaces(
     u, s, vh = th.linalg.svd(sorted_expert_vectors)
     full_expert_spectrum = s
     plt.plot(full_expert_spectrum)
-    plt.savefig(os.path.join(ROUTER_VIZ_DIR, "full_expert_spectrum.png"), dpi=300)
+    plt.savefig(os.path.join(router_viz_dir, "full_expert_spectrum.png"), dpi=300)
     plt.close()
 
     # next we look at the cosine similarity between the expert vectors
@@ -87,7 +89,7 @@ def router_spaces(
     # plot as a heatmap
     plt.imshow(expert_cosine_similarities, vmin=0, vmax=1, cmap="viridis")
     plt.colorbar()
-    plt.savefig(os.path.join(ROUTER_VIZ_DIR, "expert_cosine_similarities.png"), dpi=300)
+    plt.savefig(os.path.join(router_viz_dir, "expert_cosine_similarities.png"), dpi=300)
     plt.close()
 
     # next we want to find circuits by taking the top right singular vectors
@@ -109,23 +111,24 @@ def router_spaces(
     ):
         plt.imshow(circuit_topk_mask[:, :, circuit_idx])
         plt.savefig(
-            os.path.join(ROUTER_VIZ_DIR, f"circuit_topk_mask_{circuit_idx}.png"),
+            os.path.join(router_viz_dir, f"circuit_topk_mask_{circuit_idx}.png"),
             dpi=300,
         )
         plt.close()
 
         plt.imshow(circuit_probs[:, :, circuit_idx])
         plt.savefig(
-            os.path.join(ROUTER_VIZ_DIR, f"circuit_probs_{circuit_idx}.png"), dpi=300
+            os.path.join(router_viz_dir, f"circuit_probs_{circuit_idx}.png"), dpi=300
         )
         plt.close()
 
         plt.imshow(circuit_logits[:, :, circuit_idx])
         plt.savefig(
-            os.path.join(ROUTER_VIZ_DIR, f"circuit_logits_{circuit_idx}.png"), dpi=300
+            os.path.join(router_viz_dir, f"circuit_logits_{circuit_idx}.png"), dpi=300
         )
         plt.close()
 
 
 if __name__ == "__main__":
     arguably.run()
+
