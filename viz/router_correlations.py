@@ -12,8 +12,8 @@ from viz import FIGURE_DIR
 
 
 @arguably.command()
-def router_correlations(experiment_name: str, output_name: str | None = None) -> None:
-    router_logits_list = []
+def router_correlations(experiment_name: str) -> None:
+    """Generate router correlation plots for an experiment."""
     activated_experts_collection = []
     top_k: int | None = None
 
