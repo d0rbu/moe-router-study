@@ -1,28 +1,33 @@
 import os
+from typing import Optional
 
 import streamlit as st
 import torch as th
 
+from exp import get_experiment_dir
 from exp.activations import load_activations_indices_tokens_and_topk
 
-# Constants
-CIRCUITS_PATH = "out/saved_circuits.pt"
 
-
-def save_circuits(circuits_dict: dict, circuits_path: str = ""):
+def save_circuits(circuits_dict: dict, circuits_path: str = "", experiment_name: Optional[str] = None):
     """Save all circuits to a single file."""
-    path = circuits_path if circuits_path else CIRCUITS_PATH
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    th.save(circuits_dict, path)
+    if not circuits_path:
+        experiment_dir = get_experiment_dir(name=experiment_name)
+        circuits_path = os.path.join(experiment_dir, "saved_circuits.pt")
+    
+    os.makedirs(os.path.dirname(circuits_path), exist_ok=True)
+    th.save(circuits_dict, circuits_path)
 
 
-def load_circuits(circuits_path: str = "") -> dict:
+def load_circuits(circuits_path: str = "", experiment_name: Optional[str] = None) -> dict:
     """Load all circuits from the single file."""
-    path = circuits_path if circuits_path else CIRCUITS_PATH
-    if not os.path.exists(path):
+    if not circuits_path:
+        experiment_dir = get_experiment_dir(name=experiment_name)
+        circuits_path = os.path.join(experiment_dir, "saved_circuits.pt")
+    
+    if not os.path.exists(circuits_path):
         return {"circuits": th.zeros((0, 0, 0)), "names": []}
 
-    return th.load(path)
+    return th.load(circuits_path)
 
 
 def generate_random_mask(num_layers: int, num_experts: int, top_k: int) -> th.Tensor:
@@ -101,6 +106,7 @@ def max_activating_examples_server(
     *_args,
     device: str = "cuda",
     _minibatch_size: int | None = None,
+    experiment_name: Optional[str] = None,
 ) -> None:
     """Run the max-activating tokens visualization from the command line.
 
@@ -109,10 +115,13 @@ def max_activating_examples_server(
         top_n: Number of sequences to display.
         device: Torch device for computation (e.g., "cuda" or "cpu").
         _minibatch_size: Size of the minibatch for the computation.
+        experiment_name: Name of the experiment to use for paths.
     """
     # Load all data once at the top level
     token_topk_mask, _activated_expert_indices, tokens, top_k = (
-        load_activations_indices_tokens_and_topk(device=device)
+        load_activations_indices_tokens_and_topk(
+            device=device, experiment_name=experiment_name
+        )
     )
 
     # Get dimensions from token_topk_mask
@@ -124,7 +133,7 @@ def max_activating_examples_server(
     # Initialize session state
     if "circuits_dict" not in st.session_state:
         # Try to load existing circuits
-        circuits_dict = load_circuits(circuits_path)
+        circuits_dict = load_circuits(circuits_path, experiment_name)
 
         st.session_state.circuits_dict = circuits_dict
         st.session_state.current_circuit_idx = -1  # Always start with no selection
@@ -138,6 +147,7 @@ def max_activating_examples_server(
         st.session_state.norm_scores = None
         st.session_state.top_indices = []
         st.session_state.circuits_path = circuits_path
+        st.session_state.experiment_name = experiment_name
 
     # Page title
     st.title("Max Activating Examples Server")
@@ -216,7 +226,9 @@ def max_activating_examples_server(
 
             # Save to disk
             save_circuits(
-                st.session_state.circuits_dict, st.session_state.circuits_path
+                st.session_state.circuits_dict, 
+                st.session_state.circuits_path,
+                st.session_state.experiment_name
             )
 
             st.success(f"Circuit saved as: {circuit_name}")
@@ -353,3 +365,4 @@ def max_activating_examples_server(
 
 if __name__ == "__main__":
     max_activating_examples_server()
+

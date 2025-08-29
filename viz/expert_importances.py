@@ -1,6 +1,7 @@
 """Visualization of expert importances in MoE models."""
 
 import os
+from typing import Optional
 
 import arguably
 import matplotlib
@@ -15,10 +16,8 @@ from tqdm import tqdm
 
 matplotlib.use("WebAgg")  # Use WebAgg backend for interactive plots
 
-from exp.expert_importance import EXPERT_IMPORTANCE_DIR
-from viz import FIGURE_DIR
-
-EXPERT_IMPORTANCES_VIZ_DIR = os.path.join(FIGURE_DIR, "expert_importances")
+from exp import get_experiment_dir
+from viz import get_figure_dir
 
 # Constants
 READER_COMPONENTS = {"mlp.up_proj", "mlp.gate_proj", "attn.q_proj", "attn.k_proj"}
@@ -39,7 +38,7 @@ RESIDUAL_STREAM_COLOR = "gray"
 
 @arguably.command()
 def expert_importances(
-    data_path: str = os.path.join(EXPERT_IMPORTANCE_DIR, "all.pt"),
+    data_path: str | None = None,
     model_name: str | None = None,
     checkpoint_idx: int | None = None,
     initial_base_layer_idx: int = 0,
@@ -47,6 +46,7 @@ def expert_importances(
     normalize_percentile: float = 95.0,
     figure_width: float = 16.0,  # Increased width
     figure_height: float = 14.0,  # Increased height
+    experiment_name: Optional[str] = None,
 ) -> None:
     """Visualize expert importances with an interactive plot.
 
@@ -59,8 +59,17 @@ def expert_importances(
         normalize_percentile: Percentile for color normalization (0-100)
         figure_width: Width of the figure in inches
         figure_height: Height of the figure in inches
+        experiment_name: Name of the experiment to use for paths
     """
-    os.makedirs(EXPERT_IMPORTANCES_VIZ_DIR, exist_ok=True)
+    # Get experiment directory and figure directory
+    experiment_dir = get_experiment_dir(name=experiment_name)
+    figure_dir = get_figure_dir(experiment_name)
+    expert_importances_viz_dir = os.path.join(figure_dir, "expert_importances")
+    os.makedirs(expert_importances_viz_dir, exist_ok=True)
+
+    # If data_path is not provided, use the default path in the experiment directory
+    if data_path is None:
+        data_path = os.path.join(experiment_dir, "expert_importance", "all.pt")
 
     # Load data
     if not os.path.exists(data_path):
@@ -481,3 +490,4 @@ def expert_importances(
 
 if __name__ == "__main__":
     arguably.run()
+

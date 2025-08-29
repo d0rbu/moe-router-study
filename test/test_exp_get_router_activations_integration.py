@@ -7,7 +7,6 @@ import torch as th
 from exp.get_router_activations import (
     CONFIG_FILENAME,
     ROUTER_LOGITS_DIRNAME,
-    get_experiment_name,
     process_batch,
     save_config,
     save_router_logits,
@@ -17,38 +16,6 @@ from exp.get_router_activations import (
 
 class TestExperimentManagement:
     """Test experiment management functions."""
-
-    def test_get_experiment_name_basic(self):
-        """Test basic experiment name generation."""
-        name = get_experiment_name(
-            model_name="gpt2",
-            dataset_name="lmsys",
-            batch_size=4,
-            tokens_per_file=2000,
-        )
-        assert name == "gpt2_lmsys_batch_size=4_tokens_per_file=2000"
-
-    def test_get_experiment_name_filters_keys(self):
-        """Test that certain keys are filtered out of the experiment name."""
-        with pytest.warns(UserWarning) as record:
-            name = get_experiment_name(
-                model_name="gpt2",
-                dataset_name="lmsys",
-                batch_size=4,
-                device="cuda",
-                resume=True,
-                _internal_param=123,
-            )
-
-        # Check that the warning was raised
-        assert len(record) == 1
-        assert "excluded from the experiment name" in str(record[0].message)
-
-        # Check that the filtered keys are not in the name
-        assert name == "gpt2_lmsys_batch_size=4"
-        assert "device" not in name
-        assert "resume" not in name
-        assert "_internal_param" not in name
 
     def test_save_and_verify_config(self, tmp_path):
         """Test saving and verifying configuration."""
@@ -73,8 +40,7 @@ class TestExperimentManagement:
 
     def test_save_router_logits(self, tmp_path):
         """Test save_router_logits function."""
-        experiment_name = "test_experiment"
-        experiment_dir = os.path.join(str(tmp_path), experiment_name)
+        experiment_dir = str(tmp_path)
         os.makedirs(experiment_dir, exist_ok=True)
         router_logits_dir = os.path.join(experiment_dir, ROUTER_LOGITS_DIRNAME)
         os.makedirs(router_logits_dir, exist_ok=True)
@@ -89,12 +55,11 @@ class TestExperimentManagement:
         with (
             patch("torch.cat", return_value=th.rand(4, 3)) as mock_cat,
             patch("torch.save") as mock_save,
-            patch("exp.get_router_activations.OUTPUT_DIR", str(tmp_path)),
             patch("gc.collect"),
             patch("torch.cuda.is_available", return_value=False),
         ):
             # Call the function
-            save_router_logits(router_logits, tokens, top_k, file_idx, experiment_name)
+            save_router_logits(router_logits, tokens, top_k, file_idx, experiment_dir)
 
             # Check that torch.cat was called with the router_logits
             mock_cat.assert_called_once()

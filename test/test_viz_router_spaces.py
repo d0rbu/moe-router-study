@@ -42,11 +42,9 @@ class TestRouterSpaces:
         }
 
         # Set up patches
-        monkeypatch.setattr("viz.router_spaces.WEIGHT_DIR", str(temp_dir))
-        monkeypatch.setattr("viz.router_spaces.FIGURE_DIR", str(temp_dir))
-        monkeypatch.setattr(
-            "viz.router_spaces.ROUTER_VIZ_DIR", os.path.join(temp_dir, "router_spaces")
-        )
+        experiment_dir = str(temp_dir)
+        figure_dir = str(temp_dir)
+        router_viz_dir = os.path.join(figure_dir, "router_spaces")
 
         with (
             patch(
@@ -74,12 +72,24 @@ class TestRouterSpaces:
                     th.randn(8, 32),  # vh
                 ),
             ),
+            patch(
+                "exp.get_experiment_dir",
+                return_value=experiment_dir,
+            ),
+            patch(
+                "viz.get_figure_dir",
+                return_value=figure_dir,
+            ),
+            patch(
+                "viz.router_spaces.ROUTER_VIZ_DIR",
+                router_viz_dir,
+            ),
         ):
             # Run the function
-            router_spaces()
+            router_spaces(experiment_name="test_experiment")
 
             # Check that the output directory was created
-            assert os.path.exists(os.path.join(temp_dir, "router_spaces"))
+            assert os.path.exists(router_viz_dir)
 
             # Check that plot was called multiple times
             assert mock_plot.call_count > 0

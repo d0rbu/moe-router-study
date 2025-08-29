@@ -39,10 +39,9 @@ class TestPcaFigure:
         )
 
         # Set up patches
-        monkeypatch.setattr("viz.pca_viz.FIGURE_DIR", str(temp_dir))
-        monkeypatch.setattr(
-            "viz.pca_viz.FIGURE_PATH", os.path.join(temp_dir, "pca_circuits.png")
-        )
+        figure_dir = os.path.join(str(temp_dir), "test_experiment")
+        os.makedirs(figure_dir, exist_ok=True)
+        figure_path = os.path.join(figure_dir, "pca_circuits.png")
 
         # Create mock PCA class
         mock_pca = MagicMock()
@@ -66,9 +65,13 @@ class TestPcaFigure:
             patch(
                 "matplotlib.pyplot.close",
             ),
+            patch(
+                "viz.get_figure_dir",
+                return_value=figure_dir,
+            ),
         ):
             # Run the function
-            pca_figure(device="cpu")
+            pca_figure(device="cpu", experiment_name="test_experiment")
 
             # Check that PCA was called with the right data
             mock_pca.fit_transform.assert_called_once()
@@ -81,7 +84,7 @@ class TestPcaFigure:
             # Check that savefig was called with the right path
             mock_savefig.assert_called_once()
             args, _ = mock_savefig.call_args
-            assert args[0] == os.path.join(temp_dir, "pca_circuits.png")
+            assert args[0] == figure_path
 
     @pytest.mark.skip(reason="Test needs further work to fix mocking issues")
     def test_pca_figure_with_device(self):
