@@ -1,16 +1,87 @@
 import gc
 from itertools import batched
 import os
+from typing import Any
+import warnings
 
 import arguably
 from nnterp import StandardizedTransformer
 import torch as th
 from tqdm import tqdm
+import yaml
 
 from core.data import DATASETS
 from core.device_map import CUSTOM_DEVICES
 from core.model import MODELS
-from exp import OUTPUT_DIR, ROUTER_LOGITS_DIR
+from exp import OUTPUT_DIR
+
+# Constants
+ROUTER_LOGITS_DIRNAME = "router_logits"
+CONFIG_FILENAME = "config.yaml"
+
+
+def get_experiment_name(model_name: str, dataset_name: str, **kwargs) -> str:
+    """Generate a unique experiment name based on configuration parameters."""
+    base_name = f"{model_name}_{dataset_name}"
+
+    # Track which keys are being filtered out
+    ignored_keys = {"device", "resume"}
+    filtered_keys = set()
+
+    # Add any additional parameters that might affect the experiment
+    param_items = []
+    for k, v in sorted(kwargs.items()):
+        if k in ignored_keys or k.startswith("_"):
+            filtered_keys.add(k)
+            continue
+        param_items.append(f"{k}={v}")
+
+    # Warn about filtered keys
+    if filtered_keys:
+        warnings.warn(
+            f"The following keys were excluded from the experiment name: {filtered_keys}",
+            stacklevel=2,
+        )
+
+    param_str = "_".join(param_items)
+
+    if param_str:
+        base_name = f"{base_name}_{param_str}"
+
+    return base_name
+
+
+def save_config(config: dict[str, Any], experiment_dir: str) -> None:
+    """Save experiment configuration to a YAML file."""
+    config_path = os.path.join(experiment_dir, CONFIG_FILENAME)
+    with open(config_path, "w") as f:
+        yaml.dump(config, f, default_flow_style=False)
+
+
+def verify_config(config: dict[str, Any], experiment_dir: str) -> None:
+    """Verify that the current configuration matches the saved one."""
+    config_path = os.path.join(experiment_dir, CONFIG_FILENAME)
+
+    if not os.path.exists(config_path):
+        return
+
+    with open(config_path) as f:
+        saved_config = yaml.safe_load(f)
+
+    # Check for mismatches
+    mismatches = {}
+    for key, value in config.items():
+        if key in saved_config and saved_config[key] != value:
+            mismatches[key] = (saved_config[key], value)
+
+    if mismatches:
+        mismatch_str = "\n".join(
+            f"  - {key}: saved={saved} vs current={current}"
+            for key, (saved, current) in mismatches.items()
+        )
+        raise ValueError(
+            f"Configuration mismatch with existing experiment:\n{mismatch_str}"
+        )
 
 
 def save_router_logits(
@@ -18,6 +89,7 @@ def save_router_logits(
     tokenized_batch_collection: list[list[str]],
     top_k: int,
     file_idx: int,
+    experiment_name: str,
 ) -> None:
     router_logits = th.cat(router_logit_collection, dim=0)
     output: dict[str, th.Tensor] = {
@@ -25,7 +97,8 @@ def save_router_logits(
         "router_logits": router_logits,
         "tokens": tokenized_batch_collection,
     }
-    output_path = os.path.join(ROUTER_LOGITS_DIR, f"{file_idx}.pt")
+    router_logits_dir = os.path.join(OUTPUT_DIR, experiment_name, ROUTER_LOGITS_DIRNAME)
+    output_path = os.path.join(router_logits_dir, f"{file_idx}.pt")
     th.save(output, output_path)
 
     # Explicitly clean up large tensors
@@ -103,25 +176,54 @@ def process_batch(
 @arguably.command()
 def get_router_activations(
     model_name: str = "gpt",
-    dataset: str = "lmsys",
+    dataset_name: str = "lmsys",
     *_args,
     batch_size: int = 4,
     device: str = "cpu",
     tokens_per_file: int = 2_000,
     resume: bool = False,
+    name: str | None = None,
 ) -> None:
     model_config = MODELS.get(model_name, None)
 
     if model_config is None:
         raise ValueError(f"Model {model_name} not found")
 
-    dataset_fn = DATASETS.get(dataset, None)
+    dataset_fn = DATASETS.get(dataset_name, None)
 
     if dataset_fn is None:
-        raise ValueError(f"Dataset {dataset} not found")
+        raise ValueError(f"Dataset {dataset_name} not found")
+
+    # Create experiment configuration
+    config = {
+        "model_name": model_name,
+        "dataset_name": dataset_name,
+        "batch_size": batch_size,
+        "tokens_per_file": tokens_per_file,
+    }
+
+    # Generate experiment name if not provided
+    if name is None:
+        name = get_experiment_name(
+            model_name=model_name,
+            dataset_name=dataset_name,
+            batch_size=batch_size,
+            tokens_per_file=tokens_per_file,
+        )
+
+    # Create experiment directories
+    experiment_dir = os.path.join(OUTPUT_DIR, name)
+    router_logits_dir = os.path.join(experiment_dir, ROUTER_LOGITS_DIRNAME)
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    os.makedirs(ROUTER_LOGITS_DIR, exist_ok=True)
+    os.makedirs(experiment_dir, exist_ok=True)
+    os.makedirs(router_logits_dir, exist_ok=True)
+
+    # Verify configuration against existing one (if any)
+    verify_config(config, experiment_dir)
+
+    # Save configuration
+    save_config(config, experiment_dir)
 
     device_map = CUSTOM_DEVICES.get(device, lambda: device)()
 
@@ -133,7 +235,7 @@ def get_router_activations(
 
     start_file_idx = 0
     if resume:
-        for file in os.listdir(ROUTER_LOGITS_DIR):
+        for file in os.listdir(router_logits_dir):
             if file.endswith(".pt"):
                 start_file_idx = max(start_file_idx, int(file.split(".")[0]))
 
@@ -167,6 +269,7 @@ def get_router_activations(
                     tokenized_batch_collection,
                     top_k,
                     router_logit_collection_idx,
+                    name,
                 )
                 router_logit_collection_idx += 1
                 router_logit_collection_size = 0
@@ -187,6 +290,7 @@ def get_router_activations(
                 tokenized_batch_collection,
                 top_k,
                 router_logit_collection_idx,
+                name,
             )
 
         # Final cleanup
