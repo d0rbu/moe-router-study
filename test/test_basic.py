@@ -8,5 +8,6 @@ def test_imports() -> None:
     import viz
 
     assert core.__version__ == "0.1.0"
-    assert hasattr(exp, "OUTPUT_DIR")
-    assert hasattr(viz, "FIGURE_DIR")
+    assert hasattr(exp, "BASE_OUTPUT_DIR")
+    assert hasattr(viz, "BASE_FIGURE_DIR")
+

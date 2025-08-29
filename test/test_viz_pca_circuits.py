@@ -19,17 +19,23 @@ def test_pca_figure_creates_file(tmp_path: Path, monkeypatch) -> None:
     th.save(data, router_logits_dir / "0.pt")
 
     # 2) Send exp paths and figure dir to temp
-    monkeypatch.setattr("exp.ROUTER_LOGITS_DIR", str(router_logits_dir), raising=False)
-
-    fig_dir = tmp_path / "fig"
-    monkeypatch.setattr("viz.FIGURE_DIR", str(fig_dir), raising=False)
+    monkeypatch.setattr("exp.activations.ROUTER_LOGITS_DIRNAME", str(router_logits_dir), raising=False)
+    
+    # Set up experiment directory
+    experiment_dir = tmp_path / "test_experiment"
+    fig_dir = tmp_path / "fig" / "test_experiment"
+    fig_dir.mkdir(parents=True, exist_ok=True)
+    
+    monkeypatch.setattr("exp.get_experiment_dir", lambda name=None, **kwargs: str(experiment_dir), raising=False)
+    monkeypatch.setattr("viz.get_figure_dir", lambda experiment_name=None: str(fig_dir), raising=False)
 
     # 3) Call pca_figure on CPU
-    from viz.pca_viz import FIGURE_PATH, pca_figure
+    from viz.pca_viz import pca_figure
 
-    pca_figure(device="cpu")
+    pca_figure(device="cpu", experiment_name="test_experiment")
 
     # 4) Assert file was created and is non-empty
-    out_path = Path(FIGURE_PATH)
+    out_path = fig_dir / "pca_circuits.png"
     assert out_path.exists() and out_path.is_file()
     assert out_path.stat().st_size > 0
+
