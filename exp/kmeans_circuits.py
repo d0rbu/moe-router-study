@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 
 import arguably
 from loguru import logger
@@ -9,9 +10,9 @@ import matplotlib.pyplot as plt
 import torch as th
 from tqdm import tqdm
 
-from exp import OUTPUT_DIR
+from exp import get_experiment_dir
 from exp.activations import load_activations_and_topk
-from viz import FIGURE_DIR
+from viz import get_figure_dir
 
 
 def kmeans_manhattan(
@@ -133,6 +134,7 @@ def elbow(
     stop: int = 1024,
     step: int = 32,
     seed: int = 0,
+    figure_dir: str = None,
 ) -> None:
     assert data.ndim == 2, "Data must be of dimensions (B, D)"
 
@@ -189,10 +191,15 @@ def elbow(
 
     sse = th.tensor(sse_collection).cpu()
 
+    # Use the provided figure directory or default to the current directory
+    if figure_dir is None:
+        figure_dir = "."
+    os.makedirs(figure_dir, exist_ok=True)
+    
     # plot the sse
     plt.plot(range(start, stop, step), sse)
     plt.savefig(
-        os.path.join(FIGURE_DIR, "elbow_method.png"), dpi=300, bbox_inches="tight"
+        os.path.join(figure_dir, "elbow_method.png"), dpi=300, bbox_inches="tight"
     )
     plt.close()
 
@@ -216,8 +223,9 @@ def cluster_circuits(
     k: int | None = None,
     seed: int = 0,
     minibatch_size: int | None = None,
+    experiment_name: Optional[str] = None,
 ) -> None:
-    activated_experts, top_k = load_activations_and_topk()
+    activated_experts, top_k = load_activations_and_topk(experiment_name=experiment_name)
 
     batch_size, num_layers, num_experts = activated_experts.shape
 
@@ -238,8 +246,18 @@ def cluster_circuits(
     # (B, L, E) -> (B, L * E)
     activated_experts = activated_experts.view(activated_experts.shape[0], -1).float()
 
+    # Get experiment directory and figure directory
+    experiment_dir = get_experiment_dir(name=experiment_name)
+    figure_dir = get_figure_dir(experiment_name)
+    os.makedirs(figure_dir, exist_ok=True)
+
     if k is None:
-        elbow(activated_experts, minibatch_size=minibatch_size, seed=seed)
+        elbow(
+            activated_experts, 
+            minibatch_size=minibatch_size, 
+            seed=seed,
+            figure_dir=figure_dir
+        )
         return
 
     centroids, _, _ = kmeans_manhattan(
@@ -251,7 +269,8 @@ def cluster_circuits(
         "circuits": centroids,
         "top_k": top_k,
     }
-    out_path = os.path.join(OUTPUT_DIR, "kmeans_circuits.pt")
+    out_path = os.path.join(experiment_dir, "kmeans_circuits.pt")
+    os.makedirs(experiment_dir, exist_ok=True)
     th.save(out, out_path)
 
 

@@ -1,5 +1,6 @@
 """Tests for viz.pca_viz without mocking matplotlib."""
 
+import os
 from pathlib import Path
 
 import torch as th
@@ -8,7 +9,10 @@ import torch as th
 def test_pca_figure_creates_file(tmp_path: Path, monkeypatch) -> None:
     """Run pca_figure on tiny activation data and assert output image exists."""
     # 1) Create tiny activation file the loader expects
-    router_logits_dir = tmp_path / "router_logits"
+    experiment_dir = tmp_path / "test_experiment"
+    experiment_dir.mkdir(parents=True, exist_ok=True)
+    
+    router_logits_dir = experiment_dir / "router_logits"
     router_logits_dir.mkdir(parents=True, exist_ok=True)
 
     data = {
@@ -18,18 +22,26 @@ def test_pca_figure_creates_file(tmp_path: Path, monkeypatch) -> None:
     }
     th.save(data, router_logits_dir / "0.pt")
 
-    # 2) Send exp paths and figure dir to temp
-    monkeypatch.setattr("exp.ROUTER_LOGITS_DIR", str(router_logits_dir), raising=False)
-
-    fig_dir = tmp_path / "fig"
-    monkeypatch.setattr("viz.FIGURE_DIR", str(fig_dir), raising=False)
+    # 2) Set up experiment directory and figure directory
+    fig_dir = tmp_path / "fig" / "test_experiment"
+    fig_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Patch the necessary functions
+    monkeypatch.setattr("exp.get_experiment_dir", lambda name=None, **kwargs: str(experiment_dir), raising=False)
+    monkeypatch.setattr("viz.get_figure_dir", lambda experiment_name=None: str(fig_dir), raising=False)
+    
+    # Also patch the activations module to use our test directory
+    monkeypatch.setattr("exp.activations.load_activations", 
+                        lambda device="cpu", experiment_name=None: th.ones(10, 2, 6, dtype=th.bool),
+                        raising=False)
 
     # 3) Call pca_figure on CPU
-    from viz.pca_viz import FIGURE_PATH, pca_figure
+    from viz.pca_viz import pca_figure
 
-    pca_figure(device="cpu")
+    pca_figure(device="cpu", experiment_name="test_experiment")
 
     # 4) Assert file was created and is non-empty
-    out_path = Path(FIGURE_PATH)
+    out_path = fig_dir / "pca_circuits.png"
     assert out_path.exists() and out_path.is_file()
     assert out_path.stat().st_size > 0
+
