@@ -86,12 +86,13 @@ class TestExperimentManagement:
         file_idx = 0
 
         # Mock torch.cat and torch.save to avoid actual IO
-        with patch("torch.cat", return_value=th.rand(4, 3)) as mock_cat, \
-             patch("torch.save") as mock_save, \
-             patch("exp.get_router_activations.OUTPUT_DIR", str(tmp_path)), \
-             patch("gc.collect"), \
-             patch("torch.cuda.is_available", return_value=False):
-
+        with (
+            patch("torch.cat", return_value=th.rand(4, 3)) as mock_cat,
+            patch("torch.save") as mock_save,
+            patch("exp.get_router_activations.OUTPUT_DIR", str(tmp_path)),
+            patch("gc.collect"),
+            patch("torch.cuda.is_available", return_value=False),
+        ):
             # Call the function
             save_router_logits(router_logits, tokens, top_k, file_idx, experiment_name)
 
@@ -126,7 +127,10 @@ class TestProcessBatch:
 
         # Create mock tokenizer
         mock_tokenizer = MagicMock()
-        mock_tokenizer.tokenize.side_effect = lambda text: [f"{text}_token1", f"{text}_token2"]
+        mock_tokenizer.tokenize.side_effect = lambda text: [
+            f"{text}_token1",
+            f"{text}_token2",
+        ]
         mock_model.tokenizer = mock_tokenizer
 
         # Create mock encoding with attention_mask
@@ -144,7 +148,7 @@ class TestProcessBatch:
         # Set up mock routers_output
         mock_model.routers_output = {
             0: th.rand(6, 3),  # Regular tensor case
-            1: (th.rand(6, 3), th.rand(6, 2))  # Tuple case
+            1: (th.rand(6, 3), th.rand(6, 2)),  # Tuple case
         }
 
         # Create mock tensors for the CPU and save operations
@@ -155,7 +159,9 @@ class TestProcessBatch:
         mock_cpu_tensor1.__getitem__.return_value.save.return_value.clone = MagicMock()
         mock_cpu_tensor1.__getitem__.return_value.save.return_value.clone.return_value = MagicMock()
         mock_cpu_tensor1.__getitem__.return_value.save.return_value.clone.return_value.detach = MagicMock()
-        mock_cpu_tensor1.__getitem__.return_value.save.return_value.clone.return_value.detach.return_value = th.rand(5, 3)
+        mock_cpu_tensor1.__getitem__.return_value.save.return_value.clone.return_value.detach.return_value = th.rand(
+            5, 3
+        )
 
         mock_cpu_tensor2 = MagicMock()
         mock_cpu_tensor2.__getitem__.return_value = MagicMock()
@@ -164,19 +170,28 @@ class TestProcessBatch:
         mock_cpu_tensor2.__getitem__.return_value.save.return_value.clone = MagicMock()
         mock_cpu_tensor2.__getitem__.return_value.save.return_value.clone.return_value = MagicMock()
         mock_cpu_tensor2.__getitem__.return_value.save.return_value.clone.return_value.detach = MagicMock()
-        mock_cpu_tensor2.__getitem__.return_value.save.return_value.clone.return_value.detach.return_value = th.rand(5, 3)
+        mock_cpu_tensor2.__getitem__.return_value.save.return_value.clone.return_value.detach.return_value = th.rand(
+            5, 3
+        )
 
         # Mock the CPU operation
-        with patch.object(th.Tensor, "cpu", side_effect=[mock_cpu_tensor1, mock_cpu_tensor2]), \
-             patch("torch.stack", return_value=th.rand(2, 5, 3)):
-
+        with (
+            patch.object(
+                th.Tensor, "cpu", side_effect=[mock_cpu_tensor1, mock_cpu_tensor2]
+            ),
+            patch("torch.stack", return_value=th.rand(2, 5, 3)),
+        ):
             # Call the function
-            router_logits, tokens = process_batch(["text1", "text2"], mock_model, router_layers)
+            router_logits, tokens = process_batch(
+                ["text1", "text2"], mock_model, router_layers
+            )
 
             # Check the results
             assert router_logits.shape == (2, 5, 3)
-            assert tokens == [["text1_token1", "text1_token2"], ["text2_token1", "text2_token2"]]
+            assert tokens == [
+                ["text1_token1", "text1_token2"],
+                ["text2_token1", "text2_token2"],
+            ]
 
             # Verify the tracer was used correctly
             mock_tracer.stop.assert_called_once()
-
