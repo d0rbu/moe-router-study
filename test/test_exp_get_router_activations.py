@@ -1,8 +1,8 @@
 """Tests for exp.get_router_activations module."""
 
 import os
-from unittest.mock import MagicMock, patch
 import warnings
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch as th
@@ -13,7 +13,9 @@ from exp.get_router_activations import (
     ROUTER_LOGITS_DIRNAME,
     get_experiment_name,
     get_router_activations,
+    process_batch,
     save_config,
+    save_router_logits,
     verify_config,
 )
 
@@ -130,79 +132,60 @@ class TestGetRouterActivations:
     def test_get_router_activations_basic(self, temp_dir, monkeypatch):
         """Test basic functionality of get_router_activations."""
         # Set up patches
-        monkeypatch.setattr("exp.get_router_activations.OUTPUT_DIR", str(temp_dir))
+        monkeypatch.setattr("exp.OUTPUT_DIR", temp_dir)
 
-        # Mock dependencies
-        mock_dataset_fn = MagicMock(return_value=["text1", "text2"])
-
-        # Create a mock model
+        # Mock MODELS
         mock_model_config = MagicMock()
         mock_model_config.hf_name = "test_model"
+        mock_models = {"test_model": mock_model_config}
+        monkeypatch.setattr("exp.get_router_activations.MODELS", mock_models)
 
-        # Create a mock StandardizedTransformer instance
-        mock_transformer = MagicMock()
-        mock_transformer.layers_with_routers = [0, 1]
-        mock_transformer.router_probabilities.get_top_k.return_value = 2
+        # Mock DATASETS
+        mock_dataset = MagicMock(return_value=["text1", "text2"])
+        mock_datasets = {"test_dataset": mock_dataset}
+        monkeypatch.setattr("exp.get_router_activations.DATASETS", mock_datasets)
 
-        # Create a context manager for inference_mode
-        mock_inference_mode = MagicMock()
-        mock_inference_mode.__enter__ = MagicMock()
-        mock_inference_mode.__exit__ = MagicMock()
+        # Mock CUSTOM_DEVICES
+        mock_custom_devices = {"cpu": lambda: "cpu"}
+        monkeypatch.setattr(
+            "exp.get_router_activations.CUSTOM_DEVICES", mock_custom_devices
+        )
 
+        # Mock StandardizedTransformer
+        mock_model = MagicMock()
+        mock_model.layers_with_routers = [0, 1]
+        mock_model.router_probabilities.get_top_k.return_value = 2
+
+        # Set up mocks for all the functions and modules used in get_router_activations
         with (
             patch(
-                "exp.get_router_activations.MODELS",
-                {"test_model": mock_model_config},
-            ),
-            patch(
-                "exp.get_router_activations.DATASETS",
-                {"test_dataset": mock_dataset_fn},
-            ),
-            patch(
-                "exp.get_router_activations.CUSTOM_DEVICES",
-                {"cpu": lambda: "cpu"},
-            ),
-            patch(
                 "exp.get_router_activations.StandardizedTransformer",
-                return_value=mock_transformer,
+                return_value=mock_model,
             ),
             patch(
                 "exp.get_router_activations.process_batch",
-                return_value=(th.rand(2, 2, 4), [["token1", "token2"], ["token3"]]),
+                return_value=(th.rand(2, 2, 4), [["token1"], ["token2"]]),
             ),
             patch(
-                "exp.get_router_activations.save_router_logits",
+                "exp.get_router_activations.save_router_logits"
             ) as mock_save_router_logits,
+            patch("exp.get_router_activations.save_config") as mock_save_config,
+            patch("exp.get_router_activations.verify_config") as mock_verify_config,
+            patch("os.makedirs") as mock_makedirs,
             patch(
-                "exp.get_router_activations.save_config",
-            ) as mock_save_config,
-            patch(
-                "exp.get_router_activations.verify_config",
-            ) as mock_verify_config,
-            patch(
-                "os.makedirs",
-            ) as mock_makedirs,
-            patch(
-                "itertools.batched",
-                return_value=[["text1", "text2"]],
+                "exp.get_router_activations.batched", return_value=[["text1", "text2"]]
             ),
+            patch("exp.get_router_activations.tqdm", lambda x, **kwargs: x),
             patch(
-                "tqdm.tqdm",
-                side_effect=lambda x, **kwargs: x,
+                "exp.get_router_activations.th.inference_mode",
+                lambda: MagicMock(
+                    __enter__=lambda x: None, __exit__=lambda x, *args: None
+                ),
             ),
+            patch("exp.get_router_activations.gc.collect"),
+            patch("exp.get_router_activations.th.cuda.empty_cache"),
             patch(
-                "gc.collect",
-            ),
-            patch(
-                "th.cuda.empty_cache",
-            ),
-            patch(
-                "th.cuda.is_available",
-                return_value=False,
-            ),
-            patch(
-                "th.inference_mode",
-                return_value=mock_inference_mode,
+                "exp.get_router_activations.th.cuda.is_available", return_value=False
             ),
         ):
             # Call the function
@@ -210,22 +193,21 @@ class TestGetRouterActivations:
                 model_name="test_model",
                 dataset_name="test_dataset",
                 batch_size=2,
-                device="cpu",
                 tokens_per_file=10,
+                device="cpu",
             )
 
-            # Verify that the experiment directories were created
-            expected_exp_name = (
+            # Check that directories were created
+            expected_experiment_name = (
                 "test_model_test_dataset_batch_size=2_tokens_per_file=10"
             )
-            expected_exp_dir = os.path.join(str(temp_dir), expected_exp_name)
-            expected_router_logits_dir = os.path.join(
-                expected_exp_dir, ROUTER_LOGITS_DIRNAME
+            mock_makedirs.assert_any_call(
+                os.path.join(temp_dir, expected_experiment_name), exist_ok=True
             )
-
-            # Check that makedirs was called with the right paths
-            mock_makedirs.assert_any_call(expected_exp_dir, exist_ok=True)
-            mock_makedirs.assert_any_call(expected_router_logits_dir, exist_ok=True)
+            mock_makedirs.assert_any_call(
+                os.path.join(temp_dir, expected_experiment_name, ROUTER_LOGITS_DIRNAME),
+                exist_ok=True,
+            )
 
             # Check that config was saved and verified
             mock_save_config.assert_called_once()
@@ -240,101 +222,81 @@ class TestGetRouterActivations:
     def test_get_router_activations_with_experiment_name(self, temp_dir, monkeypatch):
         """Test get_router_activations with custom experiment name."""
         # Set up patches
-        monkeypatch.setattr("exp.get_router_activations.OUTPUT_DIR", str(temp_dir))
+        monkeypatch.setattr("exp.OUTPUT_DIR", temp_dir)
 
-        # Mock dependencies
-        mock_dataset_fn = MagicMock(return_value=["text1", "text2"])
-
-        # Create a mock model
+        # Mock MODELS
         mock_model_config = MagicMock()
         mock_model_config.hf_name = "test_model"
+        mock_models = {"test_model": mock_model_config}
+        monkeypatch.setattr("exp.get_router_activations.MODELS", mock_models)
 
-        # Create a mock StandardizedTransformer instance
-        mock_transformer = MagicMock()
-        mock_transformer.layers_with_routers = [0, 1]
-        mock_transformer.router_probabilities.get_top_k.return_value = 2
+        # Mock DATASETS
+        mock_dataset = MagicMock(return_value=["text1", "text2"])
+        mock_datasets = {"test_dataset": mock_dataset}
+        monkeypatch.setattr("exp.get_router_activations.DATASETS", mock_datasets)
 
-        # Create a context manager for inference_mode
-        mock_inference_mode = MagicMock()
-        mock_inference_mode.__enter__ = MagicMock()
-        mock_inference_mode.__exit__ = MagicMock()
+        # Mock CUSTOM_DEVICES
+        mock_custom_devices = {"cpu": lambda: "cpu"}
+        monkeypatch.setattr(
+            "exp.get_router_activations.CUSTOM_DEVICES", mock_custom_devices
+        )
 
+        # Mock StandardizedTransformer
+        mock_model = MagicMock()
+        mock_model.layers_with_routers = [0, 1]
+        mock_model.router_probabilities.get_top_k.return_value = 2
+
+        # Set up mocks for all the functions and modules used in get_router_activations
         with (
             patch(
-                "exp.get_router_activations.MODELS",
-                {"test_model": mock_model_config},
-            ),
-            patch(
-                "exp.get_router_activations.DATASETS",
-                {"test_dataset": mock_dataset_fn},
-            ),
-            patch(
-                "exp.get_router_activations.CUSTOM_DEVICES",
-                {"cpu": lambda: "cpu"},
-            ),
-            patch(
                 "exp.get_router_activations.StandardizedTransformer",
-                return_value=mock_transformer,
+                return_value=mock_model,
             ),
             patch(
                 "exp.get_router_activations.process_batch",
-                return_value=(th.rand(2, 2, 4), [["token1", "token2"], ["token3"]]),
+                return_value=(th.rand(2, 2, 4), [["token1"], ["token2"]]),
             ),
             patch(
-                "exp.get_router_activations.save_router_logits",
+                "exp.get_router_activations.save_router_logits"
             ) as mock_save_router_logits,
+            patch("exp.get_router_activations.save_config") as mock_save_config,
+            patch("exp.get_router_activations.verify_config") as mock_verify_config,
+            patch("os.makedirs") as mock_makedirs,
             patch(
-                "exp.get_router_activations.save_config",
-            ) as mock_save_config,
-            patch(
-                "exp.get_router_activations.verify_config",
-            ) as mock_verify_config,
-            patch(
-                "os.makedirs",
-            ) as mock_makedirs,
-            patch(
-                "itertools.batched",
-                return_value=[["text1", "text2"]],
+                "exp.get_router_activations.batched", return_value=[["text1", "text2"]]
             ),
+            patch("exp.get_router_activations.tqdm", lambda x, **kwargs: x),
             patch(
-                "tqdm.tqdm",
-                side_effect=lambda x, **kwargs: x,
+                "exp.get_router_activations.th.inference_mode",
+                lambda: MagicMock(
+                    __enter__=lambda x: None, __exit__=lambda x, *args: None
+                ),
             ),
+            patch("exp.get_router_activations.gc.collect"),
+            patch("exp.get_router_activations.th.cuda.empty_cache"),
             patch(
-                "gc.collect",
-            ),
-            patch(
-                "th.cuda.empty_cache",
-            ),
-            patch(
-                "th.cuda.is_available",
-                return_value=False,
-            ),
-            patch(
-                "th.inference_mode",
-                return_value=mock_inference_mode,
+                "exp.get_router_activations.th.cuda.is_available", return_value=False
             ),
         ):
-            # Call the function with custom experiment name
-            custom_name = "custom_experiment"
+            # Call the function with a custom experiment name
+            experiment_name = "custom_experiment"
             get_router_activations(
                 model_name="test_model",
                 dataset_name="test_dataset",
                 batch_size=2,
-                device="cpu",
                 tokens_per_file=10,
-                name=custom_name,
+                device="cpu",
+                name=experiment_name,
             )
 
-            # Check that directories were created correctly
-            expected_exp_dir = os.path.join(str(temp_dir), custom_name)
-            expected_router_logits_dir = os.path.join(
-                expected_exp_dir, ROUTER_LOGITS_DIRNAME
+            # Check that directories were created with the custom name
+            mock_makedirs.assert_any_call(
+                os.path.join(temp_dir, experiment_name), exist_ok=True
             )
-
-            # Check that makedirs was called with the right paths
-            mock_makedirs.assert_any_call(expected_exp_dir, exist_ok=True)
-            mock_makedirs.assert_any_call(expected_router_logits_dir, exist_ok=True)
+            mock_makedirs.assert_any_call(
+                os.path.join(temp_dir, experiment_name, ROUTER_LOGITS_DIRNAME),
+                exist_ok=True,
+            )
 
             # Check that config was saved and verified
             mock_save_config.assert_called_once()
