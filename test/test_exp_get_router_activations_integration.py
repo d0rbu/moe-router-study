@@ -182,21 +182,3 @@ class TestProcessBatch:
             # Verify the tracer was used correctly
             mock_tracer.stop.assert_called_once()
 
-
-class TestGetRouterActivationsIntegration:
-    """Integration tests for get_router_activations."""
-
-    @pytest.mark.skip(
-        reason="Complex integration test requiring extensive mocking of StandardizedTransformer"
-    )
-    def test_get_router_activations_basic_integration(self, tmp_path):
-        """Test basic integration of get_router_activations."""
-        pass
-
-    @pytest.mark.skip(
-        reason="Complex integration test requiring extensive mocking of StandardizedTransformer"
-    )
-    def test_get_router_activations_with_experiment_name_integration(self, tmp_path):
-        """Test get_router_activations with a custom experiment name."""
-        pass
-
