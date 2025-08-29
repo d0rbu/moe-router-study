@@ -2,7 +2,7 @@
 
 import os
 import warnings
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, mock_open
 
 import pytest
 import torch as th
@@ -132,7 +132,7 @@ class TestGetRouterActivations:
     def test_get_router_activations_basic(self, temp_dir, monkeypatch):
         """Test basic functionality of get_router_activations."""
         # Set up patches
-        monkeypatch.setattr("exp.OUTPUT_DIR", temp_dir)
+        monkeypatch.setattr("exp.OUTPUT_DIR", str(temp_dir))
 
         # Mock MODELS
         mock_model_config = MagicMock()
@@ -156,6 +156,11 @@ class TestGetRouterActivations:
         mock_model.layers_with_routers = [0, 1]
         mock_model.router_probabilities.get_top_k.return_value = 2
 
+        # Create a context manager for inference_mode
+        mock_inference_mode = MagicMock()
+        mock_inference_mode.__enter__ = MagicMock(return_value=None)
+        mock_inference_mode.__exit__ = MagicMock(return_value=None)
+
         # Set up mocks for all the functions and modules used in get_router_activations
         with (
             patch(
@@ -178,9 +183,7 @@ class TestGetRouterActivations:
             patch("exp.get_router_activations.tqdm", lambda x, **kwargs: x),
             patch(
                 "exp.get_router_activations.th.inference_mode",
-                lambda: MagicMock(
-                    __enter__=lambda x: None, __exit__=lambda x, *args: None
-                ),
+                return_value=mock_inference_mode,
             ),
             patch("exp.get_router_activations.gc.collect"),
             patch("exp.get_router_activations.th.cuda.empty_cache"),
@@ -202,10 +205,12 @@ class TestGetRouterActivations:
                 "test_model_test_dataset_batch_size=2_tokens_per_file=10"
             )
             mock_makedirs.assert_any_call(
-                os.path.join(temp_dir, expected_experiment_name), exist_ok=True
+                os.path.join(str(temp_dir), expected_experiment_name), exist_ok=True
             )
             mock_makedirs.assert_any_call(
-                os.path.join(temp_dir, expected_experiment_name, ROUTER_LOGITS_DIRNAME),
+                os.path.join(
+                    str(temp_dir), expected_experiment_name, ROUTER_LOGITS_DIRNAME
+                ),
                 exist_ok=True,
             )
 
@@ -222,7 +227,7 @@ class TestGetRouterActivations:
     def test_get_router_activations_with_experiment_name(self, temp_dir, monkeypatch):
         """Test get_router_activations with custom experiment name."""
         # Set up patches
-        monkeypatch.setattr("exp.OUTPUT_DIR", temp_dir)
+        monkeypatch.setattr("exp.OUTPUT_DIR", str(temp_dir))
 
         # Mock MODELS
         mock_model_config = MagicMock()
@@ -246,6 +251,11 @@ class TestGetRouterActivations:
         mock_model.layers_with_routers = [0, 1]
         mock_model.router_probabilities.get_top_k.return_value = 2
 
+        # Create a context manager for inference_mode
+        mock_inference_mode = MagicMock()
+        mock_inference_mode.__enter__ = MagicMock(return_value=None)
+        mock_inference_mode.__exit__ = MagicMock(return_value=None)
+
         # Set up mocks for all the functions and modules used in get_router_activations
         with (
             patch(
@@ -268,9 +278,7 @@ class TestGetRouterActivations:
             patch("exp.get_router_activations.tqdm", lambda x, **kwargs: x),
             patch(
                 "exp.get_router_activations.th.inference_mode",
-                lambda: MagicMock(
-                    __enter__=lambda x: None, __exit__=lambda x, *args: None
-                ),
+                return_value=mock_inference_mode,
             ),
             patch("exp.get_router_activations.gc.collect"),
             patch("exp.get_router_activations.th.cuda.empty_cache"),
@@ -291,10 +299,10 @@ class TestGetRouterActivations:
 
             # Check that directories were created with the custom name
             mock_makedirs.assert_any_call(
-                os.path.join(temp_dir, experiment_name), exist_ok=True
+                os.path.join(str(temp_dir), experiment_name), exist_ok=True
             )
             mock_makedirs.assert_any_call(
-                os.path.join(temp_dir, experiment_name, ROUTER_LOGITS_DIRNAME),
+                os.path.join(str(temp_dir), experiment_name, ROUTER_LOGITS_DIRNAME),
                 exist_ok=True,
             )
 
@@ -309,9 +317,6 @@ class TestGetRouterActivations:
 class TestProcessBatch:
     """Test process_batch function."""
 
-    @pytest.mark.skip(
-        reason="Integration test requiring complex mocking of tensor operations"
-    )
     def test_process_batch(self):
         """Test that process_batch correctly processes a batch."""
         # Import the function to test
