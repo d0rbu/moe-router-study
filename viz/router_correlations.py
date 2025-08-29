@@ -6,8 +6,8 @@ import matplotlib.pyplot as plt
 import torch as th
 from tqdm import tqdm
 
-from exp.get_router_activations import ROUTER_LOGITS_DIRNAME
 from exp import OUTPUT_DIR
+from exp.get_router_activations import ROUTER_LOGITS_DIRNAME
 from viz import FIGURE_DIR
 
 
@@ -18,7 +18,9 @@ def router_correlations(experiment_name: str, output_name: str | None = None) ->
     top_k: int | None = None
 
     for file_idx in tqdm(count(), desc="Loading router logits"):
-        file_path = os.path.join(OUTPUT_DIR, experiment_name, ROUTER_LOGITS_DIRNAME, f"{file_idx}.pt")
+        file_path = os.path.join(
+            OUTPUT_DIR, experiment_name, ROUTER_LOGITS_DIRNAME, f"{file_idx}.pt"
+        )
         if not os.path.exists(file_path):
             break
 

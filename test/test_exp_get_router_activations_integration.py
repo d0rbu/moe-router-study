@@ -1,10 +1,8 @@
 import os
-import tempfile
 from unittest.mock import MagicMock, patch
 
 import pytest
 import torch as th
-import yaml
 
 from exp.get_router_activations import (
     CONFIG_FILENAME,
@@ -80,39 +78,39 @@ class TestExperimentManagement:
         os.makedirs(experiment_dir, exist_ok=True)
         router_logits_dir = os.path.join(experiment_dir, ROUTER_LOGITS_DIRNAME)
         os.makedirs(router_logits_dir, exist_ok=True)
-        
+
         # Create test data
         router_logits = [th.rand(2, 3) for _ in range(2)]
         tokens = [["token1", "token2"], ["token3", "token4"]]
         top_k = 2
         file_idx = 0
-        
+
         # Mock torch.cat and torch.save to avoid actual IO
         with patch("torch.cat", return_value=th.rand(4, 3)) as mock_cat, \
              patch("torch.save") as mock_save, \
              patch("exp.get_router_activations.OUTPUT_DIR", str(tmp_path)), \
              patch("gc.collect"), \
              patch("torch.cuda.is_available", return_value=False):
-            
+
             # Call the function
             save_router_logits(router_logits, tokens, top_k, file_idx, experiment_name)
-            
+
             # Check that torch.cat was called with the router_logits
             mock_cat.assert_called_once()
             cat_args, cat_kwargs = mock_cat.call_args
             assert cat_args[0] == router_logits
             assert cat_kwargs["dim"] == 0
-            
+
             # Check that torch.save was called with the right arguments
             mock_save.assert_called_once()
             args, _ = mock_save.call_args
             saved_dict = args[0]
-            
+
             # Check the saved dict has the right keys and values
             assert saved_dict["topk"] == top_k
             assert "router_logits" in saved_dict
             assert saved_dict["tokens"] == tokens
-            
+
             # Check the saved path is correct
             expected_path = os.path.join(router_logits_dir, f"{file_idx}.pt")
             assert str(args[1]) == str(expected_path)
@@ -125,30 +123,30 @@ class TestProcessBatch:
         """Test process_batch function."""
         # Create mock model
         mock_model = MagicMock()
-        
+
         # Create mock tokenizer
         mock_tokenizer = MagicMock()
         mock_tokenizer.tokenize.side_effect = lambda text: [f"{text}_token1", f"{text}_token2"]
         mock_model.tokenizer = mock_tokenizer
-        
+
         # Create mock encoding with attention_mask
         mock_encoding = MagicMock()
         mock_encoding.attention_mask = th.tensor([[1, 1, 1], [1, 1, 0]])
         mock_tokenizer.return_value = mock_encoding
-        
+
         # Create mock tracer
         mock_tracer = MagicMock()
         mock_model.trace.return_value.__enter__.return_value = mock_tracer
-        
+
         # Set up router layers
         router_layers = [0, 1]
-        
+
         # Set up mock routers_output
         mock_model.routers_output = {
             0: th.rand(6, 3),  # Regular tensor case
             1: (th.rand(6, 3), th.rand(6, 2))  # Tuple case
         }
-        
+
         # Create mock tensors for the CPU and save operations
         mock_cpu_tensor1 = MagicMock()
         mock_cpu_tensor1.__getitem__.return_value = MagicMock()
@@ -158,7 +156,7 @@ class TestProcessBatch:
         mock_cpu_tensor1.__getitem__.return_value.save.return_value.clone.return_value = MagicMock()
         mock_cpu_tensor1.__getitem__.return_value.save.return_value.clone.return_value.detach = MagicMock()
         mock_cpu_tensor1.__getitem__.return_value.save.return_value.clone.return_value.detach.return_value = th.rand(5, 3)
-        
+
         mock_cpu_tensor2 = MagicMock()
         mock_cpu_tensor2.__getitem__.return_value = MagicMock()
         mock_cpu_tensor2.__getitem__.return_value.save = MagicMock()
@@ -167,18 +165,18 @@ class TestProcessBatch:
         mock_cpu_tensor2.__getitem__.return_value.save.return_value.clone.return_value = MagicMock()
         mock_cpu_tensor2.__getitem__.return_value.save.return_value.clone.return_value.detach = MagicMock()
         mock_cpu_tensor2.__getitem__.return_value.save.return_value.clone.return_value.detach.return_value = th.rand(5, 3)
-        
+
         # Mock the CPU operation
         with patch.object(th.Tensor, "cpu", side_effect=[mock_cpu_tensor1, mock_cpu_tensor2]), \
              patch("torch.stack", return_value=th.rand(2, 5, 3)):
-            
+
             # Call the function
             router_logits, tokens = process_batch(["text1", "text2"], mock_model, router_layers)
-            
+
             # Check the results
             assert router_logits.shape == (2, 5, 3)
             assert tokens == [["text1_token1", "text1_token2"], ["text2_token1", "text2_token2"]]
-            
+
             # Verify the tracer was used correctly
             mock_tracer.stop.assert_called_once()
 
