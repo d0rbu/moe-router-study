@@ -1,22 +1,23 @@
 import gc
-from itertools import batched
 import os
-from typing import Any
 import warnings
+from typing import Any
+from itertools import batched
 
 import arguably
-from nnterp import StandardizedTransformer
 import torch as th
-from tqdm import tqdm
 import yaml
+from tqdm import tqdm
+from nnterp import StandardizedTransformer
 
 from core.data import DATASETS
 from core.device_map import CUSTOM_DEVICES
 from core.model import MODELS
 from exp import OUTPUT_DIR
 
-CONFIG_FILENAME = "config.yaml"
+# Constants
 ROUTER_LOGITS_DIRNAME = "router_logits"
+CONFIG_FILENAME = "config.yaml"
 
 
 def get_experiment_name(model_name: str, dataset_name: str, **kwargs) -> str:
