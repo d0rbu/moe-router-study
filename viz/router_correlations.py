@@ -6,9 +6,9 @@ import matplotlib.pyplot as plt
 import torch as th
 from tqdm import tqdm
 
-from exp import OUTPUT_DIR
+from exp import get_experiment_dir, get_router_logits_dir
 from exp.get_router_activations import ROUTER_LOGITS_DIRNAME
-from viz import FIGURE_DIR
+from viz import get_figure_dir
 
 
 @arguably.command()
@@ -17,10 +17,16 @@ def router_correlations(experiment_name: str) -> None:
     activated_experts_collection = []
     top_k: int | None = None
 
+    # Get experiment directory and router logits directory
+    experiment_dir = get_experiment_dir(name=experiment_name)
+    router_logits_dir = get_router_logits_dir(experiment_dir)
+    
+    # Get figure directory for this experiment
+    figure_dir = get_figure_dir(experiment_name)
+    os.makedirs(figure_dir, exist_ok=True)
+
     for file_idx in tqdm(count(), desc="Loading router logits"):
-        file_path = os.path.join(
-            OUTPUT_DIR, experiment_name, ROUTER_LOGITS_DIRNAME, f"{file_idx}.pt"
-        )
+        file_path = os.path.join(router_logits_dir, f"{file_idx}.pt")
         if not os.path.exists(file_path):
             break
 
@@ -89,16 +95,15 @@ def router_correlations(experiment_name: str) -> None:
     # set default fig size
     plt.rcParams["figure.figsize"] = (16, 12)
 
-    # plot a bar chart of the correlations
+    # Save plots to experiment-specific figure directory
     print("Plotting bar chart...")
     plt.bar(range(len(correlations)), correlations)
-    plt.savefig(os.path.join(FIGURE_DIR, "router_correlations.png"))
+    plt.savefig(os.path.join(figure_dir, "router_correlations.png"))
     plt.close()
 
-    # plot a bar chart of the random correlations
     print("Plotting random bar chart...")
     plt.bar(range(len(random_correlations)), random_correlations)
-    plt.savefig(os.path.join(FIGURE_DIR, "router_correlations_random.png"))
+    plt.savefig(os.path.join(figure_dir, "router_correlations_random.png"))
     plt.close()
 
     first_layer_indices = (indices // total_experts) // num_experts
@@ -128,14 +133,14 @@ def router_correlations(experiment_name: str) -> None:
 
     # plot a bar chart of the cross-layer correlations
     plt.bar(range(len(cross_layer_correlations)), cross_layer_correlations)
-    plt.savefig(os.path.join(FIGURE_DIR, "router_correlations_cross_layer.png"))
+    plt.savefig(os.path.join(figure_dir, "router_correlations_cross_layer.png"))
     plt.close()
 
     # plot a bar chart of the cross-layer random correlations
     plt.bar(
         range(len(cross_layer_random_correlations)), cross_layer_random_correlations
     )
-    plt.savefig(os.path.join(FIGURE_DIR, "router_correlations_cross_layer_random.png"))
+    plt.savefig(os.path.join(figure_dir, "router_correlations_cross_layer_random.png"))
     plt.close()
 
     # print the top 10 correlations

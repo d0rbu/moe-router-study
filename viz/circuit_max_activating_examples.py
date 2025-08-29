@@ -1,6 +1,6 @@
 from itertools import pairwise
 import os
-from typing import cast
+from typing import cast, Optional
 
 from loguru import logger
 import matplotlib
@@ -15,7 +15,7 @@ from matplotlib.widgets import Slider
 import numpy as np
 import torch as th
 
-from exp import OUTPUT_DIR
+from exp import get_experiment_dir
 from exp.activations import (
     load_activations_indices_tokens_and_topk,
 )
@@ -23,6 +23,7 @@ from exp.activations import (
 
 def _load_circuits_tensor(
     circuits_path: str,
+    experiment_name: Optional[str] = None,
     device: str = "cuda",
     token_topk_mask: th.Tensor | None = None,
 ) -> th.Tensor:
@@ -34,8 +35,9 @@ def _load_circuits_tensor(
     """
     if not circuits_path:
         # Try common defaults in priority order
+        experiment_dir = get_experiment_dir(name=experiment_name)
         candidates = [
-            os.path.join(OUTPUT_DIR, name)
+            os.path.join(experiment_dir, name)
             for name in (
                 "optimized_circuits.pt",
                 "kmeans_circuits.pt",
@@ -59,7 +61,9 @@ def _load_circuits_tensor(
         # Infer (L, E) from activations - use provided data if available
         if token_topk_mask is None:
             token_topk_mask, _indices, _tokens, _top_k = (
-                load_activations_indices_tokens_and_topk(device=device)
+                load_activations_indices_tokens_and_topk(
+                    experiment_name=experiment_name, device=device
+                )
             )
         _B, L, E = token_topk_mask.shape
         C = int(circuits.shape[0])
@@ -716,6 +720,7 @@ def viz_max_cli(
     circuits_path: str = "",
     top_n: int = 10,
     *_args,
+    experiment_name: Optional[str] = None,
     device: str = "cuda",
     minibatch_size: int | None = None,
 ) -> None:
@@ -724,14 +729,21 @@ def viz_max_cli(
     Args:
         circuits_path: Path to a .pt file containing a dict with key "circuits" or a raw tensor.
         top_n: Number of sequences to display.
+        experiment_name: Name of the experiment to load data from.
         device: Torch device for computation (e.g., "cuda" or "cpu").
+        minibatch_size: Optional batch size for processing large datasets.
     """
     # Load all data once at the top level
     token_topk_mask, _activated_expert_indices, tokens, top_k = (
-        load_activations_indices_tokens_and_topk(device=device)
+        load_activations_indices_tokens_and_topk(
+            experiment_name=experiment_name, device=device
+        )
     )
     circuits = _load_circuits_tensor(
-        circuits_path, device=device, token_topk_mask=token_topk_mask
+        circuits_path,
+        experiment_name=experiment_name,
+        device=device,
+        token_topk_mask=token_topk_mask
     )
     viz_max_activating_tokens(
         circuits,
@@ -749,6 +761,7 @@ def viz_mean_cli(
     circuits_path: str = "",
     top_n: int = 10,
     *_args,
+    experiment_name: Optional[str] = None,
     device: str = "cuda",
     minibatch_size: int | None = None,
 ) -> None:
@@ -757,14 +770,21 @@ def viz_mean_cli(
     Args:
         circuits_path: Path to a .pt file containing a dict with key "circuits" or a raw tensor.
         top_n: Number of sequences to display.
+        experiment_name: Name of the experiment to load data from.
         device: Torch device for computation (e.g., "cuda" or "cpu").
+        minibatch_size: Optional batch size for processing large datasets.
     """
     # Load all data once at the top level
     token_topk_mask, _activated_expert_indices, tokens, top_k = (
-        load_activations_indices_tokens_and_topk(device=device)
+        load_activations_indices_tokens_and_topk(
+            experiment_name=experiment_name, device=device
+        )
     )
     circuits = _load_circuits_tensor(
-        circuits_path, device=device, token_topk_mask=token_topk_mask
+        circuits_path,
+        experiment_name=experiment_name,
+        device=device,
+        token_topk_mask=token_topk_mask
     )
     viz_mean_activating_tokens(
         circuits,
