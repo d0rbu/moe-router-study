@@ -55,7 +55,7 @@ def test_load_circuits_nonexistent(mock_experiment_dir):
     """Test loading circuits when the file doesn't exist."""
     # Mock get_experiment_dir to return our test directory
     with patch("exp.get_experiment_dir", return_value=mock_experiment_dir):
-        # Load non-existent circuits
+        # Load non-existent circuits (no file exists in the mock_experiment_dir)
         loaded_dict = load_circuits(experiment_name="test_experiment")
 
     # Check that we get an empty dictionary with the expected structure

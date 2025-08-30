@@ -124,7 +124,7 @@ class TestPcaFigure:
         # Remove the directory if it exists
         if os.path.exists(figure_dir):
             import shutil
-            shutil.rmtree(figure_dir)
+            shutil.rmtree(os.path.dirname(figure_dir))
 
         with (
             patch(
@@ -148,10 +148,14 @@ class TestPcaFigure:
                 "viz.get_figure_dir",
                 return_value=figure_dir,
             ),
+            patch(
+                "os.makedirs",
+                wraps=os.makedirs,
+            ) as mock_makedirs,
         ):
             # Run the function
             pca_figure(device="cpu", experiment_name="test_experiment")
 
-            # Check that the directory was created
-            assert os.path.exists(figure_dir)
+            # Check that makedirs was called with the figure directory
+            mock_makedirs.assert_called_with(figure_dir, exist_ok=True)
 
