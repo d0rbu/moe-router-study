@@ -27,13 +27,12 @@ def test_pca_figure_creates_file(tmp_path: Path, monkeypatch) -> None:
     fig_dir.mkdir(parents=True, exist_ok=True)
     
     # Patch the necessary functions
-    monkeypatch.setattr("exp.get_experiment_dir", lambda name=None, **kwargs: str(experiment_dir), raising=False)
-    monkeypatch.setattr("viz.get_figure_dir", lambda experiment_name=None: str(fig_dir), raising=False)
+    monkeypatch.setattr("exp.get_experiment_dir", lambda name=None, **kwargs: str(experiment_dir))
+    monkeypatch.setattr("viz.get_figure_dir", lambda experiment_name=None: str(fig_dir))
     
     # Also patch the activations module to use our test directory
     monkeypatch.setattr("exp.activations.load_activations", 
-                        lambda device="cpu", experiment_name=None: th.ones(10, 2, 6, dtype=th.bool),
-                        raising=False)
+                      lambda device="cpu", experiment_name=None: th.ones(10, 2, 6, dtype=th.bool))
 
     # 3) Call pca_figure on CPU
     from viz.pca_viz import pca_figure

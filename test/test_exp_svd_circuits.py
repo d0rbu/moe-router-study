@@ -5,8 +5,6 @@ from unittest.mock import patch
 
 import torch as th
 
-from exp.svd_circuits import svd_circuits
-
 
 class TestSvdCircuits:
     """Test svd_circuits function."""
@@ -25,11 +23,23 @@ class TestSvdCircuits:
         mock_s = th.tensor([0.9, 0.8, 0.5, 0.3, 0.1, 0.05, 0.01, 0.005, 0.001, 0.0005])
         mock_vh = th.rand(10, 12)  # 12 = 3*4 (layers * experts)
 
-        # Set up patches
-        monkeypatch.setattr("exp.svd_circuits.OUTPUT_DIR", str(temp_dir))
-        monkeypatch.setattr("exp.svd_circuits.FIGURE_DIR", str(temp_dir))
+        # Set up experiment directory
+        experiment_dir = os.path.join(str(temp_dir), "test_experiment")
+        os.makedirs(experiment_dir, exist_ok=True)
+        
+        # Set up figure directory
+        figure_dir = os.path.join(str(temp_dir), "fig", "test_experiment")
+        os.makedirs(figure_dir, exist_ok=True)
 
         with (
+            patch(
+                "exp.get_experiment_dir",
+                return_value=experiment_dir,
+            ),
+            patch(
+                "viz.get_figure_dir",
+                return_value=figure_dir,
+            ),
             patch(
                 "exp.svd_circuits.load_activations_and_topk",
                 return_value=(mock_activated_experts, 2),
@@ -45,14 +55,17 @@ class TestSvdCircuits:
                 "matplotlib.pyplot.close",
             ),
         ):
+            # Import here to avoid module-level binding issues
+            from exp.svd_circuits import svd_circuits
+            
             # Run the function
-            svd_circuits(num_circuits=5, device="cpu")
+            svd_circuits(num_circuits=5, device="cpu", experiment_name="test_experiment")
 
             # Check that savefig was called
             mock_savefig.assert_called_once()
 
             # Check that output file was created
-            output_file = os.path.join(temp_dir, "svd_circuits.pt")
+            output_file = os.path.join(experiment_dir, "svd_circuits.pt")
             assert os.path.exists(output_file)
 
             # Load and verify the output
@@ -72,11 +85,23 @@ class TestSvdCircuits:
         mock_s = th.tensor([0.9, 0.8, 0.5, 0.3, 0.1])
         mock_vh = th.rand(5, 12)  # 12 = 3*4 (layers * experts)
 
-        # Set up patches
-        monkeypatch.setattr("exp.svd_circuits.OUTPUT_DIR", str(temp_dir))
-        monkeypatch.setattr("exp.svd_circuits.FIGURE_DIR", str(temp_dir))
+        # Set up experiment directory
+        experiment_dir = os.path.join(str(temp_dir), "test_experiment")
+        os.makedirs(experiment_dir, exist_ok=True)
+        
+        # Set up figure directory
+        figure_dir = os.path.join(str(temp_dir), "fig", "test_experiment")
+        os.makedirs(figure_dir, exist_ok=True)
 
         with (
+            patch(
+                "exp.get_experiment_dir",
+                return_value=experiment_dir,
+            ),
+            patch(
+                "viz.get_figure_dir",
+                return_value=figure_dir,
+            ),
             patch(
                 "exp.svd_circuits.load_activations_and_topk",
                 return_value=(mock_activated_experts, 2),
@@ -92,11 +117,14 @@ class TestSvdCircuits:
                 "matplotlib.pyplot.close",
             ),
         ):
+            # Import here to avoid module-level binding issues
+            from exp.svd_circuits import svd_circuits
+            
             # Run the function with batch_size=5
-            svd_circuits(batch_size=5, num_circuits=3, device="cpu")
+            svd_circuits(batch_size=5, num_circuits=3, device="cpu", experiment_name="test_experiment")
 
             # Check that output file was created
-            output_file = os.path.join(temp_dir, "svd_circuits.pt")
+            output_file = os.path.join(experiment_dir, "svd_circuits.pt")
             assert os.path.exists(output_file)
 
             # Load and verify the output
@@ -113,11 +141,23 @@ class TestSvdCircuits:
         mock_s = th.tensor([0.9, 0.8, 0.5, 0.3, 0.1, 0.05, 0.01, 0.005, 0.001, 0.0005])
         mock_vh = th.rand(10, 12)
 
-        # Set up patches
-        monkeypatch.setattr("exp.svd_circuits.OUTPUT_DIR", str(temp_dir))
-        monkeypatch.setattr("exp.svd_circuits.FIGURE_DIR", str(temp_dir))
+        # Set up experiment directory
+        experiment_dir = os.path.join(str(temp_dir), "test_experiment")
+        os.makedirs(experiment_dir, exist_ok=True)
+        
+        # Set up figure directory
+        figure_dir = os.path.join(str(temp_dir), "fig", "test_experiment")
+        os.makedirs(figure_dir, exist_ok=True)
 
         with (
+            patch(
+                "exp.get_experiment_dir",
+                return_value=experiment_dir,
+            ),
+            patch(
+                "viz.get_figure_dir",
+                return_value=figure_dir,
+            ),
             patch(
                 "exp.svd_circuits.load_activations_and_topk",
                 return_value=(mock_activated_experts, 2),
@@ -133,11 +173,14 @@ class TestSvdCircuits:
                 "matplotlib.pyplot.close",
             ),
         ):
+            # Import here to avoid module-level binding issues
+            from exp.svd_circuits import svd_circuits
+            
             # Run the function with device="cuda"
-            svd_circuits(device="cuda")
+            svd_circuits(device="cuda", experiment_name="test_experiment")
 
             # Check that load_activations_and_topk was called with device="cuda"
-            mock_load.assert_called_once_with(device="cuda")
+            mock_load.assert_called_once_with(device="cuda", experiment_name="test_experiment")
 
     def test_svd_circuits_with_real_svd(self, temp_dir, monkeypatch):
         """Test svd_circuits with real SVD computation."""
@@ -151,11 +194,23 @@ class TestSvdCircuits:
             1.0  # Last 5 samples activate expert 2 in layer 1
         )
 
-        # Set up patches
-        monkeypatch.setattr("exp.svd_circuits.OUTPUT_DIR", str(temp_dir))
-        monkeypatch.setattr("exp.svd_circuits.FIGURE_DIR", str(temp_dir))
+        # Set up experiment directory
+        experiment_dir = os.path.join(str(temp_dir), "test_experiment")
+        os.makedirs(experiment_dir, exist_ok=True)
+        
+        # Set up figure directory
+        figure_dir = os.path.join(str(temp_dir), "fig", "test_experiment")
+        os.makedirs(figure_dir, exist_ok=True)
 
         with (
+            patch(
+                "exp.get_experiment_dir",
+                return_value=experiment_dir,
+            ),
+            patch(
+                "viz.get_figure_dir",
+                return_value=figure_dir,
+            ),
             patch(
                 "exp.svd_circuits.load_activations_and_topk",
                 return_value=(mock_activated_experts, 2),
@@ -167,11 +222,14 @@ class TestSvdCircuits:
                 "matplotlib.pyplot.close",
             ),
         ):
+            # Import here to avoid module-level binding issues
+            from exp.svd_circuits import svd_circuits
+            
             # Run the function
-            svd_circuits(num_circuits=2, device="cpu")
+            svd_circuits(num_circuits=2, device="cpu", experiment_name="test_experiment")
 
             # Check that output file was created
-            output_file = os.path.join(temp_dir, "svd_circuits.pt")
+            output_file = os.path.join(experiment_dir, "svd_circuits.pt")
             assert os.path.exists(output_file)
 
             # Load and verify the output
@@ -193,3 +251,4 @@ class TestSvdCircuits:
 
             # At least one of the circuits should have a high value for expert 2 in layer 1
             assert (abs(circuit1[1, 2]) > 0.1) or (abs(circuit2[1, 2]) > 0.1)
+
