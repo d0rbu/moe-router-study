@@ -1,12 +1,16 @@
+from collections import deque
 import gc
 from itertools import batched
 import os
-from typing import Any
+import time
+from typing import Any, TypeVar, cast
 import warnings
 
 import arguably
 from nnterp import StandardizedTransformer
+import numpy as np
 import torch as th
+import torch.multiprocessing as mp
 from tqdm import tqdm
 import yaml
 
@@ -18,6 +22,33 @@ from exp import OUTPUT_DIR
 # Constants
 ROUTER_LOGITS_DIRNAME = "router_logits"
 CONFIG_FILENAME = "config.yaml"
+
+# Type definitions
+T = TypeVar("T")
+
+# Try to import wandb, but make it optional
+try:
+    import wandb
+
+    WANDB_AVAILABLE = True
+except ImportError:
+    WANDB_AVAILABLE = False
+    # Create a dummy wandb module for type checking
+
+    class DummyWandb:
+        @staticmethod
+        def init(*args, **kwargs):
+            return type("DummyRun", (), {"id": "dummy_run_id"})
+
+        @staticmethod
+        def log(*args, **kwargs):
+            pass
+
+        @staticmethod
+        def finish():
+            pass
+
+    wandb = cast("Any", DummyWandb())
 
 
 def get_experiment_name(model_name: str, dataset_name: str, **kwargs) -> str:
@@ -92,7 +123,7 @@ def save_router_logits(
     experiment_name: str,
 ) -> None:
     router_logits = th.cat(router_logit_collection, dim=0)
-    output: dict[str, th.Tensor] = {
+    output: dict[str, Any] = {
         "topk": top_k,
         "router_logits": router_logits,
         "tokens": tokenized_batch_collection,
@@ -130,6 +161,11 @@ def process_batch(
 
     encoded_batch = model.tokenizer(batch, padding=True, return_tensors="pt")
     tokenized_batch = [model.tokenizer.tokenize(text) for text in batch]
+
+    # Move encoded batch to the appropriate device
+    for key in encoded_batch:
+        if isinstance(encoded_batch[key], th.Tensor):
+            encoded_batch[key] = encoded_batch[key].to(model.device)
 
     router_logits = []
 
@@ -173,6 +209,411 @@ def process_batch(
     return router_logits_tensor, tokenized_batch
 
 
+def tokenizer_worker(
+    dataset_name: str,
+    model_name: str,
+    tokenizer_batch: int,
+    tokens_per_file: int,
+    main_queue: mp.Queue,
+    stop_event: mp.Event,
+    wandb_run_id: str,
+    resume_from_batch: int = 0,
+) -> None:
+    """Worker process that tokenizes text and puts batches into the queue."""
+    # Initialize wandb in this process
+    if WANDB_AVAILABLE:
+        wandb.init(
+            project="router_activations",
+            id=wandb_run_id,
+            resume="allow",
+            name=f"tokenizer-{dataset_name}-{model_name}",
+        )
+
+    # Get model config and tokenizer
+    model_config = MODELS.get(model_name)
+    if model_config is None:
+        raise ValueError(f"Model {model_name} not found")
+
+    # Import here to avoid circular imports
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(model_config.hf_name)
+
+    # Get dataset function
+    dataset_fn = DATASETS.get(dataset_name)
+    if dataset_fn is None:
+        raise ValueError(f"Dataset {dataset_name} not found")
+
+    # Create dataset iterator
+    dataset_iter = dataset_fn(tokenizer)
+
+    # Skip batches if resuming
+    if resume_from_batch > 0:
+        if WANDB_AVAILABLE:
+            wandb.log({"tokenizer/skipping_batches": resume_from_batch})
+        for _ in tqdm(
+            range(resume_from_batch * tokenizer_batch),
+            desc="Skipping batches for resume",
+        ):
+            try:
+                next(dataset_iter)
+            except StopIteration:
+                if WANDB_AVAILABLE:
+                    wandb.log({"tokenizer/error": "Dataset exhausted during resume"})
+                stop_event.set()
+                return
+
+    # Initialize buffer and statistics
+    buffer: deque[tuple[str, list[str]]] = deque()
+    token_counts: deque[int] = deque()
+    total_tokens = 0
+    batch_idx = resume_from_batch
+    start_time = time.time()
+
+    # Process dataset
+    try:
+        for batch_data in batched(dataset_iter, tokenizer_batch):
+            if stop_event.is_set():
+                break
+
+            # Tokenize batch
+            encoded = tokenizer(batch_data, padding=False, return_tensors=None)
+            tokenized = [tokenizer.tokenize(text) for text in batch_data]
+
+            # Calculate token counts for each sequence
+            seq_token_counts = [len(ids) for ids in encoded["input_ids"]]
+
+            # Add to buffer
+            for _, (text, tokens, count) in enumerate(
+                zip(batch_data, tokenized, seq_token_counts, strict=False)
+            ):
+                buffer.append((text, tokens))
+                token_counts.append(count)
+                total_tokens += count
+
+                # Check if we have enough tokens to create a batch for processing
+                if sum(token_counts) >= tokens_per_file:
+                    # Find how many sequences to include
+                    tokens_sum = 0
+                    seqs_to_include = 0
+                    for tc in token_counts:
+                        tokens_sum += tc
+                        seqs_to_include += 1
+                        if tokens_sum >= tokens_per_file:
+                            break
+
+                    # Create batch to send to queue
+                    batch_texts = []
+                    batch_tokens = []
+                    for _ in range(seqs_to_include):
+                        text, tokens = buffer.popleft()
+                        batch_texts.append(text)
+                        batch_tokens.append(tokens)
+                        token_counts.popleft()
+
+                    # Put in queue
+                    main_queue.put((batch_idx, batch_texts, batch_tokens, tokens_sum))
+
+                    # Log statistics
+                    elapsed = time.time() - start_time
+                    if WANDB_AVAILABLE:
+                        wandb.log(
+                            {
+                                "tokenizer/batch_idx": batch_idx,
+                                "tokenizer/queue_size": main_queue.qsize(),
+                                "tokenizer/tokens_in_batch": tokens_sum,
+                                "tokenizer/total_tokens": total_tokens,
+                                "tokenizer/sequences_in_batch": seqs_to_include,
+                                "tokenizer/buffer_size": len(buffer),
+                                "tokenizer/tokens_per_second": total_tokens / elapsed
+                                if elapsed > 0
+                                else 0,
+                            }
+                        )
+
+                    batch_idx += 1
+
+            # Check if queue is getting too full - pause to let consumers catch up
+            if main_queue.qsize() > 20:  # Arbitrary threshold
+                time.sleep(1)
+
+    except Exception as e:
+        if WANDB_AVAILABLE:
+            wandb.log({"tokenizer/error": str(e)})
+        print(f"Tokenizer worker error: {e}")
+    finally:
+        # If there are remaining items in the buffer, send them as a final batch
+        if buffer and not stop_event.is_set():
+            batch_texts = []
+            batch_tokens = []
+            tokens_sum = 0
+            while buffer:
+                text, tokens = buffer.popleft()
+                batch_texts.append(text)
+                batch_tokens.append(tokens)
+                if token_counts:
+                    tokens_sum += token_counts.popleft()
+
+            main_queue.put((batch_idx, batch_texts, batch_tokens, tokens_sum))
+
+            elapsed = time.time() - start_time
+            if WANDB_AVAILABLE:
+                wandb.log(
+                    {
+                        "tokenizer/batch_idx": batch_idx,
+                        "tokenizer/queue_size": main_queue.qsize(),
+                        "tokenizer/tokens_in_batch": tokens_sum,
+                        "tokenizer/total_tokens": total_tokens,
+                        "tokenizer/sequences_in_batch": len(batch_texts),
+                        "tokenizer/buffer_size": 0,
+                        "tokenizer/tokens_per_second": total_tokens / elapsed
+                        if elapsed > 0
+                        else 0,
+                        "tokenizer/finished": True,
+                    }
+                )
+
+        # Signal that we're done
+        main_queue.put(None)
+        if WANDB_AVAILABLE:
+            wandb.finish()
+
+
+def multiplexer_worker(
+    main_queue: mp.Queue,
+    gpu_queues: list[mp.Queue],
+    stop_event: mp.Event,
+    wandb_run_id: str,
+) -> None:
+    """Worker that distributes batches to GPU queues based on load balancing."""
+    # Initialize wandb in this process
+    if WANDB_AVAILABLE:
+        wandb.init(
+            project="router_activations",
+            id=wandb_run_id,
+            resume="allow",
+            name="multiplexer",
+        )
+
+    # Initialize statistics
+    total_batches = 0
+    total_tokens = 0
+    start_time = time.time()
+
+    try:
+        while not stop_event.is_set():
+            # Get batch from main queue
+            batch_data = main_queue.get()
+
+            # Check if we're done
+            if batch_data is None:
+                break
+
+            batch_idx, batch_texts, batch_tokens, tokens_count = batch_data
+            total_batches += 1
+            total_tokens += tokens_count
+
+            # Find the GPU queue with the least items
+            queue_sizes = [q.qsize() for q in gpu_queues]
+            min_queue_idx = np.argmin(queue_sizes)
+
+            # Put batch in the selected GPU queue
+            gpu_queues[min_queue_idx].put(
+                (batch_idx, batch_texts, batch_tokens, tokens_count)
+            )
+
+            # Log statistics
+            elapsed = time.time() - start_time
+            if WANDB_AVAILABLE:
+                wandb.log(
+                    {
+                        "multiplexer/batch_idx": batch_idx,
+                        "multiplexer/main_queue_size": main_queue.qsize(),
+                        "multiplexer/total_batches": total_batches,
+                        "multiplexer/total_tokens": total_tokens,
+                        "multiplexer/tokens_per_second": total_tokens / elapsed
+                        if elapsed > 0
+                        else 0,
+                        "multiplexer/elapsed_time": elapsed,
+                        **{
+                            f"multiplexer/gpu_{i}_queue_size": size
+                            for i, size in enumerate(queue_sizes)
+                        },
+                    }
+                )
+
+    except Exception as e:
+        if WANDB_AVAILABLE:
+            wandb.log({"multiplexer/error": str(e)})
+        print(f"Multiplexer worker error: {e}")
+    finally:
+        # Signal all GPU queues that we're done
+        for q in gpu_queues:
+            q.put(None)
+        if WANDB_AVAILABLE:
+            wandb.finish()
+
+
+def gpu_worker(
+    rank: int,
+    _world_size: int,  # Renamed to avoid unused argument warning
+    gpu_queue: mp.Queue,
+    model_name: str,
+    experiment_name: str,
+    device: str,
+    stop_event: mp.Event,
+    wandb_run_id: str,
+) -> None:
+    """Worker process that runs on a specific GPU and processes batches."""
+    # Set device for this process
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(rank)
+    device_id = f"cuda:{0}"  # Always use first visible device (which is our assigned GPU)
+
+    # Initialize wandb in this process
+    if WANDB_AVAILABLE:
+        wandb.init(
+            project="router_activations",
+            id=wandb_run_id,
+            resume="allow",
+            name=f"gpu-{rank}",
+        )
+
+    try:
+        # Get model config
+        model_config = MODELS.get(model_name)
+        if model_config is None:
+            raise ValueError(f"Model {model_name} not found")
+
+        # Initialize model
+        device_map = CUSTOM_DEVICES.get(device, lambda: device_id)()
+        model = StandardizedTransformer(
+            model_config.hf_name,
+            check_attn_probs_with_trace=False,
+            device_map=device_map,
+        )
+        router_layers = model.layers_with_routers
+        top_k = model.router_probabilities.get_top_k()
+
+        # Initialize statistics
+        total_batches = 0
+        total_tokens = 0
+        processing_times: list[float] = []
+        start_time = time.time()
+
+        # Process batches
+        while not stop_event.is_set():
+            # Get batch from queue
+            batch_data = gpu_queue.get()
+
+            # Check if we're done
+            if batch_data is None:
+                break
+
+            batch_idx, batch_texts, batch_tokens, tokens_count = batch_data
+
+            # Process batch
+            batch_start = time.time()
+            with th.inference_mode():
+                router_logits, _ = process_batch(batch_texts, model, router_layers)
+
+                # Save results
+                router_logits_dir = os.path.join(
+                    OUTPUT_DIR, experiment_name, ROUTER_LOGITS_DIRNAME
+                )
+                output_path = os.path.join(router_logits_dir, f"{rank}_{batch_idx}.pt")
+
+                output = {
+                    "topk": top_k,
+                    "router_logits": router_logits,
+                    "tokens": batch_tokens,
+                }
+                th.save(output, output_path)
+
+            # Update statistics
+            batch_time = time.time() - batch_start
+            processing_times.append(batch_time)
+            total_batches += 1
+            total_tokens += tokens_count
+            elapsed = time.time() - start_time
+
+            # Calculate EMA of processing time (with 0.9 decay)
+            ema_time = (
+                processing_times[0]
+                if len(processing_times) == 1
+                else (0.9 * processing_times[-2] + 0.1 * processing_times[-1])
+            )
+
+            # Log statistics
+            if WANDB_AVAILABLE:
+                wandb.log(
+                    {
+                        f"gpu_{rank}/batch_idx": batch_idx,
+                        f"gpu_{rank}/queue_size": gpu_queue.qsize(),
+                        f"gpu_{rank}/batch_time": batch_time,
+                        f"gpu_{rank}/batch_tokens": tokens_count,
+                        f"gpu_{rank}/tokens_per_second": tokens_count / batch_time
+                        if batch_time > 0
+                        else 0,
+                        f"gpu_{rank}/total_batches": total_batches,
+                        f"gpu_{rank}/total_tokens": total_tokens,
+                        f"gpu_{rank}/avg_batch_time": sum(processing_times)
+                        / len(processing_times),
+                        f"gpu_{rank}/ema_batch_time": ema_time,
+                        f"gpu_{rank}/elapsed_time": elapsed,
+                    }
+                )
+
+    except Exception as e:
+        if WANDB_AVAILABLE:
+            wandb.log({f"gpu_{rank}/error": str(e)})
+        print(f"GPU {rank} worker error: {e}")
+    finally:
+        # Clean up
+        if WANDB_AVAILABLE:
+            wandb.finish()
+
+
+def find_completed_batches(experiment_dir: str) -> tuple[dict[int, list[int]], int]:
+    """
+    Find all completed batches across all GPUs.
+
+    Returns:
+        Tuple containing:
+        - Dictionary mapping GPU rank to list of completed batch indices
+        - Highest batch index found
+    """
+    router_logits_dir = os.path.join(experiment_dir, ROUTER_LOGITS_DIRNAME)
+    if not os.path.exists(router_logits_dir):
+        return {}, 0
+
+    completed_batches: dict[int, list[int]] = {}
+    max_batch_idx = 0
+
+    for filename in os.listdir(router_logits_dir):
+        if not filename.endswith(".pt"):
+            continue
+
+        # Parse filename to get rank and batch index
+        parts = filename.split(".")[0].split("_")
+        if len(parts) == 2:
+            rank, batch_idx = int(parts[0]), int(parts[1])
+
+            if rank not in completed_batches:
+                completed_batches[rank] = []
+
+            completed_batches[rank].append(batch_idx)
+            max_batch_idx = max(max_batch_idx, batch_idx)
+        elif len(parts) == 1:
+            # Handle old format files (no rank)
+            batch_idx = int(parts[0])
+            if -1 not in completed_batches:
+                completed_batches[-1] = []
+            completed_batches[-1].append(batch_idx)
+            max_batch_idx = max(max_batch_idx, batch_idx)
+
+    return completed_batches, max_batch_idx
+
+
 @arguably.command()
 def get_router_activations(
     model_name: str = "gpt",
@@ -181,18 +622,35 @@ def get_router_activations(
     batch_size: int = 4,
     device: str = "cpu",
     tokens_per_file: int = 2_000,
+    tokenizer_batch: int = 16,
     resume: bool = False,
     name: str | None = None,
+    wandb_project: str = "router_activations",
 ) -> None:
-    model_config = MODELS.get(model_name, None)
+    """
+    Extract router activations from a model using multiple GPUs.
 
-    if model_config is None:
-        raise ValueError(f"Model {model_name} not found")
+    Args:
+        model_name: Name of the model to use
+        dataset_name: Name of the dataset to use
+        batch_size: Batch size for processing
+        device: Device to use (cpu, cuda, mlp_gpu, attn_gpu)
+        tokens_per_file: Target number of tokens per output file
+        tokenizer_batch: Batch size for tokenizer worker
+        resume: Whether to resume from a previous run
+        name: Custom name for the experiment
+        wandb_project: WandB project name for logging
+    """
+    # Check CUDA_VISIBLE_DEVICES
+    cuda_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+    if not cuda_devices:
+        raise ValueError("CUDA_VISIBLE_DEVICES environment variable not set")
 
-    dataset_fn = DATASETS.get(dataset_name, None)
+    world_size = len(cuda_devices.split(","))
+    if world_size == 0:
+        raise ValueError("No CUDA devices available")
 
-    if dataset_fn is None:
-        raise ValueError(f"Dataset {dataset_name} not found")
+    print(f"Using {world_size} GPUs: {cuda_devices}")
 
     # Create experiment configuration
     config = {
@@ -200,6 +658,8 @@ def get_router_activations(
         "dataset_name": dataset_name,
         "batch_size": batch_size,
         "tokens_per_file": tokens_per_file,
+        "tokenizer_batch": tokenizer_batch,
+        "world_size": world_size,
     }
 
     # Generate experiment name if not provided
@@ -225,81 +685,99 @@ def get_router_activations(
     # Save configuration
     save_config(config, experiment_dir)
 
-    device_map = CUSTOM_DEVICES.get(device, lambda: device)()
+    # Initialize WandB
+    if WANDB_AVAILABLE:
+        wandb_run = wandb.init(project=wandb_project, name=name, config=config)
+        wandb_run_id = wandb_run.id
+    else:
+        print("Warning: wandb not available, logging will be disabled")
+        wandb_run_id = "dummy_run_id"
 
-    model = StandardizedTransformer(
-        model_config.hf_name, check_attn_probs_with_trace=False, device_map=device_map
-    )
-    router_layers: list[int] = model.layers_with_routers
-    top_k: int = model.router_probabilities.get_top_k()
-
-    start_file_idx = 0
+    # Find completed batches if resuming
+    resume_batch_idx = 0
     if resume:
-        for file in os.listdir(router_logits_dir):
-            if file.endswith(".pt"):
-                start_file_idx = max(start_file_idx, int(file.split(".")[0]))
+        completed_batches, max_batch_idx = find_completed_batches(experiment_dir)
+        if completed_batches:
+            resume_batch_idx = max_batch_idx + 1
+            print(f"Resuming from batch {resume_batch_idx}")
+            if WANDB_AVAILABLE:
+                wandb.log({"resume/batch_idx": resume_batch_idx})
 
-    with th.inference_mode():
-        router_logit_collection: list[th.Tensor] = []
-        tokenized_batch_collection: list[list[str]] = []
-        router_logit_collection_size: int = 0
-        router_logit_collection_idx: int = 0
+    # Initialize multiprocessing resources
+    mp.set_start_method("spawn", force=True)
 
-        pbar = tqdm(total=tokens_per_file, desc="Filling up file")
+    # Create queues and events
+    main_queue = mp.Queue(maxsize=100)  # Buffer between tokenizer and multiplexer
+    gpu_queues = [
+        mp.Queue(maxsize=10) for _ in range(world_size)
+    ]  # One queue per GPU
+    stop_event = mp.Event()  # For signaling processes to stop
 
-        for _batch_idx, batch in enumerate(
-            tqdm(
-                batched(dataset_fn(model.tokenizer), batch_size),
-                desc="Processing batches",
-            )
-        ):
-            # Process batch in isolated function to ensure variable cleanup
-            router_logits, tokenized_batch = process_batch(batch, model, router_layers)
+    # Create and start processes
+    processes = []
 
-            # Store weak references to avoid circular references
-            router_logit_collection.append(router_logits)
-            tokenized_batch_collection.extend(tokenized_batch)
-            router_logit_collection_size += router_logits.shape[0]
-            pbar.update(router_logits.shape[0])
+    # Start tokenizer worker
+    tokenizer_proc = mp.Process(
+        target=tokenizer_worker,
+        args=(
+            dataset_name,
+            model_name,
+            tokenizer_batch,
+            tokens_per_file,
+            main_queue,
+            stop_event,
+            wandb_run_id,
+            resume_batch_idx,
+        ),
+    )
+    tokenizer_proc.start()
+    processes.append(tokenizer_proc)
 
-            # save the router probabilities to a file
-            if router_logit_collection_size >= tokens_per_file:
-                save_router_logits(
-                    router_logit_collection,
-                    tokenized_batch_collection,
-                    top_k,
-                    router_logit_collection_idx,
-                    name,
-                )
-                router_logit_collection_idx += 1
-                router_logit_collection_size = 0
-                router_logit_collection = []
-                tokenized_batch_collection = []
-                pbar.reset()
+    # Start multiplexer worker
+    multiplexer_proc = mp.Process(
+        target=multiplexer_worker,
+        args=(main_queue, gpu_queues, stop_event, wandb_run_id),
+    )
+    multiplexer_proc.start()
+    processes.append(multiplexer_proc)
 
-            # clean up memory
-            del router_logits
-            del tokenized_batch
-            gc.collect()
-            th.cuda.empty_cache()
-
-        # save the remaining router probabilities to a file
-        if router_logit_collection_size > 0:
-            save_router_logits(
-                router_logit_collection,
-                tokenized_batch_collection,
-                top_k,
-                router_logit_collection_idx,
+    # Start GPU workers
+    for rank in range(world_size):
+        gpu_proc = mp.Process(
+            target=gpu_worker,
+            args=(
+                rank,
+                world_size,
+                gpu_queues[rank],
+                model_name,
                 name,
-            )
+                device,
+                stop_event,
+                wandb_run_id,
+            ),
+        )
+        gpu_proc.start()
+        processes.append(gpu_proc)
 
-        # Final cleanup
-        del router_logit_collection
-        del tokenized_batch_collection
-        gc.collect()
-        if th.cuda.is_available():
-            th.cuda.empty_cache()
+    try:
+        # Wait for all processes to finish
+        for proc in processes:
+            proc.join()
+    except KeyboardInterrupt:
+        print("Keyboard interrupt detected, stopping all processes...")
+        stop_event.set()
+
+        # Wait for processes to terminate
+        for proc in processes:
+            proc.join(timeout=10)
+            if proc.is_alive():
+                proc.terminate()
+    finally:
+        # Clean up
+        if WANDB_AVAILABLE:
+            wandb.finish()
 
 
 if __name__ == "__main__":
     arguably.run()
+
