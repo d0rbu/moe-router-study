@@ -116,6 +116,9 @@ class TestSvdCircuits:
             patch(
                 "matplotlib.pyplot.close",
             ),
+            patch(
+                "matplotlib.pyplot.plot",
+            ),
         ):
             # Import here to avoid module-level binding issues
             from exp.svd_circuits import svd_circuits
@@ -172,6 +175,9 @@ class TestSvdCircuits:
             patch(
                 "matplotlib.pyplot.close",
             ),
+            patch(
+                "matplotlib.pyplot.plot",
+            ),
         ):
             # Import here to avoid module-level binding issues
             from exp.svd_circuits import svd_circuits
@@ -220,6 +226,9 @@ class TestSvdCircuits:
             ),
             patch(
                 "matplotlib.pyplot.close",
+            ),
+            patch(
+                "matplotlib.pyplot.plot",
             ),
         ):
             # Import here to avoid module-level binding issues
