@@ -7,7 +7,10 @@ import torch as th
 from loguru import logger
 from tqdm import tqdm
 
-from exp import get_experiment_dir, get_router_logits_dir
+from exp import get_experiment_dir, get_router_logits_dir, ROUTER_LOGITS_DIRNAME
+
+# For backward compatibility with tests
+ROUTER_LOGITS_DIR = ROUTER_LOGITS_DIRNAME
 
 
 class NoDataFilesError(ValueError, FileNotFoundError):
@@ -197,4 +200,3 @@ def load_activations(
         experiment_name=experiment_name, device=device
     )
     return activated_experts
-
