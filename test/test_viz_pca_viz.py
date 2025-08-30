@@ -116,10 +116,10 @@ class TestPcaFigure:
             # Check that load_activations was called with device="cuda"
             mock_load.assert_called_once_with(device="cuda")
 
-    def test_pca_figure_creates_directory(self, temp_dir, monkeypatch):
+    def test_pca_figure_creates_directory(self, tmp_path):
         """Test that pca_figure creates the figure directory if it doesn't exist."""
-        # Set up patches
-        figure_dir = os.path.join(str(temp_dir), "test_experiment")
+        # Set up figure directory
+        figure_dir = os.path.join(str(tmp_path), "fig", "test_experiment")
         
         # Remove the directory if it exists
         if os.path.exists(figure_dir):

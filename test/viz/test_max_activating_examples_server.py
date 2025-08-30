@@ -37,8 +37,6 @@ def test_save_and_load_circuits(mock_experiment_dir):
     circuits = th.ones((2, 3, 4))
     names = ["test1", "test2"]
     circuits_dict = {"circuits": circuits, "names": names}
-    
-    circuits_path = os.path.join(mock_experiment_dir, "saved_circuits.pt")
 
     # Mock get_experiment_dir to return our test directory
     with patch("exp.get_experiment_dir", return_value=mock_experiment_dir):
