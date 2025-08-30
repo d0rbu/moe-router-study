@@ -114,8 +114,19 @@ def temp_data_file(mock_expert_importance_data):
 
 
 @patch("matplotlib.pyplot.show")
-def test_expert_importances_loads_data(mock_show, temp_data_file):
+@patch("viz.get_figure_dir")
+@patch("exp.get_experiment_dir")
+def test_expert_importances_loads_data(mock_get_experiment_dir, mock_get_figure_dir, mock_show, temp_data_file, tmp_path):
     """Test that expert_importances can load and process data."""
+    # Set up experiment and figure directories
+    experiment_dir = os.path.join(tmp_path, "test_experiment")
+    figure_dir = os.path.join(tmp_path, "fig", "test_experiment")
+    os.makedirs(figure_dir, exist_ok=True)
+    
+    # Mock the directory functions
+    mock_get_experiment_dir.return_value = experiment_dir
+    mock_get_figure_dir.return_value = figure_dir
+    
     # Run the visualization function with the test data
     expert_importances(
         data_path=temp_data_file,
@@ -123,6 +134,7 @@ def test_expert_importances_loads_data(mock_show, temp_data_file):
         checkpoint_idx=0,
         initial_base_layer_idx=0,
         initial_base_expert_idx=0,
+        experiment_name="test_experiment",
     )
 
     # Verify that plt.show() was called, indicating the visualization was created
@@ -130,8 +142,19 @@ def test_expert_importances_loads_data(mock_show, temp_data_file):
 
 
 @patch("matplotlib.pyplot.show")
-def test_expert_importances_with_filters(mock_show, temp_data_file):
+@patch("viz.get_figure_dir")
+@patch("exp.get_experiment_dir")
+def test_expert_importances_with_filters(mock_get_experiment_dir, mock_get_figure_dir, mock_show, temp_data_file, tmp_path):
     """Test that expert_importances correctly applies filters."""
+    # Set up experiment and figure directories
+    experiment_dir = os.path.join(tmp_path, "test_experiment")
+    figure_dir = os.path.join(tmp_path, "fig", "test_experiment")
+    os.makedirs(figure_dir, exist_ok=True)
+    
+    # Mock the directory functions
+    mock_get_experiment_dir.return_value = experiment_dir
+    mock_get_figure_dir.return_value = figure_dir
+    
     # Run with specific model_name and checkpoint_idx filters
     expert_importances(
         data_path=temp_data_file,
@@ -139,6 +162,7 @@ def test_expert_importances_with_filters(mock_show, temp_data_file):
         checkpoint_idx=0,
         initial_base_layer_idx=1,
         initial_base_expert_idx=1,
+        experiment_name="test_experiment",
     )
 
     # Verify that plt.show() was called
@@ -146,12 +170,24 @@ def test_expert_importances_with_filters(mock_show, temp_data_file):
 
 
 @patch("matplotlib.pyplot.show")
-def test_expert_importances_with_custom_percentile(mock_show, temp_data_file):
+@patch("viz.get_figure_dir")
+@patch("exp.get_experiment_dir")
+def test_expert_importances_with_custom_percentile(mock_get_experiment_dir, mock_get_figure_dir, mock_show, temp_data_file, tmp_path):
     """Test that expert_importances works with custom normalization percentile."""
+    # Set up experiment and figure directories
+    experiment_dir = os.path.join(tmp_path, "test_experiment")
+    figure_dir = os.path.join(tmp_path, "fig", "test_experiment")
+    os.makedirs(figure_dir, exist_ok=True)
+    
+    # Mock the directory functions
+    mock_get_experiment_dir.return_value = experiment_dir
+    mock_get_figure_dir.return_value = figure_dir
+    
     # Run with a custom normalization percentile
     expert_importances(
         data_path=temp_data_file,
         normalize_percentile=90.0,
+        experiment_name="test_experiment",
     )
 
     # Verify that plt.show() was called
@@ -165,15 +201,37 @@ def test_expert_importances_with_custom_percentile(mock_show, temp_data_file):
         "/path/does/not/exist/data.pt",
     ],
 )
-def test_expert_importances_file_not_found(invalid_path):
+@patch("viz.get_figure_dir")
+@patch("exp.get_experiment_dir")
+def test_expert_importances_file_not_found(mock_get_experiment_dir, mock_get_figure_dir, invalid_path, tmp_path):
     """Test that expert_importances raises FileNotFoundError for invalid paths."""
+    # Set up experiment and figure directories
+    experiment_dir = os.path.join(tmp_path, "test_experiment")
+    figure_dir = os.path.join(tmp_path, "fig", "test_experiment")
+    os.makedirs(figure_dir, exist_ok=True)
+    
+    # Mock the directory functions
+    mock_get_experiment_dir.return_value = experiment_dir
+    mock_get_figure_dir.return_value = figure_dir
+    
     with pytest.raises(FileNotFoundError):
-        expert_importances(data_path=invalid_path)
+        expert_importances(data_path=invalid_path, experiment_name="test_experiment")
 
 
 @patch("torch.load")
-def test_expert_importances_empty_data(mock_load, temp_data_file):
+@patch("viz.get_figure_dir")
+@patch("exp.get_experiment_dir")
+def test_expert_importances_empty_data(mock_get_experiment_dir, mock_get_figure_dir, mock_load, temp_data_file, tmp_path):
     """Test that expert_importances raises ValueError for empty data."""
+    # Set up experiment and figure directories
+    experiment_dir = os.path.join(tmp_path, "test_experiment")
+    figure_dir = os.path.join(tmp_path, "fig", "test_experiment")
+    os.makedirs(figure_dir, exist_ok=True)
+    
+    # Mock the directory functions
+    mock_get_experiment_dir.return_value = experiment_dir
+    mock_get_figure_dir.return_value = figure_dir
+    
     # Mock torch.load to return empty list
     mock_load.return_value = []
 
@@ -181,4 +239,6 @@ def test_expert_importances_empty_data(mock_load, temp_data_file):
         expert_importances(
             data_path=temp_data_file,
             model_name="nonexistent_model",
+            experiment_name="test_experiment",
         )
+

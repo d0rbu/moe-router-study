@@ -119,14 +119,12 @@ class TestPcaFigure:
     def test_pca_figure_creates_directory(self, temp_dir, monkeypatch):
         """Test that pca_figure creates the figure directory if it doesn't exist."""
         # Set up patches
-        monkeypatch.setattr("viz.pca_viz.FIGURE_DIR", str(temp_dir))
-        monkeypatch.setattr(
-            "viz.pca_viz.FIGURE_PATH", os.path.join(temp_dir, "pca_circuits.png")
-        )
-
+        figure_dir = os.path.join(str(temp_dir), "test_experiment")
+        
         # Remove the directory if it exists
-        if os.path.exists(temp_dir):
-            os.rmdir(temp_dir)
+        if os.path.exists(figure_dir):
+            import shutil
+            shutil.rmtree(figure_dir)
 
         with (
             patch(
@@ -146,9 +144,14 @@ class TestPcaFigure:
             patch(
                 "matplotlib.pyplot.close",
             ),
+            patch(
+                "viz.get_figure_dir",
+                return_value=figure_dir,
+            ),
         ):
             # Run the function
-            pca_figure(device="cpu")
+            pca_figure(device="cpu", experiment_name="test_experiment")
 
             # Check that the directory was created
-            assert os.path.exists(temp_dir)
+            assert os.path.exists(figure_dir)
+

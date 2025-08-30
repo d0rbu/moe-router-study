@@ -24,37 +24,41 @@ def temp_dir():
 
 
 @pytest.fixture
-def mock_circuits_path(temp_dir):
-    """Mock the CIRCUITS_PATH constant."""
-    with patch(
-        "viz.max_activating_examples_server.CIRCUITS_PATH",
-        os.path.join(temp_dir, "circuits.pt"),
-    ):
-        yield os.path.join(temp_dir, "circuits.pt")
+def mock_experiment_dir(temp_dir):
+    """Create a mock experiment directory."""
+    experiment_dir = os.path.join(temp_dir, "test_experiment")
+    os.makedirs(experiment_dir, exist_ok=True)
+    return experiment_dir
 
 
-def test_save_and_load_circuits(mock_circuits_path):
+def test_save_and_load_circuits(mock_experiment_dir):
     """Test saving and loading circuits."""
     # Create test data
     circuits = th.ones((2, 3, 4))
     names = ["test1", "test2"]
     circuits_dict = {"circuits": circuits, "names": names}
+    
+    circuits_path = os.path.join(mock_experiment_dir, "saved_circuits.pt")
 
-    # Save circuits
-    save_circuits(circuits_dict)
+    # Mock get_experiment_dir to return our test directory
+    with patch("exp.get_experiment_dir", return_value=mock_experiment_dir):
+        # Save circuits
+        save_circuits(circuits_dict, experiment_name="test_experiment")
 
-    # Load circuits
-    loaded_dict = load_circuits()
+        # Load circuits
+        loaded_dict = load_circuits(experiment_name="test_experiment")
 
     # Check that the loaded data matches the original
     assert th.allclose(loaded_dict["circuits"], circuits)
     assert loaded_dict["names"] == names
 
 
-def test_load_circuits_nonexistent(mock_circuits_path):
+def test_load_circuits_nonexistent(mock_experiment_dir):
     """Test loading circuits when the file doesn't exist."""
-    # Load non-existent circuits
-    loaded_dict = load_circuits()
+    # Mock get_experiment_dir to return our test directory
+    with patch("exp.get_experiment_dir", return_value=mock_experiment_dir):
+        # Load non-existent circuits
+        loaded_dict = load_circuits(experiment_name="test_experiment")
 
     # Check that we get an empty dictionary with the expected structure
     assert loaded_dict["circuits"].shape == (0, 0, 0)
@@ -154,3 +158,4 @@ def test_compute_max_activating_examples_input_types(input_type):
     assert isinstance(top_indices, list)
     assert norm_scores.shape == (5,)
     assert len(top_indices) <= 3
+
