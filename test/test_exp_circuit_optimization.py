@@ -19,10 +19,10 @@ def _round_if_float(x: object, ndigits: int = 6) -> object:
 
 def expand_batch(
     batch: dict[str, th.Tensor | int | float | str | bool | list | None],
-) -> list[dict[str, any]]:
+) -> list[dict[str, object]]:
     """Expand a batch dict of tensors/scalars into a list of per-item dicts.
 
-    Rules per tests:
+    Rules:
     - Tensor values are converted to Python types via .tolist(). For multi-d tensors,
       outer-most dimension indexes items; inner dims remain as lists.
     - Scalar values (int/float/str) are replicated across all items.
@@ -32,7 +32,7 @@ def expand_batch(
     - Empty tensors (length 0) yield an empty list.
     """
     # Convert tensors to lists, leave others as-is
-    normalized: dict[str, any] = {}
+    normalized: dict[str, object] = {}
     lengths: set[int] = set()
     batched_keys: set[str] = set()
     for k, v in batch.items():
@@ -69,9 +69,9 @@ def expand_batch(
         return []
 
     # Build expanded items
-    expanded: list[dict[str, any]] = []
+    expanded: list[dict[str, object]] = []
     for i in range(batch_len):
-        item: dict[str, any] = {}
+        item: dict[str, object] = {}
         for k, v in normalized.items():
             if k in batched_keys and isinstance(v, list) and len(v) == batch_len:
                 # Pull ith element for tensor/list-backed fields

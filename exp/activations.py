@@ -1,5 +1,7 @@
 """Utilities for loading router activations."""
+
 import os
+from typing import cast
 
 import torch
 from tqdm import tqdm
@@ -50,7 +52,10 @@ def load_activations_indices_tokens_and_topk(
 
     # Sort files by index
     file_indices = [int(os.path.basename(f)[:-3]) for f in file_paths]
-    file_paths = [file_paths[i] for i in sorted(range(len(file_indices)), key=lambda k: file_indices[k])]
+    file_paths = [
+        file_paths[i]
+        for i in sorted(range(len(file_indices)), key=lambda k: file_indices[k])
+    ]
     file_indices.sort()
 
     # Find the highest contiguous index
@@ -65,7 +70,7 @@ def load_activations_indices_tokens_and_topk(
 
     all_activated_experts = []
     all_activated_expert_indices = []
-    all_tokens = []
+    all_tokens: list[str] = []
     top_k = None
 
     for file_path in tqdm(file_paths, desc="Loading router logits"):
@@ -93,7 +98,9 @@ def load_activations_indices_tokens_and_topk(
 
         num_experts = router_logits.shape[2]
         if file_topk > num_experts:
-            raise ValueError(f"topk ({file_topk}) cannot be greater than number of experts ({num_experts})")
+            raise ValueError(
+                f"topk ({file_topk}) cannot be greater than number of experts ({num_experts})"
+            )
 
         if top_k is None:
             top_k = file_topk
@@ -105,7 +112,9 @@ def load_activations_indices_tokens_and_topk(
         batch_size, num_layers, _ = router_logits.shape
 
         # Create a boolean tensor indicating which experts are activated
-        activated = torch.zeros(batch_size, num_layers, num_experts, dtype=torch.bool, device=device)
+        activated = torch.zeros(
+            batch_size, num_layers, num_experts, dtype=torch.bool, device=device
+        )
         for b in range(batch_size):
             for layer in range(num_layers):
                 activated[b, layer, indices[b, layer]] = True
@@ -121,7 +130,10 @@ def load_activations_indices_tokens_and_topk(
     activated_expert_indices = torch.cat(all_activated_expert_indices, dim=0)
     tokens = all_tokens if all_tokens else None
 
-    return activated_experts, activated_expert_indices, tokens, top_k
+    # Ensure top_k is not None
+    assert top_k is not None, "top_k should not be None at this point"
+
+    return activated_experts, activated_expert_indices, tokens, cast("int", top_k)
 
 
 def load_activations_and_indices_and_topk(
@@ -137,8 +149,10 @@ def load_activations_and_indices_and_topk(
     Returns:
         Tuple of (activated_experts, activated_expert_indices, top_k).
     """
-    activated_experts, activated_expert_indices, _, top_k = load_activations_indices_tokens_and_topk(
-        experiment_name=experiment_name, device=device
+    activated_experts, activated_expert_indices, _, top_k = (
+        load_activations_indices_tokens_and_topk(
+            experiment_name=experiment_name, device=device
+        )
     )
     return activated_experts, activated_expert_indices, top_k
 
@@ -162,7 +176,9 @@ def load_activations_and_topk(
     return activated_experts, top_k
 
 
-def load_activations(experiment_name: str | None = None, device: str = "cpu") -> torch.Tensor:
+def load_activations(
+    experiment_name: str | None = None, device: str = "cpu"
+) -> torch.Tensor:
     """
     Load router activations from saved files.
 
@@ -174,6 +190,7 @@ def load_activations(experiment_name: str | None = None, device: str = "cpu") ->
         Boolean tensor of shape (B, L, E) where B is batch size,
         L is number of layers, and E is number of experts.
     """
-    activated_experts, _ = load_activations_and_topk(experiment_name=experiment_name, device=device)
+    activated_experts, _ = load_activations_and_topk(
+        experiment_name=experiment_name, device=device
+    )
     return activated_experts
-
