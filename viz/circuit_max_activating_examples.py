@@ -745,6 +745,12 @@ def viz_max_cli(
         device=device,
         token_topk_mask=token_topk_mask,
     )
+    # Process tokens from flat list to list of lists if needed
+    if tokens is not None and not (
+        isinstance(tokens, list) and all(isinstance(t, list) for t in tokens)
+    ):
+        # Convert flat token list to list of lists with one token per inner list
+        tokens = [[token] for token in tokens]
     viz_max_activating_tokens(
         circuits,
         token_topk_mask,
@@ -786,6 +792,12 @@ def viz_mean_cli(
         device=device,
         token_topk_mask=token_topk_mask,
     )
+    # Process tokens from flat list to list of lists if needed
+    if tokens is not None and not (
+        isinstance(tokens, list) and all(isinstance(t, list) for t in tokens)
+    ):
+        # Convert flat token list to list of lists with one token per inner list
+        tokens = [[token] for token in tokens]
     viz_mean_activating_tokens(
         circuits,
         token_topk_mask,

@@ -22,20 +22,17 @@ def _round_if_float(x: object, ndigits: int = 6) -> object:
 
 def expand_batch(
     batch: dict[str, th.Tensor | int | float | str | bool | list | None],
-) -> list[dict[str, any]]:
+) -> list[dict[str, object]]:
     """Expand a batch dict of tensors/scalars into a list of per-item dicts.
 
-    Rules:
-    - Tensor values are converted to Python types via .tolist(). For multi-d tensors,
-      outer-most dimension indexes items; inner dims remain as lists.
-    - Scalar values (int/float/str) are replicated across all items.
-    - Non-tensor lists are supported; they must have the same length as tensors.
-    - None values are allowed and replicated.
-    - If any list/tensor lengths disagree, raise AssertionError.
-    - Empty tensors (length 0) yield an empty list.
+    Args:
+        batch: A dict of tensors/scalars, where tensors have a batch dimension.
+
+    Returns:
+        A list of dicts, one per batch item, with tensors reduced to single items.
     """
     # Convert tensors to lists, leave others as-is
-    normalized: dict[str, any] = {}
+    normalized: dict[str, object] = {}
     lengths: set[int] = set()
     batched_keys: set[str] = set()
     for k, v in batch.items():
@@ -72,9 +69,9 @@ def expand_batch(
         return []
 
     # Build expanded items
-    expanded: list[dict[str, any]] = []
+    expanded: list[dict[str, object]] = []
     for i in range(batch_len):
-        item: dict[str, any] = {}
+        item: dict[str, object] = {}
         for k, v in normalized.items():
             if k in batched_keys and isinstance(v, list) and len(v) == batch_len:
                 # Pull ith element for tensor/list-backed fields
@@ -224,7 +221,11 @@ def gradient_descent(
 
             # Forward pass
             loss, faithfulness, complexity = circuit_loss(
-                circuits, batch, top_k, complexity_importance, complexity_power
+                circuits,
+                batch,
+                topk=top_k,
+                complexity_importance=complexity_importance,
+                complexity_power=complexity_power,
             )
 
             # Backward pass
@@ -242,7 +243,11 @@ def gradient_descent(
         if epoch % 10 == 0 or epoch == num_epochs - 1:
             with th.no_grad():
                 loss, faithfulness, complexity = circuit_loss(
-                    circuits, data, top_k, complexity_importance, complexity_power
+                    circuits,
+                    data,
+                    topk=top_k,
+                    complexity_importance=complexity_importance,
+                    complexity_power=complexity_power,
                 )
                 log_queue.put(
                     {
@@ -258,7 +263,11 @@ def gradient_descent(
     # Get final metrics
     with th.no_grad():
         loss, faithfulness, complexity = circuit_loss(
-            circuits, data, top_k, complexity_importance, complexity_power
+            circuits,
+            data,
+            topk=top_k,
+            complexity_importance=complexity_importance,
+            complexity_power=complexity_power,
         )
 
     # Convert to boolean tensor
