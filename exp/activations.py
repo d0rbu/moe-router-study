@@ -1,189 +1,179 @@
-"""Utilities for loading activations from router logits."""
-
+"""Utilities for loading router activations."""
 import os
 
-import torch as th
+import torch
 from tqdm import tqdm
 
-from exp import ROUTER_LOGITS_DIRNAME, get_experiment_dir, get_router_logits_dir
+from exp import get_experiment_dir, get_router_logits_dir
 
 
 def load_activations_indices_tokens_and_topk(
-    experiment_name: str,
-    device: str = "cpu",  # default to CPU to avoid requiring CUDA in tests/CI
-) -> tuple[th.Tensor, th.Tensor, list[list[str]], int]:
-    """Load boolean activation mask, top-k indices, tokens, and top_k.
+    experiment_name: str | None = None, device: str = "cpu"
+) -> tuple[torch.Tensor, torch.Tensor, list[str] | None, int]:
+    """
+    Load router activations, indices, tokens, and topk from saved files.
 
     Args:
-        experiment_name: Name of the experiment to load data from.
+        experiment_name: Name of the experiment to load activations from.
         device: Device to load tensors to.
 
     Returns:
-      - activated_experts: (B, L, E) boolean mask of top-k expert activations
-      - activated_expert_indices: (B, L, topk) long indices of selected experts
-      - tokens: list[list[str]] tokenized sequences aligned to batch concatenation
-      - top_k: int top-k used during collection
-    """
-    activated_expert_indices_collection: list[th.Tensor] = []
-    activated_experts_collection: list[th.Tensor] = []
-    tokens: list[list[str]] = []
-    top_k: int | None = None  # handle case of no files
+        Tuple of (activated_experts, activated_expert_indices, tokens, top_k).
+        - activated_experts: Boolean tensor of shape (B, L, E) where B is batch size,
+          L is number of layers, and E is number of experts.
+        - activated_expert_indices: Integer tensor of shape (B, L, top_k) containing
+          the indices of the top-k experts for each token.
+        - tokens: List of tokenized sequences, or None if not available.
+        - top_k: Number of experts activated per token.
 
+    Raises:
+        FileNotFoundError: If the activation directory does not exist.
+        ValueError: If no data files are found in the directory.
+        KeyError: If required keys are missing from the loaded data.
+        ValueError: If router_logits has invalid shape or topk is invalid.
+    """
     experiment_dir = get_experiment_dir(name=experiment_name)
     dir_path = get_router_logits_dir(experiment_dir)
 
-    if not os.path.isdir(dir_path):
+    if not os.path.exists(dir_path):
         raise FileNotFoundError(f"Activation directory not found: {dir_path}")
 
-    # get the highest file index of contiguous *.pt files
-    file_indices = [
-        int(f.split(".")[0]) for f in os.listdir(dir_path) if f.endswith(".pt")
+    # Get all .pt files in the directory
+    file_paths = [
+        os.path.join(dir_path, f)
+        for f in os.listdir(dir_path)
+        if f.endswith(".pt") and f[:-3].isdigit()
     ]
 
-    # Check if there are any files
-    if not file_indices:
+    if not file_paths:
         raise ValueError("No data files found in directory")
 
+    # Sort files by index
+    file_indices = [int(os.path.basename(f)[:-3]) for f in file_paths]
+    file_paths = [file_paths[i] for i in sorted(range(len(file_indices)), key=lambda k: file_indices[k])]
     file_indices.sort()
-    # get the highest file index that does not have a gap
-    highest_file_idx = file_indices[-1]
-    for i in range(len(file_indices) - 1):
-        if file_indices[i + 1] - file_indices[i] > 1:
-            highest_file_idx = file_indices[i]
+
+    # Find the highest contiguous index
+    max_contiguous_idx = 0
+    for i, idx in enumerate(file_indices):
+        if idx != i:
             break
+        max_contiguous_idx = i
 
-    # Iterate through files and load data
-    for file_idx in tqdm(
-        range(highest_file_idx + 1),
-        desc="Loading activations",
-        total=highest_file_idx + 1,
-    ):
-        file_path = os.path.join(dir_path, f"{file_idx}.pt")
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"File not found: {file_path}")
+    # Only process files up to the highest contiguous index
+    file_paths = file_paths[: max_contiguous_idx + 1]
 
+    all_activated_experts = []
+    all_activated_expert_indices = []
+    all_tokens = []
+    top_k = None
+
+    for file_path in tqdm(file_paths, desc="Loading router logits"):
         try:
-            data = th.load(file_path, map_location=device)
-        except Exception as e:  # pragma: no cover - defensive
+            data = torch.load(file_path, map_location=device)
+        except Exception as e:
             raise RuntimeError(f"Failed to load router logits file: {file_path}") from e
 
-        # Check for required keys
         if "topk" not in data:
-            raise KeyError(f"Missing 'topk' key in file {file_path}")
-        if "router_logits" not in data:
-            raise KeyError(f"Missing 'router_logits' key in file {file_path}")
+            raise KeyError(f"Missing 'topk' key in file: {file_path}")
 
-        # Get topk value
         file_topk = data["topk"]
-
-        # Validate topk
         if file_topk <= 0:
-            raise ValueError(f"Invalid topk value: {file_topk} must be > 0")
+            raise ValueError(f"Invalid topk value: {file_topk}")
 
-        # Check router_logits shape
+        if "router_logits" not in data:
+            raise KeyError(f"Missing 'router_logits' key in file: {file_path}")
+
         router_logits = data["router_logits"]
         if len(router_logits.shape) != 3:
             raise ValueError(
-                f"Expected 3D tensor for router_logits, got shape {router_logits.shape}"
+                f"Expected router_logits to be 3D (batch_size, num_layers, num_experts), "
+                f"got shape: {router_logits.shape}"
             )
 
-        # Check if topk is larger than number of experts
         num_experts = router_logits.shape[2]
         if file_topk > num_experts:
-            raise ValueError(
-                f"topk cannot be larger than number of experts: {file_topk} > {num_experts}"
-            )
+            raise ValueError(f"topk ({file_topk}) cannot be greater than number of experts ({num_experts})")
 
-        # Check for consistent topk values across files
         if top_k is None:
             top_k = file_topk
         elif top_k != file_topk:
             raise ValueError(f"Inconsistent topk values: {top_k} vs {file_topk}")
 
-        # Process the data
-        router_logits = router_logits.to(device)
+        # Get the indices of the top-k experts for each token
+        _, indices = torch.topk(router_logits, k=file_topk, dim=2)
+        batch_size, num_layers, _ = router_logits.shape
 
-        # Get tokens if available
+        # Create a boolean tensor indicating which experts are activated
+        activated = torch.zeros(batch_size, num_layers, num_experts, dtype=torch.bool, device=device)
+        for b in range(batch_size):
+            for layer in range(num_layers):
+                activated[b, layer, indices[b, layer]] = True
+
+        all_activated_experts.append(activated)
+        all_activated_expert_indices.append(indices)
+
         if "tokens" in data:
-            tokens.extend(data["tokens"])
+            all_tokens.extend(data["tokens"])
 
-        # Get top-k indices and create boolean mask
-        batch_size, num_layers, num_experts = router_logits.shape
-        topk_indices = th.topk(router_logits, k=file_topk, dim=2).indices
+    # Concatenate all tensors along the batch dimension
+    activated_experts = torch.cat(all_activated_experts, dim=0)
+    activated_expert_indices = torch.cat(all_activated_expert_indices, dim=0)
+    tokens = all_tokens if all_tokens else None
 
-        # (B, L, topk) -> (B, L, E)
-        activated_experts = th.zeros_like(router_logits, device=device).bool()
-        activated_experts.scatter_(2, topk_indices, True)
-
-        activated_expert_indices_collection.append(topk_indices)
-        activated_experts_collection.append(activated_experts)
-
-    # Concatenate all tensors
-    if not activated_experts_collection:
-        raise ValueError("No data loaded from files")
-
-    # (B, L, E)
-    activated_experts = th.cat(activated_experts_collection, dim=0)
-    # (B, L, topk)
-    activated_expert_indices = th.cat(activated_expert_indices_collection, dim=0)
-
-    assert top_k is not None, "top_k should be set by now"
     return activated_experts, activated_expert_indices, tokens, top_k
 
 
 def load_activations_and_indices_and_topk(
-    experiment_name: str, device: str = "cpu"
-) -> tuple[th.Tensor, th.Tensor, int]:
-    """Load boolean activation mask, top-k indices, and top_k.
+    experiment_name: str | None = None, device: str = "cpu"
+) -> tuple[torch.Tensor, torch.Tensor, int]:
+    """
+    Load router activations, indices, and topk from saved files.
 
     Args:
-        experiment_name: Name of the experiment to load data from.
+        experiment_name: Name of the experiment to load activations from.
         device: Device to load tensors to.
 
     Returns:
-      - activated_experts: (B, L, E) boolean mask of top-k expert activations
-      - activated_expert_indices: (B, L, topk) long indices of selected experts
-      - top_k: int top-k used during collection
+        Tuple of (activated_experts, activated_expert_indices, top_k).
     """
-    activated_experts, activated_expert_indices, _, top_k = (
-        load_activations_indices_tokens_and_topk(
-            experiment_name=experiment_name, device=device
-        )
+    activated_experts, activated_expert_indices, _, top_k = load_activations_indices_tokens_and_topk(
+        experiment_name=experiment_name, device=device
     )
     return activated_experts, activated_expert_indices, top_k
 
 
 def load_activations_and_topk(
-    experiment_name: str, device: str = "cpu"
-) -> tuple[th.Tensor, int]:
-    """Load boolean activation mask and top_k.
+    experiment_name: str | None = None, device: str = "cpu"
+) -> tuple[torch.Tensor, int]:
+    """
+    Load router activations and topk from saved files.
 
     Args:
-        experiment_name: Name of the experiment to load data from.
+        experiment_name: Name of the experiment to load activations from.
         device: Device to load tensors to.
 
     Returns:
-      - activated_experts: (B, L, E) boolean mask of top-k expert activations
-      - top_k: int top-k used during collection
+        Tuple of (activated_experts, top_k).
     """
-    activated_experts, _, top_k = load_activations_and_indices_and_topk(
+    activated_experts, _, _, top_k = load_activations_indices_tokens_and_topk(
         experiment_name=experiment_name, device=device
     )
     return activated_experts, top_k
 
 
-def load_activations(experiment_name: str, device: str = "cpu") -> th.Tensor:
-    """Load boolean activation mask.
+def load_activations(experiment_name: str | None = None, device: str = "cpu") -> torch.Tensor:
+    """
+    Load router activations from saved files.
 
     Args:
-        experiment_name: Name of the experiment to load data from.
+        experiment_name: Name of the experiment to load activations from.
         device: Device to load tensors to.
 
     Returns:
-      - activated_experts: (B, L, E) boolean mask of top-k expert activations
+        Boolean tensor of shape (B, L, E) where B is batch size,
+        L is number of layers, and E is number of experts.
     """
-    activated_experts, _ = load_activations_and_topk(
-        experiment_name=experiment_name, device=device
-    )
+    activated_experts, _ = load_activations_and_topk(experiment_name=experiment_name, device=device)
     return activated_experts
 
