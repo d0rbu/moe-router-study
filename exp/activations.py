@@ -9,9 +9,6 @@ from tqdm import tqdm
 
 from exp import get_experiment_dir, get_router_logits_dir, ROUTER_LOGITS_DIRNAME
 
-# Keep this for backward compatibility with tests
-ROUTER_LOGITS_DIR = ROUTER_LOGITS_DIRNAME
-
 
 def load_activations_indices_tokens_and_topk(
     experiment_name: str,
@@ -191,3 +188,4 @@ def load_activations(experiment_name: str, device: str = "cpu") -> th.Tensor:
         experiment_name=experiment_name, device=device
     )
     return activated_experts
+

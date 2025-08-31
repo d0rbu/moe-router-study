@@ -6,8 +6,6 @@ from unittest.mock import patch
 import pytest
 import torch as th
 
-from viz.router_correlations import router_correlations
-
 
 class TestRouterCorrelations:
     """Test router_correlations function."""
@@ -16,10 +14,11 @@ class TestRouterCorrelations:
     def test_router_correlations_no_files(self, temp_dir, monkeypatch):
         """Test router_correlations with no data files."""
         # Set up patches
-        monkeypatch.setattr("viz.router_correlations.ROUTER_LOGITS_DIR", str(temp_dir))
-
-        with pytest.raises(ValueError, match="No data files found"):
-            router_correlations()
+        with patch("exp.get_router_logits_dir", return_value=str(temp_dir)):
+            from viz.router_correlations import router_correlations
+            
+            with pytest.raises(ValueError, match="No data files found"):
+                router_correlations(experiment_name="test_experiment")
 
     @pytest.mark.skip(reason="Test needs further work to fix mocking issues")
     def test_router_correlations_basic(self, temp_dir, monkeypatch):
@@ -48,32 +47,38 @@ class TestRouterCorrelations:
                 os.path.join(temp_dir, f"{file_idx}.pt"),
             )
 
-        # Set up patches
-        monkeypatch.setattr("viz.router_correlations.ROUTER_LOGITS_DIR", str(temp_dir))
-        monkeypatch.setattr("viz.router_correlations.FIGURE_DIR", str(temp_dir))
-
-        # Mock the correlation calculation to avoid issues with tensor shapes
-        mock_correlation = th.eye(12)  # 12 = 3*4 (layers * experts)
+        # Set up experiment directory and figure directory
+        experiment_dir = os.path.join(temp_dir, "test_experiment")
+        os.makedirs(experiment_dir, exist_ok=True)
+        
+        figure_dir = os.path.join(temp_dir, "fig", "test_experiment")
+        os.makedirs(figure_dir, exist_ok=True)
 
         with (
-            patch("torch.corrcoef", return_value=mock_correlation),
+            patch("exp.get_experiment_dir", return_value=experiment_dir),
+            patch("exp.get_router_logits_dir", return_value=temp_dir),
+            patch("viz.get_figure_dir", return_value=figure_dir),
+            patch("torch.corrcoef", return_value=th.eye(12)),  # 12 = 3*4 (layers * experts)
             patch("matplotlib.pyplot.savefig"),
             patch("matplotlib.pyplot.close"),
             patch("builtins.print") as mock_print,
         ):
+            # Import here to avoid module-level binding issues
+            from viz.router_correlations import router_correlations
+            
             # Run the function
-            router_correlations()
+            router_correlations(experiment_name="test_experiment")
 
             # Check that output files were created
-            assert os.path.exists(os.path.join(temp_dir, "router_correlations.png"))
+            assert os.path.exists(os.path.join(figure_dir, "router_correlations.png"))
             assert os.path.exists(
-                os.path.join(temp_dir, "router_correlations_random.png")
+                os.path.join(figure_dir, "router_correlations_random.png")
             )
             assert os.path.exists(
-                os.path.join(temp_dir, "router_correlations_cross_layer.png")
+                os.path.join(figure_dir, "router_correlations_cross_layer.png")
             )
             assert os.path.exists(
-                os.path.join(temp_dir, "router_correlations_cross_layer_random.png")
+                os.path.join(figure_dir, "router_correlations_cross_layer_random.png")
             )
 
             # Check that print was called with expected messages
@@ -113,9 +118,12 @@ class TestRouterCorrelations:
             os.path.join(temp_dir, "0.pt"),
         )
 
-        # Set up patches
-        monkeypatch.setattr("viz.router_correlations.ROUTER_LOGITS_DIR", str(temp_dir))
-        monkeypatch.setattr("viz.router_correlations.FIGURE_DIR", str(temp_dir))
+        # Set up experiment directory and figure directory
+        experiment_dir = os.path.join(temp_dir, "test_experiment")
+        os.makedirs(experiment_dir, exist_ok=True)
+        
+        figure_dir = os.path.join(temp_dir, "fig", "test_experiment")
+        os.makedirs(figure_dir, exist_ok=True)
 
         # Create a mock correlation matrix with known values
         mock_correlation = th.eye(6)  # 6 = 2*3 (layers * experts)
@@ -127,13 +135,19 @@ class TestRouterCorrelations:
         mock_correlation[3, 1] = -1.0
 
         with (
+            patch("exp.get_experiment_dir", return_value=experiment_dir),
+            patch("exp.get_router_logits_dir", return_value=temp_dir),
+            patch("viz.get_figure_dir", return_value=figure_dir),
             patch("torch.corrcoef", return_value=mock_correlation),
             patch("matplotlib.pyplot.savefig"),
             patch("matplotlib.pyplot.close"),
             patch("builtins.print") as mock_print,
         ):
+            # Import here to avoid module-level binding issues
+            from viz.router_correlations import router_correlations
+            
             # Run the function
-            router_correlations()
+            router_correlations(experiment_name="test_experiment")
 
             # Check that print was called with correlation values
             print_calls = [
@@ -173,17 +187,26 @@ class TestRouterCorrelations:
             os.path.join(temp_dir, "0.pt"),
         )
 
-        # Set up patches
-        monkeypatch.setattr("viz.router_correlations.ROUTER_LOGITS_DIR", str(temp_dir))
-        monkeypatch.setattr("viz.router_correlations.FIGURE_DIR", str(temp_dir))
+        # Set up experiment directory and figure directory
+        experiment_dir = os.path.join(temp_dir, "test_experiment")
+        os.makedirs(experiment_dir, exist_ok=True)
+        
+        figure_dir = os.path.join(temp_dir, "fig", "test_experiment")
+        os.makedirs(figure_dir, exist_ok=True)
 
         with (
+            patch("exp.get_experiment_dir", return_value=experiment_dir),
+            patch("exp.get_router_logits_dir", return_value=temp_dir),
+            patch("viz.get_figure_dir", return_value=figure_dir),
             patch("matplotlib.pyplot.savefig"),
             patch("matplotlib.pyplot.close"),
             patch("builtins.print") as mock_print,
         ):
+            # Import here to avoid module-level binding issues
+            from viz.router_correlations import router_correlations
+            
             # Run the function
-            router_correlations()
+            router_correlations(experiment_name="test_experiment")
 
             # Check that print was called with correlation values
             print_calls = [
@@ -207,3 +230,4 @@ class TestRouterCorrelations:
 
             # We should find at least one high positive or high negative correlation
             assert high_positive_found or high_negative_found
+
