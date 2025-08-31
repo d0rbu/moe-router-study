@@ -1,6 +1,7 @@
 """Experiments for MoE router study."""
+
 import os
-from typing import Any, Dict, Optional
+from typing import Any
 import warnings
 
 import yaml
@@ -12,15 +13,15 @@ WEIGHT_DIRNAME = "weights"
 CONFIG_FILENAME = "config.yaml"
 
 
-def get_experiment_dir(name: Optional[str] = None, **kwargs) -> str:
+def get_experiment_dir(name: str | None = None, **kwargs) -> str:
     """
     Get the experiment directory path.
-    
+
     Args:
         name: Optional name for the experiment. If not provided, one will be generated
               based on the provided kwargs.
         **kwargs: Configuration parameters used to generate a name if one is not provided.
-    
+
     Returns:
         Path to the experiment directory.
     """
@@ -28,11 +29,11 @@ def get_experiment_dir(name: Optional[str] = None, **kwargs) -> str:
         # Generate a name based on config parameters
         if not kwargs:
             raise ValueError("Either name or config parameters must be provided")
-        
+
         # Extract model_name and dataset_name if available
         model_name = kwargs.get("model_name", "unknown_model")
         dataset_name = kwargs.get("dataset_name", "unknown_dataset")
-        
+
         # Track which keys are being filtered out
         ignored_keys = {"device", "resume", "model_name", "dataset_name"}
         filtered_keys = set()
@@ -54,53 +55,53 @@ def get_experiment_dir(name: Optional[str] = None, **kwargs) -> str:
 
         param_str = "_".join(param_items)
         name = f"{model_name}_{dataset_name}"
-        
+
         if param_str:
             name = f"{name}_{param_str}"
-    
+
     return os.path.join(BASE_OUTPUT_DIR, name)
 
 
-def save_config(config: Dict[str, Any], experiment_dir: str) -> None:
+def save_config(config: dict[str, Any], experiment_dir: str) -> None:
     """
     Save experiment configuration to a YAML file.
-    
+
     Args:
         config: Dictionary containing configuration parameters.
         experiment_dir: Path to the experiment directory.
     """
     os.makedirs(experiment_dir, exist_ok=True)
     config_path = os.path.join(experiment_dir, CONFIG_FILENAME)
-    
+
     with open(config_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False)
 
 
-def verify_config(config: Dict[str, Any], experiment_dir: str) -> None:
+def verify_config(config: dict[str, Any], experiment_dir: str) -> None:
     """
     Verify that the current configuration matches the saved one.
-    
+
     Args:
         config: Dictionary containing current configuration parameters.
         experiment_dir: Path to the experiment directory.
-        
+
     Raises:
         ValueError: If there's a mismatch between current and saved configurations.
     """
     config_path = os.path.join(experiment_dir, CONFIG_FILENAME)
-    
+
     if not os.path.exists(config_path):
         return
-    
+
     with open(config_path) as f:
         saved_config = yaml.safe_load(f)
-    
+
     # Check for mismatches
     mismatches = {}
     for key, value in config.items():
         if key in saved_config and saved_config[key] != value:
             mismatches[key] = (saved_config[key], value)
-    
+
     if mismatches:
         mismatch_str = "\n".join(
             f"  - {key}: saved={saved} vs current={current}"
@@ -119,4 +120,3 @@ def get_router_logits_dir(experiment_dir: str) -> str:
 def get_weight_dir(experiment_dir: str) -> str:
     """Get the weights directory for an experiment."""
     return os.path.join(experiment_dir, WEIGHT_DIRNAME)
-

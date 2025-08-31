@@ -64,7 +64,7 @@ class TestExpertImportance:
         # Set up experiment directory
         experiment_dir = os.path.join(str(temp_dir), "test_experiment")
         os.makedirs(experiment_dir, exist_ok=True)
-        
+
         # Set up expert importance directory
         expert_importance_dir = os.path.join(experiment_dir, "expert_importance")
         os.makedirs(expert_importance_dir, exist_ok=True)
@@ -79,9 +79,14 @@ class TestExpertImportance:
         ):
             # Import here to avoid module-level binding issues
             from exp.expert_importance import expert_importance
-            
+
             # Run the function
-            expert_importance(model_name="test_model", checkpoint_idx=0, device="cpu", experiment_name="test_experiment")
+            expert_importance(
+                model_name="test_model",
+                checkpoint_idx=0,
+                device="cpu",
+                experiment_name="test_experiment",
+            )
 
             # Check that output file was created
             output_file = os.path.join(expert_importance_dir, "all.pt")
@@ -134,9 +139,12 @@ class TestExpertImportance:
         with pytest.raises(ValueError, match="Model .* not found"):
             # Import here to avoid module-level binding issues
             from exp.expert_importance import expert_importance
+
             expert_importance(model_name="nonexistent_model")
 
-    @pytest.mark.xfail(reason="Test passes individually but fails when run with other tests")
+    @pytest.mark.xfail(
+        reason="Test passes individually but fails when run with other tests"
+    )
     def test_expert_importance_calculation(self, temp_dir, monkeypatch):
         """Test that importance calculations are correct."""
         # Create a simplified mock with known values for verification
@@ -207,7 +215,7 @@ class TestExpertImportance:
         # Set up experiment directory
         experiment_dir = os.path.join(str(temp_dir), "test_experiment")
         os.makedirs(experiment_dir, exist_ok=True)
-        
+
         # Set up expert importance directory
         expert_importance_dir = os.path.join(experiment_dir, "expert_importance")
         os.makedirs(expert_importance_dir, exist_ok=True)
@@ -222,9 +230,11 @@ class TestExpertImportance:
         ):
             # Import here to avoid module-level binding issues
             from exp.expert_importance import expert_importance
-            
+
             # Run the function
-            expert_importance(model_name="test_model", device="cpu", experiment_name="test_experiment")
+            expert_importance(
+                model_name="test_model", device="cpu", experiment_name="test_experiment"
+            )
 
             # Load and verify the output
             output_file = os.path.join(expert_importance_dir, "all.pt")
@@ -275,7 +285,7 @@ class TestExpertImportance:
         # Set up experiment directory
         experiment_dir = os.path.join(str(temp_dir), "test_experiment")
         os.makedirs(experiment_dir, exist_ok=True)
-        
+
         # Set up expert importance directory
         expert_importance_dir = os.path.join(experiment_dir, "expert_importance")
         os.makedirs(expert_importance_dir, exist_ok=True)
@@ -290,12 +300,16 @@ class TestExpertImportance:
         ):
             # Import here to avoid module-level binding issues
             from exp.expert_importance import expert_importance
-            
+
             # Run the function with checkpoint_idx
-            expert_importance(model_name="test_model", checkpoint_idx=1, device="cpu", experiment_name="test_experiment")
+            expert_importance(
+                model_name="test_model",
+                checkpoint_idx=1,
+                device="cpu",
+                experiment_name="test_experiment",
+            )
 
             # Check that StandardizedTransformer was called with correct revision
             mock_transformer_cls.assert_called_once()
             _, kwargs = mock_transformer_cls.call_args
             assert kwargs["revision"] == "step2000"
-

@@ -1,13 +1,11 @@
 """Utilities for loading activations from router logits."""
 
 import os
-from typing import Optional
 
 import torch as th
-from loguru import logger
 from tqdm import tqdm
 
-from exp import get_experiment_dir, get_router_logits_dir, ROUTER_LOGITS_DIRNAME
+from exp import ROUTER_LOGITS_DIRNAME, get_experiment_dir, get_router_logits_dir
 
 
 def load_activations_indices_tokens_and_topk(

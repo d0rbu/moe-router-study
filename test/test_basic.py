@@ -10,4 +10,3 @@ def test_imports() -> None:
     assert core.__version__ == "0.1.0"
     assert hasattr(exp, "BASE_OUTPUT_DIR")
     assert hasattr(viz, "BASE_FIGURE_DIR")
-

@@ -39,8 +39,8 @@ def test_save_and_load_circuits(mock_experiment_dir):
     # Mock get_experiment_dir to return our test directory
     with patch("exp.get_experiment_dir", return_value=mock_experiment_dir):
         # Import here to avoid module-level patching issues
-        from viz.max_activating_examples_server import save_circuits, load_circuits
-        
+        from viz.max_activating_examples_server import load_circuits, save_circuits
+
         # Save circuits
         save_circuits(circuits_dict, experiment_name="test_experiment")
 
@@ -59,7 +59,7 @@ def test_load_circuits_nonexistent(mock_experiment_dir):
     with patch("exp.get_experiment_dir", return_value=mock_experiment_dir):
         # Import here to avoid module-level patching issues
         from viz.max_activating_examples_server import load_circuits
-        
+
         # Load non-existent circuits (no file exists in the mock_experiment_dir)
         loaded_dict = load_circuits(experiment_name="test_experiment")
 
@@ -161,4 +161,3 @@ def test_compute_max_activating_examples_input_types(input_type):
     assert isinstance(top_indices, list)
     assert norm_scores.shape == (5,)
     assert len(top_indices) <= 3
-
