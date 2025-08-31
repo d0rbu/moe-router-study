@@ -82,17 +82,16 @@ def get_experiment_name(model_name: str, dataset_name: str, **kwargs) -> str:
     return base_name
 
 
-def save_config(config: dict[str, Any], experiment_dir: str) -> None:
+def save_config(config: dict, experiment_dir: str) -> None:
     """Save experiment configuration to a YAML file."""
     config_path = os.path.join(experiment_dir, CONFIG_FILENAME)
     with open(config_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False)
 
 
-def verify_config(config: dict[str, Any], experiment_dir: str) -> None:
+def verify_config(config: dict, experiment_dir: str) -> None:
     """Verify that the current configuration matches the saved one."""
     config_path = os.path.join(experiment_dir, CONFIG_FILENAME)
-
     if not os.path.exists(config_path):
         return
 
@@ -113,33 +112,6 @@ def verify_config(config: dict[str, Any], experiment_dir: str) -> None:
         raise ValueError(
             f"Configuration mismatch with existing experiment:\n{mismatch_str}"
         )
-
-
-def save_router_logits(
-    router_logit_collection: list[th.Tensor],
-    tokenized_batch_collection: list[list[str]],
-    top_k: int,
-    file_idx: int,
-    experiment_name: str,
-) -> None:
-    router_logits = th.cat(router_logit_collection, dim=0)
-    output: dict[str, Any] = {
-        "topk": top_k,
-        "router_logits": router_logits,
-        "tokens": tokenized_batch_collection,
-    }
-    router_logits_dir = os.path.join(OUTPUT_DIR, experiment_name, ROUTER_LOGITS_DIRNAME)
-    output_path = os.path.join(router_logits_dir, f"{file_idx}.pt")
-    th.save(output, output_path)
-
-    # Explicitly clean up large tensors
-    del router_logits
-    del output
-
-    # Force garbage collection
-    gc.collect()
-    if th.cuda.is_available():
-        th.cuda.empty_cache()
 
 
 def process_batch(
@@ -311,8 +283,13 @@ def tokenizer_worker(
                         batch_tokens.append(tokens)
                         token_counts.popleft()
 
+                    # Create encoded batch
+                    encoded_batch = tokenizer(
+                        batch_texts, padding=True, return_tensors="pt"
+                    )
+
                     # Put in queue
-                    main_queue.put((batch_idx, batch_texts, batch_tokens, tokens_sum))
+                    main_queue.put((batch_idx, encoded_batch, batch_tokens, tokens_sum))
 
                     # Log statistics
                     elapsed = time.time() - start_time
@@ -354,7 +331,11 @@ def tokenizer_worker(
                 if token_counts:
                     tokens_sum += token_counts.popleft()
 
-            main_queue.put((batch_idx, batch_texts, batch_tokens, tokens_sum))
+            # Create encoded batch
+            encoded_batch = tokenizer(batch_texts, padding=True, return_tensors="pt")
+
+            # Put in queue
+            main_queue.put((batch_idx, encoded_batch, batch_tokens, tokens_sum))
 
             elapsed = time.time() - start_time
             if WANDB_AVAILABLE:
@@ -399,28 +380,39 @@ def multiplexer_worker(
     total_batches = 0
     total_tokens = 0
     start_time = time.time()
+    gpu_batch_counts = [0] * len(gpu_queues)  # Track batches sent to each GPU
+    gpu_busy = [False] * len(gpu_queues)  # Track if GPU is currently processing
 
     try:
         while not stop_event.is_set():
             # Get batch from main queue
-            batch_data = main_queue.get()
-
-            # Check if we're done
-            if batch_data is None:
+            item = main_queue.get()
+            if item is None:
                 break
 
-            batch_idx, batch_texts, batch_tokens, tokens_count = batch_data
+            batch_idx, encoded_batch, batch_tokens, tokens_count = item
             total_batches += 1
             total_tokens += tokens_count
 
-            # Find the GPU queue with the least items
-            queue_sizes = [q.qsize() for q in gpu_queues]
+            # Find GPU with smallest queue, considering if they're busy
+            queue_sizes = []
+            for i, q in enumerate(gpu_queues):
+                size = q.qsize()
+                # Add penalty if GPU is busy
+                if gpu_busy[i]:
+                    size += 1
+                queue_sizes.append(size)
+
+            # Use numpy for argmin
             min_queue_idx = np.argmin(queue_sizes)
 
             # Put batch in the selected GPU queue
             gpu_queues[min_queue_idx].put(
-                (batch_idx, batch_texts, batch_tokens, tokens_count)
+                (batch_idx, encoded_batch, batch_tokens, tokens_count)
             )
+
+            # Update batch count for this GPU
+            gpu_batch_counts[min_queue_idx] += 1
 
             # Log statistics
             elapsed = time.time() - start_time
@@ -436,8 +428,16 @@ def multiplexer_worker(
                         else 0,
                         "multiplexer/elapsed_time": elapsed,
                         **{
-                            f"multiplexer/gpu_{i}_queue_size": size
-                            for i, size in enumerate(queue_sizes)
+                            f"multiplexer/gpu_{i}_queue_size": q.qsize()
+                            for i, q in enumerate(gpu_queues)
+                        },
+                        **{
+                            f"multiplexer/gpu_{i}_batch_count": count
+                            for i, count in enumerate(gpu_batch_counts)
+                        },
+                        **{
+                            f"multiplexer/gpu_{i}_busy": int(busy)
+                            for i, busy in enumerate(gpu_busy)
                         },
                     }
                 )
@@ -463,11 +463,14 @@ def gpu_worker(
     device: str,
     stop_event: mp.Event,
     wandb_run_id: str,
+    gpu_busy: list[bool] | None = None,  # Reference to multiplexer's gpu_busy list
 ) -> None:
     """Worker process that runs on a specific GPU and processes batches."""
     # Set device for this process
     os.environ["CUDA_VISIBLE_DEVICES"] = str(rank)
-    device_id = f"cuda:{0}"  # Always use first visible device (which is our assigned GPU)
+    device_id = (
+        f"cuda:{0}"  # Always use first visible device (which is our assigned GPU)
+    )
 
     # Initialize wandb in this process
     if WANDB_AVAILABLE:
@@ -494,6 +497,11 @@ def gpu_worker(
         router_layers = model.layers_with_routers
         top_k = model.router_probabilities.get_top_k()
 
+        # Create output directory
+        experiment_dir = os.path.join(OUTPUT_DIR, experiment_name)
+        router_logits_dir = os.path.join(experiment_dir, ROUTER_LOGITS_DIRNAME)
+        os.makedirs(router_logits_dir, exist_ok=True)
+
         # Initialize statistics
         total_batches = 0
         total_tokens = 0
@@ -502,29 +510,58 @@ def gpu_worker(
 
         # Process batches
         while not stop_event.is_set():
+            # Signal that we're ready for a new batch
+            if gpu_busy is not None:
+                gpu_busy[rank] = False
+
             # Get batch from queue
-            batch_data = gpu_queue.get()
+            item = gpu_queue.get()
+
+            # Signal that we're busy processing
+            if gpu_busy is not None:
+                gpu_busy[rank] = True
 
             # Check if we're done
-            if batch_data is None:
+            if item is None:
                 break
 
-            batch_idx, batch_texts, batch_tokens, tokens_count = batch_data
+            batch_idx, encoded_batch, batch_tokens, tokens_count = item
+
+            # Move encoded batch to device
+            for key in encoded_batch:
+                if isinstance(encoded_batch[key], th.Tensor):
+                    encoded_batch[key] = encoded_batch[key].to(model.device)
 
             # Process batch
             batch_start = time.time()
             with th.inference_mode():
-                router_logits, _ = process_batch(batch_texts, model, router_layers)
+                # Extract router logits
+                router_logits = []
+                with model.trace(encoded_batch):
+                    for layer in router_layers:
+                        padding_mask = encoded_batch.attention_mask.bool().view(-1)
+                        router_output = model.routers_output[layer]
+
+                        match router_output:
+                            case (router_scores, _router_indices):
+                                logits = router_scores.cpu()[padding_mask].save()
+                            case tuple():
+                                raise ValueError(
+                                    f"Found tuple of length {len(router_output)} for router output at layer {layer}"
+                                )
+                            case router_scores:
+                                logits = router_scores.cpu()[padding_mask].save()
+
+                        router_logits.append(logits.clone().detach())
+
+                # Stack the logits
+                router_logits_tensor = th.stack(router_logits, dim=1).clone().detach()
 
                 # Save results
-                router_logits_dir = os.path.join(
-                    OUTPUT_DIR, experiment_name, ROUTER_LOGITS_DIRNAME
-                )
                 output_path = os.path.join(router_logits_dir, f"{rank}_{batch_idx}.pt")
-
                 output = {
                     "topk": top_k,
-                    "router_logits": router_logits,
+                    "router_logits": router_logits_tensor,
                     "tokens": batch_tokens,
                 }
                 th.save(output, output_path)
@@ -708,10 +745,12 @@ def get_router_activations(
 
     # Create queues and events
     main_queue = mp.Queue(maxsize=100)  # Buffer between tokenizer and multiplexer
-    gpu_queues = [
-        mp.Queue(maxsize=10) for _ in range(world_size)
-    ]  # One queue per GPU
+    gpu_queues = [mp.Queue(maxsize=10) for _ in range(world_size)]  # One queue per GPU
     stop_event = mp.Event()  # For signaling processes to stop
+
+    # Create shared state for GPU busy status
+    manager = mp.Manager()
+    gpu_busy = manager.list([False] * world_size)
 
     # Create and start processes
     processes = []
@@ -754,6 +793,7 @@ def get_router_activations(
                 device,
                 stop_event,
                 wandb_run_id,
+                gpu_busy,
             ),
         )
         gpu_proc.start()
@@ -780,4 +820,3 @@ def get_router_activations(
 
 if __name__ == "__main__":
     arguably.run()
-
