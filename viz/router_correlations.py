@@ -7,7 +7,6 @@ import torch as th
 from tqdm import tqdm
 
 from exp import get_experiment_dir, get_router_logits_dir
-from exp.get_router_activations import ROUTER_LOGITS_DIRNAME
 from viz import get_figure_dir
 
 
@@ -20,7 +19,7 @@ def router_correlations(experiment_name: str) -> None:
     # Get experiment directory and router logits directory
     experiment_dir = get_experiment_dir(name=experiment_name)
     router_logits_dir = get_router_logits_dir(experiment_dir)
-    
+
     # Get figure directory for this experiment
     figure_dir = get_figure_dir(experiment_name)
     os.makedirs(figure_dir, exist_ok=True)

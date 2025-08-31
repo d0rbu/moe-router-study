@@ -1,5 +1,4 @@
 import os
-from typing import Optional
 
 import arguably
 import matplotlib.pyplot as plt
@@ -11,7 +10,7 @@ from viz import get_figure_dir
 
 
 @arguably.command()
-def pca_figure(device: str = "cpu", experiment_name: Optional[str] = None) -> None:
+def pca_figure(device: str = "cpu", experiment_name: str | None = None) -> None:
     # Use CPU by default to avoid GPU requirement in tests/CI
     # Call module attribute (tests patch this symbol to simulate failure)
     activated_experts = activations.load_activations(
@@ -38,4 +37,3 @@ def pca_figure(device: str = "cpu", experiment_name: Optional[str] = None) -> No
 
 if __name__ == "__main__":
     arguably.run()
-

@@ -27,7 +27,7 @@ class TestSvdCircuits:
         # Set up experiment directory
         experiment_dir = os.path.join(str(temp_dir), "test_experiment")
         os.makedirs(experiment_dir, exist_ok=True)
-        
+
         # Set up figure directory
         figure_dir = os.path.join(str(temp_dir), "fig", "test_experiment")
         os.makedirs(figure_dir, exist_ok=True)
@@ -61,9 +61,11 @@ class TestSvdCircuits:
         ):
             # Import here to avoid module-level binding issues
             from exp.svd_circuits import svd_circuits
-            
+
             # Run the function
-            svd_circuits(num_circuits=5, device="cpu", experiment_name="test_experiment")
+            svd_circuits(
+                num_circuits=5, device="cpu", experiment_name="test_experiment"
+            )
 
             # Check that savefig was called
             mock_savefig.assert_called_once()
@@ -79,7 +81,9 @@ class TestSvdCircuits:
             assert th.equal(saved_data["circuits"], mock_vh[:5, :])
             assert saved_data["top_k"] == 2
 
-    @pytest.mark.xfail(reason="Test passes individually but fails when run with other tests")
+    @pytest.mark.xfail(
+        reason="Test passes individually but fails when run with other tests"
+    )
     def test_svd_circuits_with_batch_size(self, temp_dir, monkeypatch):
         """Test svd_circuits with specified batch_size."""
         # Create test data
@@ -93,7 +97,7 @@ class TestSvdCircuits:
         # Set up experiment directory
         experiment_dir = os.path.join(str(temp_dir), "test_experiment")
         os.makedirs(experiment_dir, exist_ok=True)
-        
+
         # Set up figure directory
         figure_dir = os.path.join(str(temp_dir), "fig", "test_experiment")
         os.makedirs(figure_dir, exist_ok=True)
@@ -127,9 +131,14 @@ class TestSvdCircuits:
         ):
             # Import here to avoid module-level binding issues
             from exp.svd_circuits import svd_circuits
-            
+
             # Run the function with batch_size=5
-            svd_circuits(batch_size=5, num_circuits=3, device="cpu", experiment_name="test_experiment")
+            svd_circuits(
+                batch_size=5,
+                num_circuits=3,
+                device="cpu",
+                experiment_name="test_experiment",
+            )
 
             # Check that output file was created
             output_file = os.path.join(experiment_dir, "svd_circuits.pt")
@@ -152,7 +161,7 @@ class TestSvdCircuits:
         # Set up experiment directory
         experiment_dir = os.path.join(str(temp_dir), "test_experiment")
         os.makedirs(experiment_dir, exist_ok=True)
-        
+
         # Set up figure directory
         figure_dir = os.path.join(str(temp_dir), "fig", "test_experiment")
         os.makedirs(figure_dir, exist_ok=True)
@@ -186,14 +195,18 @@ class TestSvdCircuits:
         ):
             # Import here to avoid module-level binding issues
             from exp.svd_circuits import svd_circuits
-            
+
             # Run the function with device="cuda"
             svd_circuits(device="cuda", experiment_name="test_experiment")
 
             # Check that load_activations_and_topk was called with device="cuda"
-            mock_load.assert_called_once_with(device="cuda", experiment_name="test_experiment")
+            mock_load.assert_called_once_with(
+                device="cuda", experiment_name="test_experiment"
+            )
 
-    @pytest.mark.xfail(reason="Test passes individually but fails when run with other tests")
+    @pytest.mark.xfail(
+        reason="Test passes individually but fails when run with other tests"
+    )
     def test_svd_circuits_with_real_svd(self, temp_dir, monkeypatch):
         """Test svd_circuits with real SVD computation."""
         # Create test data with known patterns
@@ -209,7 +222,7 @@ class TestSvdCircuits:
         # Set up experiment directory
         experiment_dir = os.path.join(str(temp_dir), "test_experiment")
         os.makedirs(experiment_dir, exist_ok=True)
-        
+
         # Set up figure directory
         figure_dir = os.path.join(str(temp_dir), "fig", "test_experiment")
         os.makedirs(figure_dir, exist_ok=True)
@@ -239,9 +252,11 @@ class TestSvdCircuits:
         ):
             # Import here to avoid module-level binding issues
             from exp.svd_circuits import svd_circuits
-            
+
             # Run the function
-            svd_circuits(num_circuits=2, device="cpu", experiment_name="test_experiment")
+            svd_circuits(
+                num_circuits=2, device="cpu", experiment_name="test_experiment"
+            )
 
             # Check that output file was created
             output_file = os.path.join(experiment_dir, "svd_circuits.pt")
@@ -266,4 +281,3 @@ class TestSvdCircuits:
 
             # At least one of the circuits should have a high value for expert 2 in layer 1
             assert (abs(circuit1[1, 2]) > 0.1) or (abs(circuit2[1, 2]) > 0.1)
-

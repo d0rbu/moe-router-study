@@ -1,13 +1,11 @@
 """Utilities for loading activations from router logits."""
 
 import os
-from typing import Optional
 
 import torch as th
-from loguru import logger
 from tqdm import tqdm
 
-from exp import get_experiment_dir, get_router_logits_dir, ROUTER_LOGITS_DIRNAME
+from exp import get_experiment_dir, get_router_logits_dir
 
 
 def load_activations_indices_tokens_and_topk(
@@ -188,4 +186,3 @@ def load_activations(experiment_name: str, device: str = "cpu") -> th.Tensor:
         experiment_name=experiment_name, device=device
     )
     return activated_experts
-

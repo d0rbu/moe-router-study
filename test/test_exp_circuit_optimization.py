@@ -9,8 +9,6 @@ import pytest
 import torch as th
 
 # Import the helper functions directly from the module
-from exp.circuit_loss import circuit_loss
-from exp.circuit_optimization import gradient_descent
 
 
 # Define the helper functions here for testing since they're no longer directly imported
@@ -644,4 +642,3 @@ class TestCircuitOptimizationErrorHandling:
 
         # Should have processed some items
         assert mock_wandb_run.log.call_count >= 0
-

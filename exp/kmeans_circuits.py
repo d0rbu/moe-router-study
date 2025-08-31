@@ -1,5 +1,4 @@
 import os
-from typing import Optional
 
 import arguably
 from loguru import logger
@@ -134,7 +133,7 @@ def elbow(
     stop: int = 1024,
     step: int = 32,
     seed: int = 0,
-    figure_dir: str = None,
+    figure_dir: str | None = None,
 ) -> None:
     assert data.ndim == 2, "Data must be of dimensions (B, D)"
 
@@ -195,7 +194,7 @@ def elbow(
     if figure_dir is None:
         figure_dir = "."
     os.makedirs(figure_dir, exist_ok=True)
-    
+
     # plot the sse
     plt.plot(range(start, stop, step), sse)
     plt.savefig(
@@ -223,9 +222,11 @@ def cluster_circuits(
     k: int | None = None,
     seed: int = 0,
     minibatch_size: int | None = None,
-    experiment_name: Optional[str] = None,
+    experiment_name: str | None = None,
 ) -> None:
-    activated_experts, top_k = load_activations_and_topk(experiment_name=experiment_name)
+    activated_experts, top_k = load_activations_and_topk(
+        experiment_name=experiment_name
+    )
 
     batch_size, num_layers, num_experts = activated_experts.shape
 
@@ -253,10 +254,10 @@ def cluster_circuits(
 
     if k is None:
         elbow(
-            activated_experts, 
-            minibatch_size=minibatch_size, 
+            activated_experts,
+            minibatch_size=minibatch_size,
             seed=seed,
-            figure_dir=figure_dir
+            figure_dir=figure_dir,
         )
         return
 

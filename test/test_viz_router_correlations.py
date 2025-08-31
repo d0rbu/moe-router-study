@@ -16,7 +16,7 @@ class TestRouterCorrelations:
         # Set up patches
         with patch("exp.get_router_logits_dir", return_value=str(temp_dir)):
             from viz.router_correlations import router_correlations
-            
+
             with pytest.raises(ValueError, match="No data files found"):
                 router_correlations(experiment_name="test_experiment")
 
@@ -50,7 +50,7 @@ class TestRouterCorrelations:
         # Set up experiment directory and figure directory
         experiment_dir = os.path.join(temp_dir, "test_experiment")
         os.makedirs(experiment_dir, exist_ok=True)
-        
+
         figure_dir = os.path.join(temp_dir, "fig", "test_experiment")
         os.makedirs(figure_dir, exist_ok=True)
 
@@ -58,14 +58,16 @@ class TestRouterCorrelations:
             patch("exp.get_experiment_dir", return_value=experiment_dir),
             patch("exp.get_router_logits_dir", return_value=temp_dir),
             patch("viz.get_figure_dir", return_value=figure_dir),
-            patch("torch.corrcoef", return_value=th.eye(12)),  # 12 = 3*4 (layers * experts)
+            patch(
+                "torch.corrcoef", return_value=th.eye(12)
+            ),  # 12 = 3*4 (layers * experts)
             patch("matplotlib.pyplot.savefig"),
             patch("matplotlib.pyplot.close"),
             patch("builtins.print") as mock_print,
         ):
             # Import here to avoid module-level binding issues
             from viz.router_correlations import router_correlations
-            
+
             # Run the function
             router_correlations(experiment_name="test_experiment")
 
@@ -121,7 +123,7 @@ class TestRouterCorrelations:
         # Set up experiment directory and figure directory
         experiment_dir = os.path.join(temp_dir, "test_experiment")
         os.makedirs(experiment_dir, exist_ok=True)
-        
+
         figure_dir = os.path.join(temp_dir, "fig", "test_experiment")
         os.makedirs(figure_dir, exist_ok=True)
 
@@ -145,7 +147,7 @@ class TestRouterCorrelations:
         ):
             # Import here to avoid module-level binding issues
             from viz.router_correlations import router_correlations
-            
+
             # Run the function
             router_correlations(experiment_name="test_experiment")
 
@@ -190,7 +192,7 @@ class TestRouterCorrelations:
         # Set up experiment directory and figure directory
         experiment_dir = os.path.join(temp_dir, "test_experiment")
         os.makedirs(experiment_dir, exist_ok=True)
-        
+
         figure_dir = os.path.join(temp_dir, "fig", "test_experiment")
         os.makedirs(figure_dir, exist_ok=True)
 
@@ -204,7 +206,7 @@ class TestRouterCorrelations:
         ):
             # Import here to avoid module-level binding issues
             from viz.router_correlations import router_correlations
-            
+
             # Run the function
             router_correlations(experiment_name="test_experiment")
 
@@ -230,4 +232,3 @@ class TestRouterCorrelations:
 
             # We should find at least one high positive or high negative correlation
             assert high_positive_found or high_negative_found
-

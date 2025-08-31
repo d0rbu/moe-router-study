@@ -52,7 +52,7 @@ class TestActivationToLossPipeline:
         # Set up experiment directory
         experiment_dir = os.path.join(str(temp_dir), "test_experiment")
         os.makedirs(experiment_dir, exist_ok=True)
-        
+
         # Set up router logits directory
         router_logits_dir = os.path.join(experiment_dir, "router_logits")
         os.makedirs(router_logits_dir, exist_ok=True)
@@ -71,7 +71,9 @@ class TestActivationToLossPipeline:
         ):
             from exp.activations import load_activations_and_topk
 
-            activated_experts, loaded_topk = load_activations_and_topk(experiment_name="test_experiment")
+            activated_experts, loaded_topk = load_activations_and_topk(
+                experiment_name="test_experiment"
+            )
 
         # Verify activation loading
         total_tokens = num_files * tokens_per_file
@@ -174,7 +176,7 @@ class TestVisualizationPipeline:
         # Set up experiment directory
         experiment_dir = os.path.join(str(temp_dir), "test_experiment")
         os.makedirs(experiment_dir, exist_ok=True)
-        
+
         # Set up router logits directory
         router_logits_dir = os.path.join(experiment_dir, "router_logits")
         os.makedirs(router_logits_dir, exist_ok=True)
@@ -256,11 +258,11 @@ class TestVisualizationPipeline:
         # Set up experiment directory
         experiment_dir = os.path.join(str(temp_dir), "test_experiment")
         os.makedirs(experiment_dir, exist_ok=True)
-        
+
         # Set up figure directory
         figure_dir = os.path.join(str(temp_dir), "fig", "test_experiment")
         os.makedirs(figure_dir, exist_ok=True)
-        
+
         # Set up router spaces directory
         router_spaces_dir = os.path.join(figure_dir, "router_spaces")
         os.makedirs(router_spaces_dir, exist_ok=True)
@@ -330,7 +332,7 @@ class TestEndToEndDataFlow:
         # Set up experiment directory
         experiment_dir = os.path.join(str(temp_dir), "test_experiment")
         os.makedirs(experiment_dir, exist_ok=True)
-        
+
         # Set up router logits directory
         router_logits_dir = os.path.join(experiment_dir, "router_logits")
         os.makedirs(router_logits_dir, exist_ok=True)
@@ -430,7 +432,7 @@ class TestErrorPropagation:
         # Set up experiment directory
         experiment_dir = os.path.join(str(temp_dir), "test_experiment")
         os.makedirs(experiment_dir, exist_ok=True)
-        
+
         # Set up router logits directory
         router_logits_dir = os.path.join(experiment_dir, "router_logits")
         os.makedirs(router_logits_dir, exist_ok=True)
@@ -486,7 +488,7 @@ class TestDataConsistency:
         # Set up experiment directory
         experiment_dir = os.path.join(str(temp_dir), "test_experiment")
         os.makedirs(experiment_dir, exist_ok=True)
-        
+
         # Set up router logits directory
         router_logits_dir = os.path.join(experiment_dir, "router_logits")
         os.makedirs(router_logits_dir, exist_ok=True)
@@ -505,7 +507,9 @@ class TestDataConsistency:
         ):
             from exp.activations import load_activations_and_topk
 
-            activated_experts, loaded_topk = load_activations_and_topk(experiment_name="test_experiment")
+            activated_experts, loaded_topk = load_activations_and_topk(
+                experiment_name="test_experiment"
+            )
 
         assert loaded_topk == topk
 
@@ -534,7 +538,7 @@ class TestDataConsistency:
         # Set up experiment directory
         experiment_dir = os.path.join(str(temp_dir), "test_experiment")
         os.makedirs(experiment_dir, exist_ok=True)
-        
+
         # Set up router logits directory
         router_logits_dir = os.path.join(experiment_dir, "router_logits")
         os.makedirs(router_logits_dir, exist_ok=True)
@@ -585,4 +589,3 @@ class TestDataConsistency:
 
         assert_tensor_shape_and_type(loss, (batch_size,))
         assert_tensor_shape_and_type(loss_idx, (batch_size,))
-

@@ -1,7 +1,6 @@
 """Visualization of expert importances in MoE models."""
 
 import os
-from typing import Optional
 
 import arguably
 import matplotlib
@@ -46,7 +45,7 @@ def expert_importances(
     normalize_percentile: float = 95.0,
     figure_width: float = 16.0,  # Increased width
     figure_height: float = 14.0,  # Increased height
-    experiment_name: Optional[str] = None,
+    experiment_name: str | None = None,
 ) -> None:
     """Visualize expert importances with an interactive plot.
 
@@ -490,4 +489,3 @@ def expert_importances(
 
 if __name__ == "__main__":
     arguably.run()
-

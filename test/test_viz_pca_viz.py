@@ -70,6 +70,7 @@ class TestPcaFigure:
         ):
             # Run the function
             from viz.pca_viz import pca_figure
+
             pca_figure(device="cpu", experiment_name="test_experiment")
 
             # Check that PCA was called with the right data
@@ -111,6 +112,7 @@ class TestPcaFigure:
         ):
             # Run the function with device="cuda"
             from viz.pca_viz import pca_figure
+
             pca_figure(device="cuda")
 
             # Check that load_activations was called with device="cuda"
@@ -121,10 +123,11 @@ class TestPcaFigure:
         """Test that pca_figure creates the figure directory if it doesn't exist."""
         # Set up figure directory
         figure_dir = os.path.join(str(tmp_path), "fig", "test_experiment")
-        
+
         # Remove the directory if it exists
         if os.path.exists(figure_dir):
             import shutil
+
             shutil.rmtree(os.path.dirname(figure_dir))
 
         with (
@@ -156,8 +159,8 @@ class TestPcaFigure:
         ):
             # Run the function
             from viz.pca_viz import pca_figure
+
             pca_figure(device="cpu", experiment_name="test_experiment")
 
             # Check that makedirs was called with the figure directory
             mock_makedirs.assert_called_with(figure_dir, exist_ok=True)
-

@@ -1,6 +1,6 @@
 from itertools import pairwise
 import os
-from typing import cast, Optional
+from typing import cast
 
 from loguru import logger
 import matplotlib
@@ -23,7 +23,7 @@ from exp.activations import (
 
 def _load_circuits_tensor(
     circuits_path: str,
-    experiment_name: Optional[str] = None,
+    experiment_name: str | None = None,
     device: str = "cuda",
     token_topk_mask: th.Tensor | None = None,
 ) -> th.Tensor:
@@ -720,7 +720,7 @@ def viz_max_cli(
     circuits_path: str = "",
     top_n: int = 10,
     *_args,
-    experiment_name: Optional[str] = None,
+    experiment_name: str | None = None,
     device: str = "cuda",
     minibatch_size: int | None = None,
 ) -> None:
@@ -743,7 +743,7 @@ def viz_max_cli(
         circuits_path,
         experiment_name=experiment_name,
         device=device,
-        token_topk_mask=token_topk_mask
+        token_topk_mask=token_topk_mask,
     )
     viz_max_activating_tokens(
         circuits,
@@ -761,7 +761,7 @@ def viz_mean_cli(
     circuits_path: str = "",
     top_n: int = 10,
     *_args,
-    experiment_name: Optional[str] = None,
+    experiment_name: str | None = None,
     device: str = "cuda",
     minibatch_size: int | None = None,
 ) -> None:
@@ -784,7 +784,7 @@ def viz_mean_cli(
         circuits_path,
         experiment_name=experiment_name,
         device=device,
-        token_topk_mask=token_topk_mask
+        token_topk_mask=token_topk_mask,
     )
     viz_mean_activating_tokens(
         circuits,

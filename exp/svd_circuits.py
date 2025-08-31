@@ -1,5 +1,4 @@
 import os
-from typing import Optional
 
 import arguably
 import matplotlib.pyplot as plt
@@ -12,10 +11,10 @@ from viz import get_figure_dir
 
 @arguably.command()
 def svd_circuits(
-    batch_size: int = 0, 
-    num_circuits: int = 64, 
+    batch_size: int = 0,
+    num_circuits: int = 64,
     device: str = "cpu",
-    experiment_name: Optional[str] = None
+    experiment_name: str | None = None,
 ) -> None:
     activated_experts, top_k = load_activations_and_topk(
         experiment_name=experiment_name, device=device
@@ -55,4 +54,3 @@ def svd_circuits(
 
 if __name__ == "__main__":
     arguably.run()
-
