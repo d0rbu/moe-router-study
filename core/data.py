@@ -6,7 +6,7 @@ from datasets import Dataset, IterableColumn, load_dataset
 from tqdm import tqdm
 from transformers import AutoTokenizer, PreTrainedTokenizer
 
-from exp.get_activations import DATASET_DIRNAME
+from exp import DATASET_DIRNAME
 
 
 def fineweb_10bt_text(_tokenizer: PreTrainedTokenizer) -> IterableColumn:

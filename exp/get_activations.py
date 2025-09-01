@@ -15,13 +15,11 @@ import yaml
 
 from core.data import DATASETS
 from core.model import MODELS
-from exp import OUTPUT_DIR
+from exp import OUTPUT_DIR, MODEL_DIRNAME
 
 # Constants
 ACTIVATION_DIRNAME = "activations"
 CONFIG_FILENAME = "config.yaml"
-MODEL_DIRNAME = "models"
-DATASET_DIRNAME = "datasets"
 
 
 def get_experiment_name(model_name: str, dataset_name: str, **kwargs) -> str:
