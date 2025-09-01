@@ -187,7 +187,6 @@ def tokenizer_worker(
     tokens_per_file: int,
     main_queue: mp.Queue,
     stop_event: Any,  # mp.Event is not properly typed
-    wandb_run_id: str,
     resume_from_batch: int = 0,
     num_tokens: int = 1_000_000_000,  # 1B tokens
 ) -> None:
@@ -195,8 +194,6 @@ def tokenizer_worker(
     # Initialize wandb
     wandb.init(
         project="router_activations",
-        # Use id parameter as that's what wandb expects
-        id=wandb_run_id,  # type: ignore
         resume="allow",
         name=f"tokenizer-{dataset_name}-{model_name}",
     )
@@ -296,15 +293,12 @@ def multiplexer_worker(
     main_queue: mp.Queue,
     gpu_queues: list[mp.Queue],
     stop_event: Any,  # mp.Event is not properly typed
-    wandb_run_id: str,
     gpu_busy: list[bool],
 ) -> None:
     """Worker process that distributes batches to GPU queues based on load."""
     # Initialize wandb
     wandb.init(
         project="router_activations",
-        # Use id parameter as that's what wandb expects
-        id=wandb_run_id,  # type: ignore
         resume="allow",
         name="multiplexer",
     )
@@ -386,7 +380,6 @@ def gpu_worker(
     experiment_name: str,
     cpu_only: bool,
     stop_event: Any,  # mp.Event is not properly typed
-    wandb_run_id: str,
     gpu_busy: list[bool],  # Reference to multiplexer's gpu_busy list
     activations_to_store: set[str] = ACTIVATION_KEYS,
 ) -> None:
@@ -395,8 +388,6 @@ def gpu_worker(
         # Initialize wandb
         wandb.init(
             project="router_activations",
-            # Use id parameter as that's what wandb expects
-            id=wandb_run_id,  # type: ignore
             resume="allow",
             name=f"gpu-{device_id}" if not cpu_only else "cpu",
         )
@@ -612,8 +603,7 @@ def get_router_activations(
     print(f"Experiment name: {name}")
 
     # Initialize WandB
-    wandb.init(project=wandb_project, id=name, config=config)
-    wandb_run_id = name
+    wandb.init(project=wandb_project, name=name, resume="allow", config=config)
 
     # Find completed batches if resuming
     resume_batch_idx = 0
@@ -651,7 +641,6 @@ def get_router_activations(
             tokens_per_file,
             main_queue,
             stop_event,
-            wandb_run_id,
             resume_batch_idx,
         ),
     )
@@ -662,7 +651,7 @@ def get_router_activations(
     print("Starting multiplexer worker")
     multiplexer_proc = mp.Process(
         target=multiplexer_worker,
-        args=(main_queue, gpu_queues, stop_event, wandb_run_id, gpu_busy),
+        args=(main_queue, gpu_queues, stop_event, gpu_busy),
     )
     multiplexer_proc.start()
     processes.append(multiplexer_proc)
@@ -684,7 +673,6 @@ def get_router_activations(
                 name,
                 cpu_only,
                 stop_event,
-                wandb_run_id,
                 gpu_busy,
                 set(activations_to_store),
             ),
