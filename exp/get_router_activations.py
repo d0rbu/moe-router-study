@@ -61,6 +61,12 @@ def save_config(config: dict, experiment_dir: str) -> None:
         yaml.dump(config, f, default_flow_style=False)
 
 
+CONFIG_KEYS_TO_VERIFY = {
+    "model_name",
+    "dataset_name",
+    "tokens_per_file",
+}
+
 def verify_config(config: dict, experiment_dir: str) -> None:
     """Verify that the current configuration matches the saved one."""
     config_path = os.path.join(experiment_dir, CONFIG_FILENAME)
@@ -72,9 +78,11 @@ def verify_config(config: dict, experiment_dir: str) -> None:
 
     # Check for mismatches
     mismatches = {}
-    for key, value in config.items():
-        if key in saved_config and saved_config[key] != value:
-            mismatches[key] = (saved_config[key], value)
+    for key in CONFIG_KEYS_TO_VERIFY:
+        current_value = config.get(key)
+        saved_value = saved_config.get(key)
+        if current_value != saved_value:
+            mismatches[key] = (saved_value, current_value)
 
     if mismatches:
         mismatch_str = "\n".join(
@@ -358,10 +366,6 @@ def multiplexer_worker(
                         f"multiplexer/gpu_{i}_batch_count": count
                         for i, count in enumerate(gpu_batch_counts)
                     },
-                    **{
-                        f"multiplexer/gpu_{i}_busy": int(gpu_busy[i])
-                        for i in range(len(gpu_queues))
-                    },
                 }
             )
 
@@ -377,13 +381,14 @@ def multiplexer_worker(
 
 def gpu_worker(
     rank: int,
-    _world_size: int,  # Renamed to avoid unused argument warning
+    device_id: int,
     gpu_queue: mp.Queue,
     model_name: str,
     experiment_name: str,
+    cpu_only: bool,
     stop_event: Any,  # mp.Event is not properly typed
     wandb_run_id: str,
-    gpu_busy: list[bool] | None = None,  # Reference to multiplexer's gpu_busy list
+    gpu_busy: list[bool],  # Reference to multiplexer's gpu_busy list
 ) -> None:
     """Worker process for processing batches on a specific GPU."""
     try:
@@ -393,14 +398,10 @@ def gpu_worker(
             # Use id parameter as that's what wandb expects
             id=wandb_run_id,  # type: ignore
             resume="allow",
-            name=f"gpu-{rank}",
+            name=f"gpu-{device_id}" if not cpu_only else "cpu",
         )
 
-        # Set device for this process
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(rank)
-        device_id = (
-            f"cuda:{0}"  # Always use first visible device (which is our assigned GPU)
-        )
+        device_map = f"cuda:{device_id}" if not cpu_only else "cpu"
 
         # Get model config
         model_config = MODELS.get(model_name)
@@ -411,7 +412,7 @@ def gpu_worker(
         model = StandardizedTransformer(
             model_config.hf_name,
             check_attn_probs_with_trace=False,
-            device_map=device_id,
+            device_map=device_map,
         )
         layers_with_routers = model.layers_with_routers
         top_k = model.router_probabilities.get_top_k()
@@ -430,15 +431,13 @@ def gpu_worker(
         # Process batches
         while not stop_event.is_set():
             # Signal that we're ready for a new batch
-            if gpu_busy is not None:
-                gpu_busy[rank] = False
+            gpu_busy[rank] = False
 
             # Get batch from queue
             item = gpu_queue.get()
 
             # Signal that we're busy processing
-            if gpu_busy is not None:
-                gpu_busy[rank] = True
+            gpu_busy[rank] = True
 
             # Check if we're done
             if item is None:
@@ -480,13 +479,6 @@ def gpu_worker(
             total_tokens += tokens_count
             elapsed = time.time() - start_time
 
-            # Calculate EMA of processing time (with 0.9 decay)
-            ema_time = (
-                processing_times[0]
-                if len(processing_times) == 1
-                else (0.9 * processing_times[-2] + 0.1 * processing_times[-1])
-            )
-
             # Log statistics
             wandb.log(
                 {
@@ -501,7 +493,6 @@ def gpu_worker(
                     f"gpu_{rank}/total_tokens": total_tokens,
                     f"gpu_{rank}/avg_batch_time": sum(processing_times)
                     / len(processing_times),
-                    f"gpu_{rank}/ema_batch_time": ema_time,
                     f"gpu_{rank}/elapsed_time": elapsed,
                 }
             )
@@ -543,7 +534,7 @@ def get_router_activations(
     dataset_name: str = "lmsys",
     *_args,
     batch_size: int = 4,
-    device: str = "cpu",
+    cuda_devices: str = "",
     tokens_per_file: int = 2_000,
     tokenizer_batch: int = 16,
     resume: bool = False,
@@ -564,16 +555,18 @@ def get_router_activations(
         name: Custom name for the experiment
         wandb_project: WandB project name for logging
     """
-    # Check CUDA_VISIBLE_DEVICES
-    cuda_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "")
-    if not cuda_devices:
-        raise ValueError("CUDA_VISIBLE_DEVICES environment variable not set")
+    cuda_devices_raw = cuda_devices or os.environ.get("CUDA_VISIBLE_DEVICES", "")
+    cpu_only = cuda_devices_raw == ""
+    device_ids = [int(i) for i in cuda_devices_raw.split(",")] if not cpu_only else [0]
 
-    world_size = len(cuda_devices.split(","))
+    world_size = len(device_ids)
     if world_size == 0:
-        raise ValueError("No CUDA devices available")
+        raise ValueError(f"Unable to parse CUDA devices: {device_ids}")
 
-    print(f"Using {world_size} GPUs: {cuda_devices}")
+    if cpu_only:
+        print("Using CPU only")
+    else:
+        print(f"Using {world_size} GPUs: {device_ids}")
 
     # Create experiment configuration
     config = {
@@ -583,6 +576,8 @@ def get_router_activations(
         "tokens_per_file": tokens_per_file,
         "tokenizer_batch": tokenizer_batch,
         "world_size": world_size,
+        "cpu_only": cpu_only,
+        "device_ids": device_ids,
     }
 
     # Generate experiment name if not provided
@@ -590,7 +585,6 @@ def get_router_activations(
         name = get_experiment_name(
             model_name=model_name,
             dataset_name=dataset_name,
-            batch_size=batch_size,
             tokens_per_file=tokens_per_file,
         )
 
@@ -648,6 +642,7 @@ def get_router_activations(
             stop_event,
             wandb_run_id,
             resume_batch_idx,
+            tokenizer_batch,
         ),
     )
     tokenizer_proc.start()
@@ -662,16 +657,16 @@ def get_router_activations(
     processes.append(multiplexer_proc)
 
     # Start GPU workers
-    for rank in range(world_size):
+    for rank, device_id in enumerate(device_ids):
         gpu_proc = mp.Process(
             target=gpu_worker,
             args=(
                 rank,
-                world_size,
+                device_id,
                 gpu_queues[rank],
                 model_name,
                 name,
-                device,
+                cpu_only,
                 stop_event,
                 wandb_run_id,
                 gpu_busy,
