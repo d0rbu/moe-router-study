@@ -609,8 +609,10 @@ def get_router_activations(
     # Save configuration
     save_config(config, experiment_dir)
 
+    print(f"Experiment name: {name}")
+
     # Initialize WandB
-    wandb_run = wandb.init(project=wandb_project, id=name, config=config)
+    wandb.init(project=wandb_project, id=name, config=config)
     wandb_run_id = name
 
     # Find completed batches if resuming
@@ -639,6 +641,7 @@ def get_router_activations(
     processes = []
 
     # Start tokenizer worker
+    print("Starting tokenizer worker")
     tokenizer_proc = mp.Process(
         target=tokenizer_worker,
         args=(
@@ -656,6 +659,7 @@ def get_router_activations(
     processes.append(tokenizer_proc)
 
     # Start multiplexer worker
+    print("Starting multiplexer worker")
     multiplexer_proc = mp.Process(
         target=multiplexer_worker,
         args=(main_queue, gpu_queues, stop_event, wandb_run_id, gpu_busy),
@@ -665,6 +669,11 @@ def get_router_activations(
 
     # Start GPU workers
     for rank, device_id in enumerate(device_ids):
+        if cpu_only:
+            print(f"Starting CPU worker {rank}")
+        else:
+            print(f"Starting GPU worker {rank} on cuda:{device_id}")
+
         gpu_proc = mp.Process(
             target=gpu_worker,
             args=(
