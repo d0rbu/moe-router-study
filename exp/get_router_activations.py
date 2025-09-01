@@ -19,9 +19,6 @@ from exp import OUTPUT_DIR
 ROUTER_LOGITS_DIRNAME = "router_logits"
 CONFIG_FILENAME = "config.yaml"
 
-# Type definitions
-T = TypeVar("T")
-
 
 def get_experiment_name(model_name: str, dataset_name: str, **kwargs) -> str:
     """Generate a unique experiment name based on configuration parameters."""
