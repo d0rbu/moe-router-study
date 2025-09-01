@@ -19,6 +19,8 @@ from exp import OUTPUT_DIR
 # Constants
 ACTIVATION_DIRNAME = "activations"
 CONFIG_FILENAME = "config.yaml"
+MODEL_DIRNAME = "models"
+DATASET_DIRNAME = "datasets"
 
 
 def get_experiment_name(model_name: str, dataset_name: str, **kwargs) -> str:
@@ -204,7 +206,12 @@ def tokenizer_worker(
     # Import here to avoid circular imports
     from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(model_config.hf_name)
+    hf_name = MODELS[model_name].hf_name
+    local_path = os.path.join(os.path.abspath(MODEL_DIRNAME), hf_name)
+
+    path = local_path if os.path.exists(local_path) else hf_name
+
+    tokenizer = AutoTokenizer.from_pretrained(path)
 
     # Get dataset function
     dataset_fn = DATASETS.get(dataset_name)
@@ -384,9 +391,13 @@ def gpu_worker(
         if model_config is None:
             raise ValueError(f"Model {model_name} not found")
 
+        hf_name = MODELS[model_name].hf_name
+        local_path = os.path.join(os.path.abspath(MODEL_DIRNAME), hf_name)
+        path = local_path if os.path.exists(local_path) else hf_name
+
         # Initialize model
         model = StandardizedTransformer(
-            model_config.hf_name,
+            path,
             check_attn_probs_with_trace=False,
             device_map=device_map,
         )
