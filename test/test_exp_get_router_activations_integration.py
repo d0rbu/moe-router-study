@@ -48,7 +48,11 @@ class TestExperimentManagement:
     def test_save_and_verify_config(self, tmp_path):
         """Test saving and verifying configuration."""
         experiment_dir = str(tmp_path)
-        config = {"model_name": "gpt2", "dataset_name": "lmsys", "batch_size": 4}
+        config = {
+            "model_name": "gpt2",
+            "dataset_name": "lmsys",
+            "tokens_per_file": 2000,
+        }
 
         # Save the config
         save_config(config, experiment_dir)
@@ -62,16 +66,15 @@ class TestExperimentManagement:
 
         # Try to verify with a different config (should raise ValueError)
         different_config = config.copy()
-        different_config["batch_size"] = 8
+        different_config["tokens_per_file"] = 4000
         with pytest.raises(ValueError):
             verify_config(different_config, experiment_dir)
 
 
+# This class is a placeholder for future tests
 class TestProcessBatch:
     """Test process_batch function."""
 
-    def test_process_batch(self):
-        """Test process_batch function with simplified mocking."""
-        # Skip this test for now as we're focusing on the API changes
-        # The implementation details can be tested later
-        pass
+    def test_placeholder(self):
+        """Placeholder test."""
+        assert True

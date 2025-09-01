@@ -15,7 +15,7 @@ from tqdm import tqdm
 
 matplotlib.use("WebAgg")  # Use WebAgg backend for interactive plots
 
-from exp.expert_importance import EXPERT_IMPORTANCE_DIR
+from exp import get_experiment_dir
 from viz import FIGURE_DIR
 
 EXPERT_IMPORTANCES_VIZ_DIR = os.path.join(FIGURE_DIR, "expert_importances")
@@ -39,7 +39,8 @@ RESIDUAL_STREAM_COLOR = "gray"
 
 @arguably.command()
 def expert_importances(
-    data_path: str = os.path.join(EXPERT_IMPORTANCE_DIR, "all.pt"),
+    data_path: str | None = None,
+    experiment_name: str = "expert_importance",
     model_name: str | None = None,
     checkpoint_idx: int | None = None,
     initial_base_layer_idx: int = 0,
@@ -51,7 +52,8 @@ def expert_importances(
     """Visualize expert importances with an interactive plot.
 
     Args:
-        data_path: Path to the expert importance data file
+        data_path: Path to the expert importance data file (if None, uses experiment_name)
+        experiment_name: Name of the experiment to load data from
         model_name: Filter by model name (None for no filter)
         checkpoint_idx: Filter by checkpoint index (None for no filter)
         initial_base_layer_idx: Initial base layer index to highlight
@@ -61,6 +63,12 @@ def expert_importances(
         figure_height: Height of the figure in inches
     """
     os.makedirs(EXPERT_IMPORTANCES_VIZ_DIR, exist_ok=True)
+
+    # Determine data path
+    if data_path is None:
+        data_path = os.path.join(
+            get_experiment_dir(experiment_name), "expert_importance.pt"
+        )
 
     # Load data
     if not os.path.exists(data_path):
@@ -477,6 +485,45 @@ def expert_importances(
     ax.legend([expert_legend], ["Selected Expert"], loc="upper right")
 
     plt.show()
+
+
+@arguably.command()
+def plot_expert_importances(
+    *_args,
+    data_path: str = os.path.join(
+        get_experiment_dir("expert_importance"), "expert_importance.pt"
+    ),
+    base_layer_idx: int = 0,
+    derived_layer_idx: int = 0,
+    component: str = "mlp.up_proj",
+    role: str = "reader",
+    param_type: str = "moe",
+    base_expert_idx: int | None = None,
+    derived_expert_idx: int | None = None,
+    top_n: int = 10,
+    sort_by: str = "l2",
+    interactive: bool = False,
+    save_path: str | None = None,
+) -> None:
+    """Plot expert importances for a specific component and layer.
+
+    Args:
+        data_path: Path to the expert importance data file
+        base_layer_idx: Base layer index to plot
+        derived_layer_idx: Derived layer index to plot
+        component: Component to plot (e.g., "mlp.up_proj")
+        role: Role to plot ("reader" or "writer")
+        param_type: Parameter type to plot ("moe" or "attn")
+        base_expert_idx: Base expert index to plot (None for all)
+        derived_expert_idx: Derived expert index to plot (None for all)
+        top_n: Number of top experts to show
+        sort_by: Field to sort by (e.g., "l2")
+        interactive: Whether to show interactive plot
+        save_path: Path to save the plot (None for no save)
+    """
+    # This is a placeholder for the implementation
+    # The actual implementation would load the data, filter it, and create a plot
+    pass
 
 
 if __name__ == "__main__":

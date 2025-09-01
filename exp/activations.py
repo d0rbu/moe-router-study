@@ -15,10 +15,33 @@ class NoDataFilesError(ValueError, FileNotFoundError):
     pass
 
 
+def get_router_logits_dir(experiment_name: str | None = None) -> str:
+    """Get the router logits directory for an experiment.
+
+    Args:
+        experiment_name: Name of the experiment. If None, uses the legacy directory.
+
+    Returns:
+        Path to the router logits directory
+    """
+    if experiment_name is None:
+        # For backward compatibility
+        return exp.ROUTER_LOGITS_DIR
+
+    # For experiment-specific directory
+    experiment_dir = exp.get_experiment_dir(experiment_name)
+    return os.path.join(experiment_dir, exp.ROUTER_LOGITS_DIRNAME)
+
+
 def load_activations_indices_tokens_and_topk(
     device: str = "cpu",  # default to CPU to avoid requiring CUDA in tests/CI
+    experiment_name: str | None = None,
 ) -> tuple[th.Tensor, th.Tensor, list[list[str]], int]:
     """Load boolean activation mask, top-k indices, tokens, and top_k.
+
+    Args:
+        device: Device to load tensors to
+        experiment_name: Name of the experiment to load from. If None, uses the legacy directory.
 
     Returns:
       - activated_experts: (B, L, E) boolean mask of top-k expert activations
@@ -31,17 +54,10 @@ def load_activations_indices_tokens_and_topk(
     tokens: list[list[str]] = []
     top_k: int | None = None  # handle case of no files
 
-    # Resolve directory with flexibility for tests:
-    # 1) Prefer module-level ROUTER_LOGITS_DIR if patched and exists
-    # 2) Else fall back to exp.ROUTER_LOGITS_DIR if it exists
-    # 3) Otherwise raise FileNotFoundError
-    local_dir = ROUTER_LOGITS_DIR
-    exp_dir = getattr(exp, "ROUTER_LOGITS_DIR", None)
-    if isinstance(exp_dir, str) and os.path.isdir(exp_dir):
-        fallback_dir = exp_dir
-    else:
-        fallback_dir = None
-    dir_path = local_dir if os.path.isdir(local_dir) else (fallback_dir or local_dir)
+    # Get the router logits directory
+    dir_path = get_router_logits_dir(experiment_name)
+
+    # Ensure the directory exists
     if not os.path.isdir(dir_path):
         raise FileNotFoundError(f"Activation directory not found: {dir_path}")
 
@@ -137,40 +153,51 @@ def load_activations_indices_tokens_and_topk(
 
 def load_activations_and_indices_and_topk(
     device: str = "cpu",
+    experiment_name: str | None = None,
 ) -> tuple[th.Tensor, th.Tensor, int]:
     activated_experts, activated_expert_indices, _tokens, top_k = (
-        load_activations_indices_tokens_and_topk(device=device)
+        load_activations_indices_tokens_and_topk(
+            device=device, experiment_name=experiment_name
+        )
     )
     return activated_experts, activated_expert_indices, top_k
 
 
-def load_activations_and_topk(device: str = "cuda") -> tuple[th.Tensor, int]:
+def load_activations_and_topk(
+    device: str = "cuda", experiment_name: str | None = None
+) -> tuple[th.Tensor, int]:
     # Default to CPU to be CI-friendly
     device = device or "cpu"
     if device == "cuda" and not th.cuda.is_available():
         logger.warning("CUDA not available; falling back to CPU")
         device = "cpu"
     activated_experts, _indices, top_k = load_activations_and_indices_and_topk(
-        device=device
+        device=device, experiment_name=experiment_name
     )
     return activated_experts, top_k
 
 
-def load_activations(device: str = "cuda") -> th.Tensor:
+def load_activations(
+    device: str = "cuda", experiment_name: str | None = None
+) -> th.Tensor:
     # Default to CPU to be CI-friendly
     device = device or "cpu"
     if device == "cuda" and not th.cuda.is_available():
         logger.warning("CUDA not available; falling back to CPU")
         device = "cpu"
-    activated_experts, _, _ = load_activations_and_indices_and_topk(device=device)
+    activated_experts, _, _ = load_activations_and_indices_and_topk(
+        device=device, experiment_name=experiment_name
+    )
     return activated_experts
 
 
 def load_activations_tokens_and_topk(
-    device: str = "cpu",
+    device: str = "cuda", experiment_name: str | None = None
 ) -> tuple[th.Tensor, list[list[str]], int]:
     activated_experts, _indices, tokens, top_k = (
-        load_activations_indices_tokens_and_topk(device=device)
+        load_activations_indices_tokens_and_topk(
+            device=device, experiment_name=experiment_name
+        )
     )
     return activated_experts, tokens, top_k
 

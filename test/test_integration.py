@@ -48,15 +48,21 @@ class TestActivationToLossPipeline:
         num_experts = 16
         topk = 4
 
+        # Create router_logits directory
+        router_logits_dir = temp_dir / "router_logits"
+        os.makedirs(router_logits_dir, exist_ok=True)
+
         for i in range(num_files):
             data = {
                 "topk": topk,
                 "router_logits": th.randn(tokens_per_file, num_layers, num_experts),
             }
-            th.save(data, temp_dir / f"{i}.pt")
+            th.save(data, router_logits_dir / f"{i}.pt")
 
         # Load activations
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
+        with patch(
+            "exp.activations.get_router_logits_dir", return_value=str(router_logits_dir)
+        ):
             from exp.activations import load_activations_and_topk
 
             activated_experts, loaded_topk = load_activations_and_topk()
@@ -292,15 +298,20 @@ class TestEndToEndDataFlow:
         topk = 3
 
         # Create activation files
+        router_logits_dir = temp_dir / "router_logits"
+        os.makedirs(router_logits_dir, exist_ok=True)
+
         for i in range(2):
             data = {
                 "topk": topk,
                 "router_logits": th.randn(batch_size // 2, num_layers, num_experts),
             }
-            th.save(data, temp_dir / f"{i}.pt")
+            th.save(data, router_logits_dir / f"{i}.pt")
 
         # Step 3: Load activations
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
+        with patch(
+            "exp.activations.get_router_logits_dir", return_value=str(router_logits_dir)
+        ):
             from exp.activations import load_activations_and_indices_and_topk
 
             activated_experts, activated_indices, loaded_topk = (
@@ -380,10 +391,14 @@ class TestErrorPropagation:
     def test_activation_loading_error_propagation(self, temp_dir):
         """Test that activation loading errors propagate correctly."""
         # Create corrupted file
-        corrupted_file = temp_dir / "0.pt"
+        router_logits_dir = temp_dir / "router_logits"
+        os.makedirs(router_logits_dir, exist_ok=True)
+        corrupted_file = router_logits_dir / "0.pt"
         corrupted_file.write_text("corrupted data")
 
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
+        with patch(
+            "exp.activations.get_router_logits_dir", return_value=str(router_logits_dir)
+        ):
             from exp.activations import load_activations_and_topk
 
             with pytest.raises((RuntimeError, ValueError, OSError)):
@@ -422,14 +437,19 @@ class TestDataConsistency:
         num_experts = 20
 
         # Create activation data with specific topk
+        router_logits_dir = temp_dir / "router_logits"
+        os.makedirs(router_logits_dir, exist_ok=True)
+
         data = {
             "topk": topk,
             "router_logits": th.randn(batch_size, num_layers, num_experts),
         }
-        th.save(data, temp_dir / "0.pt")
+        th.save(data, router_logits_dir / "0.pt")
 
         # Load and verify topk consistency
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
+        with patch(
+            "exp.activations.get_router_logits_dir", return_value=str(router_logits_dir)
+        ):
             from exp.activations import load_activations_and_topk
 
             activated_experts, loaded_topk = load_activations_and_topk()
@@ -458,14 +478,19 @@ class TestDataConsistency:
         topk = 4
 
         # Create activation data
+        router_logits_dir = temp_dir / "router_logits"
+        os.makedirs(router_logits_dir, exist_ok=True)
+
         data = {
             "topk": topk,
             "router_logits": th.randn(batch_size, num_layers, num_experts),
         }
-        th.save(data, temp_dir / "0.pt")
+        th.save(data, router_logits_dir / "0.pt")
 
         # Load activations
-        with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
+        with patch(
+            "exp.activations.get_router_logits_dir", return_value=str(router_logits_dir)
+        ):
             from exp.activations import load_activations_and_indices_and_topk
 
             activated_experts, activated_indices, _ = (

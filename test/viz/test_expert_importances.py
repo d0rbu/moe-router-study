@@ -172,7 +172,8 @@ def test_expert_importances_file_not_found(invalid_path):
 
 
 @patch("torch.load")
-def test_expert_importances_empty_data(mock_load, temp_data_file):
+@patch("os.path.exists", return_value=True)
+def test_expert_importances_empty_data(mock_exists, mock_load, temp_data_file):
     """Test that expert_importances raises ValueError for empty data."""
     # Mock torch.load to return empty list
     mock_load.return_value = []

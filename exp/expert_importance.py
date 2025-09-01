@@ -9,16 +9,21 @@ from torch import Tensor
 from tqdm import tqdm
 
 from core.model import MODELS
-from exp import OUTPUT_DIR
-
-EXPERT_IMPORTANCE_DIR = os.path.join(OUTPUT_DIR, "expert_importance")
+from exp import (
+    get_experiment_dir,
+    get_experiment_name,
+    save_config,
+    verify_config,
+)
 
 
 @arguably.command()
 def expert_importance(
     model_name: str = "olmoe",
+    dataset_name: str = "lmsys",
     checkpoint_idx: int | None = None,
     device: str = "cpu",
+    name: str | None = None,
 ) -> None:
     """Compute reader/writer importance vectors and scores for ALL experts across ALL router layers.
 
@@ -28,7 +33,39 @@ def expert_importance(
       - Writers (column-space): down_proj, o_proj via y = W.T @ v
       - Computes L2 norms of these importance vectors
       - Saves one .pt per layer under out/expert_importance/
+
+    Args:
+        model_name: Name of the model
+        dataset_name: Name of the dataset
+        checkpoint_idx: Index of the checkpoint to use
+        device: Device to run on
+        name: Custom name for the experiment
     """
+    # Generate experiment name if not provided
+    if name is None:
+        name = get_experiment_name(
+            model_name=model_name,
+            dataset_name=dataset_name,
+            checkpoint_idx=checkpoint_idx,
+        )
+
+    # Create experiment directory
+    experiment_dir = get_experiment_dir(name)
+
+    # Create configuration
+    config = {
+        "model_name": model_name,
+        "dataset_name": dataset_name,
+        "checkpoint_idx": checkpoint_idx,
+        "device": device,
+    }
+
+    # Verify configuration against existing one (if any)
+    verify_config(config, experiment_dir)
+
+    # Save configuration
+    save_config(config, experiment_dir)
+
     model_config = MODELS.get(model_name, None)
     if model_config is None:
         raise ValueError(f"Model {model_name} not found")
@@ -37,8 +74,6 @@ def expert_importance(
         revision = None
     else:
         revision = str(model_config.checkpoints[checkpoint_idx])
-
-    os.makedirs(EXPERT_IMPORTANCE_DIR, exist_ok=True)
 
     model = StandardizedTransformer(
         model_config.hf_name,
@@ -260,7 +295,7 @@ def expert_importance(
                     )
 
         # Save a single file containing ALL entries across layers/experts
-        outfile = os.path.join(EXPERT_IMPORTANCE_DIR, "all.pt")
+        outfile = os.path.join(experiment_dir, "expert_importance.pt")
         th.save(entries, outfile)
 
 

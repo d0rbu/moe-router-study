@@ -10,7 +10,12 @@ import torch as th
 from tqdm import tqdm
 import trackio as wandb
 
-from exp import OUTPUT_DIR
+from exp import (
+    get_experiment_dir,
+    get_experiment_name,
+    save_config,
+    verify_config,
+)
 from exp.activations import load_activations
 from exp.circuit_loss import circuit_loss
 
@@ -286,7 +291,9 @@ def gradient_descent(
 
 @arguably.command()
 def load_and_gradient_descent(
-    top_k: int,
+    model_name: str = "gpt",
+    dataset_name: str = "lmsys",
+    top_k: int = 8,
     complexity_importance: float = 0.4,
     complexity_power: float = 1.0,
     lr: float = 0.05,
@@ -298,23 +305,76 @@ def load_and_gradient_descent(
     grad_accumulation_steps: int = 1,
     seed: int = 0,
     device: str = "cuda",
+    name: str | None = None,
+    source_experiment: str | None = None,
 ) -> None:
-    data = load_activations(device=device)
+    """
+    Perform gradient descent to find optimal circuits.
+
+    Args:
+        model_name: Name of the model
+        dataset_name: Name of the dataset
+        top_k: Number of top experts to consider
+        complexity_importance: Importance of complexity in the loss function
+        complexity_power: Power to raise complexity to in the loss function
+        lr: Learning rate
+        max_circuits: Maximum number of circuits to search over
+        num_epochs: Number of epochs to run
+        num_warmup_epochs: Number of warmup epochs
+        num_cooldown_epochs: Number of cooldown epochs
+        batch_size: Batch size (0 for full batch)
+        grad_accumulation_steps: Number of gradient accumulation steps
+        seed: Random seed
+        device: Device to run on
+        name: Custom name for the experiment
+        source_experiment: Name of the experiment to load activations from
+    """
+    # Generate experiment name if not provided
+    if name is None:
+        name = get_experiment_name(
+            model_name=model_name,
+            dataset_name=dataset_name,
+            top_k=top_k,
+            complexity_importance=complexity_importance,
+            complexity_power=complexity_power,
+            max_circuits=max_circuits,
+            seed=seed,
+        )
+
+    # Create experiment directory
+    experiment_dir = get_experiment_dir(name)
+
+    # Create configuration
+    config = {
+        "model_name": model_name,
+        "dataset_name": dataset_name,
+        "top_k": top_k,
+        "complexity_importance": complexity_importance,
+        "complexity_power": complexity_power,
+        "lr": lr,
+        "max_circuits": max_circuits,
+        "num_epochs": num_epochs,
+        "num_warmup_epochs": num_warmup_epochs,
+        "num_cooldown_epochs": num_cooldown_epochs,
+        "batch_size": batch_size,
+        "grad_accumulation_steps": grad_accumulation_steps,
+        "seed": seed,
+        "source_experiment": source_experiment,
+    }
+
+    # Verify configuration against existing one (if any)
+    verify_config(config, experiment_dir)
+
+    # Save configuration
+    save_config(config, experiment_dir)
+
+    # Load activations from source experiment if specified
+    data = load_activations(device=device, experiment_name=source_experiment)
 
     wandb_run = wandb.init(
         project="circuit-optimization",
-        name=f"topk={top_k};ci={complexity_importance};cp={complexity_power};lr={lr};mc={max_circuits};ne={num_epochs};nw={num_warmup_epochs};nc={num_cooldown_epochs};s={seed}",
-        config={
-            "top_k": top_k,
-            "complexity_importance": complexity_importance,
-            "complexity_power": complexity_power,
-            "max_circuits": max_circuits,
-            "num_epochs": num_epochs,
-            "num_warmup_epochs": num_warmup_epochs,
-            "num_cooldown_epochs": num_cooldown_epochs,
-            "lr": lr,
-            "seed": seed,
-        },
+        name=name,
+        config=config,
     )
 
     circuits, loss, faithfulness, complexity = gradient_descent(
@@ -342,7 +402,7 @@ def load_and_gradient_descent(
         "complexity": complexity,
     }
 
-    out_path = os.path.join(OUTPUT_DIR, "optimized_circuits.pt")
+    out_path = os.path.join(experiment_dir, "optimized_circuits.pt")
     th.save(out, out_path)
 
     wandb.finish()
@@ -350,7 +410,9 @@ def load_and_gradient_descent(
 
 @arguably.command()
 def grid_search_gradient_descent(
-    top_k: int,
+    model_name: str = "gpt",
+    dataset_name: str = "lmsys",
+    top_k: int = 8,
     complexity_importances: list[float] | None = None,
     complexity_powers: list[float] | None = None,
     lrs: list[float] | None = None,
@@ -362,58 +424,83 @@ def grid_search_gradient_descent(
     batch_size: int = 0,
     grad_accumulation_steps: int = 1,
     device: str = "cuda",
+    name: str | None = None,
+    source_experiment: str | None = None,
 ) -> None:
+    """
+    Perform grid search over hyperparameters for gradient descent.
+
+    Args:
+        model_name: Name of the model
+        dataset_name: Name of the dataset
+        top_k: Number of top experts to consider
+        complexity_importances: List of complexity importance values to search over
+        complexity_powers: List of complexity power values to search over
+        lrs: List of learning rates to search over
+        max_circuitses: List of maximum circuit values to search over
+        num_epochses: List of number of epochs to search over
+        num_warmup_epochses: List of number of warmup epochs to search over
+        num_cooldown_epochses: List of number of cooldown epochs to search over
+        num_seeds: Number of random seeds to use
+        batch_size: Batch size (0 for full batch)
+        grad_accumulation_steps: Number of gradient accumulation steps
+        device: Device to run on
+        name: Custom name for the experiment
+        source_experiment: Name of the experiment to load activations from
+    """
     if complexity_importances is None:
-        # complexity_importances = [0.5, 0.9, 0.1, 0.99, 0.01]
-        # complexity_importances = [0.5, 0.4, 0.3, 0.2, 0.1]
-        # complexity_importances = [0.6, 0.5, 0.4, 0.3]
-        # complexity_importances = [0.6, 0.5, 0.4]
-        # complexity_importances = [0.4, 0.3]
         complexity_importances = [0.6, 0.5, 0.4]
     if complexity_powers is None:
-        # complexity_powers = [1.0, 2.0, 0.5]
-        # complexity_powers = [1.0]
-        # complexity_powers = [1.0]
-        # complexity_powers = [1.0]
-        # complexity_powers = [1.0]
         complexity_powers = [1.0, 0.5]
     if lrs is None:
-        # lrs = [1e-1, 1e-2, 1e-3, 1e-4]
-        # lrs = [0.05, 0.02, 0.01, 0.005, 0.002]
-        # lrs = [0.05, 0.02, 0.01]
-        # lrs = [0.05]
-        # lrs = [0.05]
         lrs = [0.05]
     if max_circuitses is None:
-        # max_circuitses = [64, 128, 256, 512]
-        # max_circuitses = [32, 64, 128, 256]
-        # max_circuitses = [32, 64, 128, 256]
-        # max_circuitses = [32, 48, 64]
-        # max_circuitses = [32, 48, 64]
         max_circuitses = [64, 128, 256]
     if num_epochses is None:
-        # num_epochses = [2048]
-        # num_epochses = [4096]
-        # num_epochses = [8192]
-        # num_epochses = [4096]
-        # num_epochses = [4096]
         num_epochses = [4096]
     if num_warmup_epochses is None:
-        # num_warmup_epochses = [0]
-        # num_warmup_epochses = [0]
-        # num_warmup_epochses = [0]
-        # num_warmup_epochses = [0]
-        # num_warmup_epochses = [0]
         num_warmup_epochses = [0]
     if num_cooldown_epochses is None:
-        # num_cooldown_epochses = [512]
-        # num_cooldown_epochses = [1024]
-        # num_cooldown_epochses = [2048]
-        # num_cooldown_epochses = [0]
-        # num_cooldown_epochses = [0]
         num_cooldown_epochses = [0]
 
-    data = load_activations(device=device)
+    # Generate experiment name if not provided
+    if name is None:
+        name = get_experiment_name(
+            model_name=model_name,
+            dataset_name=dataset_name,
+            top_k=top_k,
+            grid_search=True,
+            num_seeds=num_seeds,
+        )
+
+    # Create experiment directory
+    experiment_dir = get_experiment_dir(name)
+
+    # Create configuration
+    config = {
+        "model_name": model_name,
+        "dataset_name": dataset_name,
+        "top_k": top_k,
+        "complexity_importances": complexity_importances,
+        "complexity_powers": complexity_powers,
+        "lrs": lrs,
+        "max_circuitses": max_circuitses,
+        "num_epochses": num_epochses,
+        "num_warmup_epochses": num_warmup_epochses,
+        "num_cooldown_epochses": num_cooldown_epochses,
+        "num_seeds": num_seeds,
+        "batch_size": batch_size,
+        "grad_accumulation_steps": grad_accumulation_steps,
+        "source_experiment": source_experiment,
+    }
+
+    # Verify configuration against existing one (if any)
+    verify_config(config, experiment_dir)
+
+    # Save configuration
+    save_config(config, experiment_dir)
+
+    data = load_activations(device=device, experiment_name=source_experiment)
     loss_landscape = th.empty(
         num_seeds,
         len(complexity_importances),
@@ -490,9 +577,10 @@ def grid_search_gradient_descent(
         * len(num_warmup_epochses)
         * len(num_cooldown_epochses),
     ):
+        run_name = f"ci={complexity_importance};cp={complexity_power};lr={lr};s={seed};mc={max_circuits};ne={num_epochs};nw={num_warmup_epochs};nc={num_cooldown_epochs}"
         wandb_run = wandb.init(
             project="circuit-optimization",
-            name=f"ci={complexity_importance};cp={complexity_power};lr={lr};s={seed};mc={max_circuits};ne={num_epochs};nw={num_warmup_epochs};nc={num_cooldown_epochs}",
+            name=run_name,
             config={
                 "complexity_importance": complexity_importance,
                 "complexity_power": complexity_power,
@@ -502,6 +590,7 @@ def grid_search_gradient_descent(
                 "num_warmup_epochs": num_warmup_epochs,
                 "num_cooldown_epochs": num_cooldown_epochs,
                 "seed": seed,
+                "parent_experiment": name,
             },
         )
 
@@ -562,6 +651,29 @@ def grid_search_gradient_descent(
             num_cooldown_epochs_idx,
         ] = circuits
 
+        # Save individual run results
+        run_dir = os.path.join(experiment_dir, "runs", run_name)
+        os.makedirs(run_dir, exist_ok=True)
+        run_out = {
+            "circuits": circuits,
+            "loss": loss,
+            "faithfulness": faithfulness,
+            "complexity": complexity,
+            "config": {
+                "complexity_importance": complexity_importance,
+                "complexity_power": complexity_power,
+                "lr": lr,
+                "max_circuits": max_circuits,
+                "num_epochs": num_epochs,
+                "num_warmup_epochs": num_warmup_epochs,
+                "num_cooldown_epochs": num_cooldown_epochs,
+                "seed": seed,
+            },
+        }
+        th.save(run_out, os.path.join(run_dir, "results.pt"))
+
+        wandb.finish()
+
     out = {
         "loss_landscape": loss_landscape,
         "faithfulness_landscape": faithfulness_landscape,
@@ -575,10 +687,8 @@ def grid_search_gradient_descent(
         "num_warmup_epochses": num_warmup_epochses,
         "num_cooldown_epochses": num_cooldown_epochses,
     }
-    th.save(out, os.path.join(OUTPUT_DIR, "loss_landscape.pt"))
-    wandb.finish()
+    th.save(out, os.path.join(experiment_dir, "loss_landscape.pt"))
 
 
 if __name__ == "__main__":
-    # arguably.run()
-    grid_search_gradient_descent(top_k=8, grad_accumulation_steps=4)
+    arguably.run()

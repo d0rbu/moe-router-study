@@ -65,7 +65,7 @@ class TestExpertImportance:
 
         # Set up temporary output directory
         monkeypatch.setattr(
-            "exp.expert_importance.EXPERT_IMPORTANCE_DIR", str(temp_dir)
+            "exp.expert_importance.get_experiment_dir", lambda name: str(temp_dir)
         )
 
         with (
@@ -79,7 +79,7 @@ class TestExpertImportance:
             expert_importance(model_name="test_model", checkpoint_idx=0, device="cpu")
 
             # Check that output file was created
-            output_file = os.path.join(temp_dir, "all.pt")
+            output_file = os.path.join(temp_dir, "expert_importance.pt")
             assert os.path.exists(output_file)
 
             # Load and verify the output
@@ -198,7 +198,7 @@ class TestExpertImportance:
 
         # Set up temporary output directory
         monkeypatch.setattr(
-            "exp.expert_importance.EXPERT_IMPORTANCE_DIR", str(temp_dir)
+            "exp.expert_importance.get_experiment_dir", lambda name: str(temp_dir)
         )
 
         with (
@@ -212,7 +212,7 @@ class TestExpertImportance:
             expert_importance(model_name="test_model", device="cpu")
 
             # Load and verify the output
-            output_file = os.path.join(temp_dir, "all.pt")
+            output_file = os.path.join(temp_dir, "expert_importance.pt")
             entries = th.load(output_file)
 
             # Find specific entries to check calculations
@@ -259,7 +259,7 @@ class TestExpertImportance:
 
         # Set up temporary output directory
         monkeypatch.setattr(
-            "exp.expert_importance.EXPERT_IMPORTANCE_DIR", str(temp_dir)
+            "exp.expert_importance.get_experiment_dir", lambda name: str(temp_dir)
         )
 
         with (

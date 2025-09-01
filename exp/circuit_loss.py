@@ -1,5 +1,16 @@
+import os
+
+import arguably
 import torch as th
 import torch.nn.functional as F
+
+from exp import (
+    get_experiment_dir,
+    get_experiment_name,
+    save_config,
+    verify_config,
+)
+from exp.activations import load_activations_and_topk
 
 
 # New: factor IoU computation into a helper for direct testing
@@ -216,3 +227,102 @@ def circuit_loss(
     )
 
     return loss, faithfulness_loss, complexity_term
+
+
+@arguably.command()
+def compute_circuit_loss(
+    model_name: str = "gpt",
+    dataset_name: str = "lmsys",
+    circuit_file: str = "kmeans_circuits.pt",
+    complexity_importance: float = 0.4,
+    complexity_power: float = 1.0,
+    device: str = "cuda",
+    name: str | None = None,
+    source_experiment: str | None = None,
+    circuit_experiment: str | None = None,
+) -> None:
+    """
+    Compute circuit loss for a given circuit file.
+
+    Args:
+        model_name: Name of the model
+        dataset_name: Name of the dataset
+        circuit_file: Name of the circuit file
+        complexity_importance: Importance of complexity in the loss function
+        complexity_power: Power to raise complexity to in the loss function
+        device: Device to run on
+        name: Custom name for the experiment
+        source_experiment: Name of the experiment to load activations from
+        circuit_experiment: Name of the experiment to load circuits from
+    """
+    # Generate experiment name if not provided
+    if name is None:
+        name = get_experiment_name(
+            model_name=model_name,
+            dataset_name=dataset_name,
+            complexity_importance=complexity_importance,
+            complexity_power=complexity_power,
+        )
+
+    # Create experiment directory
+    experiment_dir = get_experiment_dir(name)
+
+    # Create configuration
+    config = {
+        "model_name": model_name,
+        "dataset_name": dataset_name,
+        "circuit_file": circuit_file,
+        "complexity_importance": complexity_importance,
+        "complexity_power": complexity_power,
+        "device": device,
+        "source_experiment": source_experiment,
+        "circuit_experiment": circuit_experiment,
+    }
+
+    # Verify configuration against existing one (if any)
+    verify_config(config, experiment_dir)
+
+    # Save configuration
+    save_config(config, experiment_dir)
+
+    # Load activations
+    activated_experts, top_k = load_activations_and_topk(
+        device=device, experiment_name=source_experiment
+    )
+
+    # Load circuits
+    if circuit_experiment is not None:
+        circuit_dir = get_experiment_dir(circuit_experiment)
+        circuit_path = os.path.join(circuit_dir, circuit_file)
+    else:
+        # Make sure source_experiment is not None before using it
+        if source_experiment is None:
+            raise ValueError("Either circuit_experiment or source_experiment must be provided")
+        circuit_path = os.path.join(get_experiment_dir(source_experiment), circuit_file)
+
+    circuits_data = th.load(circuit_path, map_location=device)
+    circuits = circuits_data["circuits"]
+
+    # Compute loss
+    loss, faithfulness, complexity = circuit_loss(
+        activated_experts,
+        circuits,
+        top_k=top_k,
+        complexity_importance=complexity_importance,
+        complexity_power=complexity_power,
+    )
+
+    # Save results
+    results = {
+        "loss": loss,
+        "faithfulness": faithfulness,
+        "complexity": complexity,
+        "top_k": top_k,
+    }
+
+    out_path = os.path.join(experiment_dir, "circuit_loss.pt")
+    th.save(results, out_path)
+
+
+if __name__ == "__main__":
+    arguably.run()

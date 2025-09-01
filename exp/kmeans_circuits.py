@@ -9,7 +9,12 @@ import matplotlib.pyplot as plt
 import torch as th
 from tqdm import tqdm
 
-from exp import OUTPUT_DIR
+from exp import (
+    get_experiment_dir,
+    get_experiment_name,
+    save_config,
+    verify_config,
+)
 from exp.activations import load_activations_and_topk
 from viz import FIGURE_DIR
 
@@ -133,6 +138,7 @@ def elbow(
     stop: int = 1024,
     step: int = 32,
     seed: int = 0,
+    experiment_name: str | None = None,
 ) -> None:
     assert data.ndim == 2, "Data must be of dimensions (B, D)"
 
@@ -189,11 +195,16 @@ def elbow(
 
     sse = th.tensor(sse_collection).cpu()
 
+    # Create experiment directory if name is provided
+    if experiment_name:
+        experiment_dir = get_experiment_dir(experiment_name)
+        figure_path = os.path.join(experiment_dir, "elbow_method.png")
+    else:
+        figure_path = os.path.join(FIGURE_DIR, "elbow_method.png")
+
     # plot the sse
     plt.plot(range(start, stop, step), sse)
-    plt.savefig(
-        os.path.join(FIGURE_DIR, "elbow_method.png"), dpi=300, bbox_inches="tight"
-    )
+    plt.savefig(figure_path, dpi=300, bbox_inches="tight")
     plt.close()
 
 
@@ -212,47 +223,88 @@ def get_top_circuits(
 
 @arguably.command()
 def cluster_circuits(
+    model_name: str = "gpt",
+    dataset_name: str = "lmsys",
     *_args,
     k: int | None = None,
     seed: int = 0,
     minibatch_size: int | None = None,
+    name: str | None = None,
+    source_experiment: str | None = None,
 ) -> None:
-    activated_experts, top_k = load_activations_and_topk()
+    """Perform k-means clustering on router activations to identify circuits.
 
-    batch_size, num_layers, num_experts = activated_experts.shape
-
-    if minibatch_size is None:
-        minibatch_size = batch_size
-    else:
-        assert minibatch_size > 0 and minibatch_size <= batch_size, (
-            "Batch size must be > 0 and <= batch_size"
+    Args:
+        model_name: Name of the model
+        dataset_name: Name of the dataset
+        k: Number of clusters (if None, runs elbow method)
+        seed: Random seed for initialization
+        minibatch_size: Batch size for processing data
+        name: Custom name for the experiment
+        source_experiment: Name of the experiment to load activations from
+    """
+    # Generate experiment name if not provided
+    if name is None:
+        name = get_experiment_name(
+            model_name=model_name,
+            dataset_name=dataset_name,
+            k=k,
+            seed=seed,
         )
 
-        if (num_leftover_samples := batch_size % minibatch_size) > 0:
-            logger.warning(
-                f"Batch size {batch_size} is not divisible by minibatch size {minibatch_size}, {num_leftover_samples} samples will be discarded"
-            )
-            activated_experts = activated_experts[:-num_leftover_samples]
-            batch_size -= num_leftover_samples
+    # Create experiment directory
+    experiment_dir = get_experiment_dir(name)
 
-    # (B, L, E) -> (B, L * E)
-    activated_experts = activated_experts.view(activated_experts.shape[0], -1).float()
+    # Create config dictionary
+    config = {
+        "model_name": model_name,
+        "dataset_name": dataset_name,
+        "k": k,
+        "seed": seed,
+        "minibatch_size": minibatch_size,
+        "source_experiment": source_experiment,
+    }
 
-    if k is None:
-        elbow(activated_experts, minibatch_size=minibatch_size, seed=seed)
-        return
+    # Verify config against saved config
+    verify_config(config, experiment_dir)
 
-    centroids, _, _ = kmeans_manhattan(
-        activated_experts, k, minibatch_size=minibatch_size, seed=seed
+    # Save config
+    save_config(config, experiment_dir)
+
+    # Load activations
+    activated_experts, top_k = load_activations_and_topk(
+        experiment_name=source_experiment
     )
 
-    # save circuits
-    out = {
-        "circuits": centroids,
-        "top_k": top_k,
-    }
-    out_path = os.path.join(OUTPUT_DIR, "kmeans_circuits.pt")
-    th.save(out, out_path)
+    # Flatten the activations for clustering
+    num_tokens, num_layers, num_experts = activated_experts.shape
+    flattened_activations = activated_experts.view(num_tokens, -1).float()
+
+    # Set default minibatch size if not provided
+    if minibatch_size is None:
+        minibatch_size = min(1024, num_tokens)
+
+    # Run elbow method if k is not provided
+    if k is None:
+        logger.info("Running elbow method to determine optimal k")
+        elbow(
+            flattened_activations,
+            minibatch_size=minibatch_size,
+            seed=seed,
+            experiment_name=name,
+        )
+        return
+
+    # Run k-means clustering
+    logger.info(f"Running k-means clustering with k={k}")
+    centroids, _, _ = kmeans_manhattan(
+        flattened_activations, k=k, minibatch_size=minibatch_size, seed=seed
+    )
+
+    # Save the circuits
+    output_path = os.path.join(experiment_dir, "kmeans_circuits.pt")
+    th.save({"circuits": centroids, "top_k": top_k}, output_path)
+    logger.info(f"Saved circuits to {output_path}")
 
 
 if __name__ == "__main__":
