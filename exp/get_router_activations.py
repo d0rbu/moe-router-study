@@ -365,6 +365,7 @@ def multiplexer_worker(
     gpu_queues: list[mp.Queue],
     stop_event: mp.Event,
     wandb_run_id: str,
+    gpu_busy: list[bool] | None = None,  # Add shared gpu_busy list parameter
 ) -> None:
     """Worker that distributes batches to GPU queues based on load balancing."""
     # Initialize wandb in this process
@@ -381,7 +382,9 @@ def multiplexer_worker(
     total_tokens = 0
     start_time = time.time()
     gpu_batch_counts = [0] * len(gpu_queues)  # Track batches sent to each GPU
-    gpu_busy = [False] * len(gpu_queues)  # Track if GPU is currently processing
+
+    # Use shared gpu_busy list if provided, otherwise create a local one
+    local_gpu_busy = [False] * len(gpu_queues) if gpu_busy is None else None
 
     try:
         while not stop_event.is_set():
@@ -399,7 +402,7 @@ def multiplexer_worker(
             for i, q in enumerate(gpu_queues):
                 size = q.qsize()
                 # Add penalty if GPU is busy
-                if gpu_busy[i]:
+                if (gpu_busy is not None and gpu_busy[i]) or (local_gpu_busy is not None and local_gpu_busy[i]):
                     size += 1
                 queue_sizes.append(size)
 
@@ -413,6 +416,10 @@ def multiplexer_worker(
 
             # Update batch count for this GPU
             gpu_batch_counts[min_queue_idx] += 1
+
+            # Mark GPU as busy if using local tracking
+            if local_gpu_busy is not None:
+                local_gpu_busy[min_queue_idx] = True
 
             # Log statistics
             elapsed = time.time() - start_time
@@ -436,8 +443,10 @@ def multiplexer_worker(
                             for i, count in enumerate(gpu_batch_counts)
                         },
                         **{
-                            f"multiplexer/gpu_{i}_busy": int(busy)
-                            for i, busy in enumerate(gpu_busy)
+                            f"multiplexer/gpu_{i}_busy": int(
+                                gpu_busy[i] if gpu_busy is not None else local_gpu_busy[i]
+                            )
+                            for i in range(len(gpu_queues))
                         },
                     }
                 )
@@ -775,7 +784,7 @@ def get_router_activations(
     # Start multiplexer worker
     multiplexer_proc = mp.Process(
         target=multiplexer_worker,
-        args=(main_queue, gpu_queues, stop_event, wandb_run_id),
+        args=(main_queue, gpu_queues, stop_event, wandb_run_id, gpu_busy),
     )
     multiplexer_proc.start()
     processes.append(multiplexer_proc)
