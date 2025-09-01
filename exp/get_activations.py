@@ -1,5 +1,6 @@
 from collections import deque
 import os
+import queue
 import time
 from typing import Any
 import warnings
@@ -8,7 +9,7 @@ import arguably
 from nnterp import StandardizedTransformer
 import torch as th
 import torch.multiprocessing as mp
-import trackio as wandb
+import wandb
 import yaml
 
 from core.data import DATASETS
@@ -92,12 +93,14 @@ def verify_config(config: dict, experiment_dir: str) -> None:
         )
 
 
-ACTIVATION_KEYS = frozenset({
-    "attn_output",
-    "router_logits",
-    "mlp_output",
-    "layer_output",
-})
+ACTIVATION_KEYS = frozenset(
+    {
+        "attn_output",
+        "router_logits",
+        "mlp_output",
+        "layer_output",
+    }
+)
 
 
 def process_batch(
@@ -187,16 +190,11 @@ def tokenizer_worker(
     tokens_per_file: int,
     main_queue: mp.Queue,
     stop_event: Any,  # mp.Event is not properly typed
+    log_queue: mp.Queue,
     resume_from_batch: int = 0,
     num_tokens: int = 1_000_000_000,  # 1B tokens
 ) -> None:
     """Worker process for tokenizing text data."""
-    # Initialize wandb
-    wandb.init(
-        project="router_activations",
-        resume="allow",
-        name=f"tokenizer-{dataset_name}-{model_name}",
-    )
 
     # Get model config and tokenizer
     model_config = MODELS.get(model_name)
@@ -246,7 +244,7 @@ def tokenizer_worker(
                 batch_idx += 1
 
                 if batch_idx < resume_from_batch:
-                    wandb.log({"tokenizer/skipping_batches": batch_idx})
+                    log_queue.put({"tokenizer/skipping_batches": batch_idx})
                     continue
 
                 # Create batch from all items in buffer
@@ -269,7 +267,7 @@ def tokenizer_worker(
 
                 assert elapsed > 0, "Elapsed time is 0, this should never happen"
 
-                wandb.log(
+                log_queue.put(
                     {
                         "tokenizer/batch_idx": batch_idx,
                         "tokenizer/queue_size": main_queue.qsize(),
@@ -282,11 +280,10 @@ def tokenizer_worker(
                     }
                 )
     except Exception as e:
-        wandb.log({"tokenizer/error": str(e)})
+        log_queue.put({"tokenizer/error": str(e)})
         print(f"Tokenizer worker error: {e}")
     finally:
         main_queue.put(None)
-        wandb.finish()
 
 
 def multiplexer_worker(
@@ -294,14 +291,9 @@ def multiplexer_worker(
     gpu_queues: list[mp.Queue],
     stop_event: Any,  # mp.Event is not properly typed
     gpu_busy: list[bool],
+    log_queue: mp.Queue,
 ) -> None:
     """Worker process that distributes batches to GPU queues based on load."""
-    # Initialize wandb
-    wandb.init(
-        project="router_activations",
-        resume="allow",
-        name="multiplexer",
-    )
 
     # Initialize statistics
     total_batches = 0
@@ -341,7 +333,7 @@ def multiplexer_worker(
 
             # Log statistics
             elapsed = time.time() - start_time
-            wandb.log(
+            log_queue.put(
                 {
                     "multiplexer/batch_idx": batch_idx,
                     "multiplexer/main_queue_size": main_queue.qsize(),
@@ -363,13 +355,12 @@ def multiplexer_worker(
             )
 
     except Exception as e:
-        wandb.log({"multiplexer/error": str(e)})
+        log_queue.put({"multiplexer/error": str(e)})
         print(f"Multiplexer worker error: {e}")
     finally:
         # Signal all GPU queues that we're done
         for q in gpu_queues:
             q.put(None)
-        wandb.finish()
 
 
 def gpu_worker(
@@ -381,17 +372,11 @@ def gpu_worker(
     cpu_only: bool,
     stop_event: Any,  # mp.Event is not properly typed
     gpu_busy: list[bool],  # Reference to multiplexer's gpu_busy list
+    log_queue: mp.Queue,
     activations_to_store: set[str] = ACTIVATION_KEYS,
 ) -> None:
     """Worker process for processing batches on a specific GPU."""
     try:
-        # Initialize wandb
-        wandb.init(
-            project="router_activations",
-            resume="allow",
-            name=f"gpu-{device_id}" if not cpu_only else "cpu",
-        )
-
         device_map = f"cuda:{device_id}" if not cpu_only else "cpu"
 
         # Get model config
@@ -474,7 +459,7 @@ def gpu_worker(
             elapsed = time.time() - start_time
 
             # Log statistics
-            wandb.log(
+            log_queue.put(
                 {
                     f"gpu_{rank}/batch_idx": batch_idx,
                     f"gpu_{rank}/queue_size": gpu_queue.qsize(),
@@ -492,11 +477,8 @@ def gpu_worker(
             )
 
     except Exception as e:
-        wandb.log({f"gpu_{rank}/error": str(e)})
+        log_queue.put({f"gpu_{rank}/error": str(e)})
         print(f"GPU {rank} worker error: {e}")
-    finally:
-        # Clean up
-        wandb.finish()
 
 
 def find_completed_batches(experiment_dir: str) -> set[int]:
@@ -533,7 +515,6 @@ def get_router_activations(
     num_tokens: int = 1_000_000_000,  # 1B tokens
     resume: bool = False,
     name: str | None = None,
-    wandb_project: str = "router_activations",
     activations_to_store: list[str] | None = None,
 ) -> None:
     """
@@ -548,7 +529,6 @@ def get_router_activations(
         num_tokens: Number of tokens to process
         resume: Whether to resume from a previous run
         name: Custom name for the experiment
-        wandb_project: WandB project name for logging
     """
     cuda_devices_raw = cuda_devices or os.environ.get("CUDA_VISIBLE_DEVICES", "")
     cpu_only = cuda_devices_raw == ""
@@ -603,7 +583,7 @@ def get_router_activations(
     print(f"Experiment name: {name}")
 
     # Initialize WandB
-    wandb.init(project=wandb_project, name=name, resume="allow", config=config)
+    wandb.init(project="router_activations", name=name, resume="allow", config=config)
 
     # Find completed batches if resuming
     resume_batch_idx = 0
@@ -621,6 +601,7 @@ def get_router_activations(
     # Create queues and events
     main_queue = mp.Queue(maxsize=100)  # Buffer between tokenizer and multiplexer
     gpu_queues = [mp.Queue(maxsize=10) for _ in range(world_size)]  # One queue per GPU
+    log_queue = mp.Queue()  # For sending logs back to main process
     stop_event = mp.Event()  # For signaling processes to stop
 
     # Create shared state for GPU busy status
@@ -637,11 +618,12 @@ def get_router_activations(
         args=(
             model_name,
             dataset_name,
-            num_tokens,
             tokens_per_file,
             main_queue,
             stop_event,
+            log_queue,
             resume_batch_idx,
+            num_tokens,
         ),
     )
     tokenizer_proc.start()
@@ -651,7 +633,7 @@ def get_router_activations(
     print("Starting multiplexer worker")
     multiplexer_proc = mp.Process(
         target=multiplexer_worker,
-        args=(main_queue, gpu_queues, stop_event, gpu_busy),
+        args=(main_queue, gpu_queues, stop_event, gpu_busy, log_queue),
     )
     multiplexer_proc.start()
     processes.append(multiplexer_proc)
@@ -674,6 +656,7 @@ def get_router_activations(
                 cpu_only,
                 stop_event,
                 gpu_busy,
+                log_queue,
                 set(activations_to_store),
             ),
         )
@@ -681,9 +664,15 @@ def get_router_activations(
         processes.append(gpu_proc)
 
     try:
-        # Wait for all processes to finish
-        for proc in processes:
-            proc.join()
+        processes_are_running = True
+        while processes_are_running:
+            try:
+                log = log_queue.get(block=True, timeout=10.0)
+                wandb.log(log)
+            except queue.Empty:
+                warnings.warn("No logs received from log queue after 10 seconds", stacklevel=2)
+
+            processes_are_running = any(proc.is_alive() for proc in processes)
     except KeyboardInterrupt:
         print("Keyboard interrupt detected, stopping all processes...")
         stop_event.set()
@@ -693,9 +682,6 @@ def get_router_activations(
             proc.join(timeout=10)
             if proc.is_alive():
                 proc.terminate()
-    finally:
-        # Clean up
-        wandb.finish()
 
 
 if __name__ == "__main__":
