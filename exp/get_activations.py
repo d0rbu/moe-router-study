@@ -1,7 +1,7 @@
 from collections import deque
 import os
 import time
-from typing import Any, TypeVar
+from typing import Any
 import warnings
 
 import arguably
@@ -16,7 +16,7 @@ from core.model import MODELS
 from exp import OUTPUT_DIR
 
 # Constants
-ROUTER_LOGITS_DIRNAME = "router_logits"
+ACTIVATION_DIRNAME = "activations"
 CONFIG_FILENAME = "config.yaml"
 
 
@@ -79,7 +79,7 @@ def verify_config(config: dict, experiment_dir: str) -> None:
     for key in CONFIG_KEYS_TO_VERIFY:
         current_value = config.get(key)
         saved_value = saved_config.get(key)
-        if current_value != saved_value:
+        if current_value != saved_value and current_value is not None:
             mismatches[key] = (saved_value, current_value)
 
     if mismatches:
@@ -92,28 +92,49 @@ def verify_config(config: dict, experiment_dir: str) -> None:
         )
 
 
+ACTIVATION_KEYS = frozenset({
+    "attn_output",
+    "router_logits",
+    "mlp_output",
+    "layer_output",
+})
+
+
 def process_batch(
     encoded_batch: dict,
-    tokenized_batch: list[list[str]],
     model: StandardizedTransformer,
-    router_layers: list[int],
-) -> tuple[th.Tensor, list[list[str]]]:
+    router_layers: set[int],
+    activations_to_store: set[str] = ACTIVATION_KEYS,
+) -> dict[str, th.Tensor]:
     """Process a batch of texts through the model and extract router logits.
 
     Args:
         encoded_batch: Encoded batch from tokenizer with padding.
-        tokenized_batch: List of tokenized sequences (as strings).
         model: Model to process the batch.
-        router_layers: List of router layer indices to extract.
+        router_layers: Set of router layer indices to extract.
+        stored_activations: Activations to score
 
     Returns:
-        Tuple of (router_logits, tokenized_batch).
+        Dictionary of activations.
     """
+    extra_activations_to_store = activations_to_store - ACTIVATION_KEYS
+    if extra_activations_to_store:
+        raise ValueError(
+            f"Unexpected activations to store: {extra_activations_to_store}"
+        )
+
+    activations_to_store = ACTIVATION_KEYS & activations_to_store
+
+    if len(activations_to_store) == 0:
+        raise ValueError(
+            f"No activations to store. Available activations: {ACTIVATION_KEYS}"
+        )
+
     # Move tensors to model device
     encoded_batch = {k: v.to(model.device) for k, v in encoded_batch.items()}
 
-    # Extract router logits
-    router_logits = []
+    # Extract activations
+    activations = {activation_key: [] for activation_key in activations_to_store}
 
     # Use trace context manager to capture router outputs
     with model.trace(encoded_batch):
@@ -121,27 +142,43 @@ def process_batch(
         attention_mask = encoded_batch["attention_mask"]
         padding_mask = attention_mask.bool().flatten()
 
-        # Extract router logits for each layer
-        for layer_idx in router_layers:
-            router_output = model.routers_output[layer_idx]
+        # Extract activations for each layer
+        for layer_idx, layer in enumerate(model.layers):
+            if "attn_output" in activations_to_store:
+                attn_output = model.attentions_output[layer_idx]
+                activations["attn_output"].append(attn_output.output.clone().detach())
 
-            # Handle different router output formats
-            match router_output:
-                case (router_scores, _router_indices):
-                    logits = router_scores.cpu()[padding_mask].save()
-                case tuple():
-                    raise ValueError(
-                        f"Found tuple of length {len(router_output)} for router output at layer {layer_idx}"
-                    )
-                case router_scores:
-                    logits = router_scores.cpu()[padding_mask].save()
+            if "router_logits" in activations_to_store and layer_idx in router_layers:
+                router_output = model.routers_output[layer_idx]
 
-            router_logits.append(logits.clone().detach())
+                # Handle different router output formats
+                match router_output:
+                    case (router_scores, _router_indices):
+                        logits = router_scores.cpu()[padding_mask].save()
+                    case tuple():
+                        raise ValueError(
+                            f"Found tuple of length {len(router_output)} for router output at layer {layer_idx}"
+                        )
+                    case router_scores:
+                        logits = router_scores.cpu()[padding_mask].save()
 
-    # Stack router logits across layers
-    router_logits_tensor = th.stack(router_logits, dim=1)
+                activations["router_logits"].append(logits.clone().detach())
 
-    return router_logits_tensor, tokenized_batch
+            if "mlp_output" in activations_to_store:
+                mlp_output = model.mlps_output[layer_idx]
+                activations["mlp_output"].append(mlp_output.output.clone().detach())
+
+            if "layer_output" in activations_to_store:
+                layer_output = model.layers_output[layer_idx]
+                activations["layer_output"].append(layer_output.clone().detach())
+
+    # Stack logits across layers
+    activations = {
+        activation_key: th.stack(activation_list, dim=1)
+        for activation_key, activation_list in activations.items()
+    }
+
+    return activations
 
 
 def tokenizer_worker(
@@ -351,6 +388,7 @@ def gpu_worker(
     stop_event: Any,  # mp.Event is not properly typed
     wandb_run_id: str,
     gpu_busy: list[bool],  # Reference to multiplexer's gpu_busy list
+    activations_to_store: set[str] = ACTIVATION_KEYS,
 ) -> None:
     """Worker process for processing batches on a specific GPU."""
     try:
@@ -381,8 +419,8 @@ def gpu_worker(
 
         # Create output directory
         experiment_dir = os.path.join(OUTPUT_DIR, experiment_name)
-        router_logits_dir = os.path.join(experiment_dir, ROUTER_LOGITS_DIRNAME)
-        os.makedirs(router_logits_dir, exist_ok=True)
+        activations_dir = os.path.join(experiment_dir, ACTIVATION_DIRNAME)
+        os.makedirs(activations_dir, exist_ok=True)
 
         # Initialize statistics
         total_batches = 0
@@ -421,16 +459,19 @@ def gpu_worker(
             # Process batch and get router logits
             batch_start = time.time()
             with th.inference_mode():
-                router_logits_tensor, _ = process_batch(
-                    encoded_batch, batch_tokens, model, layers_with_routers
+                activations = process_batch(
+                    encoded_batch,
+                    model,
+                    layers_with_routers,
+                    activations_to_store=activations_to_store,
                 )
 
             # Save results
-            output_path = os.path.join(router_logits_dir, f"{batch_idx}.pt")
+            output_path = os.path.join(activations_dir, f"{batch_idx}.pt")
             output = {
                 "topk": top_k,
-                "router_logits": router_logits_tensor,
                 "tokens": batch_tokens,
+                **activations,
             }
             th.save(output, output_path)
 
@@ -476,12 +517,12 @@ def find_completed_batches(experiment_dir: str) -> set[int]:
     Returns:
         A set of completed batch indices.
     """
-    router_logits_dir = os.path.join(experiment_dir, ROUTER_LOGITS_DIRNAME)
-    if not os.path.exists(router_logits_dir):
+    activations_dir = os.path.join(experiment_dir, ACTIVATION_DIRNAME)
+    if not os.path.exists(activations_dir):
         return set()
 
     completed_batches = set()
-    for filename in os.listdir(router_logits_dir):
+    for filename in os.listdir(activations_dir):
         if filename.endswith(".pt"):
             # Extract batch index from filename (format: {batch_idx}.pt)
             batch_idx = int(filename.split(".")[0])
@@ -502,6 +543,7 @@ def get_router_activations(
     resume: bool = False,
     name: str | None = None,
     wandb_project: str = "router_activations",
+    activations_to_store: list[str] | None = None,
 ) -> None:
     """
     Extract router activations from a model using multiple GPUs.
@@ -524,6 +566,9 @@ def get_router_activations(
     world_size = len(device_ids)
     if world_size == 0:
         raise ValueError(f"Unable to parse CUDA devices: {device_ids}")
+
+    if activations_to_store is None:
+        activations_to_store = ["router_logits", "mlp_output", "layer_output"]
 
     if cpu_only:
         print("Using CPU only")
@@ -552,11 +597,11 @@ def get_router_activations(
 
     # Create experiment directories
     experiment_dir = os.path.join(OUTPUT_DIR, name)
-    router_logits_dir = os.path.join(experiment_dir, ROUTER_LOGITS_DIRNAME)
+    activations_dir = os.path.join(experiment_dir, ACTIVATION_DIRNAME)
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     os.makedirs(experiment_dir, exist_ok=True)
-    os.makedirs(router_logits_dir, exist_ok=True)
+    os.makedirs(activations_dir, exist_ok=True)
 
     # Verify configuration against existing one (if any)
     verify_config(config, experiment_dir)
@@ -632,6 +677,7 @@ def get_router_activations(
                 stop_event,
                 wandb_run_id,
                 gpu_busy,
+                set(activations_to_store),
             ),
         )
         gpu_proc.start()
