@@ -1,5 +1,4 @@
 from collections import deque
-import gc
 from itertools import batched
 import os
 import time
@@ -27,7 +26,6 @@ CONFIG_FILENAME = "config.yaml"
 T = TypeVar("T")
 
 # Set wandb availability flag
-WANDB_AVAILABLE = True
 
 
 def get_experiment_name(model_name: str, dataset_name: str, **kwargs) -> str:
@@ -94,68 +92,50 @@ def verify_config(config: dict, experiment_dir: str) -> None:
 
 
 def process_batch(
-    batch: list[str],
+    encoded_batch: dict,
+    tokenized_batch: list[list[str]],
     model: StandardizedTransformer,
     router_layers: list[int],
 ) -> tuple[th.Tensor, list[list[str]]]:
-    """
-    Process a single batch of data to extract router logits.
+    """Process a batch of texts through the model and extract router logits.
 
     Args:
-        batch: A batch of text data
-        model: The transformer model
-        router_layers: List of layer indices with routers
+        encoded_batch: Encoded batch from tokenizer with padding.
+        tokenized_batch: List of tokenized sequences (as strings).
+        model: Model to process the batch.
+        router_layers: List of router layer indices to extract.
 
     Returns:
-        tuple: (router_logits, tokenized_batch)
+        Tuple of (router_logits, tokenized_batch).
     """
+    # Move tensors to model device
+    encoded_batch = {k: v.to(model.device) for k, v in encoded_batch.items()}
 
-    encoded_batch = model.tokenizer(batch, padding=True, return_tensors="pt")
-    tokenized_batch = [model.tokenizer.tokenize(text) for text in batch]
-
-    # Move encoded batch to the appropriate device
-    for key in encoded_batch:
-        if isinstance(encoded_batch[key], th.Tensor):
-            encoded_batch[key] = encoded_batch[key].to(model.device)
-
+    # Extract router logits
     router_logits = []
 
-    with model.trace(batch) as tracer:
-        for layer in router_layers:
-            padding_mask: th.Tensor = encoded_batch.attention_mask.bool().view(
-                -1
-            )  # (batch_size * seq_len)
+    # Use trace context manager to capture router outputs
+    with model.trace(encoded_batch):
+        # Get attention mask to filter out padding tokens
+        attention_mask = encoded_batch["attention_mask"]
+        padding_mask = attention_mask.bool().flatten()
 
-            # Get router logits and immediately detach and move to CPU
-            router_output = model.routers_output[layer]
+        # Extract router logits for each layer
+        for layer_idx in router_layers:
+            router_output = model.routers_output[layer_idx]
 
-            match router_output:
-                case (router_scores, _router_indices):
-                    logits = router_scores.cpu()[padding_mask].save()
-                case tuple():
-                    raise ValueError(
-                        f"Found tuple of length {len(router_output)} for router output at layer {layer}"
-                    )
-                case router_scores:
-                    logits = router_scores.cpu()[padding_mask].save()
+            # Handle different router output formats
+            if isinstance(router_output, tuple):
+                router_scores = router_output[0]
+            else:
+                router_scores = router_output
 
-            router_logits.append(logits.clone().detach())
+            # Save and detach router scores
+            router_scores.cpu()[padding_mask].save()
+            router_logits.append(router_scores.clone().detach().cpu()[padding_mask])
 
-        # Explicitly stop the tracer to clean up resources
-        tracer.stop()
-
-    # Stack the logits and create a new tensor to break references
-    router_logits_tensor = th.stack(router_logits, dim=1).clone().detach()
-
-    # Clean up memory explicitly
-    del encoded_batch
-    del router_logits
-    del tracer
-
-    # Force garbage collection to clean up any lingering references
-    gc.collect()
-    if th.cuda.is_available():
-        th.cuda.empty_cache()
+    # Stack router logits across layers
+    router_logits_tensor = th.stack(router_logits, dim=1)
 
     return router_logits_tensor, tokenized_batch
 
@@ -439,7 +419,7 @@ def gpu_worker(
             check_attn_probs_with_trace=False,
             device_map=device_map,
         )
-        router_layers = model.layers_with_routers
+        layers_with_routers = model.layers_with_routers
         top_k = model.router_probabilities.get_top_k()
 
         # Create output directory
@@ -478,38 +458,26 @@ def gpu_worker(
                     encoded_batch[key] = encoded_batch[key].to(model.device)
 
             # Process batch
+            batch_idx, encoded_batch, batch_tokens, tokens_count = item
+
+            # Move tensors to device
+            encoded_batch = {k: v.to(model.device) for k, v in encoded_batch.items()}
+
+            # Process batch and get router logits
             batch_start = time.time()
             with th.inference_mode():
-                # Extract router logits
-                router_logits = []
-                with model.trace(encoded_batch):
-                    for layer in router_layers:
-                        padding_mask = encoded_batch.attention_mask.bool().view(-1)
-                        router_output = model.routers_output[layer]
+                router_logits_tensor, _ = process_batch(
+                    encoded_batch, batch_tokens, model, layers_with_routers
+                )
 
-                        match router_output:
-                            case (router_scores, _router_indices):
-                                logits = router_scores.cpu()[padding_mask].save()
-                            case tuple():
-                                raise ValueError(
-                                    f"Found tuple of length {len(router_output)} for router output at layer {layer}"
-                                )
-                            case router_scores:
-                                logits = router_scores.cpu()[padding_mask].save()
-
-                        router_logits.append(logits.clone().detach())
-
-                # Stack the logits
-                router_logits_tensor = th.stack(router_logits, dim=1).clone().detach()
-
-                # Save results
-                output_path = os.path.join(router_logits_dir, f"{batch_idx}.pt")
-                output = {
-                    "topk": top_k,
-                    "router_logits": router_logits_tensor,
-                    "tokens": batch_tokens,
-                }
-                th.save(output, output_path)
+            # Save results
+            output_path = os.path.join(router_logits_dir, f"{batch_idx}.pt")
+            output = {
+                "topk": top_k,
+                "router_logits": router_logits_tensor,
+                "tokens": batch_tokens,
+            }
+            th.save(output, output_path)
 
             # Update statistics
             batch_time = time.time() - batch_start
@@ -552,45 +520,27 @@ def gpu_worker(
         wandb.finish()
 
 
-def find_completed_batches(experiment_dir: str) -> tuple[dict[int, list[int]], int]:
-    """
-    Find all completed batches across all GPUs.
+def find_completed_batches(experiment_dir: str) -> set[int]:
+    """Find all completed batch indices in the experiment directory.
+
+    Args:
+        experiment_dir: Path to the experiment directory.
 
     Returns:
-        Tuple containing:
-        - Dictionary mapping GPU rank to list of completed batch indices
-        - Highest batch index found
+        A set of completed batch indices.
     """
     router_logits_dir = os.path.join(experiment_dir, ROUTER_LOGITS_DIRNAME)
     if not os.path.exists(router_logits_dir):
-        return {}, 0
+        return set()
 
-    completed_batches: dict[int, list[int]] = {}
-    max_batch_idx = 0
-
+    completed_batches = set()
     for filename in os.listdir(router_logits_dir):
-        if not filename.endswith(".pt"):
-            continue
+        if filename.endswith(".pt"):
+            # Extract batch index from filename (format: {batch_idx}.pt)
+            batch_idx = int(filename.split(".")[0])
+            completed_batches.add(batch_idx)
 
-        # Parse filename to get batch index
-        parts = filename.split(".")[0].split("_")
-        if len(parts) == 2:
-            rank, batch_idx = int(parts[0]), int(parts[1])
-
-            if rank not in completed_batches:
-                completed_batches[rank] = []
-
-            completed_batches[rank].append(batch_idx)
-            max_batch_idx = max(max_batch_idx, batch_idx)
-        elif len(parts) == 1:
-            # Handle old format files (no rank)
-            batch_idx = int(parts[0])
-            if -1 not in completed_batches:
-                completed_batches[-1] = []
-            completed_batches[-1].append(batch_idx)
-            max_batch_idx = max(max_batch_idx, batch_idx)
-
-    return completed_batches, max_batch_idx
+    return completed_batches
 
 
 @arguably.command()
@@ -671,8 +621,9 @@ def get_router_activations(
     # Find completed batches if resuming
     resume_batch_idx = 0
     if resume:
-        completed_batches, max_batch_idx = find_completed_batches(experiment_dir)
+        completed_batches = find_completed_batches(experiment_dir)
         if completed_batches:
+            max_batch_idx = max(completed_batches) if completed_batches else 0
             resume_batch_idx = max_batch_idx + 1
             print(f"Resuming from batch {resume_batch_idx}")
             wandb.log({"resume/batch_idx": resume_batch_idx})
