@@ -1,9 +1,12 @@
 from collections.abc import Callable
+import os
 from typing import Any, cast
 
 from datasets import Dataset, IterableColumn, load_dataset
 from tqdm import tqdm
 from transformers import AutoTokenizer, PreTrainedTokenizer
+
+from exp.get_activations import DATASET_DIRNAME
 
 
 def fineweb_10bt_text(_tokenizer: PreTrainedTokenizer) -> IterableColumn:
@@ -55,7 +58,11 @@ def lmsys_chat_1m_text(
     Returns:
         IterableColumn: Stream of formatted conversation texts
     """
-    ds = load_dataset("lmsys/lmsys-chat-1m", split="train", streaming=streaming)
+    hf_name = "lmsys/lmsys-chat-1m"
+    local_path = os.path.join(os.path.abspath(DATASET_DIRNAME), hf_name)
+    path = local_path if os.path.exists(local_path) else hf_name
+
+    ds = load_dataset(path, split="train", streaming=streaming)
 
     if streaming:
         assert start_idx == 0 and stop_idx == 0, (
