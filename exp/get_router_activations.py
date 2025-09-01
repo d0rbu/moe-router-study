@@ -7,7 +7,6 @@ import warnings
 
 import arguably
 from nnterp import StandardizedTransformer
-import numpy as np
 import torch as th
 import torch.multiprocessing as mp
 from tqdm import tqdm
@@ -211,21 +210,14 @@ def tokenizer_worker(
                 tokens_batch.append(tokens)
 
             # Check if we have enough tokens to make a batch
-            tokens_sum = sum(token_counts)
-            if tokens_sum >= tokens_per_file:
-                # Extract items until we reach tokens_per_file
-                batch_texts = []
-                batch_tokens = []
-                tokens_sum = 0
-
-                while token_counts and tokens_sum < tokens_per_file:
-                    text, tokens = buffer.popleft()
-                    batch_texts.append(text)
-                    batch_tokens.append(tokens)
-                    tokens_sum += token_counts.popleft()
+            if sum(len(tokens) for text, tokens in buffer) >= tokens_per_file:
+                # Create batch from all items in buffer
+                batch = [buffer.popleft() for _ in range(len(buffer))]
+                batch_texts, batch_tokens = tuple(zip(*batch))
+                tokens_sum = sum(len(tokens) for tokens in batch_tokens)
 
                 # Put in queue
-                main_queue.put((batch_idx, batch_texts, batch_tokens, tokens_sum))
+                main_queue.put((batch_idx, batch_texts, batch_tokens, tokens_sum), block=True)
 
                 # Log statistics
                 elapsed = time.time() - start_time
@@ -248,8 +240,6 @@ def tokenizer_worker(
                 batch_idx += 1
 
             # Check if queue is getting too full - pause to let consumers catch up
-            if main_queue.qsize() > 20:  # Arbitrary threshold
-                time.sleep(1)
 
     except Exception as e:
         wandb.log({"tokenizer/error": str(e)})
@@ -257,18 +247,13 @@ def tokenizer_worker(
     finally:
         # If there are remaining items in the buffer, send them as a final batch
         if buffer and not stop_event.is_set():
-            batch_texts = []
-            batch_tokens = []
-            tokens_sum = 0
+            batch = [buffer.popleft() for _ in range(len(buffer))]
+            batch_texts, batch_tokens = tuple(zip(*batch))
+            tokens_sum = sum(len(tokens) for tokens in batch_tokens)
 
-            while buffer:
-                text, tokens = buffer.popleft()
-                batch_texts.append(text)
-                batch_tokens.append(tokens)
-                tokens_sum += token_counts.popleft()
+            main_queue.put((batch_idx, batch_texts, batch_tokens, tokens_sum), block=True)
 
-            main_queue.put((batch_idx, batch_texts, batch_tokens, tokens_sum))
-
+            # Log statistics
             elapsed = time.time() - start_time
             wandb.log(
                 {
@@ -295,6 +280,7 @@ def multiplexer_worker(
     gpu_queues: list[mp.Queue],
     stop_event: mp.Event,
     wandb_run_id: str,
+    gpu_busy: list[bool],
 ) -> None:
     """Worker that distributes batches to GPU queues based on load balancing."""
     # Initialize wandb in this process
@@ -322,8 +308,15 @@ def multiplexer_worker(
             total_tokens += tokens_count
 
             # Find GPU with smallest queue
-            queue_sizes = [q.qsize() for q in gpu_queues]
-            target_gpu = np.argmin(queue_sizes)
+            queue_sizes = []
+            for i, q in enumerate(gpu_queues):
+                size = q.qsize()
+                # Add penalty if GPU is busy
+                size += gpu_busy[i]
+                queue_sizes.append(size)
+
+            # Get the index of the GPU with the smallest queue
+            target_gpu = th.argmin(th.tensor(queue_sizes)).item()
 
             # Send to that GPU
             gpu_queues[target_gpu].put(
@@ -422,7 +415,7 @@ def gpu_worker(
                 router_logits, _ = process_batch(batch_texts, model, router_layers)
 
             # Save results
-            output_path = os.path.join(router_logits_dir, f"{rank}_{batch_idx}.pt")
+            output_path = os.path.join(router_logits_dir, f"{batch_idx}.pt")
             output = {
                 "topk": top_k,
                 "router_logits": router_logits,
@@ -489,23 +482,19 @@ def find_completed_batches(experiment_dir: str) -> tuple[dict[int, list[int]], i
         if not filename.endswith(".pt"):
             continue
 
-        # Handle both old format (batch_idx.pt) and new format (rank_batch_idx.pt)
-        parts = filename.split("_")
-        if len(parts) == 2:  # New format: rank_batch_idx.pt
-            rank_str, batch_idx_str = parts
-            rank = int(rank_str)
-            batch_idx = int(batch_idx_str.split(".")[0])
-        else:  # Old format: batch_idx.pt
-            rank = 0  # Assume rank 0 for old format
+        # Files are now named as batch_idx.pt
+        try:
             batch_idx = int(filename.split(".")[0])
-
-        # Update completed batches for this rank
-        if rank not in completed_batches:
-            completed_batches[rank] = []
-        completed_batches[rank].append(batch_idx)
-
-        # Update max batch index
-        max_batch_idx = max(max_batch_idx, batch_idx)
+            rank = 0  # Default rank for global batch index format
+            
+            if rank not in completed_batches:
+                completed_batches[rank] = []
+            
+            completed_batches[rank].append(batch_idx)
+            max_batch_idx = max(max_batch_idx, batch_idx)
+        except ValueError:
+            # Skip files that don't match the expected format
+            continue
 
     return completed_batches, max_batch_idx
 
@@ -593,11 +582,11 @@ def get_router_activations(
             print(f"Resuming from batch {resume_batch_idx}")
             wandb.log({"resume/batch_idx": resume_batch_idx})
 
-    # Initialize multiprocessing resources
-    mp.set_start_method("spawn", force=True)
+    # Create multiprocessing primitives
     stop_event = mp.Event()
     main_queue = mp.Queue(maxsize=100)  # Buffer between tokenizer and multiplexer
     gpu_queues = [mp.Queue(maxsize=10) for _ in range(world_size)]  # One queue per GPU
+    gpu_busy = [False] * world_size  # Track if GPU is currently processing
 
     # Start tokenizer worker
     tokenizer_proc = mp.Process(
@@ -618,7 +607,7 @@ def get_router_activations(
     # Start multiplexer worker
     multiplexer_proc = mp.Process(
         target=multiplexer_worker,
-        args=(main_queue, gpu_queues, stop_event, wandb_run_id),
+        args=(main_queue, gpu_queues, stop_event, wandb_run_id, gpu_busy),
     )
     multiplexer_proc.start()
 
@@ -668,4 +657,3 @@ def get_router_activations(
 
 if __name__ == "__main__":
     arguably.run()
-
