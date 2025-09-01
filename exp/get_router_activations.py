@@ -124,17 +124,15 @@ def process_batch(
             # Handle different router output formats
             match router_output:
                 case (router_scores, _router_indices):
-                    # Save and detach router scores
-                    router_scores.cpu()[padding_mask].save()
-                    router_logits.append(
-                        router_scores.clone().detach().cpu()[padding_mask]
+                    logits = router_scores.cpu()[padding_mask].save()
+                case tuple():
+                    raise ValueError(
+                        f"Found tuple of length {len(router_output)} for router output at layer {layer_idx}"
                     )
                 case router_scores:
-                    # Save and detach router scores
-                    router_scores.cpu()[padding_mask].save()
-                    router_logits.append(
-                        router_scores.clone().detach().cpu()[padding_mask]
-                    )
+                    logits = router_scores.cpu()[padding_mask].save()
+
+            router_logits.append(logits.clone().detach())
 
     # Stack router logits across layers
     router_logits_tensor = th.stack(router_logits, dim=1)
