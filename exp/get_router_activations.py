@@ -3,15 +3,15 @@ import gc
 from itertools import batched
 import os
 import time
-from typing import Any, TypeVar, cast
+from typing import TypeVar
 import warnings
 
 import arguably
 from nnterp import StandardizedTransformer
-import numpy as np
 import torch as th
 import torch.multiprocessing as mp
 from tqdm import tqdm
+import trackio as wandb
 import yaml
 
 from core.data import DATASETS
@@ -26,29 +26,8 @@ CONFIG_FILENAME = "config.yaml"
 # Type definitions
 T = TypeVar("T")
 
-# Try to import wandb, but make it optional
-try:
-    import wandb
-
-    WANDB_AVAILABLE = True
-except ImportError:
-    WANDB_AVAILABLE = False
-    # Create a dummy wandb module for type checking
-
-    class DummyWandb:
-        @staticmethod
-        def init(*args, **kwargs):
-            return type("DummyRun", (), {"id": "dummy_run_id"})
-
-        @staticmethod
-        def log(*args, **kwargs):
-            pass
-
-        @staticmethod
-        def finish():
-            pass
-
-    wandb = cast("Any", DummyWandb())
+# Set wandb availability flag
+WANDB_AVAILABLE = True
 
 
 def get_experiment_name(model_name: str, dataset_name: str, **kwargs) -> str:
@@ -193,13 +172,12 @@ def tokenizer_worker(
 ) -> None:
     """Worker process that tokenizes text and puts batches into the queue."""
     # Initialize wandb in this process
-    if WANDB_AVAILABLE:
-        wandb.init(
-            project="router_activations",
-            id=wandb_run_id,
-            resume="allow",
-            name=f"tokenizer-{dataset_name}-{model_name}",
-        )
+    wandb.init(
+        project="router_activations",
+        id=wandb_run_id,
+        resume="allow",
+        name=f"tokenizer-{dataset_name}-{model_name}",
+    )
 
     # Get model config and tokenizer
     model_config = MODELS.get(model_name)
@@ -221,8 +199,7 @@ def tokenizer_worker(
 
     # Skip batches if resuming
     if resume_from_batch > 0:
-        if WANDB_AVAILABLE:
-            wandb.log({"tokenizer/skipping_batches": resume_from_batch})
+        wandb.log({"tokenizer/skipping_batches": resume_from_batch})
         for _ in tqdm(
             range(resume_from_batch * tokenizer_batch),
             desc="Skipping batches for resume",
@@ -230,14 +207,12 @@ def tokenizer_worker(
             try:
                 next(dataset_iter)
             except StopIteration:
-                if WANDB_AVAILABLE:
-                    wandb.log({"tokenizer/error": "Dataset exhausted during resume"})
+                wandb.log({"tokenizer/error": "Dataset exhausted during resume"})
                 stop_event.set()
                 return
 
     # Initialize buffer and statistics
     buffer: deque[tuple[str, list[str]]] = deque()
-    token_counts: deque[int] = deque()
     total_tokens = 0
     batch_idx = resume_from_batch
     start_time = time.time()
@@ -249,115 +224,91 @@ def tokenizer_worker(
                 break
 
             # Tokenize batch
-            encoded = tokenizer(batch_data, padding=False, return_tensors=None)
             tokenized = [tokenizer.tokenize(text) for text in batch_data]
 
             # Calculate token counts for each sequence
-            seq_token_counts = [len(ids) for ids in encoded["input_ids"]]
+            token_counts = [len(tokens) for tokens in tokenized]
 
             # Add to buffer
-            for _, (text, tokens, count) in enumerate(
-                zip(batch_data, tokenized, seq_token_counts, strict=False)
+            for text, tokens, count in zip(
+                batch_data, tokenized, token_counts, strict=False
             ):
                 buffer.append((text, tokens))
-                token_counts.append(count)
                 total_tokens += count
 
                 # Check if we have enough tokens to create a batch for processing
                 if sum(token_counts) >= tokens_per_file:
-                    # Find how many sequences to include
-                    tokens_sum = 0
-                    seqs_to_include = 0
-                    for tc in token_counts:
-                        tokens_sum += tc
-                        seqs_to_include += 1
-                        if tokens_sum >= tokens_per_file:
-                            break
-
-                    # Create batch to send to queue
-                    batch_texts = []
-                    batch_tokens = []
-                    for _ in range(seqs_to_include):
-                        text, tokens = buffer.popleft()
-                        batch_texts.append(text)
-                        batch_tokens.append(tokens)
-                        token_counts.popleft()
+                    # Create batch from all items in buffer
+                    batch = [buffer.popleft() for _ in range(len(buffer))]
+                    batch_texts, batch_tokens = tuple(zip(*batch, strict=False))
 
                     # Create encoded batch
                     encoded_batch = tokenizer(
                         batch_texts, padding=True, return_tensors="pt"
                     )
+                    tokens_sum = sum(token_counts)
 
                     # Put in queue
-                    main_queue.put((batch_idx, encoded_batch, batch_tokens, tokens_sum))
+                    main_queue.put(
+                        (batch_idx, encoded_batch, batch_tokens, tokens_sum), block=True
+                    )
 
                     # Log statistics
                     elapsed = time.time() - start_time
-                    if WANDB_AVAILABLE:
-                        wandb.log(
-                            {
-                                "tokenizer/batch_idx": batch_idx,
-                                "tokenizer/queue_size": main_queue.qsize(),
-                                "tokenizer/tokens_in_batch": tokens_sum,
-                                "tokenizer/total_tokens": total_tokens,
-                                "tokenizer/sequences_in_batch": seqs_to_include,
-                                "tokenizer/buffer_size": len(buffer),
-                                "tokenizer/tokens_per_second": total_tokens / elapsed
-                                if elapsed > 0
-                                else 0,
-                            }
-                        )
+                    wandb.log(
+                        {
+                            "tokenizer/batch_idx": batch_idx,
+                            "tokenizer/queue_size": main_queue.qsize(),
+                            "tokenizer/tokens_in_batch": tokens_sum,
+                            "tokenizer/total_tokens": total_tokens,
+                            "tokenizer/sequences_in_batch": len(batch_texts),
+                            "tokenizer/buffer_size": len(buffer),
+                            "tokenizer/tokens_per_second": total_tokens / elapsed
+                            if elapsed > 0
+                            else 0,
+                        }
+                    )
 
                     batch_idx += 1
-
-            # Check if queue is getting too full - pause to let consumers catch up
-            if main_queue.qsize() > 20:  # Arbitrary threshold
-                time.sleep(1)
+                    token_counts = []
 
     except Exception as e:
-        if WANDB_AVAILABLE:
-            wandb.log({"tokenizer/error": str(e)})
+        wandb.log({"tokenizer/error": str(e)})
         print(f"Tokenizer worker error: {e}")
     finally:
         # If there are remaining items in the buffer, send them as a final batch
         if buffer and not stop_event.is_set():
-            batch_texts = []
-            batch_tokens = []
-            tokens_sum = 0
-            while buffer:
-                text, tokens = buffer.popleft()
-                batch_texts.append(text)
-                batch_tokens.append(tokens)
-                if token_counts:
-                    tokens_sum += token_counts.popleft()
+            batch = [buffer.popleft() for _ in range(len(buffer))]
+            batch_texts, batch_tokens = tuple(zip(*batch, strict=False))
 
             # Create encoded batch
             encoded_batch = tokenizer(batch_texts, padding=True, return_tensors="pt")
+            tokens_sum = sum(len(tokens) for tokens in batch_tokens)
 
             # Put in queue
-            main_queue.put((batch_idx, encoded_batch, batch_tokens, tokens_sum))
+            main_queue.put(
+                (batch_idx, encoded_batch, batch_tokens, tokens_sum), block=True
+            )
 
             elapsed = time.time() - start_time
-            if WANDB_AVAILABLE:
-                wandb.log(
-                    {
-                        "tokenizer/batch_idx": batch_idx,
-                        "tokenizer/queue_size": main_queue.qsize(),
-                        "tokenizer/tokens_in_batch": tokens_sum,
-                        "tokenizer/total_tokens": total_tokens,
-                        "tokenizer/sequences_in_batch": len(batch_texts),
-                        "tokenizer/buffer_size": 0,
-                        "tokenizer/tokens_per_second": total_tokens / elapsed
-                        if elapsed > 0
-                        else 0,
-                        "tokenizer/finished": True,
-                    }
-                )
+            wandb.log(
+                {
+                    "tokenizer/batch_idx": batch_idx,
+                    "tokenizer/queue_size": main_queue.qsize(),
+                    "tokenizer/tokens_in_batch": tokens_sum,
+                    "tokenizer/total_tokens": total_tokens,
+                    "tokenizer/sequences_in_batch": len(batch_texts),
+                    "tokenizer/buffer_size": 0,
+                    "tokenizer/tokens_per_second": total_tokens / elapsed
+                    if elapsed > 0
+                    else 0,
+                    "tokenizer/finished": True,
+                }
+            )
 
         # Signal that we're done
         main_queue.put(None)
-        if WANDB_AVAILABLE:
-            wandb.finish()
+        wandb.finish()
 
 
 def multiplexer_worker(
@@ -369,13 +320,12 @@ def multiplexer_worker(
 ) -> None:
     """Worker that distributes batches to GPU queues based on load balancing."""
     # Initialize wandb in this process
-    if WANDB_AVAILABLE:
-        wandb.init(
-            project="router_activations",
-            id=wandb_run_id,
-            resume="allow",
-            name="multiplexer",
-        )
+    wandb.init(
+        project="router_activations",
+        id=wandb_run_id,
+        resume="allow",
+        name="multiplexer",
+    )
 
     # Initialize statistics
     total_batches = 0
@@ -402,16 +352,18 @@ def multiplexer_worker(
             for i, q in enumerate(gpu_queues):
                 size = q.qsize()
                 # Add penalty if GPU is busy
-                if (gpu_busy is not None and gpu_busy[i]) or (local_gpu_busy is not None and local_gpu_busy[i]):
+                if (gpu_busy is not None and gpu_busy[i]) or (
+                    local_gpu_busy is not None and local_gpu_busy[i]
+                ):
                     size += 1
                 queue_sizes.append(size)
 
-            # Use numpy for argmin
-            min_queue_idx = np.argmin(queue_sizes)
+            # Use torch for argmin
+            min_queue_idx = th.argmin(th.tensor(queue_sizes)).item()
 
             # Put batch in the selected GPU queue
             gpu_queues[min_queue_idx].put(
-                (batch_idx, encoded_batch, batch_tokens, tokens_count)
+                (batch_idx, encoded_batch, batch_tokens, tokens_count), block=True
             )
 
             # Update batch count for this GPU
@@ -423,44 +375,41 @@ def multiplexer_worker(
 
             # Log statistics
             elapsed = time.time() - start_time
-            if WANDB_AVAILABLE:
-                wandb.log(
-                    {
-                        "multiplexer/batch_idx": batch_idx,
-                        "multiplexer/main_queue_size": main_queue.qsize(),
-                        "multiplexer/total_batches": total_batches,
-                        "multiplexer/total_tokens": total_tokens,
-                        "multiplexer/tokens_per_second": total_tokens / elapsed
-                        if elapsed > 0
-                        else 0,
-                        "multiplexer/elapsed_time": elapsed,
-                        **{
-                            f"multiplexer/gpu_{i}_queue_size": q.qsize()
-                            for i, q in enumerate(gpu_queues)
-                        },
-                        **{
-                            f"multiplexer/gpu_{i}_batch_count": count
-                            for i, count in enumerate(gpu_batch_counts)
-                        },
-                        **{
-                            f"multiplexer/gpu_{i}_busy": int(
-                                gpu_busy[i] if gpu_busy is not None else local_gpu_busy[i]
-                            )
-                            for i in range(len(gpu_queues))
-                        },
-                    }
-                )
+            wandb.log(
+                {
+                    "multiplexer/batch_idx": batch_idx,
+                    "multiplexer/main_queue_size": main_queue.qsize(),
+                    "multiplexer/total_batches": total_batches,
+                    "multiplexer/total_tokens": total_tokens,
+                    "multiplexer/tokens_per_second": total_tokens / elapsed
+                    if elapsed > 0
+                    else 0,
+                    "multiplexer/elapsed_time": elapsed,
+                    **{
+                        f"multiplexer/gpu_{i}_queue_size": q.qsize()
+                        for i, q in enumerate(gpu_queues)
+                    },
+                    **{
+                        f"multiplexer/gpu_{i}_batch_count": count
+                        for i, count in enumerate(gpu_batch_counts)
+                    },
+                    **{
+                        f"multiplexer/gpu_{i}_busy": int(
+                            gpu_busy[i] if gpu_busy is not None else local_gpu_busy[i]
+                        )
+                        for i in range(len(gpu_queues))
+                    },
+                }
+            )
 
     except Exception as e:
-        if WANDB_AVAILABLE:
-            wandb.log({"multiplexer/error": str(e)})
+        wandb.log({"multiplexer/error": str(e)})
         print(f"Multiplexer worker error: {e}")
     finally:
         # Signal all GPU queues that we're done
         for q in gpu_queues:
             q.put(None)
-        if WANDB_AVAILABLE:
-            wandb.finish()
+        wandb.finish()
 
 
 def gpu_worker(
@@ -482,13 +431,12 @@ def gpu_worker(
     )
 
     # Initialize wandb in this process
-    if WANDB_AVAILABLE:
-        wandb.init(
-            project="router_activations",
-            id=wandb_run_id,
-            resume="allow",
-            name=f"gpu-{rank}",
-        )
+    wandb.init(
+        project="router_activations",
+        id=wandb_run_id,
+        resume="allow",
+        name=f"gpu-{rank}",
+    )
 
     try:
         # Get model config
@@ -567,7 +515,7 @@ def gpu_worker(
                 router_logits_tensor = th.stack(router_logits, dim=1).clone().detach()
 
                 # Save results
-                output_path = os.path.join(router_logits_dir, f"{rank}_{batch_idx}.pt")
+                output_path = os.path.join(router_logits_dir, f"{batch_idx}.pt")
                 output = {
                     "topk": top_k,
                     "router_logits": router_logits_tensor,
@@ -590,33 +538,30 @@ def gpu_worker(
             )
 
             # Log statistics
-            if WANDB_AVAILABLE:
-                wandb.log(
-                    {
-                        f"gpu_{rank}/batch_idx": batch_idx,
-                        f"gpu_{rank}/queue_size": gpu_queue.qsize(),
-                        f"gpu_{rank}/batch_time": batch_time,
-                        f"gpu_{rank}/batch_tokens": tokens_count,
-                        f"gpu_{rank}/tokens_per_second": tokens_count / batch_time
-                        if batch_time > 0
-                        else 0,
-                        f"gpu_{rank}/total_batches": total_batches,
-                        f"gpu_{rank}/total_tokens": total_tokens,
-                        f"gpu_{rank}/avg_batch_time": sum(processing_times)
-                        / len(processing_times),
-                        f"gpu_{rank}/ema_batch_time": ema_time,
-                        f"gpu_{rank}/elapsed_time": elapsed,
-                    }
-                )
+            wandb.log(
+                {
+                    f"gpu_{rank}/batch_idx": batch_idx,
+                    f"gpu_{rank}/queue_size": gpu_queue.qsize(),
+                    f"gpu_{rank}/batch_time": batch_time,
+                    f"gpu_{rank}/batch_tokens": tokens_count,
+                    f"gpu_{rank}/tokens_per_second": tokens_count / batch_time
+                    if batch_time > 0
+                    else 0,
+                    f"gpu_{rank}/total_batches": total_batches,
+                    f"gpu_{rank}/total_tokens": total_tokens,
+                    f"gpu_{rank}/avg_batch_time": sum(processing_times)
+                    / len(processing_times),
+                    f"gpu_{rank}/ema_batch_time": ema_time,
+                    f"gpu_{rank}/elapsed_time": elapsed,
+                }
+            )
 
     except Exception as e:
-        if WANDB_AVAILABLE:
-            wandb.log({f"gpu_{rank}/error": str(e)})
+        wandb.log({f"gpu_{rank}/error": str(e)})
         print(f"GPU {rank} worker error: {e}")
     finally:
         # Clean up
-        if WANDB_AVAILABLE:
-            wandb.finish()
+        wandb.finish()
 
 
 def find_completed_batches(experiment_dir: str) -> tuple[dict[int, list[int]], int]:
@@ -639,7 +584,7 @@ def find_completed_batches(experiment_dir: str) -> tuple[dict[int, list[int]], i
         if not filename.endswith(".pt"):
             continue
 
-        # Parse filename to get rank and batch index
+        # Parse filename to get batch index
         parts = filename.split(".")[0].split("_")
         if len(parts) == 2:
             rank, batch_idx = int(parts[0]), int(parts[1])
@@ -732,12 +677,8 @@ def get_router_activations(
     save_config(config, experiment_dir)
 
     # Initialize WandB
-    if WANDB_AVAILABLE:
-        wandb_run = wandb.init(project=wandb_project, name=name, config=config)
-        wandb_run_id = wandb_run.id
-    else:
-        print("Warning: wandb not available, logging will be disabled")
-        wandb_run_id = "dummy_run_id"
+    wandb_run = wandb.init(project=wandb_project, name=name, config=config)
+    wandb_run_id = wandb_run.id
 
     # Find completed batches if resuming
     resume_batch_idx = 0
@@ -746,8 +687,7 @@ def get_router_activations(
         if completed_batches:
             resume_batch_idx = max_batch_idx + 1
             print(f"Resuming from batch {resume_batch_idx}")
-            if WANDB_AVAILABLE:
-                wandb.log({"resume/batch_idx": resume_batch_idx})
+            wandb.log({"resume/batch_idx": resume_batch_idx})
 
     # Initialize multiprocessing resources
     mp.set_start_method("spawn", force=True)
@@ -823,8 +763,7 @@ def get_router_activations(
                 proc.terminate()
     finally:
         # Clean up
-        if WANDB_AVAILABLE:
-            wandb.finish()
+        wandb.finish()
 
 
 if __name__ == "__main__":
