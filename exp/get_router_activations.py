@@ -152,6 +152,7 @@ def tokenizer_worker(
     stop_event: Any,  # mp.Event is not properly typed
     wandb_run_id: str,
     resume_from_batch: int = 0,
+    num_tokens: int = 1_000_000_000,  # 1B tokens
 ) -> None:
     """Worker process for tokenizing text data."""
     # Initialize wandb
@@ -188,6 +189,8 @@ def tokenizer_worker(
     batch_idx = -1
     start_time = time.time()
 
+    assert num_tokens > 0, "Total number of tokens to process must be greater than 0"
+
     # Process dataset
     try:
         for text in dataset_iter:
@@ -204,7 +207,7 @@ def tokenizer_worker(
             total_tokens += count
 
             # Check if we have enough tokens to create a batch for processing
-            if buffer_token_count >= tokens_per_file:
+            if buffer_token_count >= tokens_per_file or total_tokens >= num_tokens:
                 buffer_token_count = 0
                 batch_idx += 1
 
@@ -229,55 +232,25 @@ def tokenizer_worker(
 
                 # Log statistics
                 elapsed = time.time() - start_time
+
+                assert elapsed > 0, "Elapsed time is 0, this should never happen"
+
                 wandb.log(
                     {
                         "tokenizer/batch_idx": batch_idx,
                         "tokenizer/queue_size": main_queue.qsize(),
                         "tokenizer/tokens_in_batch": tokens_sum,
                         "tokenizer/total_tokens": total_tokens,
+                        "tokenizer/progress": total_tokens / num_tokens,
                         "tokenizer/sequences_in_batch": len(batch_texts),
                         "tokenizer/buffer_size": len(buffer),
-                        "tokenizer/tokens_per_second": total_tokens / elapsed
-                        if elapsed > 0
-                        else 0,
+                        "tokenizer/tokens_per_second": total_tokens / elapsed,
                     }
                 )
-
     except Exception as e:
         wandb.log({"tokenizer/error": str(e)})
         print(f"Tokenizer worker error: {e}")
     finally:
-        # If there are remaining items in the buffer, send them as a final batch
-        if buffer and not stop_event.is_set():
-            batch = [buffer.popleft() for _ in range(len(buffer))]
-            batch_texts, batch_tokens = tuple(zip(*batch, strict=False))
-
-            # Create encoded batch
-            encoded_batch = tokenizer(batch_texts, padding=True, return_tensors="pt")
-            tokens_sum = sum(len(tokens) for tokens in batch_tokens)
-
-            # Put in queue
-            main_queue.put(
-                (batch_idx, encoded_batch, batch_tokens, tokens_sum), block=True
-            )
-
-            elapsed = time.time() - start_time
-            wandb.log(
-                {
-                    "tokenizer/batch_idx": batch_idx,
-                    "tokenizer/queue_size": main_queue.qsize(),
-                    "tokenizer/tokens_in_batch": tokens_sum,
-                    "tokenizer/total_tokens": total_tokens,
-                    "tokenizer/sequences_in_batch": len(batch_texts),
-                    "tokenizer/buffer_size": 0,
-                    "tokenizer/tokens_per_second": total_tokens / elapsed
-                    if elapsed > 0
-                    else 0,
-                    "tokenizer/finished": True,
-                }
-            )
-
-        # Signal that we're done
         main_queue.put(None)
         wandb.finish()
 
@@ -525,6 +498,7 @@ def get_router_activations(
     batch_size: int = 4,
     cuda_devices: str = "",
     tokens_per_file: int = 20_000,
+    num_tokens: int = 1_000_000_000,  # 1B tokens
     resume: bool = False,
     name: str | None = None,
     wandb_project: str = "router_activations",
@@ -538,6 +512,7 @@ def get_router_activations(
         batch_size: Batch size for processing
         cuda_devices: Comma-separated list of CUDA devices to use. If empty, defaults to CUDA_VISIBLE_DEVICES environment variable or CPU if it's not set.
         tokens_per_file: Target number of tokens per output file
+        num_tokens: Number of tokens to process
         resume: Whether to resume from a previous run
         name: Custom name for the experiment
         wandb_project: WandB project name for logging
@@ -559,6 +534,7 @@ def get_router_activations(
     config = {
         "model_name": model_name,
         "dataset_name": dataset_name,
+        "num_tokens": num_tokens,
         "batch_size": batch_size,
         "tokens_per_file": tokens_per_file,
         "world_size": world_size,
@@ -623,6 +599,7 @@ def get_router_activations(
         args=(
             model_name,
             dataset_name,
+            num_tokens,
             tokens_per_file,
             main_queue,
             stop_event,
