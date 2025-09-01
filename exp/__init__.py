@@ -1,7 +1,9 @@
 """Experiments for MoE router study."""
 
+import os
+
 OUTPUT_DIR = "out"
-ROUTER_LOGITS_DIR = "out/router_logits"
-WEIGHT_DIR = "out/weights"
+ACTIVATION_DIRNAME = "activations"
+WEIGHT_DIR = os.path.join(OUTPUT_DIR, "weights")
 MODEL_DIRNAME = "models"
 DATASET_DIRNAME = "datasets"

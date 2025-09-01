@@ -15,10 +15,9 @@ import yaml
 
 from core.data import DATASETS
 from core.model import MODELS
-from exp import OUTPUT_DIR, MODEL_DIRNAME
+from exp import OUTPUT_DIR, MODEL_DIRNAME, ACTIVATION_DIRNAME
 
 # Constants
-ACTIVATION_DIRNAME = "activations"
 CONFIG_FILENAME = "config.yaml"
 
 
