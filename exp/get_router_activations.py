@@ -1,5 +1,4 @@
 from collections import deque
-from itertools import batched
 import os
 import time
 from typing import TypeVar
@@ -123,14 +122,19 @@ def process_batch(
             router_output = model.routers_output[layer_idx]
 
             # Handle different router output formats
-            if isinstance(router_output, tuple):
-                router_scores = router_output[0]
-            else:
-                router_scores = router_output
-
-            # Save and detach router scores
-            router_scores.cpu()[padding_mask].save()
-            router_logits.append(router_scores.clone().detach().cpu()[padding_mask])
+            match router_output:
+                case (router_scores, _router_indices):
+                    # Save and detach router scores
+                    router_scores.cpu()[padding_mask].save()
+                    router_logits.append(
+                        router_scores.clone().detach().cpu()[padding_mask]
+                    )
+                case router_scores:
+                    # Save and detach router scores
+                    router_scores.cpu()[padding_mask].save()
+                    router_logits.append(
+                        router_scores.clone().detach().cpu()[padding_mask]
+                    )
 
     # Stack router logits across layers
     router_logits_tensor = th.stack(router_logits, dim=1)
@@ -197,58 +201,53 @@ def tokenizer_worker(
 
     # Process dataset
     try:
-        for batch_data in batched(dataset_iter, tokenizer_batch):
+        for text in dataset_iter:
             if stop_event.is_set():
                 break
 
-            # Tokenize batch
-            tokenized = [tokenizer.tokenize(text) for text in batch_data]
-
-            # Calculate token counts for each sequence
-            token_counts = [len(tokens) for tokens in tokenized]
+            # Tokenize text
+            tokens = tokenizer.tokenize(text)
+            count = len(tokens)
 
             # Add to buffer
-            for text, tokens, count in zip(
-                batch_data, tokenized, token_counts, strict=False
-            ):
-                buffer.append((text, tokens))
-                total_tokens += count
+            buffer.append((text, tokens))
+            total_tokens += count
 
-                # Check if we have enough tokens to create a batch for processing
-                if sum(token_counts) >= tokens_per_file:
-                    # Create batch from all items in buffer
-                    batch = [buffer.popleft() for _ in range(len(buffer))]
-                    batch_texts, batch_tokens = tuple(zip(*batch, strict=False))
+            # Check if we have enough tokens to create a batch for processing
+            buffer_token_count = sum(len(tokens) for _, tokens in buffer)
+            if buffer_token_count >= tokens_per_file:
+                # Create batch from all items in buffer
+                batch = [buffer.popleft() for _ in range(len(buffer))]
+                batch_texts, batch_tokens = tuple(zip(*batch, strict=False))
 
-                    # Create encoded batch
-                    encoded_batch = tokenizer(
-                        batch_texts, padding=True, return_tensors="pt"
-                    )
-                    tokens_sum = sum(token_counts)
+                # Create encoded batch
+                encoded_batch = tokenizer(
+                    batch_texts, padding=True, return_tensors="pt"
+                )
+                tokens_sum = sum(len(tokens) for tokens in batch_tokens)
 
-                    # Put in queue
-                    main_queue.put(
-                        (batch_idx, encoded_batch, batch_tokens, tokens_sum), block=True
-                    )
+                # Put in queue
+                main_queue.put(
+                    (batch_idx, encoded_batch, batch_tokens, tokens_sum), block=True
+                )
 
-                    # Log statistics
-                    elapsed = time.time() - start_time
-                    wandb.log(
-                        {
-                            "tokenizer/batch_idx": batch_idx,
-                            "tokenizer/queue_size": main_queue.qsize(),
-                            "tokenizer/tokens_in_batch": tokens_sum,
-                            "tokenizer/total_tokens": total_tokens,
-                            "tokenizer/sequences_in_batch": len(batch_texts),
-                            "tokenizer/buffer_size": len(buffer),
-                            "tokenizer/tokens_per_second": total_tokens / elapsed
-                            if elapsed > 0
-                            else 0,
-                        }
-                    )
+                # Log statistics
+                elapsed = time.time() - start_time
+                wandb.log(
+                    {
+                        "tokenizer/batch_idx": batch_idx,
+                        "tokenizer/queue_size": main_queue.qsize(),
+                        "tokenizer/tokens_in_batch": tokens_sum,
+                        "tokenizer/total_tokens": total_tokens,
+                        "tokenizer/sequences_in_batch": len(batch_texts),
+                        "tokenizer/buffer_size": len(buffer),
+                        "tokenizer/tokens_per_second": total_tokens / elapsed
+                        if elapsed > 0
+                        else 0,
+                    }
+                )
 
-                    batch_idx += 1
-                    token_counts = []
+                batch_idx += 1
 
     except Exception as e:
         wandb.log({"tokenizer/error": str(e)})
