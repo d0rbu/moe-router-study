@@ -67,6 +67,7 @@ CONFIG_KEYS_TO_VERIFY = {
     "tokens_per_file",
 }
 
+
 def verify_config(config: dict, experiment_dir: str) -> None:
     """Verify that the current configuration matches the saved one."""
     config_path = os.path.join(experiment_dir, CONFIG_FILENAME)
@@ -154,7 +155,6 @@ def tokenizer_worker(
     stop_event: Any,  # mp.Event is not properly typed
     wandb_run_id: str,
     resume_from_batch: int = 0,
-    tokenizer_batch: int = 4,
 ) -> None:
     """Worker process for tokenizing text data."""
     # Initialize wandb
@@ -184,24 +184,11 @@ def tokenizer_worker(
     # Create dataset iterator
     dataset_iter = dataset_fn(tokenizer)
 
-    # Skip batches if resuming
-    if resume_from_batch > 0:
-        wandb.log({"tokenizer/skipping_batches": resume_from_batch})
-        try:
-            # Skip approximately resume_from_batch * tokenizer_batch items
-            for _ in range(resume_from_batch * tokenizer_batch):
-                # Cast dataset_iter to Any to avoid type checking issues
-                next(dataset_iter)  # type: ignore
-        except StopIteration:
-            wandb.log({"tokenizer/error": "Dataset exhausted during resume"})
-            print("Dataset exhausted during resume skipping")
-            stop_event.set()
-            return
-
     # Initialize buffer and statistics
     buffer: deque[tuple[str, list[str]]] = deque()
+    buffer_token_count = 0
     total_tokens = 0
-    batch_idx = resume_from_batch
+    batch_idx = -1
     start_time = time.time()
 
     # Process dataset
@@ -216,11 +203,18 @@ def tokenizer_worker(
 
             # Add to buffer
             buffer.append((text, tokens))
+            buffer_token_count += count
             total_tokens += count
 
             # Check if we have enough tokens to create a batch for processing
-            buffer_token_count = sum(len(tokens) for _, tokens in buffer)
             if buffer_token_count >= tokens_per_file:
+                buffer_token_count = 0
+                batch_idx += 1
+
+                if batch_idx < resume_from_batch:
+                    wandb.log({"tokenizer/skipping_batches": batch_idx})
+                    continue
+
                 # Create batch from all items in buffer
                 batch = [buffer.popleft() for _ in range(len(buffer))]
                 batch_texts, batch_tokens = tuple(zip(*batch, strict=False))
@@ -251,8 +245,6 @@ def tokenizer_worker(
                         else 0,
                     }
                 )
-
-                batch_idx += 1
 
     except Exception as e:
         wandb.log({"tokenizer/error": str(e)})
@@ -535,8 +527,7 @@ def get_router_activations(
     *_args,
     batch_size: int = 4,
     cuda_devices: str = "",
-    tokens_per_file: int = 2_000,
-    tokenizer_batch: int = 16,
+    tokens_per_file: int = 20_000,
     resume: bool = False,
     name: str | None = None,
     wandb_project: str = "router_activations",
@@ -548,9 +539,8 @@ def get_router_activations(
         model_name: Name of the model to use
         dataset_name: Name of the dataset to use
         batch_size: Batch size for processing
-        device: Device to use (cpu, cuda, mlp_gpu, attn_gpu)
+        cuda_devices: Comma-separated list of CUDA devices to use. If empty, defaults to CUDA_VISIBLE_DEVICES environment variable or CPU if it's not set.
         tokens_per_file: Target number of tokens per output file
-        tokenizer_batch: Batch size for tokenizer worker
         resume: Whether to resume from a previous run
         name: Custom name for the experiment
         wandb_project: WandB project name for logging
@@ -574,7 +564,6 @@ def get_router_activations(
         "dataset_name": dataset_name,
         "batch_size": batch_size,
         "tokens_per_file": tokens_per_file,
-        "tokenizer_batch": tokenizer_batch,
         "world_size": world_size,
         "cpu_only": cpu_only,
         "device_ids": device_ids,
@@ -642,7 +631,6 @@ def get_router_activations(
             stop_event,
             wandb_run_id,
             resume_batch_idx,
-            tokenizer_batch,
         ),
     )
     tokenizer_proc.start()
