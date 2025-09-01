@@ -1,12 +1,13 @@
 from collections import deque
 import os
 import queue
+import sys
 import time
 from typing import Any
 import warnings
 
-from loguru import logger
 import arguably
+from loguru import logger
 from nnterp import StandardizedTransformer
 import torch as th
 import torch.multiprocessing as mp
@@ -15,7 +16,7 @@ import yaml
 
 from core.data import DATASETS
 from core.model import MODELS
-from exp import OUTPUT_DIR, MODEL_DIRNAME, ACTIVATION_DIRNAME
+from exp import ACTIVATION_DIRNAME, MODEL_DIRNAME, OUTPUT_DIR
 
 # Constants
 CONFIG_FILENAME = "config.yaml"
@@ -193,8 +194,12 @@ def tokenizer_worker(
     log_queue: mp.Queue,
     resume_from_batch: int = 0,
     num_tokens: int = 1_000_000_000,  # 1B tokens
+    log_level: str = "INFO",
 ) -> None:
     """Worker process for tokenizing text data."""
+
+    logger.remove()
+    logger.add(sys.stderr, level=log_level)
 
     # Get model config and tokenizer
     model_config = MODELS.get(model_name)
@@ -237,6 +242,7 @@ def tokenizer_worker(
                 break
 
             # Tokenize text
+            logger.debug("Tokenizing text")
             tokens = tokenizer.tokenize(text)
             count = len(tokens)
 
@@ -245,26 +251,31 @@ def tokenizer_worker(
             buffer_token_count += count
             total_tokens += count
 
+            logger.debug(f"Buffer token count: {buffer_token_count:7d} | Total tokens: {total_tokens:9d}")
             # Check if we have enough tokens to create a batch for processing
             if buffer_token_count >= tokens_per_file or total_tokens >= num_tokens:
                 buffer_token_count = 0
                 batch_idx += 1
 
                 if batch_idx < resume_from_batch:
+                    logger.debug(f"Skipping batch {batch_idx}")
                     log_queue.put({"tokenizer/skipping_batches": batch_idx})
                     continue
 
                 # Create batch from all items in buffer
+                logger.debug(f"Creating batch from {len(buffer)} items")
                 batch = [buffer.popleft() for _ in range(len(buffer))]
                 batch_texts, batch_tokens = tuple(zip(*batch, strict=False))
 
                 # Create encoded batch
+                logger.debug("Creating encoded batch")
                 encoded_batch = tokenizer(
                     batch_texts, padding=True, return_tensors="pt"
                 )
                 tokens_sum = sum(len(tokens) for tokens in batch_tokens)
 
                 # Put in queue
+                logger.debug(f"Putting batch {batch_idx} in queue")
                 main_queue.put(
                     (batch_idx, encoded_batch, batch_tokens, tokens_sum), block=True
                 )
@@ -274,6 +285,7 @@ def tokenizer_worker(
 
                 assert elapsed > 0, "Elapsed time is 0, this should never happen"
 
+                logger.debug(f"Putting statistics in queue for batch {batch_idx}")
                 log_queue.put(
                     {
                         "tokenizer/batch_idx": batch_idx,
@@ -299,8 +311,12 @@ def multiplexer_worker(
     stop_event: Any,  # mp.Event is not properly typed
     gpu_busy: list[bool],
     log_queue: mp.Queue,
+    log_level: str = "INFO",
 ) -> None:
     """Worker process that distributes batches to GPU queues based on load."""
+
+    logger.remove()
+    logger.add(sys.stderr, level=log_level)
 
     # Initialize statistics
     total_batches = 0
@@ -321,6 +337,7 @@ def multiplexer_worker(
             total_tokens += tokens_count
 
             # Find GPU with smallest queue, considering if they're busy
+            logger.debug("Finding GPU with smallest queue")
             queue_sizes = []
             for i, q in enumerate(gpu_queues):
                 size = q.qsize()
@@ -332,15 +349,18 @@ def multiplexer_worker(
             min_queue_idx = th.argmin(th.tensor(queue_sizes)).item()
 
             # Put batch in the selected GPU queue
+            logger.debug(f"Putting batch {batch_idx} in GPU {min_queue_idx} queue")
             gpu_queues[min_queue_idx].put(
                 (batch_idx, encoded_batch, batch_tokens, tokens_count), block=True
             )
 
             # Update batch count for this GPU
+            logger.debug(f"Updating batch count for GPU {min_queue_idx}")
             gpu_batch_counts[min_queue_idx] += 1
 
             # Log statistics
             elapsed = time.time() - start_time
+            logger.debug(f"Putting statistics in queue for batch {batch_idx}")
             log_queue.put(
                 {
                     "multiplexer/batch_idx": batch_idx,
@@ -382,8 +402,13 @@ def gpu_worker(
     gpu_busy: list[bool],  # Reference to multiplexer's gpu_busy list
     log_queue: mp.Queue,
     activations_to_store: set[str] = ACTIVATION_KEYS,
+    log_level: str = "INFO",
 ) -> None:
     """Worker process for processing batches on a specific GPU."""
+
+    logger.remove()
+    logger.add(sys.stderr, level=log_level)
+
     try:
         device_map = f"cuda:{device_id}" if not cpu_only else "cpu"
 
@@ -403,6 +428,7 @@ def gpu_worker(
             check_attn_probs_with_trace=False,
             device_map=device_map,
         )
+        logger.debug("Model initialized")
         layers_with_routers = model.layers_with_routers
         top_k = model.router_probabilities.get_top_k()
 
@@ -427,6 +453,8 @@ def gpu_worker(
             # Get batch from queue
             item = gpu_queue.get()
 
+            logger.debug(f"Rank {rank} picked up batch from queue")
+
             # Signal that we're busy processing
             gpu_busy[rank] = True
 
@@ -448,6 +476,7 @@ def gpu_worker(
             encoded_batch = {k: v.to(model.device) for k, v in encoded_batch.items()}
 
             # Process batch and get router logits
+            logger.debug(f"Rank {rank} processing batch {batch_idx}")
             batch_start = time.time()
             with th.inference_mode():
                 activations = process_batch(
@@ -457,6 +486,8 @@ def gpu_worker(
                     activations_to_store=activations_to_store,
                 )
 
+            logger.debug(f"Rank {rank} processed batch {batch_idx}")
+
             # Save results
             output_path = os.path.join(activations_dir, f"{batch_idx}.pt")
             output = {
@@ -464,6 +495,7 @@ def gpu_worker(
                 "tokens": batch_tokens,
                 **activations,
             }
+            logger.debug(f"Rank {rank} saving results to {output_path}")
             th.save(output, output_path)
 
             # Update statistics
@@ -474,6 +506,7 @@ def gpu_worker(
             elapsed = time.time() - start_time
 
             # Log statistics
+            logger.debug(f"Rank {rank} logging statistics for batch {batch_idx}")
             log_queue.put(
                 {
                     f"gpu_{rank}/batch_idx": batch_idx,
@@ -531,6 +564,7 @@ def get_router_activations(
     resume: bool = False,
     name: str | None = None,
     activations_to_store: list[str] | None = None,
+    log_level: str = "INFO",
 ) -> None:
     """
     Extract router activations from a model using multiple GPUs.
@@ -545,6 +579,9 @@ def get_router_activations(
         resume: Whether to resume from a previous run
         name: Custom name for the experiment
     """
+    logger.remove()
+    logger.add(sys.stderr, level=log_level)
+
     cuda_devices_raw = cuda_devices or os.environ.get("CUDA_VISIBLE_DEVICES", "")
     cpu_only = cuda_devices_raw == ""
     device_ids = [int(i) for i in cuda_devices_raw.split(",")] if not cpu_only else [0]
@@ -639,6 +676,7 @@ def get_router_activations(
             log_queue,
             resume_batch_idx,
             num_tokens,
+            log_level,
         ),
     )
     tokenizer_proc.start()
@@ -648,7 +686,7 @@ def get_router_activations(
     logger.info("Starting multiplexer worker")
     multiplexer_proc = mp.Process(
         target=multiplexer_worker,
-        args=(main_queue, gpu_queues, stop_event, gpu_busy, log_queue),
+        args=(main_queue, gpu_queues, stop_event, gpu_busy, log_queue, log_level),
     )
     multiplexer_proc.start()
     processes.append(multiplexer_proc)
@@ -673,6 +711,7 @@ def get_router_activations(
                 gpu_busy,
                 log_queue,
                 set(activations_to_store),
+                log_level,
             ),
         )
         gpu_proc.start()
