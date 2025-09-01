@@ -13,29 +13,41 @@ WEIGHT_DIRNAME = "weights"
 CONFIG_FILENAME = "config.yaml"
 
 
-def get_experiment_dir(name: str | None = None, **kwargs) -> str:
+def get_experiment_dir(
+    name: str | None = None,
+    model_name: str | None = None,
+    dataset_name: str | None = None,
+    **kwargs,
+) -> str:
     """
     Get the experiment directory path.
 
     Args:
         name: Optional name for the experiment. If not provided, one will be generated
-              based on the provided kwargs.
-        **kwargs: Configuration parameters used to generate a name if one is not provided.
+              based on the provided model_name, dataset_name, and kwargs.
+        model_name: Name of the model used in the experiment. Required if name is None.
+        dataset_name: Name of the dataset used in the experiment. Required if name is None.
+        **kwargs: Additional configuration parameters used to generate a name if one is not provided.
 
     Returns:
         Path to the experiment directory.
+
+    Raises:
+        ValueError: If name is None and either model_name or dataset_name is None.
     """
     if name is None:
-        # Generate a name based on config parameters
-        if not kwargs:
-            raise ValueError("Either name or config parameters must be provided")
-
-        # Extract model_name and dataset_name if available
-        model_name = kwargs.get("model_name", "unknown_model")
-        dataset_name = kwargs.get("dataset_name", "unknown_dataset")
+        # Validate required parameters
+        if model_name is None:
+            raise ValueError(
+                "model_name is required when generating an experiment name"
+            )
+        if dataset_name is None:
+            raise ValueError(
+                "dataset_name is required when generating an experiment name"
+            )
 
         # Track which keys are being filtered out
-        ignored_keys = {"device", "resume", "model_name", "dataset_name"}
+        ignored_keys = {"device", "resume"}
         filtered_keys = set()
 
         # Add any additional parameters that might affect the experiment

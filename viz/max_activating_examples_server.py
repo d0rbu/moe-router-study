@@ -125,12 +125,18 @@ def max_activating_examples_server(
         )
     )
 
-    # Process tokens from flat list to list of lists if needed
-    if tokens is not None and not (
-        isinstance(tokens, list) and all(isinstance(t, list) for t in tokens)
-    ):
-        # Convert flat token list to list of lists with one token per inner list
-        tokens = [[token] for token in tokens]
+    # Validate tokens format
+    if tokens is not None:
+        if not isinstance(tokens, list):
+            raise TypeError("Tokens must be a list")
+
+        # Check if tokens is a list of lists
+        if not all(isinstance(seq, list) for seq in tokens):
+            raise TypeError("Tokens must be a list of lists of strings")
+
+        # Check that sequences are not just single tokens
+        if any(len(seq) == 1 for seq in tokens):
+            raise ValueError("Token sequences should not be of length 1")
 
     # Get dimensions from token_topk_mask
     num_layers, num_experts = token_topk_mask.shape[1], token_topk_mask.shape[2]

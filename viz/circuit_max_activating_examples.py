@@ -98,15 +98,20 @@ def _ensure_token_alignment(
 
 
 def build_sequence_id_tensor(
-    sequences: list[list[str]],
+    sequences: list[list[str]] | None,
     device: str = "cuda",
 ) -> tuple[th.Tensor, th.Tensor, th.Tensor]:
-    """Map each token to its sequence index and compute lengths/offsets.
+    """Build a tensor mapping token positions to sequence IDs.
+
+    Args:
+        sequences: List of tokenized sequences
+        device: Device to place tensors on
 
     Returns:
-      - seq_ids_per_token: (B,) long tensor mapping token index -> seq index
-      - seq_lengths: (S,) long tensor of token counts per sequence
-      - seq_offsets: (S+1,) long tensor of prefix sums, start index per sequence
+        Tuple of (sequence_ids, sequence_lengths, sequence_offsets)
+        - sequence_ids: (num_tokens,) tensor mapping each token to its sequence ID
+        - sequence_lengths: (num_sequences,) tensor of sequence lengths
+        - sequence_offsets: (num_sequences,) tensor of sequence start offsets
     """
     lengths = [len(seq) for seq in sequences]
     S = len(lengths)
@@ -236,19 +241,26 @@ def _render_sequences_panel(
 
 def _viz_render_precomputed(
     circuits: th.Tensor,
-    sequences: list[list[str]],
+    sequences: list[list[str]] | None,
     norm_scores: th.Tensor,  # (B, C) in [0,1]
     order_per_circuit: list[list[int]],  # len C, ordered seq ids per circuit
-    token_topk_mask: th.Tensor,
-    top_n: int = 10,  # noqa: ARG001
+    top_n: int = 10,
+    circuit_idx: int = 0,
     device: str = "cuda",
-) -> None:
-    """Render interactive view showing a single sequence as plaintext with token highlighting.
+) -> tuple[th.Tensor, th.Tensor, th.Tensor]:
+    """Render precomputed visualization data.
 
-    - Left: one sequence rendered inline; each token has a background color based on activation (0..1).
-    - Right: circuit grid with slider to switch circuits.
-    - Sliders: one for circuit index, one for sequence index.
-    - Hover a token to see its actual top-k router activation mask overlaid as transparency.
+    Args:
+        circuits: (C, L, E) boolean tensor of circuits
+        sequences: List of tokenized sequences
+        norm_scores: (B, C) normalized scores per sequence per circuit
+        order_per_circuit: List of lists of sequence indices, ordered by score
+        top_n: Number of sequences to display
+        circuit_idx: Index of the circuit to display
+        device: Device to use for computation
+
+    Returns:
+        Tuple of (circuit_grid, circuit_mask, token_grid)
     """
     circuits = circuits.to(device=device, dtype=th.float32)
 
@@ -553,7 +565,7 @@ def _viz_render_precomputed(
 def viz_max_activating_tokens(
     circuits: th.Tensor,
     token_topk_mask: th.Tensor,
-    tokens: list[list[str]],
+    tokens: list[list[str]] | None,
     top_k: int,
     top_n: int = 10,
     device: str = "cuda",
@@ -629,8 +641,8 @@ def viz_max_activating_tokens(
         tokens,
         norm_scores,
         order_per_circuit,
-        token_topk_mask,
         top_n=top_n,
+        circuit_idx=circuit_idx,
         device=device,
     )
 
@@ -638,7 +650,7 @@ def viz_max_activating_tokens(
 def viz_mean_activating_tokens(
     circuits: th.Tensor,
     token_topk_mask: th.Tensor,
-    tokens: list[list[str]],
+    tokens: list[list[str]] | None,
     top_k: int,
     top_n: int = 10,
     device: str = "cuda",
@@ -709,8 +721,8 @@ def viz_mean_activating_tokens(
         tokens,
         norm_scores,
         order_per_circuit,
-        token_topk_mask,
         top_n=top_n,
+        circuit_idx=circuit_idx,
         device=device,
     )
 
@@ -745,12 +757,20 @@ def viz_max_cli(
         device=device,
         token_topk_mask=token_topk_mask,
     )
-    # Process tokens from flat list to list of lists if needed
-    if tokens is not None and not (
-        isinstance(tokens, list) and all(isinstance(t, list) for t in tokens)
-    ):
-        # Convert flat token list to list of lists with one token per inner list
-        tokens = [[token] for token in tokens]
+
+    # Validate tokens format
+    if tokens is not None:
+        if not isinstance(tokens, list):
+            raise TypeError("Tokens must be a list")
+
+        # Check if tokens is a list of lists
+        if not all(isinstance(seq, list) for seq in tokens):
+            raise TypeError("Tokens must be a list of lists of strings")
+
+        # Check that sequences are not just single tokens
+        if any(len(seq) == 1 for seq in tokens):
+            raise ValueError("Token sequences should not be of length 1")
+
     viz_max_activating_tokens(
         circuits,
         token_topk_mask,
@@ -792,12 +812,20 @@ def viz_mean_cli(
         device=device,
         token_topk_mask=token_topk_mask,
     )
-    # Process tokens from flat list to list of lists if needed
-    if tokens is not None and not (
-        isinstance(tokens, list) and all(isinstance(t, list) for t in tokens)
-    ):
-        # Convert flat token list to list of lists with one token per inner list
-        tokens = [[token] for token in tokens]
+
+    # Validate tokens format
+    if tokens is not None:
+        if not isinstance(tokens, list):
+            raise TypeError("Tokens must be a list")
+
+        # Check if tokens is a list of lists
+        if not all(isinstance(seq, list) for seq in tokens):
+            raise TypeError("Tokens must be a list of lists of strings")
+
+        # Check that sequences are not just single tokens
+        if any(len(seq) == 1 for seq in tokens):
+            raise ValueError("Token sequences should not be of length 1")
+
     viz_mean_activating_tokens(
         circuits,
         token_topk_mask,
