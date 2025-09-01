@@ -1,14 +1,13 @@
 from collections import deque
 import os
 import time
-from typing import TypeVar
+from typing import Any, TypeVar
 import warnings
 
 import arguably
 from nnterp import StandardizedTransformer
 import torch as th
 import torch.multiprocessing as mp
-from tqdm import tqdm
 import trackio as wandb
 import yaml
 
@@ -141,20 +140,21 @@ def process_batch(
 
 
 def tokenizer_worker(
-    dataset_name: str,
     model_name: str,
-    tokenizer_batch: int,
+    dataset_name: str,
     tokens_per_file: int,
     main_queue: mp.Queue,
-    stop_event: mp.Event,
+    stop_event: Any,  # mp.Event is not properly typed
     wandb_run_id: str,
     resume_from_batch: int = 0,
+    tokenizer_batch: int = 4,
 ) -> None:
-    """Worker process that tokenizes text and puts batches into the queue."""
-    # Initialize wandb in this process
+    """Worker process for tokenizing text data."""
+    # Initialize wandb
     wandb.init(
         project="router_activations",
-        id=wandb_run_id,
+        # Use id parameter as that's what wandb expects
+        id=wandb_run_id,  # type: ignore
         resume="allow",
         name=f"tokenizer-{dataset_name}-{model_name}",
     )
@@ -180,16 +180,16 @@ def tokenizer_worker(
     # Skip batches if resuming
     if resume_from_batch > 0:
         wandb.log({"tokenizer/skipping_batches": resume_from_batch})
-        for _ in tqdm(
-            range(resume_from_batch * tokenizer_batch),
-            desc="Skipping batches for resume",
-        ):
-            try:
-                next(dataset_iter)
-            except StopIteration:
-                wandb.log({"tokenizer/error": "Dataset exhausted during resume"})
-                stop_event.set()
-                return
+        try:
+            # Skip approximately resume_from_batch * tokenizer_batch items
+            for _ in range(resume_from_batch * tokenizer_batch):
+                # Cast dataset_iter to Any to avoid type checking issues
+                next(dataset_iter)  # type: ignore
+        except StopIteration:
+            wandb.log({"tokenizer/error": "Dataset exhausted during resume"})
+            print("Dataset exhausted during resume skipping")
+            stop_event.set()
+            return
 
     # Initialize buffer and statistics
     buffer: deque[tuple[str, list[str]]] = deque()
@@ -289,15 +289,16 @@ def tokenizer_worker(
 def multiplexer_worker(
     main_queue: mp.Queue,
     gpu_queues: list[mp.Queue],
-    stop_event: mp.Event,
+    stop_event: Any,  # mp.Event is not properly typed
     wandb_run_id: str,
     gpu_busy: list[bool],
 ) -> None:
-    """Worker that distributes batches to GPU queues based on load balancing."""
-    # Initialize wandb in this process
+    """Worker process that distributes batches to GPU queues based on load."""
+    # Initialize wandb
     wandb.init(
         project="router_activations",
-        id=wandb_run_id,
+        # Use id parameter as that's what wandb expects
+        id=wandb_run_id,  # type: ignore
         resume="allow",
         name="multiplexer",
     )
@@ -382,26 +383,27 @@ def gpu_worker(
     model_name: str,
     experiment_name: str,
     device: str,
-    stop_event: mp.Event,
+    stop_event: Any,  # mp.Event is not properly typed
     wandb_run_id: str,
     gpu_busy: list[bool] | None = None,  # Reference to multiplexer's gpu_busy list
 ) -> None:
-    """Worker process that runs on a specific GPU and processes batches."""
-    # Set device for this process
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(rank)
-    device_id = (
-        f"cuda:{0}"  # Always use first visible device (which is our assigned GPU)
-    )
-
-    # Initialize wandb in this process
-    wandb.init(
-        project="router_activations",
-        id=wandb_run_id,
-        resume="allow",
-        name=f"gpu-{rank}",
-    )
-
+    """Worker process for processing batches on a specific GPU."""
     try:
+        # Initialize wandb
+        wandb.init(
+            project="router_activations",
+            # Use id parameter as that's what wandb expects
+            id=wandb_run_id,  # type: ignore
+            resume="allow",
+            name=f"gpu-{rank}",
+        )
+
+        # Set device for this process
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(rank)
+        device_id = (
+            f"cuda:{0}"  # Always use first visible device (which is our assigned GPU)
+        )
+
         # Get model config
         model_config = MODELS.get(model_name)
         if model_config is None:
@@ -611,7 +613,7 @@ def get_router_activations(
 
     # Initialize WandB
     wandb_run = wandb.init(project=wandb_project, name=name, config=config)
-    wandb_run_id = wandb_run.id
+    wandb_run_id = wandb_run.id if wandb_run else None  # type: ignore  # Handle the case where wandb.init returns None
 
     # Find completed batches if resuming
     resume_batch_idx = 0
@@ -642,9 +644,8 @@ def get_router_activations(
     tokenizer_proc = mp.Process(
         target=tokenizer_worker,
         args=(
-            dataset_name,
             model_name,
-            tokenizer_batch,
+            dataset_name,
             tokens_per_file,
             main_queue,
             stop_event,
