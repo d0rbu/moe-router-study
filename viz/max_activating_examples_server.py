@@ -125,12 +125,15 @@ def max_activating_examples_server(
         )
     )
 
-    # Process tokens from flat list to list of lists if needed
-    if tokens is not None and not (
-        isinstance(tokens, list) and all(isinstance(t, list) for t in tokens)
-    ):
-        # Convert flat token list to list of lists with one token per inner list
-        tokens = [[token] for token in tokens]
+    # Ensure tokens are in the correct format for visualization (list of lists)
+    if tokens is not None:
+        if not isinstance(tokens, list):
+            tokens = [tokens]  # Convert to a list if it's not already
+
+        # Check if it's a flat list of tokens or already a list of lists
+        if tokens and not isinstance(tokens[0], list):
+            # If it's a flat list, convert to list of single-token lists
+            tokens = [[token] for token in tokens]
 
     # Get dimensions from token_topk_mask
     num_layers, num_experts = token_topk_mask.shape[1], token_topk_mask.shape[2]

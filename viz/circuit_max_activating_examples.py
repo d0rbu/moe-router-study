@@ -553,7 +553,7 @@ def _viz_render_precomputed(
 def viz_max_activating_tokens(
     circuits: th.Tensor,
     token_topk_mask: th.Tensor,
-    tokens: list[list[str]],
+    tokens: list[list[str]] | list[str] | None,
     top_k: int,
     top_n: int = 10,
     device: str = "cuda",
@@ -565,7 +565,22 @@ def viz_max_activating_tokens(
     - Right: circuit grid with slider to switch circuits.
     - Hover a token to see its actual top-k router activation mask overlaid as transparency.
     """
-    _ensure_token_alignment(token_topk_mask, tokens)
+    # Ensure tokens are in the correct format for visualization
+    if tokens is not None:
+        if not isinstance(tokens, list):
+            tokens = [tokens]
+        
+        # Convert flat list to list of lists if needed
+        if tokens and not isinstance(tokens[0], list):
+            tokens = [[token] for token in tokens]
+    else:
+        # If tokens is None, create a placeholder
+        tokens = [["token"] * token_topk_mask.shape[0]]
+    
+    # Now tokens is guaranteed to be list[list[str]]
+    tokens_list_of_lists = tokens  # type: list[list[str]]
+    
+    _ensure_token_alignment(token_topk_mask, tokens_list_of_lists)
     circuits = circuits.to(device=device, dtype=th.float32)
 
     batch_size, num_layers, num_experts = token_topk_mask.shape
@@ -638,7 +653,7 @@ def viz_max_activating_tokens(
 def viz_mean_activating_tokens(
     circuits: th.Tensor,
     token_topk_mask: th.Tensor,
-    tokens: list[list[str]],
+    tokens: list[list[str]] | list[str] | None,
     top_k: int,
     top_n: int = 10,
     device: str = "cuda",
@@ -648,7 +663,22 @@ def viz_mean_activating_tokens(
 
     Same as viz_max_activating_tokens, but selecting sequences by mean token score.
     """
-    _ensure_token_alignment(token_topk_mask, tokens)
+    # Ensure tokens are in the correct format for visualization
+    if tokens is not None:
+        if not isinstance(tokens, list):
+            tokens = [tokens]
+        
+        # Convert flat list to list of lists if needed
+        if tokens and not isinstance(tokens[0], list):
+            tokens = [[token] for token in tokens]
+    else:
+        # If tokens is None, create a placeholder
+        tokens = [["token"] * token_topk_mask.shape[0]]
+    
+    # Now tokens is guaranteed to be list[list[str]]
+    tokens_list_of_lists = tokens  # type: list[list[str]]
+    
+    _ensure_token_alignment(token_topk_mask, tokens_list_of_lists)
     circuits = circuits.to(device=device, dtype=th.float32)
 
     batch_size, num_layers, num_experts = token_topk_mask.shape
@@ -745,12 +775,17 @@ def viz_max_cli(
         device=device,
         token_topk_mask=token_topk_mask,
     )
-    # Process tokens from flat list to list of lists if needed
-    if tokens is not None and not (
-        isinstance(tokens, list) and all(isinstance(t, list) for t in tokens)
-    ):
-        # Convert flat token list to list of lists with one token per inner list
-        tokens = [[token] for token in tokens]
+
+    # Ensure tokens are in the correct format for visualization (list of lists)
+    if tokens is not None:
+        if not isinstance(tokens, list):
+            tokens = [tokens]  # Convert to a list if it's not already
+
+        # Check if it's a flat list of tokens or already a list of lists
+        if tokens and not isinstance(tokens[0], list):
+            # If it's a flat list, convert to list of single-token lists
+            tokens = [[token] for token in tokens]
+
     viz_max_activating_tokens(
         circuits,
         token_topk_mask,
@@ -792,12 +827,17 @@ def viz_mean_cli(
         device=device,
         token_topk_mask=token_topk_mask,
     )
-    # Process tokens from flat list to list of lists if needed
-    if tokens is not None and not (
-        isinstance(tokens, list) and all(isinstance(t, list) for t in tokens)
-    ):
-        # Convert flat token list to list of lists with one token per inner list
-        tokens = [[token] for token in tokens]
+
+    # Ensure tokens are in the correct format for visualization (list of lists)
+    if tokens is not None:
+        if not isinstance(tokens, list):
+            tokens = [tokens]  # Convert to a list if it's not already
+
+        # Check if it's a flat list of tokens or already a list of lists
+        if tokens and not isinstance(tokens[0], list):
+            # If it's a flat list, convert to list of single-token lists
+            tokens = [[token] for token in tokens]
+
     viz_mean_activating_tokens(
         circuits,
         token_topk_mask,

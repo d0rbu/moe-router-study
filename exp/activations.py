@@ -11,7 +11,7 @@ from exp import get_experiment_dir, get_router_logits_dir
 
 def load_activations_indices_tokens_and_topk(
     experiment_name: str | None = None, device: str = "cpu"
-) -> tuple[torch.Tensor, torch.Tensor, list[str] | None, int]:
+) -> tuple[torch.Tensor, torch.Tensor, list[list[str]] | list[str] | None, int]:
     """
     Load router activations, indices, tokens, and topk from saved files.
 
@@ -70,7 +70,7 @@ def load_activations_indices_tokens_and_topk(
 
     all_activated_experts = []
     all_activated_expert_indices = []
-    all_tokens: list[str] = []
+    all_tokens = []
     top_k = None
 
     for file_path in tqdm(file_paths, desc="Loading router logits"):
@@ -123,6 +123,7 @@ def load_activations_indices_tokens_and_topk(
         all_activated_expert_indices.append(indices)
 
         if "tokens" in data:
+            # Preserve the original token format from the file
             all_tokens.extend(data["tokens"])
 
     # Concatenate all tensors along the batch dimension

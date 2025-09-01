@@ -31,11 +31,20 @@ def get_experiment_dir(name: str | None = None, **kwargs) -> str:
             raise ValueError("Either name or config parameters must be provided")
 
         # Extract model_name and dataset_name if available
-        model_name = kwargs.get("model_name", "unknown_model")
-        dataset_name = kwargs.get("dataset_name", "unknown_dataset")
+        if "model_name" not in kwargs:
+            raise ValueError(
+                "model_name is required when generating an experiment name"
+            )
+        if "dataset_name" not in kwargs:
+            raise ValueError(
+                "dataset_name is required when generating an experiment name"
+            )
+
+        model_name = kwargs["model_name"]
+        dataset_name = kwargs["dataset_name"]
 
         # Track which keys are being filtered out
-        ignored_keys = {"device", "resume", "model_name", "dataset_name"}
+        ignored_keys = {"device", "resume"}
         filtered_keys = set()
 
         # Add any additional parameters that might affect the experiment
