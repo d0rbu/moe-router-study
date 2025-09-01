@@ -208,3 +208,6 @@ out/
 out_*
 
 .ruff_cache/
+
+datasets/
+models/
