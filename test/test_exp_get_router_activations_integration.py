@@ -6,7 +6,6 @@ import torch as th
 
 from exp.get_router_activations import (
     CONFIG_FILENAME,
-    ROUTER_LOGITS_DIRNAME,
     get_experiment_name,
     process_batch,
     save_config,
@@ -76,7 +75,7 @@ class TestExperimentManagement:
         experiment_name = "test_experiment"
         experiment_dir = os.path.join(str(tmp_path), experiment_name)
         os.makedirs(experiment_dir, exist_ok=True)
-        router_logits_dir = os.path.join(experiment_dir, ROUTER_LOGITS_DIRNAME)
+        router_logits_dir = os.path.join(experiment_dir, "router_logits")
         os.makedirs(router_logits_dir, exist_ok=True)
 
         # Create test data
