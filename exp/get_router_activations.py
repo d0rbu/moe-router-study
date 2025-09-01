@@ -1,5 +1,4 @@
 from collections import deque
-from itertools import batched
 import os
 import time
 from typing import Any, TypeVar
@@ -130,35 +129,32 @@ def process_batch(
             encoded_batch[key] = encoded_batch[key].to(model.device)
 
     # Get router logits
-    with th.inference_mode():
-        with model.trace(encoded_batch) as tracer:
-            # Get attention mask to filter out padding tokens
-            attention_mask = encoded_batch["attention_mask"]
-            padding_mask = attention_mask.bool().flatten()
+    with th.inference_mode(), model.trace(encoded_batch) as tracer:
+        # Get attention mask to filter out padding tokens
+        attention_mask = encoded_batch["attention_mask"]
+        padding_mask = attention_mask.bool().flatten()
 
-            # Extract router logits for each layer
-            router_logits = []
-            for layer in router_layers:
-                # Get router logits and immediately detach and move to CPU
-                router_output = model.routers_output[layer]
+        # Extract router logits for each layer
+        router_logits = []
+        for layer in router_layers:
+            # Get router logits and immediately detach and move to CPU
+            router_output = model.routers_output[layer]
 
-                match router_output:
-                    case (router_scores, _router_indices):
-                        logits = router_scores.cpu()[padding_mask].save()
-                    case router_scores:
-                        logits = router_scores.cpu()[padding_mask].save()
-                    case _:
-                        raise ValueError(
-                            f"Unexpected router output format at layer {layer}: {type(router_output)}"
-                        )
+            # Handle different router output formats
+            if isinstance(router_output, tuple):
+                router_scores, _router_indices = router_output
+                logits = router_scores.cpu()[padding_mask].save()
+            else:
+                router_scores = router_output
+                logits = router_scores.cpu()[padding_mask].save()
 
-                router_logits.append(logits.clone().detach())
+            router_logits.append(logits.clone().detach())
 
-            # Stack the logits and create a new tensor to break references
-            router_logits_tensor = th.stack(router_logits, dim=1).clone().detach()
+        # Stack the logits and create a new tensor to break references
+        router_logits_tensor = th.stack(router_logits, dim=1).clone().detach()
 
-            # Explicitly stop the tracer to clean up resources
-            tracer.stop()
+        # Explicitly stop the tracer to clean up resources
+        tracer.stop()
 
     return router_logits_tensor, tokenized_batch
 
@@ -280,7 +276,7 @@ def tokenizer_worker(
         # If there are remaining items in the buffer, send them as a final batch
         if buffer and not stop_event.is_set():
             batch = [buffer.popleft() for _ in range(len(buffer))]
-            batch_texts, batch_tokens = tuple(zip(*batch))
+            batch_texts, batch_tokens = tuple(zip(*batch, strict=False))
             tokens_sum = sum(len(tokens) for tokens in batch_tokens)
 
             main_queue.put((batch_idx, batch_texts, batch_tokens, tokens_sum), block=True)
@@ -518,12 +514,13 @@ def find_completed_batches(experiment_dir: str) -> tuple[dict[int, list[int]], i
         try:
             batch_idx = int(filename.split(".")[0])
             rank = 0  # Default rank for global batch index format
-            
+
             if rank not in completed_batches:
                 completed_batches[rank] = []
-            
+
             completed_batches[rank].append(batch_idx)
             max_batch_idx = max(max_batch_idx, batch_idx)
+
         except ValueError:
             # Skip files that don't match the expected format
             continue
