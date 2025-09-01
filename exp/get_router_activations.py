@@ -25,8 +25,6 @@ CONFIG_FILENAME = "config.yaml"
 # Type definitions
 T = TypeVar("T")
 
-# Set wandb availability flag
-
 
 def get_experiment_name(model_name: str, dataset_name: str, **kwargs) -> str:
     """Generate a unique experiment name based on configuration parameters."""
