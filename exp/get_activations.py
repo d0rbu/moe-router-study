@@ -5,6 +5,7 @@ import time
 from typing import Any
 import warnings
 
+from loguru import logger
 import arguably
 from nnterp import StandardizedTransformer
 import torch as th
@@ -213,6 +214,7 @@ def tokenizer_worker(
 
     tokenizer = AutoTokenizer.from_pretrained(path)
 
+    logger.info(f"Using tokenizer from {path}")
     # Get dataset function
     dataset_fn = DATASETS.get(dataset_name)
     if dataset_fn is None:
@@ -230,6 +232,7 @@ def tokenizer_worker(
 
     assert num_tokens > 0, "Total number of tokens to process must be greater than 0"
 
+    logger.info(f"Starting tokenizer worker for {dataset_name}")
     # Process dataset
     try:
         for text in dataset_iter:
@@ -288,7 +291,7 @@ def tokenizer_worker(
                 )
     except Exception as e:
         log_queue.put({"tokenizer/error": str(e)})
-        print(f"Tokenizer worker error: {e}")
+        logger.error(f"Tokenizer worker error: {e}")
     finally:
         main_queue.put(None)
 
@@ -308,6 +311,7 @@ def multiplexer_worker(
     start_time = time.time()
     gpu_batch_counts = [0] * len(gpu_queues)  # Track batches sent to each GPU
 
+    logger.info("Starting multiplexer worker")
     try:
         while not stop_event.is_set():
             # Get batch from main queue
@@ -363,7 +367,7 @@ def multiplexer_worker(
 
     except Exception as e:
         log_queue.put({"multiplexer/error": str(e)})
-        print(f"Multiplexer worker error: {e}")
+        logger.error(f"Multiplexer worker error: {e}")
     finally:
         # Signal all GPU queues that we're done
         for q in gpu_queues:
@@ -395,6 +399,7 @@ def gpu_worker(
         local_path = os.path.join(os.path.abspath(MODEL_DIRNAME), hf_name)
         path = local_path if os.path.exists(local_path) else hf_name
 
+        logger.info(f"Using model from {path}")
         # Initialize model
         model = StandardizedTransformer(
             path,
@@ -414,6 +419,8 @@ def gpu_worker(
         total_tokens = 0
         processing_times: list[float] = []
         start_time = time.time()
+
+        logger.info(f"Starting GPU worker {rank} on cuda:{device_id}")
 
         # Process batches
         while not stop_event.is_set():
@@ -489,7 +496,7 @@ def gpu_worker(
 
     except Exception as e:
         log_queue.put({f"gpu_{rank}/error": str(e)})
-        print(f"GPU {rank} worker error: {e}")
+        logger.error(f"GPU {rank} worker error: {e}")
 
 
 def find_completed_batches(experiment_dir: str) -> set[int]:
@@ -553,9 +560,9 @@ def get_router_activations(
         activations_to_store = ["router_logits", "mlp_output", "layer_output"]
 
     if cpu_only:
-        print("Using CPU only")
+        logger.info("Using CPU only")
     else:
-        print(f"Using {world_size} GPUs: {device_ids}")
+        logger.info(f"Using {world_size} GPUs: {device_ids}")
 
     # Create experiment configuration
     config = {
@@ -591,7 +598,7 @@ def get_router_activations(
     # Save configuration
     save_config(config, experiment_dir)
 
-    print(f"Experiment name: {name}")
+    logger.info(f"Experiment name: {name}")
 
     # Initialize WandB
     wandb.init(project="router_activations", resume="allow", config=config)
@@ -603,7 +610,7 @@ def get_router_activations(
         if completed_batches:
             max_batch_idx = max(completed_batches) if completed_batches else 0
             resume_batch_idx = max_batch_idx + 1
-            print(f"Resuming from batch {resume_batch_idx}")
+            logger.info(f"Resuming from batch {resume_batch_idx}")
             wandb.log({"resume/batch_idx": resume_batch_idx})
 
     # Initialize multiprocessing resources
@@ -623,7 +630,7 @@ def get_router_activations(
     processes = []
 
     # Start tokenizer worker
-    print("Starting tokenizer worker")
+    logger.info("Starting tokenizer worker")
     tokenizer_proc = mp.Process(
         target=tokenizer_worker,
         args=(
@@ -641,7 +648,7 @@ def get_router_activations(
     processes.append(tokenizer_proc)
 
     # Start multiplexer worker
-    print("Starting multiplexer worker")
+    logger.info("Starting multiplexer worker")
     multiplexer_proc = mp.Process(
         target=multiplexer_worker,
         args=(main_queue, gpu_queues, stop_event, gpu_busy, log_queue),
@@ -652,9 +659,9 @@ def get_router_activations(
     # Start GPU workers
     for rank, device_id in enumerate(device_ids):
         if cpu_only:
-            print(f"Starting CPU worker {rank}")
+            logger.info(f"Starting CPU worker {rank}")
         else:
-            print(f"Starting GPU worker {rank} on cuda:{device_id}")
+            logger.info(f"Starting GPU worker {rank} on cuda:{device_id}")
 
         gpu_proc = mp.Process(
             target=gpu_worker,
@@ -687,7 +694,7 @@ def get_router_activations(
 
             processes_are_running = any(proc.is_alive() for proc in processes)
     except KeyboardInterrupt:
-        print("Keyboard interrupt detected, stopping all processes...")
+        logger.info("Keyboard interrupt detected, stopping all processes...")
         stop_event.set()
 
         # Wait for processes to terminate
