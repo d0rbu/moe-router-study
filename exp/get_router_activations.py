@@ -12,7 +12,6 @@ import trackio as wandb
 import yaml
 
 from core.data import DATASETS
-from core.device_map import CUSTOM_DEVICES
 from core.model import MODELS
 from exp import OUTPUT_DIR
 
@@ -382,7 +381,6 @@ def gpu_worker(
     gpu_queue: mp.Queue,
     model_name: str,
     experiment_name: str,
-    device: str,
     stop_event: Any,  # mp.Event is not properly typed
     wandb_run_id: str,
     gpu_busy: list[bool] | None = None,  # Reference to multiplexer's gpu_busy list
@@ -410,11 +408,10 @@ def gpu_worker(
             raise ValueError(f"Model {model_name} not found")
 
         # Initialize model
-        device_map = CUSTOM_DEVICES.get(device, lambda: device_id)()
         model = StandardizedTransformer(
             model_config.hf_name,
             check_attn_probs_with_trace=False,
-            device_map=device_map,
+            device_map=device_id,
         )
         layers_with_routers = model.layers_with_routers
         top_k = model.router_probabilities.get_top_k()
