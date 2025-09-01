@@ -9,7 +9,7 @@ import arguably
 from nnterp import StandardizedTransformer
 import torch as th
 import torch.multiprocessing as mp
-import wandb
+import trackio as wandb
 import yaml
 
 from core.data import DATASETS
@@ -583,7 +583,7 @@ def get_router_activations(
     print(f"Experiment name: {name}")
 
     # Initialize WandB
-    wandb.init(project="router_activations", name=name, resume="allow", config=config)
+    wandb.init(project="router_activations", resume="allow", config=config)
 
     # Find completed batches if resuming
     resume_batch_idx = 0
@@ -670,7 +670,9 @@ def get_router_activations(
                 log = log_queue.get(block=True, timeout=10.0)
                 wandb.log(log)
             except queue.Empty:
-                warnings.warn("No logs received from log queue after 10 seconds", stacklevel=2)
+                warnings.warn(
+                    "No logs received from log queue after 10 seconds", stacklevel=2
+                )
 
             processes_are_running = any(proc.is_alive() for proc in processes)
     except KeyboardInterrupt:
