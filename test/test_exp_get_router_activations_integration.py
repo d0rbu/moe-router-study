@@ -1,14 +1,10 @@
 import os
-from unittest.mock import MagicMock, patch
 
 import pytest
-import torch as th
 
 from exp.get_router_activations import (
     CONFIG_FILENAME,
-    ROUTER_LOGITS_DIRNAME,
     get_experiment_name,
-    process_batch,
     save_config,
     verify_config,
 )
