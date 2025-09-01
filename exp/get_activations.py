@@ -610,8 +610,8 @@ def get_router_activations(
     save_config(config, experiment_dir)
 
     # Initialize WandB
-    wandb_run = wandb.init(project=wandb_project, name=name, config=config)
-    wandb_run_id = wandb_run.id if wandb_run else None  # type: ignore  # Handle the case where wandb.init returns None
+    wandb_run = wandb.init(project=wandb_project, id=name, config=config)
+    wandb_run_id = name
 
     # Find completed batches if resuming
     resume_batch_idx = 0
