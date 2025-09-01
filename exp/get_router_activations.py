@@ -131,9 +131,34 @@ def process_batch(
 
     # Get router logits
     with th.inference_mode():
-        router_logits_tensor = model.trace(
-            encoded_batch, router_layers=router_layers
-        )
+        with model.trace(encoded_batch) as tracer:
+            # Get attention mask to filter out padding tokens
+            attention_mask = encoded_batch["attention_mask"]
+            padding_mask = attention_mask.bool().flatten()
+
+            # Extract router logits for each layer
+            router_logits = []
+            for layer in router_layers:
+                # Get router logits and immediately detach and move to CPU
+                router_output = model.routers_output[layer]
+
+                match router_output:
+                    case (router_scores, _router_indices):
+                        logits = router_scores.cpu()[padding_mask].save()
+                    case router_scores:
+                        logits = router_scores.cpu()[padding_mask].save()
+                    case _:
+                        raise ValueError(
+                            f"Unexpected router output format at layer {layer}: {type(router_output)}"
+                        )
+
+                router_logits.append(logits.clone().detach())
+
+            # Stack the logits and create a new tensor to break references
+            router_logits_tensor = th.stack(router_logits, dim=1).clone().detach()
+
+            # Explicitly stop the tracer to clean up resources
+            tracer.stop()
 
     return router_logits_tensor, tokenized_batch
 
@@ -158,13 +183,14 @@ def tokenizer_worker(
     )
 
     # Get model config and tokenizer
-    model_config = MODELS[model_name]
-    hf_name = model_config["hf_name"]
+    model_config = MODELS.get(model_name)
+    if model_config is None:
+        raise ValueError(f"Model {model_name} not found")
 
     # Import here to avoid circular imports
     from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(hf_name)
+    tokenizer = AutoTokenizer.from_pretrained(model_config.hf_name)
 
     # Get dataset function
     dataset_fn = DATASETS.get(dataset_name)
@@ -189,35 +215,41 @@ def tokenizer_worker(
                 return
 
     # Initialize buffer and statistics
-    buffer = deque()  # (text, tokens) pairs
-    token_counts = deque()  # token counts for each item in buffer
-    batch_idx = resume_from_batch
+    buffer: deque[tuple[str, list[str]]] = deque()
     total_tokens = 0
+    batch_idx = resume_from_batch
     start_time = time.time()
 
+    # Process dataset
     try:
-        # Process dataset in batches
-        for texts in batched(dataset_iter, tokenizer_batch):
+        for text in dataset_iter:
             if stop_event.is_set():
                 break
 
-            # Tokenize batch
-            tokens_batch = []
-            for text in texts:
-                tokens = tokenizer.encode(text)
-                buffer.append((text, tokens))
-                token_counts.append(len(tokens))
-                tokens_batch.append(tokens)
+            # Tokenize text
+            tokens = tokenizer.tokenize(text)
+            count = len(tokens)
 
-            # Check if we have enough tokens to make a batch
+            # Add to buffer
+            buffer.append((text, tokens))
+            total_tokens += count
+
+            # Check if we have enough tokens to create a batch for processing
             if sum(len(tokens) for text, tokens in buffer) >= tokens_per_file:
                 # Create batch from all items in buffer
                 batch = [buffer.popleft() for _ in range(len(buffer))]
-                batch_texts, batch_tokens = tuple(zip(*batch))
+                batch_texts, batch_tokens = tuple(zip(*batch, strict=False))
+
+                # Create encoded batch
+                encoded_batch = tokenizer(
+                    batch_texts, padding=True, return_tensors="pt"
+                )
                 tokens_sum = sum(len(tokens) for tokens in batch_tokens)
 
                 # Put in queue
-                main_queue.put((batch_idx, batch_texts, batch_tokens, tokens_sum), block=True)
+                main_queue.put(
+                    (batch_idx, encoded_batch, batch_tokens, tokens_sum), block=True
+                )
 
                 # Log statistics
                 elapsed = time.time() - start_time
