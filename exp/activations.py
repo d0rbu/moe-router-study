@@ -33,6 +33,7 @@ def load_activations_indices_tokens_and_topk(
         ValueError: If no data files are found in the directory.
         KeyError: If required keys are missing from the loaded data.
         ValueError: If router_logits has invalid shape or topk is invalid.
+        TypeError: If tokens are not in the expected format (list of lists of strings).
     """
     experiment_dir = get_experiment_dir(name=experiment_name)
     dir_path = get_router_logits_dir(experiment_dir)
@@ -126,14 +127,15 @@ def load_activations_indices_tokens_and_topk(
         if "tokens" in data:
             file_tokens = data["tokens"]
             # Ensure tokens are in the correct format (list of lists of strings)
-            if isinstance(file_tokens, list):
-                if file_tokens and isinstance(file_tokens[0], list):
-                    # Already in the correct format
-                    all_tokens.extend(file_tokens)
-                else:
-                    # This is a flat list, which is not the expected format
-                    # We'll keep it as is for backward compatibility with tests
-                    all_tokens.extend(file_tokens)
+            if not isinstance(file_tokens, list):
+                raise TypeError(f"Tokens in {file_path} must be a list")
+
+            if not all(isinstance(seq, list) for seq in file_tokens):
+                raise TypeError(
+                    f"Tokens in {file_path} must be a list of lists of strings"
+                )
+
+            all_tokens.extend(file_tokens)
 
     # Concatenate all tensors along the batch dimension
     activated_experts = torch.cat(all_activated_experts, dim=0)

@@ -118,6 +118,10 @@ def max_activating_examples_server(
         _minibatch_size: Size of the minibatch for the computation.
         experiment_name: Name of the experiment to use for paths.
     """
+    # Set experiment_name based on get_experiment_dir if it is None
+    if experiment_name is None:
+        experiment_name = get_experiment_dir()
+
     # Load all data once at the top level
     token_topk_mask, _activated_expert_indices, tokens, top_k = (
         load_activations_indices_tokens_and_topk(
@@ -126,17 +130,16 @@ def max_activating_examples_server(
     )
 
     # Validate tokens format
-    if tokens is not None:
-        if not isinstance(tokens, list):
-            raise TypeError("Tokens must be a list")
+    if not isinstance(tokens, list):
+        raise TypeError("Tokens must be a list")
 
-        # Check if tokens is a list of lists
-        if not all(isinstance(seq, list) for seq in tokens):
-            raise TypeError("Tokens must be a list of lists of strings")
+    # Check if tokens is a list of lists
+    if not all(isinstance(seq, list) for seq in tokens):
+        raise TypeError("Tokens must be a list of lists of strings")
 
-        # Check that sequences are not just single tokens
-        if any(len(seq) == 1 for seq in tokens):
-            raise ValueError("Token sequences should not be of length 1")
+    # Check that sequences are not just single tokens
+    if any(len(seq) == 1 for seq in tokens):
+        raise ValueError("Token sequences should not be of length 1")
 
     # Get dimensions from token_topk_mask
     num_layers, num_experts = token_topk_mask.shape[1], token_topk_mask.shape[2]
