@@ -3,7 +3,7 @@ import os
 import arguably
 from huggingface_hub import snapshot_download
 
-from exp.get_activations import DATASET_DIRNAME
+from exp import DATASET_DIRNAME
 
 
 @arguably.command()

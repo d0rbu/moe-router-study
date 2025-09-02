@@ -2,7 +2,9 @@ import os
 
 import arguably
 from huggingface_hub import snapshot_download
-from exp.get_activations import MODEL_DIRNAME
+
+from exp import MODEL_DIRNAME
+
 
 @arguably.command()
 def download(hf_name: str = "allenai/OLMoE-1B-7B-0125-Instruct", revision: str | None = None) -> None:
