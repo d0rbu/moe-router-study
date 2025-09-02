@@ -13,6 +13,7 @@ from loguru import logger
 from nnterp import StandardizedTransformer
 import torch as th
 import torch.multiprocessing as mp
+from tqdm import tqdm
 import trackio as wandb
 import yaml
 
@@ -108,6 +109,7 @@ ACTIVATION_KEYS = frozenset(
 
 def process_batch(
     encoded_batch: dict,
+    batch_idx: int,
     model: StandardizedTransformer,
     gpu_minibatch_size: int,
     router_layers: set[int],
@@ -117,6 +119,7 @@ def process_batch(
 
     Args:
         encoded_batch: Encoded batch from tokenizer with padding.
+        batch_idx: Index of the batch.
         model: Model to process the batch.
         gpu_minibatch_size: Size of the minibatch to process on each GPU.
         router_layers: Set of router layer indices to extract.
@@ -125,7 +128,7 @@ def process_batch(
     Returns:
         Dictionary of activations.
     """
-    logger.debug(f"Processing batch with activations to store: {activations_to_store}")
+    logger.debug(f"Processing batch {batch_idx} with activations to store: {activations_to_store}")
 
     batch_size = encoded_batch["input_ids"].shape[0]
 
@@ -143,7 +146,9 @@ def process_batch(
         for activation_key in activations_to_store
     }
 
-    for minibatch_idx in range(num_minibatches):
+    for minibatch_idx in tqdm(
+        range(num_minibatches), desc=f"Batch {batch_idx}", total=num_minibatches, leave=False,
+    ):
         th.cuda.empty_cache()
         gc.collect()
 
@@ -155,7 +160,7 @@ def process_batch(
         }
 
         minibatch_token_count = encoded_minibatch["attention_mask"].sum().item()
-        logger.debug(f"Minibatch {minibatch_idx} has {minibatch_token_count} tokens")
+        logger.debug(f"Batch {batch_idx} minibatch {minibatch_idx} has {minibatch_token_count} tokens")
 
         # Use trace context manager to capture router outputs
         with model.trace(encoded_minibatch):
@@ -164,7 +169,12 @@ def process_batch(
             padding_mask = attention_mask.cpu().bool().flatten()
 
             # Extract activations for each layer
-            for layer_idx, _layer in enumerate(model.layers):
+            for layer_idx, _layer in tqdm(
+                enumerate(model.layers),
+                desc=f"Batch {batch_idx} minibatch {minibatch_idx}",
+                total=len(model.layers),
+                leave=False,
+            ):
                 if "attn_output" in activations_to_store:
                     attn_output = model.attentions_output[layer_idx]
                     activations["attn_output"][layer_idx].append(
@@ -223,6 +233,7 @@ def process_batch(
 def tokenizer_worker(
     model_name: str,
     dataset_name: str,
+    context_length: int,
     tokens_per_file: int,
     main_queue: mp.Queue,
     stop_event: Any,  # mp.Event is not properly typed
@@ -281,7 +292,7 @@ def tokenizer_worker(
             count = len(tokens)
 
             if text_idx % 1000 == 0:
-                logger.info(f"Tokenized {text_idx} into {count} tokens")
+                logger.debug(f"Tokenized text {text_idx} into {count} tokens")
 
             # Add to buffer
             buffer.append((text, tokens))
@@ -304,7 +315,7 @@ def tokenizer_worker(
 
                 # Create batch from all items in buffer
                 logger.debug(
-                    f"Creating batch from {len(buffer)} items with {current_buffer_token_count} tokens"
+                    f"Creating batch {batch_idx} from {len(buffer)} items with {current_buffer_token_count} tokens"
                 )
                 batch = [buffer.popleft() for _ in range(len(buffer))]
                 batch_texts, batch_tokens = tuple(zip(*batch, strict=False))
@@ -312,7 +323,11 @@ def tokenizer_worker(
                 # Create encoded batch
                 logger.debug("Creating encoded batch")
                 encoded_batch = tokenizer(
-                    batch_texts, padding=True, return_tensors="pt"
+                    batch_texts,
+                    padding=True,
+                    return_tensors="pt",
+                    max_length=context_length,
+                    truncation=True,
                 )
                 tokens_sum = sum(len(tokens) for tokens in batch_tokens)
 
@@ -538,6 +553,7 @@ def gpu_worker(
             with th.inference_mode():
                 activations = process_batch(
                     encoded_batch,
+                    batch_idx,
                     model,
                     gpu_minibatch_size,
                     layers_with_routers,
@@ -584,7 +600,9 @@ def gpu_worker(
 
     except Exception as e:
         log_queue.put({f"gpu_{rank}/error": str(e)})
-        logger.error(f"GPU {rank} worker error: {e}", line=e.__traceback__.tb_lineno)
+        logger.error(
+            f"GPU {rank} worker error at line {e.__traceback__.tb_lineno}: {e}"
+        )
 
 
 def find_completed_batches(experiment_dir: str) -> set[int]:
@@ -612,11 +630,11 @@ def find_completed_batches(experiment_dir: str) -> set[int]:
 
 @arguably.command()
 def get_router_activations(
-    model_name: str = "gpt",
+    model_name: str = "olmoe-i",
     dataset_name: str = "lmsys",
     *_args,
-    batch_size: int = 4,
-    gpu_minibatch_size: int = 1,
+    context_length: int = 2048,
+    gpu_minibatch_size: int = 4,
     gpus_per_worker: int = 2,
     cuda_devices: str = "",
     tokens_per_file: int = 20_000,
@@ -632,7 +650,7 @@ def get_router_activations(
     Args:
         model_name: Name of the model to use
         dataset_name: Name of the dataset to use
-        batch_size: Batch size for processing
+        context_length: Context length for processing
         gpu_minibatch_size: Batch size for processing on each GPU
         gpus_per_worker: Number of GPUs to shard the model across
         cuda_devices: Comma-separated list of CUDA devices to use. If empty, defaults to CUDA_VISIBLE_DEVICES environment variable or CPU if it's not set.
@@ -680,8 +698,8 @@ def get_router_activations(
     config = {
         "model_name": model_name,
         "dataset_name": dataset_name,
+        "context_length": context_length,
         "num_tokens": num_tokens,
-        "batch_size": batch_size,
         "tokens_per_file": tokens_per_file,
         "world_size": world_size,
         "cpu_only": cpu_only,
@@ -695,6 +713,7 @@ def get_router_activations(
         name = get_experiment_name(
             model_name=model_name,
             dataset_name=dataset_name,
+            context_length=context_length,
             tokens_per_file=tokens_per_file,
         )
 
@@ -750,6 +769,7 @@ def get_router_activations(
         args=(
             model_name,
             dataset_name,
+            context_length,
             tokens_per_file,
             main_queue,
             stop_event,
