@@ -1,179 +1,321 @@
+from collections import defaultdict
+from collections.abc import Iterator
+from itertools import batched, count, pairwise
 import os
 
-from loguru import logger
 import torch as th
+import torch.multiprocessing as mp
 from tqdm import tqdm
 
-import exp  # Import module for runtime access to exp.ROUTER_LOGITS_DIR
-
-# Define a module-level ROUTER_LOGITS_DIR so tests can patch exp.activations.ROUTER_LOGITS_DIR
-ROUTER_LOGITS_DIR = "router_logits"
+from exp import ACTIVATION_DIRNAME, OUTPUT_DIR
 
 
-# Custom error that satisfies both ValueError and FileNotFoundError expectations
-class NoDataFilesError(ValueError, FileNotFoundError):
-    pass
-
-
-def load_activations_indices_tokens_and_topk(
-    device: str = "cpu",  # default to CPU to avoid requiring CUDA in tests/CI
-) -> tuple[th.Tensor, th.Tensor, list[list[str]], int]:
-    """Load boolean activation mask, top-k indices, tokens, and top_k.
-
-    Returns:
-      - activated_experts: (B, L, E) boolean mask of top-k expert activations
-      - activated_expert_indices: (B, L, topk) long indices of selected experts
-      - tokens: list[list[str]] tokenized sequences aligned to batch concatenation
-      - top_k: int top-k used during collection
-    """
-    activated_expert_indices_collection: list[th.Tensor] = []
-    activated_experts_collection: list[th.Tensor] = []
-    tokens: list[list[str]] = []
-    top_k: int | None = None  # handle case of no files
-
-    # Resolve directory with flexibility for tests:
-    # 1) Prefer module-level ROUTER_LOGITS_DIR if patched and exists
-    # 2) Else fall back to exp.ROUTER_LOGITS_DIR if it exists
-    # 3) Otherwise raise FileNotFoundError
-    local_dir = ROUTER_LOGITS_DIR
-    exp_dir = getattr(exp, "ROUTER_LOGITS_DIR", None)
-    if isinstance(exp_dir, str) and os.path.isdir(exp_dir):
-        fallback_dir = exp_dir
-    else:
-        fallback_dir = None
-    dir_path = local_dir if os.path.isdir(local_dir) else (fallback_dir or local_dir)
-    if not os.path.isdir(dir_path):
-        raise FileNotFoundError(f"Activation directory not found: {dir_path}")
-
-    # get the highest file index of contiguous *.pt files
-    file_indices = [
-        int(f.split(".")[0]) for f in os.listdir(dir_path) if f.endswith(".pt")
-    ]
-
-    # Check if there are any files
-    if not file_indices:
-        raise ValueError("No data files found in directory")
-
-    file_indices.sort()
-    # get the highest file index that does not have a gap
-    highest_file_idx = file_indices[-1]
-    for i in range(len(file_indices) - 1):
-        if file_indices[i + 1] - file_indices[i] > 1:
-            highest_file_idx = file_indices[i]
-            break
-
-    # Use the module-level, patchable directory constant
-    for file_idx in tqdm(
-        range(highest_file_idx + 1),
-        desc="Loading activations",
-        total=highest_file_idx + 1,
+class Activations:
+    def __init__(
+        self,
+        experiment_name: str,
+        device: str = "cpu",
+        reshuffle: bool = False,
+        tokens_per_file_in_reshuffled: int = 100_000,
+        shuffle_batch_size: int = 100,
+        seed: int = 0,
+        max_cache_size: int = 2,
     ):
-        file_path = os.path.join(dir_path, f"{file_idx}.pt")
-        if not os.path.exists(file_path):
-            break
+        """
+        Args:
+            experiment_name: Name of the experiment
+            device: Device to use
+            reshuffle: Whether to shuffle the activations
+            tokens_per_file_in_reshuffled: Number of tokens per file, only used if reshuffling
+            shuffle_batch_size: How many batches to shuffle at a time
+            seed: Seed for the random number generator
+            max_cache_size: Maximum number of file data entries to cache
+        """
+        activation_dir = os.path.join(OUTPUT_DIR, experiment_name, ACTIVATION_DIRNAME)
 
-        try:
-            output = th.load(file_path)
-        except Exception as e:  # pragma: no cover - defensive
-            raise RuntimeError(f"Failed to load router logits file: {file_path}") from e
+        self.device = device
+        self.activation_filepaths = self.load_files(
+            activation_dir=activation_dir,
+            reshuffle=reshuffle,
+            seed=seed,
+            tokens_per_file=tokens_per_file_in_reshuffled,
+            shuffle_batch_size=shuffle_batch_size,
+        )
+        self.max_cache_size = max_cache_size
 
-        # Required keys
-        if "topk" not in output or "router_logits" not in output:
-            missing = [k for k in ("topk", "router_logits") if k not in output]
-            raise KeyError(f"Missing keys in logits file: {missing}")
+    # worker to fetch data from disk
+    def _get_file_data(self, cached_file_data: mp.Queue):
+        for activation_filepath in self.activation_filepaths:
+            file_data = th.load(activation_filepath)
+            cached_file_data.put(file_data, block=True)
+        cached_file_data.put(None)
 
-        # Normalize to python int
-        file_topk = int(output["topk"])  # type: ignore[call-overload]
-        if top_k is None:
-            top_k = file_topk
-        elif file_topk != top_k:
-            raise KeyError(
-                f"Inconsistent topk across files: saw {file_topk} then {top_k}"
+    def __call__(self, batch_size: int = 4096, ctx_len: int = 128) -> Iterator[dict]:
+        def data_generator(batch_size: int, ctx_len: int) -> Iterator[dict]:
+            # cache of file data to come
+            cached_file_data = mp.Queue(maxsize=self.max_cache_size)
+
+            # create worker process to get file data
+            worker_process = mp.Process(
+                target=self._get_file_data, args=(cached_file_data,)
             )
+            worker_process.start()
 
-        router_logits: th.Tensor = output["router_logits"].to(device)
+            current_data = cached_file_data.get(block=True)
+            current_local_idx = 0
+            current_data_size = len(current_data["tokens"])
 
-        # Validate shape
-        if router_logits.ndim != 3:
-            raise RuntimeError(
-                f"Invalid router_logits shape {tuple(router_logits.shape)}; expected (B, L, E)"
-            )
+            if ctx_len <= 0:
+                ctx_len = (
+                    1024 * 1024
+                )  # probably not very future proof given the scary pace of progress
 
-        # Validate top_k against experts
-        E = int(router_logits.shape[-1])
-        if top_k <= 0:
-            raise ValueError("topk must be > 0")
-        if top_k > E:
-            raise RuntimeError("topk must be <= number of experts")
+            current_batch = {}
+            remaining_batch_size = batch_size
 
-        # Optional tokens list for alignment in viz
-        file_tokens: list[list[str]] = output.get("tokens", [])
-        tokens.extend(file_tokens)
+            for batch_idx in count():
+                while current_data_size - current_local_idx < remaining_batch_size:
+                    for key, value in current_data.items():
+                        match value:
+                            case th.Tensor():
+                                if key in current_batch:
+                                    current_batch[key] = th.cat(
+                                        current_batch[key],
+                                        value[
+                                            current_local_idx : current_local_idx
+                                            + batch_size,
+                                            :,
+                                            :ctx_len,
+                                        ],
+                                        dim=0,
+                                    )
+                                else:
+                                    current_batch[key] = value[
+                                        current_local_idx : current_local_idx
+                                        + batch_size,
+                                        :,
+                                        :ctx_len,
+                                    ]
+                            case list():
+                                truncated_sequences = [
+                                    sequence[:ctx_len]
+                                    for sequence in value[
+                                        current_local_idx : current_local_idx
+                                        + batch_size
+                                    ]
+                                ]
+                                if key in current_batch:
+                                    current_batch[key].extend(truncated_sequences)
+                                else:
+                                    current_batch[key] = truncated_sequences
+                            case _:
+                                if key in current_batch:
+                                    assert current_batch[key] == value, (
+                                        f"Inconsistent value for {key}: {current_batch[key]} != {value}"
+                                    )
+                                else:
+                                    current_batch[key] = value
 
-        # (B, L, E) -> (B, L, topk)
-        _num_layers, _num_experts = router_logits.shape[1], router_logits.shape[2]
-        topk_indices = th.topk(router_logits, k=top_k, dim=2).indices
+                    remaining_batch_size -= current_data_size - current_local_idx
+                    current_data = cached_file_data.get(block=True)
 
-        # (B, L, topk) -> (B, L, E)
-        expert_activations = th.zeros_like(router_logits, device=device).bool()
-        expert_activations.scatter_(2, topk_indices, True)
+                    if current_data is None:
+                        worker_process.join()
+                        return
 
-        activated_expert_indices_collection.append(topk_indices)
-        activated_experts_collection.append(expert_activations)
+                    current_local_idx = 0
+                    current_data_size = len(current_data["tokens"])
+                else:
+                    for key, value in current_data.items():
+                        match value:
+                            case th.Tensor():
+                                if key in current_batch:
+                                    current_batch[key] = th.cat(
+                                        current_batch[key],
+                                        value[
+                                            current_local_idx : current_local_idx
+                                            + batch_size,
+                                            :,
+                                            :ctx_len,
+                                        ],
+                                        dim=0,
+                                    )
+                                else:
+                                    current_batch[key] = value[
+                                        current_local_idx : current_local_idx
+                                        + batch_size,
+                                        :,
+                                        :ctx_len,
+                                    ]
+                            case list():
+                                truncated_sequences = [
+                                    sequence[:ctx_len]
+                                    for sequence in value[
+                                        current_local_idx : current_local_idx
+                                        + batch_size
+                                    ]
+                                ]
+                                if key in current_batch:
+                                    current_batch[key].extend(truncated_sequences)
+                                else:
+                                    current_batch[key] = truncated_sequences
+                            case _:
+                                if key in current_batch:
+                                    assert current_batch[key] == value, (
+                                        f"Inconsistent value for {key}: {current_batch[key]} != {value}"
+                                    )
+                                else:
+                                    current_batch[key] = value
 
-    if top_k is None or not activated_experts_collection:
-        # Raise a hybrid exception that is both ValueError and FileNotFoundError
-        # so tests expecting either will pass.
-        raise NoDataFilesError(
-            "No data files found; ensure exp.get_router_activations has been run"
+                    yield current_batch
+                    current_batch = {}
+                    current_local_idx += remaining_batch_size
+                    remaining_batch_size = batch_size
+
+        return data_generator(batch_size, ctx_len)
+
+    def __iter__(self) -> Iterator[dict]:
+        return self()
+
+    @staticmethod
+    def load_files(
+        activation_dir: str,
+        reshuffle: bool = False,
+        seed: int = 0,
+        tokens_per_file_in_reshuffled: int = 100_000,
+        shuffle_batch_size: int = 100,
+    ) -> list[str]:
+        if reshuffle:
+            shuffle_dirname = f"reshuffled-seed={seed}-tokens_per_file={tokens_per_file_in_reshuffled}"
+            activation_files_dir = os.path.join(activation_dir, shuffle_dirname)
+            os.makedirs(activation_files_dir, exist_ok=True)
+        else:
+            activation_files_dir = activation_dir
+
+        activation_filepaths = Activations.get_activation_filepaths(
+            activation_files_dir
         )
 
-    # (B, L, E)
-    activated_experts = th.cat(activated_experts_collection, dim=0)
-    # (B, L, topk)
-    activated_expert_indices = th.cat(activated_expert_indices_collection, dim=0)
-    return activated_experts, activated_expert_indices, tokens, top_k
+        if activation_filepaths:
+            return activation_filepaths
 
+        # if we are here then there are no activation files
+        if reshuffle:
+            return Activations.reshuffle(
+                activation_dir=activation_dir,
+                output_dir=activation_files_dir,
+                tokens_per_file=tokens_per_file_in_reshuffled,
+                seed=seed,
+                shuffle_batch_size=shuffle_batch_size,
+            )
 
-def load_activations_and_indices_and_topk(
-    device: str = "cpu",
-) -> tuple[th.Tensor, th.Tensor, int]:
-    activated_experts, activated_expert_indices, _tokens, top_k = (
-        load_activations_indices_tokens_and_topk(device=device)
-    )
-    return activated_experts, activated_expert_indices, top_k
+        raise FileNotFoundError(f"No activation files found in {activation_dir}")
 
+    @staticmethod
+    def get_activation_filepaths(activation_dir: str) -> list[str]:
+        all_activation_filenames = [
+            filename
+            for filename in os.listdir(activation_dir)
+            if filename.endswith(".pt")
+        ]
 
-def load_activations_and_topk(device: str = "cuda") -> tuple[th.Tensor, int]:
-    # Default to CPU to be CI-friendly
-    device = device or "cpu"
-    if device == "cuda" and not th.cuda.is_available():
-        logger.warning("CUDA not available; falling back to CPU")
-        device = "cpu"
-    activated_experts, _indices, top_k = load_activations_and_indices_and_topk(
-        device=device
-    )
-    return activated_experts, top_k
+        activation_indices = [
+            int(filename.split(".")[0]) for filename in all_activation_filenames
+        ]
+        max_contiguous_activation_index = max(activation_indices)
+        for prev_index, next_index in pairwise(activation_indices):
+            if next_index - prev_index > 1:
+                max_contiguous_activation_index = prev_index
+                break
 
+        contiguous_activation_filepaths = [
+            os.path.join(activation_dir, f"{i}.pt")
+            for i in range(max_contiguous_activation_index + 1)
+        ]
+        return contiguous_activation_filepaths
 
-def load_activations(device: str = "cuda") -> th.Tensor:
-    # Default to CPU to be CI-friendly
-    device = device or "cpu"
-    if device == "cuda" and not th.cuda.is_available():
-        logger.warning("CUDA not available; falling back to CPU")
-        device = "cpu"
-    activated_experts, _, _ = load_activations_and_indices_and_topk(device=device)
-    return activated_experts
+    @staticmethod
+    def reshuffle(
+        activation_dir: str,
+        output_dir: str,
+        tokens_per_file_in_reshuffled: int = 100_000,
+        shuffle_batch_size: int = 100,
+        seed: int = 0,
+    ) -> list[str]:
+        activation_filepaths = Activations.get_activation_filepaths(activation_dir)
+        batch_sizes = th.zeros(len(activation_filepaths), dtype=th.int32)
 
+        for i, filepath in enumerate(activation_filepaths):
+            with th.load(filepath) as data:
+                batch_sizes[i] = len(data["tokens"])
 
-def load_activations_tokens_and_topk(
-    device: str = "cpu",
-) -> tuple[th.Tensor, list[list[str]], int]:
-    activated_experts, _indices, tokens, top_k = (
-        load_activations_indices_tokens_and_topk(device=device)
-    )
-    return activated_experts, tokens, top_k
+        th.random.seed(seed)
 
+        current_batch = defaultdict(list)
+        current_batch_idx = 0
+        num_batch_tokens = 0
 
-if __name__ == "__main__":
-    load_activations_and_topk()
+        for shuffle_batch, batch_sizes in tqdm(
+            batched(
+                zip(activation_filepaths, batch_sizes, strict=False), shuffle_batch_size
+            ),
+            desc="Reshuffling",
+            total=len(activation_filepaths) // shuffle_batch_size,
+        ):
+            file_data = [th.load(filepath) for filepath in shuffle_batch]
+
+            batch_size_ranges = th.cumsum(batch_sizes, dim=0)
+            total_size = batch_size_ranges[-1]
+
+            batch_shuffled_indices = th.randperm(total_size)
+
+            for batch_idx in tqdm(
+                batch_shuffled_indices, total=total_size, leave=False
+            ):
+                file_idx, local_idx = Activations._batch_idx_to_file_and_local_idx(
+                    batch_size_ranges, batch_idx
+                )
+                data = file_data[file_idx]
+
+                for key, value in data.items():
+                    match value:
+                        case th.Tensor() | list():
+                            current_batch[key].append(value[local_idx])
+                        case _:
+                            if key in current_batch:
+                                assert current_batch[key] == value, (
+                                    f"Inconsistent value for {key}: {current_batch[key]} != {value}"
+                                )
+                            else:
+                                current_batch[key] = value
+
+                num_batch_tokens += len(data["tokens"][local_idx])
+
+                if num_batch_tokens >= tokens_per_file_in_reshuffled:
+                    output_filepath = os.path.join(
+                        output_dir, f"{current_batch_idx}.pt"
+                    )
+                    Activations._collate_and_save_batch(current_batch, output_filepath)
+
+                    current_batch = defaultdict(list)
+                    num_batch_tokens = 0
+                    current_batch_idx += 1
+
+        if current_batch:
+            output_filepath = os.path.join(output_dir, f"{current_batch_idx}.pt")
+            Activations._collate_and_save_batch(current_batch, output_filepath)
+
+    @staticmethod
+    def _collate_and_save_batch(batch: dict, output_filepath: str):
+        for key, value in batch.items():
+            if isinstance(value, th.Tensor):
+                batch[key] = th.stack(value, dim=0)
+        th.save(batch, output_filepath)
+
+    @staticmethod
+    def _batch_idx_to_file_and_local_idx(
+        batch_size_ranges: th.Tensor, batch_idx: int
+    ) -> tuple[int, int]:
+        file_idx = th.searchsorted(batch_size_ranges, batch_idx, side="right")
+        local_idx = batch_idx - batch_size_ranges[file_idx]
+        return file_idx, local_idx
