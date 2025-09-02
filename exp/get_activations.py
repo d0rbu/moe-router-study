@@ -1,4 +1,5 @@
 from collections import deque
+import math
 import os
 import queue
 import sys
@@ -107,6 +108,7 @@ ACTIVATION_KEYS = frozenset(
 def process_batch(
     encoded_batch: dict,
     model: StandardizedTransformer,
+    gpu_minibatch_size: int,
     router_layers: set[int],
     activations_to_store: set[str] = ACTIVATION_KEYS,
 ) -> dict[str, th.Tensor]:
@@ -115,6 +117,7 @@ def process_batch(
     Args:
         encoded_batch: Encoded batch from tokenizer with padding.
         model: Model to process the batch.
+        gpu_minibatch_size: Size of the minibatch to process on each GPU.
         router_layers: Set of router layer indices to extract.
         stored_activations: Activations to score
 
@@ -123,52 +126,76 @@ def process_batch(
     """
     logger.debug(f"Processing batch with activations to store: {activations_to_store}")
 
-    # Move tensors to model device
-    encoded_batch = {k: v.to(model.device) for k, v in encoded_batch.items()}
+    batch_size = encoded_batch["input_ids"].shape[0]
+
+    if gpu_minibatch_size <= 0:
+        gpu_minibatch_size = batch_size
+    else:
+        gpu_minibatch_size = min(gpu_minibatch_size, batch_size)
+
+    num_minibatches = math.ceil(batch_size / gpu_minibatch_size)
+    num_layers = len(model.layers)
 
     # Extract activations
-    activations = {activation_key: [] for activation_key in activations_to_store}
+    activations = {activation_key: [[] for _ in range(num_layers)] for activation_key in activations_to_store}
 
-    # Use trace context manager to capture router outputs
-    with model.trace(encoded_batch):
-        # Get attention mask to filter out padding tokens
-        attention_mask = encoded_batch["attention_mask"]
-        padding_mask = attention_mask.cpu().bool().flatten()
+    for minibatch_idx in range(num_minibatches):
+        minibatch_start = minibatch_idx * gpu_minibatch_size
+        minibatch_end = min(minibatch_start + gpu_minibatch_size, batch_size)
+        encoded_minibatch = {
+            k: v[minibatch_start:minibatch_end].to(model.device)
+            for k, v in encoded_batch.items()
+        }
 
-        # Extract activations for each layer
-        for layer_idx, layer in enumerate(model.layers):
-            if "attn_output" in activations_to_store:
-                attn_output = model.attentions_output[layer_idx]
-                activations["attn_output"].append(attn_output.output.clone().detach())
+        # Use trace context manager to capture router outputs
+        with model.trace(encoded_minibatch):
+            # Get attention mask to filter out padding tokens
+            attention_mask = encoded_minibatch["attention_mask"]
+            padding_mask = attention_mask.cpu().bool().flatten()
 
-            if "router_logits" in activations_to_store and layer_idx in router_layers:
-                router_output = model.routers_output[layer_idx]
+            # Extract activations for each layer
+            for layer_idx, layer in enumerate(model.layers):
+                if "attn_output" in activations_to_store:
+                    attn_output = model.attentions_output[layer_idx]
+                    activations["attn_output"][layer_idx].append(
+                        attn_output.output.clone().detach()
+                    )
 
-                # Handle different router output formats
-                match router_output:
-                    case (router_scores, _router_indices):
-                        logits = router_scores.cpu()[padding_mask].save()
-                    case tuple():
-                        raise ValueError(
-                            f"Found tuple of length {len(router_output)} for router output at layer {layer_idx}"
-                        )
-                    case router_scores:
-                        logits = router_scores.cpu()[padding_mask].save()
+                if (
+                    "router_logits" in activations_to_store
+                    and layer_idx in router_layers
+                ):
+                    router_output = model.routers_output[layer_idx]
 
-                activations["router_logits"].append(logits.clone().detach())
+                    # Handle different router output formats
+                    match router_output:
+                        case (router_scores, _router_indices):
+                            logits = router_scores.cpu()[padding_mask].save()
+                        case tuple():
+                            raise ValueError(
+                                f"Found tuple of length {len(router_output)} for router output at layer {layer_idx}"
+                            )
+                        case router_scores:
+                            logits = router_scores.cpu()[padding_mask].save()
 
-            if "mlp_output" in activations_to_store:
-                mlp_output = model.mlps_output[layer_idx]
-                activations["mlp_output"].append(mlp_output.clone().detach())
+                    activations["router_logits"][layer_idx].append(logits.clone().detach())
 
-            if "layer_output" in activations_to_store:
-                layer_output = model.layers_output[layer_idx]
-                activations["layer_output"].append(layer_output.clone().detach())
+                if "mlp_output" in activations_to_store:
+                    mlp_output = model.mlps_output[layer_idx]
+                    activations["mlp_output"][layer_idx].append(mlp_output.clone().detach())
 
-    # Stack logits across layers
+                if "layer_output" in activations_to_store:
+                    layer_output = model.layers_output[layer_idx]
+                    activations["layer_output"][layer_idx].append(layer_output.clone().detach())
+
+    # Stack logits across minibatches and layers
     activations = {
-        activation_key: th.stack(activation_list, dim=1)
-        for activation_key, activation_list in activations.items()
+        activation_key: [th.cat(activation_minibatches, dim=0) for activation_minibatches in activations_by_layer]
+        for activation_key, activations_by_layer in activations.items()
+    }
+    activations = {
+        activation_key: th.stack(activations_by_layer, dim=1)
+        for activation_key, activations_by_layer in activations.items()
     }
 
     return activations
@@ -250,7 +277,9 @@ def tokenizer_worker(
                     continue
 
                 # Create batch from all items in buffer
-                logger.debug(f"Creating batch from {len(buffer)} items with {buffer_token_count} tokens")
+                logger.debug(
+                    f"Creating batch from {len(buffer)} items with {buffer_token_count} tokens"
+                )
                 batch = [buffer.popleft() for _ in range(len(buffer))]
                 batch_texts, batch_tokens = tuple(zip(*batch, strict=False))
 
@@ -383,6 +412,7 @@ def gpu_worker(
     device_id: int,
     gpu_queue: mp.Queue,
     model_name: str,
+    gpu_minibatch_size: int,
     experiment_name: str,
     cpu_only: bool,
     stop_event: Any,  # mp.Event is not properly typed
@@ -463,13 +493,6 @@ def gpu_worker(
             if item is None:
                 break
 
-            batch_idx, encoded_batch, batch_tokens, tokens_count = item
-
-            # Move encoded batch to device
-            for key in encoded_batch:
-                if isinstance(encoded_batch[key], th.Tensor):
-                    encoded_batch[key] = encoded_batch[key].to(model.device)
-
             # Process batch
             batch_idx, encoded_batch, batch_tokens, tokens_count = item
 
@@ -483,6 +506,7 @@ def gpu_worker(
                 activations = process_batch(
                     encoded_batch,
                     model,
+                    gpu_minibatch_size,
                     layers_with_routers,
                     activations_to_store=current_activations_to_store,
                 )
@@ -559,6 +583,7 @@ def get_router_activations(
     dataset_name: str = "lmsys",
     *_args,
     batch_size: int = 4,
+    gpu_minibatch_size: int = 1,
     cuda_devices: str = "",
     tokens_per_file: int = 20_000,
     num_tokens: int = 1_000_000_000,  # 1B tokens
@@ -707,6 +732,7 @@ def get_router_activations(
                 device_id,
                 gpu_queues[rank],
                 model_name,
+                gpu_minibatch_size,
                 name,
                 cpu_only,
                 stop_event,
