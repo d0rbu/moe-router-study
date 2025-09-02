@@ -121,18 +121,7 @@ def process_batch(
     Returns:
         Dictionary of activations.
     """
-    extra_activations_to_store = activations_to_store - ACTIVATION_KEYS
-    if extra_activations_to_store:
-        raise ValueError(
-            f"Unexpected activations to store: {extra_activations_to_store}"
-        )
-
-    activations_to_store = ACTIVATION_KEYS & activations_to_store
-
-    if len(activations_to_store) == 0:
-        raise ValueError(
-            f"No activations to store. Available activations: {ACTIVATION_KEYS}"
-        )
+    logger.debug(f"Processing batch with activations to store: {activations_to_store}")
 
     # Move tensors to model device
     encoded_batch = {k: v.to(model.device) for k, v in encoded_batch.items()}
@@ -251,7 +240,6 @@ def tokenizer_worker(
             buffer_token_count += count
             total_tokens += count
 
-            logger.debug(f"Buffer token count: {buffer_token_count:7d} | Total tokens: {total_tokens:9d}")
             # Check if we have enough tokens to create a batch for processing
             if buffer_token_count >= tokens_per_file or total_tokens >= num_tokens:
                 buffer_token_count = 0
@@ -263,7 +251,7 @@ def tokenizer_worker(
                     continue
 
                 # Create batch from all items in buffer
-                logger.debug(f"Creating batch from {len(buffer)} items")
+                logger.debug(f"Creating batch from {len(buffer)} items with {buffer_token_count} tokens")
                 batch = [buffer.popleft() for _ in range(len(buffer))]
                 batch_texts, batch_tokens = tuple(zip(*batch, strict=False))
 
@@ -405,6 +393,20 @@ def gpu_worker(
     log_level: str = "INFO",
 ) -> None:
     """Worker process for processing batches on a specific GPU."""
+    logger.debug(f"Processing batch with activations to store: {activations_to_store}")
+
+    extra_activations_to_store = activations_to_store - ACTIVATION_KEYS
+    if extra_activations_to_store:
+        raise ValueError(
+            f"Unexpected activations to store: {extra_activations_to_store}"
+        )
+
+    current_activations_to_store = activations_to_store & ACTIVATION_KEYS
+
+    if len(current_activations_to_store) == 0:
+        raise ValueError(
+            f"No activations to store. Available activations: {ACTIVATION_KEYS}"
+        )
 
     logger.remove()
     logger.add(sys.stderr, level=log_level)
@@ -483,7 +485,7 @@ def gpu_worker(
                     encoded_batch,
                     model,
                     layers_with_routers,
-                    activations_to_store=activations_to_store,
+                    activations_to_store=current_activations_to_store,
                 )
 
             logger.debug(f"Rank {rank} processed batch {batch_idx}")
@@ -698,6 +700,7 @@ def get_router_activations(
         else:
             logger.info(f"Starting GPU worker {rank} on cuda:{device_id}")
 
+        logger.debug(f"Storing activations: {activations_to_store}")
         gpu_proc = mp.Process(
             target=gpu_worker,
             args=(
