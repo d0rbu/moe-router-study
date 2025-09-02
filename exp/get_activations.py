@@ -591,7 +591,7 @@ def get_router_activations(
     if world_size == 0:
         raise ValueError(f"Unable to parse CUDA devices: {device_ids}")
 
-    if activations_to_store is None:
+    if not activations_to_store:
         activations_to_store = ["router_logits", "mlp_output", "layer_output"]
 
     if cpu_only:
