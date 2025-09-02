@@ -1,18 +1,20 @@
-import os
+"""Module for loading activation data from disk."""
+
+from collections.abc import Sequence
 
 from loguru import logger
 import torch as th
-from tqdm import tqdm
+from torch.utils.data import DataLoader
 
-import exp  # Import module for runtime access to exp.ROUTER_LOGITS_DIR
+from exp.activation_dataset import (
+    ActivationDataset,
+    NoDataFilesError,
+    create_activation_dataloader,
+    get_expert_indices_from_logits,
+)
 
 # Define a module-level ROUTER_LOGITS_DIR so tests can patch exp.activations.ROUTER_LOGITS_DIR
 ROUTER_LOGITS_DIR = "router_logits"
-
-
-# Custom error that satisfies both ValueError and FileNotFoundError expectations
-class NoDataFilesError(ValueError, FileNotFoundError):
-    pass
 
 
 def load_activations_indices_tokens_and_topk(
@@ -26,118 +28,59 @@ def load_activations_indices_tokens_and_topk(
       - tokens: list[list[str]] tokenized sequences aligned to batch concatenation
       - top_k: int top-k used during collection
     """
-    activated_expert_indices_collection: list[th.Tensor] = []
-    activated_experts_collection: list[th.Tensor] = []
-    tokens: list[list[str]] = []
-    top_k: int | None = None  # handle case of no files
+    # Create dataset
+    dataset = ActivationDataset(
+        device=device,
+        activation_keys=["router_logits"],
+        preload_metadata=True,
+    )
 
-    # Resolve directory with flexibility for tests:
-    # 1) Prefer module-level ROUTER_LOGITS_DIR if patched and exists
-    # 2) Else fall back to exp.ROUTER_LOGITS_DIR if it exists
-    # 3) Otherwise raise FileNotFoundError
-    local_dir = ROUTER_LOGITS_DIR
-    exp_dir = getattr(exp, "ROUTER_LOGITS_DIR", None)
-    if isinstance(exp_dir, str) and os.path.isdir(exp_dir):
-        fallback_dir = exp_dir
-    else:
-        fallback_dir = None
-    dir_path = local_dir if os.path.isdir(local_dir) else (fallback_dir or local_dir)
-    if not os.path.isdir(dir_path):
-        raise FileNotFoundError(f"Activation directory not found: {dir_path}")
+    # Get top_k
+    top_k = dataset.get_top_k()
 
-    # get the highest file index of contiguous *.pt files
-    file_indices = [
-        int(f.split(".")[0]) for f in os.listdir(dir_path) if f.endswith(".pt")
-    ]
+    # Initialize storage for results
+    activated_experts_list = []
+    activated_expert_indices_list = []
+    tokens = []
 
-    # Check if there are any files
-    if not file_indices:
-        raise ValueError("No data files found in directory")
+    # Process each file individually to avoid loading everything at once
+    for idx in range(len(dataset)):
+        item = dataset[idx]
+        router_logits = item["router_logits"]
 
-    file_indices.sort()
-    # get the highest file index that does not have a gap
-    highest_file_idx = file_indices[-1]
-    for i in range(len(file_indices) - 1):
-        if file_indices[i + 1] - file_indices[i] > 1:
-            highest_file_idx = file_indices[i]
-            break
+        # Get expert activations and indices
+        expert_activations, expert_indices = get_expert_indices_from_logits(
+            router_logits, top_k
+        )
 
-    # Use the module-level, patchable directory constant
-    for file_idx in tqdm(
-        range(highest_file_idx + 1),
-        desc="Loading activations",
-        total=highest_file_idx + 1,
-    ):
-        file_path = os.path.join(dir_path, f"{file_idx}.pt")
-        if not os.path.exists(file_path):
-            break
+        activated_experts_list.append(expert_activations)
+        activated_expert_indices_list.append(expert_indices)
+        tokens.extend(item["tokens"])
 
-        try:
-            output = th.load(file_path)
-        except Exception as e:  # pragma: no cover - defensive
-            raise RuntimeError(f"Failed to load router logits file: {file_path}") from e
-
-        # Required keys
-        if "topk" not in output or "router_logits" not in output:
-            missing = [k for k in ("topk", "router_logits") if k not in output]
-            raise KeyError(f"Missing keys in logits file: {missing}")
-
-        # Normalize to python int
-        file_topk = int(output["topk"])  # type: ignore[call-overload]
-        if top_k is None:
-            top_k = file_topk
-        elif file_topk != top_k:
-            raise KeyError(
-                f"Inconsistent topk across files: saw {file_topk} then {top_k}"
-            )
-
-        router_logits: th.Tensor = output["router_logits"].to(device)
-
-        # Validate shape
-        if router_logits.ndim != 3:
-            raise RuntimeError(
-                f"Invalid router_logits shape {tuple(router_logits.shape)}; expected (B, L, E)"
-            )
-
-        # Validate top_k against experts
-        E = int(router_logits.shape[-1])
-        if top_k <= 0:
-            raise ValueError("topk must be > 0")
-        if top_k > E:
-            raise RuntimeError("topk must be <= number of experts")
-
-        # Optional tokens list for alignment in viz
-        file_tokens: list[list[str]] = output.get("tokens", [])
-        tokens.extend(file_tokens)
-
-        # (B, L, E) -> (B, L, topk)
-        _num_layers, _num_experts = router_logits.shape[1], router_logits.shape[2]
-        topk_indices = th.topk(router_logits, k=top_k, dim=2).indices
-
-        # (B, L, topk) -> (B, L, E)
-        expert_activations = th.zeros_like(router_logits, device=device).bool()
-        expert_activations.scatter_(2, topk_indices, True)
-
-        activated_expert_indices_collection.append(topk_indices)
-        activated_experts_collection.append(expert_activations)
-
-    if top_k is None or not activated_experts_collection:
-        # Raise a hybrid exception that is both ValueError and FileNotFoundError
-        # so tests expecting either will pass.
+    # Concatenate results if we have any
+    if not activated_experts_list:
         raise NoDataFilesError(
             "No data files found; ensure exp.get_router_activations has been run"
         )
 
     # (B, L, E)
-    activated_experts = th.cat(activated_experts_collection, dim=0)
+    activated_experts = th.cat(activated_experts_list, dim=0)
     # (B, L, topk)
-    activated_expert_indices = th.cat(activated_expert_indices_collection, dim=0)
+    activated_expert_indices = th.cat(activated_expert_indices_list, dim=0)
+
     return activated_experts, activated_expert_indices, tokens, top_k
 
 
 def load_activations_and_indices_and_topk(
     device: str = "cpu",
 ) -> tuple[th.Tensor, th.Tensor, int]:
+    """Load boolean activation mask, top-k indices, and top_k.
+
+    Returns:
+      - activated_experts: (B, L, E) boolean mask of top-k expert activations
+      - activated_expert_indices: (B, L, topk) long indices of selected experts
+      - top_k: int top-k used during collection
+    """
     activated_experts, activated_expert_indices, _tokens, top_k = (
         load_activations_indices_tokens_and_topk(device=device)
     )
@@ -145,6 +88,12 @@ def load_activations_and_indices_and_topk(
 
 
 def load_activations_and_topk(device: str = "cuda") -> tuple[th.Tensor, int]:
+    """Load boolean activation mask and top_k.
+
+    Returns:
+      - activated_experts: (B, L, E) boolean mask of top-k expert activations
+      - top_k: int top-k used during collection
+    """
     # Default to CPU to be CI-friendly
     device = device or "cpu"
     if device == "cuda" and not th.cuda.is_available():
@@ -157,6 +106,11 @@ def load_activations_and_topk(device: str = "cuda") -> tuple[th.Tensor, int]:
 
 
 def load_activations(device: str = "cuda") -> th.Tensor:
+    """Load boolean activation mask.
+
+    Returns:
+      - activated_experts: (B, L, E) boolean mask of top-k expert activations
+    """
     # Default to CPU to be CI-friendly
     device = device or "cpu"
     if device == "cuda" and not th.cuda.is_available():
@@ -169,10 +123,48 @@ def load_activations(device: str = "cuda") -> th.Tensor:
 def load_activations_tokens_and_topk(
     device: str = "cpu",
 ) -> tuple[th.Tensor, list[list[str]], int]:
+    """Load boolean activation mask, tokens, and top_k.
+
+    Returns:
+      - activated_experts: (B, L, E) boolean mask of top-k expert activations
+      - tokens: list[list[str]] tokenized sequences aligned to batch concatenation
+      - top_k: int top-k used during collection
+    """
     activated_experts, _indices, tokens, top_k = (
         load_activations_indices_tokens_and_topk(device=device)
     )
     return activated_experts, tokens, top_k
+
+
+def create_activation_loader(
+    batch_size: int = 4,
+    device: str = "cpu",
+    activation_keys: Sequence[str] = ("router_logits",),
+    shuffle: bool = False,
+    num_workers: int = 0,
+) -> tuple[DataLoader, int]:
+    """Create a DataLoader for activation data.
+
+    This is the recommended way to process large activation datasets
+    that don't fit in memory.
+
+    Args:
+        batch_size: Number of files to load per batch.
+        device: Device to load tensors to.
+        activation_keys: Keys of activations to load from files.
+        shuffle: Whether to shuffle the dataset.
+        num_workers: Number of worker processes for loading data.
+
+    Returns:
+        Tuple of (DataLoader, top_k).
+    """
+    return create_activation_dataloader(
+        batch_size=batch_size,
+        device=device,
+        activation_keys=activation_keys,
+        shuffle=shuffle,
+        num_workers=num_workers,
+    )
 
 
 if __name__ == "__main__":
