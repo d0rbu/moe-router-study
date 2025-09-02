@@ -298,7 +298,6 @@ def tokenizer_worker(
                     log_queue.put({"tokenizer/skipping_batches": batch_idx})
 
                     buffer.clear()
-                    buffer_token_count = 0
 
                     continue
 
