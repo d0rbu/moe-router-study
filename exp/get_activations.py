@@ -272,13 +272,16 @@ def tokenizer_worker(
     logger.info(f"Starting tokenizer worker for {dataset_name}")
     # Process dataset
     try:
-        for text in dataset_iter:
+        for text_idx, text in enumerate(dataset_iter):
             if stop_event.is_set():
                 break
 
             # Tokenize text
             tokens = tokenizer.tokenize(text)
             count = len(tokens)
+
+            if text_idx % 1000 == 0:
+                logger.info(f"Tokenized {text_idx} into {count} tokens")
 
             # Add to buffer
             buffer.append((text, tokens))
@@ -293,6 +296,10 @@ def tokenizer_worker(
                 if batch_idx < resume_from_batch:
                     logger.debug(f"Skipping batch {batch_idx}")
                     log_queue.put({"tokenizer/skipping_batches": batch_idx})
+
+                    buffer.clear()
+                    buffer_token_count = 0
+
                     continue
 
                 # Create batch from all items in buffer
