@@ -161,7 +161,7 @@ def process_batch(
                 if "attn_output" in activations_to_store:
                     attn_output = model.attentions_output[layer_idx]
                     activations["attn_output"][layer_idx].append(
-                        attn_output.output.clone().detach()
+                        attn_output.output.cpu().clone().detach()
                     )
 
                 if (
@@ -182,19 +182,19 @@ def process_batch(
                             logits = router_scores.cpu()[padding_mask].save()
 
                     activations["router_logits"][layer_idx].append(
-                        logits.clone().detach()
+                        logits.cpu().clone().detach()
                     )
 
                 if "mlp_output" in activations_to_store:
                     mlp_output = model.mlps_output[layer_idx]
                     activations["mlp_output"][layer_idx].append(
-                        mlp_output.clone().detach()
+                        mlp_output.cpu().clone().detach()
                     )
 
                 if "layer_output" in activations_to_store:
                     layer_output = model.layers_output[layer_idx]
                     activations["layer_output"][layer_idx].append(
-                        layer_output.clone().detach()
+                        layer_output.cpu().clone().detach()
                     )
 
     # Stack logits across minibatches and layers
