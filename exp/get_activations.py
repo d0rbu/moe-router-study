@@ -154,6 +154,9 @@ def process_batch(
             for k, v in encoded_batch.items()
         }
 
+        minibatch_token_count = encoded_minibatch["attention_mask"].sum().item()
+        logger.debug(f"Minibatch {minibatch_idx} has {minibatch_token_count} tokens")
+
         # Use trace context manager to capture router outputs
         with model.trace(encoded_minibatch):
             # Get attention mask to filter out padding tokens
