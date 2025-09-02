@@ -290,6 +290,7 @@ def tokenizer_worker(
 
             # Check if we have enough tokens to create a batch for processing
             if buffer_token_count >= tokens_per_file or total_tokens >= num_tokens:
+                current_buffer_token_count = buffer_token_count
                 buffer_token_count = 0
                 batch_idx += 1
 
@@ -303,7 +304,7 @@ def tokenizer_worker(
 
                 # Create batch from all items in buffer
                 logger.debug(
-                    f"Creating batch from {len(buffer)} items with {buffer_token_count} tokens"
+                    f"Creating batch from {len(buffer)} items with {current_buffer_token_count} tokens"
                 )
                 batch = [buffer.popleft() for _ in range(len(buffer))]
                 batch_texts, batch_tokens = tuple(zip(*batch, strict=False))
@@ -583,7 +584,7 @@ def gpu_worker(
 
     except Exception as e:
         log_queue.put({f"gpu_{rank}/error": str(e)})
-        logger.error(f"GPU {rank} worker error: {e}")
+        logger.error(f"GPU {rank} worker error: {e}", line=e.__traceback__.tb_lineno)
 
 
 def find_completed_batches(experiment_dir: str) -> set[int]:
