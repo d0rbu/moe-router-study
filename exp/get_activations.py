@@ -223,6 +223,7 @@ def process_batch(
 def tokenizer_worker(
     model_name: str,
     dataset_name: str,
+    context_length: int,
     tokens_per_file: int,
     main_queue: mp.Queue,
     stop_event: Any,  # mp.Event is not properly typed
@@ -312,7 +313,7 @@ def tokenizer_worker(
                 # Create encoded batch
                 logger.debug("Creating encoded batch")
                 encoded_batch = tokenizer(
-                    batch_texts, padding=True, return_tensors="pt"
+                    batch_texts, padding=True, return_tensors="pt", max_length=context_length, truncation=True
                 )
                 tokens_sum = sum(len(tokens) for tokens in batch_tokens)
 
@@ -612,10 +613,10 @@ def find_completed_batches(experiment_dir: str) -> set[int]:
 
 @arguably.command()
 def get_router_activations(
-    model_name: str = "gpt",
+    model_name: str = "olmoe-i",
     dataset_name: str = "lmsys",
     *_args,
-    batch_size: int = 4,
+    context_length: int = 2048,
     gpu_minibatch_size: int = 1,
     gpus_per_worker: int = 2,
     cuda_devices: str = "",
@@ -632,7 +633,7 @@ def get_router_activations(
     Args:
         model_name: Name of the model to use
         dataset_name: Name of the dataset to use
-        batch_size: Batch size for processing
+        context_length: Context length for processing
         gpu_minibatch_size: Batch size for processing on each GPU
         gpus_per_worker: Number of GPUs to shard the model across
         cuda_devices: Comma-separated list of CUDA devices to use. If empty, defaults to CUDA_VISIBLE_DEVICES environment variable or CPU if it's not set.
@@ -681,7 +682,6 @@ def get_router_activations(
         "model_name": model_name,
         "dataset_name": dataset_name,
         "num_tokens": num_tokens,
-        "batch_size": batch_size,
         "tokens_per_file": tokens_per_file,
         "world_size": world_size,
         "cpu_only": cpu_only,
@@ -750,6 +750,7 @@ def get_router_activations(
         args=(
             model_name,
             dataset_name,
+            context_length,
             tokens_per_file,
             main_queue,
             stop_event,
