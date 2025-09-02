@@ -681,6 +681,7 @@ def get_router_activations(
     config = {
         "model_name": model_name,
         "dataset_name": dataset_name,
+        "context_length": context_length,
         "num_tokens": num_tokens,
         "tokens_per_file": tokens_per_file,
         "world_size": world_size,
@@ -695,6 +696,7 @@ def get_router_activations(
         name = get_experiment_name(
             model_name=model_name,
             dataset_name=dataset_name,
+            context_length=context_length,
             tokens_per_file=tokens_per_file,
         )
 
