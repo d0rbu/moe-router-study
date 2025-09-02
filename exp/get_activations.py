@@ -137,7 +137,10 @@ def process_batch(
     num_layers = len(model.layers)
 
     # Extract activations
-    activations = {activation_key: [[] for _ in range(num_layers)] for activation_key in activations_to_store}
+    activations = {
+        activation_key: [[] for _ in range(num_layers)]
+        for activation_key in activations_to_store
+    }
 
     for minibatch_idx in range(num_minibatches):
         minibatch_start = minibatch_idx * gpu_minibatch_size
@@ -178,19 +181,28 @@ def process_batch(
                         case router_scores:
                             logits = router_scores.cpu()[padding_mask].save()
 
-                    activations["router_logits"][layer_idx].append(logits.clone().detach())
+                    activations["router_logits"][layer_idx].append(
+                        logits.clone().detach()
+                    )
 
                 if "mlp_output" in activations_to_store:
                     mlp_output = model.mlps_output[layer_idx]
-                    activations["mlp_output"][layer_idx].append(mlp_output.clone().detach())
+                    activations["mlp_output"][layer_idx].append(
+                        mlp_output.clone().detach()
+                    )
 
                 if "layer_output" in activations_to_store:
                     layer_output = model.layers_output[layer_idx]
-                    activations["layer_output"][layer_idx].append(layer_output.clone().detach())
+                    activations["layer_output"][layer_idx].append(
+                        layer_output.clone().detach()
+                    )
 
     # Stack logits across minibatches and layers
     activations = {
-        activation_key: [th.cat(activation_minibatches, dim=0) for activation_minibatches in activations_by_layer]
+        activation_key: [
+            th.cat(activation_minibatches, dim=0)
+            for activation_minibatches in activations_by_layer
+        ]
         for activation_key, activations_by_layer in activations.items()
     }
     activations = {
@@ -409,7 +421,7 @@ def multiplexer_worker(
 
 def gpu_worker(
     rank: int,
-    device_id: int,
+    device_ids: list[int],
     gpu_queue: mp.Queue,
     model_name: str,
     gpu_minibatch_size: int,
@@ -441,8 +453,6 @@ def gpu_worker(
     logger.add(sys.stderr, level=log_level)
 
     try:
-        device_map = f"cuda:{device_id}" if not cpu_only else "cpu"
-
         # Get model config
         model_config = MODELS.get(model_name)
         if model_config is None:
@@ -457,7 +467,7 @@ def gpu_worker(
         model = StandardizedTransformer(
             path,
             check_attn_probs_with_trace=False,
-            device_map=device_map,
+            device_map="auto",
         )
         logger.debug("Model initialized")
         layers_with_routers = model.layers_with_routers
@@ -474,7 +484,11 @@ def gpu_worker(
         processing_times: list[float] = []
         start_time = time.time()
 
-        logger.info(f"Starting GPU worker {rank} on cuda:{device_id}")
+        logger.info(
+            f"Starting GPU worker {rank} on {', '.join(f'cuda:{device_id}' for device_id in device_ids)}"
+        )
+
+        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(device_id) for device_id in device_ids)
 
         # Process batches
         while not stop_event.is_set():
@@ -497,7 +511,10 @@ def gpu_worker(
             batch_idx, encoded_batch, batch_tokens, tokens_count = item
 
             # Move tensors to device
-            encoded_batch = {k: v.to(model.device) for k, v in encoded_batch.items()}
+            if not cpu_only:
+                encoded_batch = {
+                    k: v.to(device_ids[0]) for k, v in encoded_batch.items()
+                }
 
             # Process batch and get router logits
             logger.debug(f"Rank {rank} processing batch {batch_idx}")
@@ -584,6 +601,7 @@ def get_router_activations(
     *_args,
     batch_size: int = 4,
     gpu_minibatch_size: int = 1,
+    gpus_per_worker: int = 2,
     cuda_devices: str = "",
     tokens_per_file: int = 20_000,
     num_tokens: int = 1_000_000_000,  # 1B tokens
@@ -599,6 +617,8 @@ def get_router_activations(
         model_name: Name of the model to use
         dataset_name: Name of the dataset to use
         batch_size: Batch size for processing
+        gpu_minibatch_size: Batch size for processing on each GPU
+        gpus_per_worker: Number of GPUs to shard the model across
         cuda_devices: Comma-separated list of CUDA devices to use. If empty, defaults to CUDA_VISIBLE_DEVICES environment variable or CPU if it's not set.
         tokens_per_file: Target number of tokens per output file
         num_tokens: Number of tokens to process
@@ -624,6 +644,22 @@ def get_router_activations(
     else:
         logger.info(f"Using {world_size} GPUs: {device_ids}")
 
+    num_workers = world_size // gpus_per_worker
+    worker_gpu_map = (
+        {
+            i: device_ids[i * gpus_per_worker : (i + 1) * gpus_per_worker]
+            for i in range(num_workers)
+        }
+        if not cpu_only
+        else {i: [0] for i in range(num_workers)}
+    )
+
+    extra_gpus = world_size % gpus_per_worker
+    if extra_gpus > 0:
+        logger.warning(
+            f"{extra_gpus} extra GPUs will be ignored due to gpus_per_worker={gpus_per_worker}"
+        )
+
     # Create experiment configuration
     config = {
         "model_name": model_name,
@@ -634,6 +670,8 @@ def get_router_activations(
         "world_size": world_size,
         "cpu_only": cpu_only,
         "device_ids": device_ids,
+        "gpus_per_worker": gpus_per_worker,
+        "worker_gpu_map": worker_gpu_map,
     }
 
     # Generate experiment name if not provided
@@ -718,18 +756,20 @@ def get_router_activations(
     processes.append(multiplexer_proc)
 
     # Start GPU workers
-    for rank, device_id in enumerate(device_ids):
+    for rank, device_ids in worker_gpu_map.items():
         if cpu_only:
             logger.info(f"Starting CPU worker {rank}")
         else:
-            logger.info(f"Starting GPU worker {rank} on cuda:{device_id}")
+            logger.info(
+                f"Starting GPU worker {rank} on {', '.join(f'cuda:{device_id}' for device_id in device_ids)}"
+            )
 
         logger.debug(f"Storing activations: {activations_to_store}")
         gpu_proc = mp.Process(
             target=gpu_worker,
             args=(
                 rank,
-                device_id,
+                device_ids,
                 gpu_queues[rank],
                 model_name,
                 gpu_minibatch_size,
