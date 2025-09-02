@@ -1,4 +1,5 @@
 from collections import deque
+import gc
 import math
 import os
 import queue
@@ -143,6 +144,9 @@ def process_batch(
     }
 
     for minibatch_idx in range(num_minibatches):
+        th.cuda.empty_cache()
+        gc.collect()
+
         minibatch_start = minibatch_idx * gpu_minibatch_size
         minibatch_end = min(minibatch_start + gpu_minibatch_size, batch_size)
         encoded_minibatch = {
@@ -488,7 +492,9 @@ def gpu_worker(
             f"Starting GPU worker {rank} on {', '.join(f'cuda:{device_id}' for device_id in device_ids)}"
         )
 
-        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(device_id) for device_id in device_ids)
+        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(
+            str(device_id) for device_id in device_ids
+        )
 
         # Process batches
         while not stop_event.is_set():
@@ -605,7 +611,7 @@ def get_router_activations(
     cuda_devices: str = "",
     tokens_per_file: int = 20_000,
     num_tokens: int = 1_000_000_000,  # 1B tokens
-    resume: bool = False,
+    resume: bool = True,
     name: str | None = None,
     activations_to_store: list[str] | None = None,
     log_level: str = "INFO",
