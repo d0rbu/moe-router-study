@@ -159,7 +159,7 @@ def process_batch(
 
             if "mlp_output" in activations_to_store:
                 mlp_output = model.mlps_output[layer_idx]
-                activations["mlp_output"].append(mlp_output.output.clone().detach())
+                activations["mlp_output"].append(mlp_output.clone().detach())
 
             if "layer_output" in activations_to_store:
                 layer_output = model.layers_output[layer_idx]
