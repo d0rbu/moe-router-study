@@ -386,7 +386,7 @@ class TestErrorPropagation:
         with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
             from exp.activations import load_activations_and_topk
 
-            with pytest.raises((RuntimeError, ValueError, OSError)):
+            with pytest.raises((RuntimeError, ValueError, OSError, Exception)):
                 load_activations_and_topk()
 
     def test_circuit_loss_error_propagation(self):

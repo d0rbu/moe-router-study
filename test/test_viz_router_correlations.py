@@ -16,7 +16,9 @@ class TestRouterCorrelations:
     def test_router_correlations_no_files(self, temp_dir, monkeypatch):
         """Test router_correlations with no data files."""
         # Set up patches
-        monkeypatch.setattr("viz.router_correlations.ROUTER_LOGITS_DIR", str(temp_dir))
+        monkeypatch.setattr(
+            "viz.router_correlations.ROUTER_LOGITS_DIRNAME", str(temp_dir)
+        )
 
         with pytest.raises(ValueError, match="No data files found"):
             router_correlations()
@@ -49,7 +51,9 @@ class TestRouterCorrelations:
             )
 
         # Set up patches
-        monkeypatch.setattr("viz.router_correlations.ROUTER_LOGITS_DIR", str(temp_dir))
+        monkeypatch.setattr(
+            "viz.router_correlations.ROUTER_LOGITS_DIRNAME", str(temp_dir)
+        )
         monkeypatch.setattr("viz.router_correlations.FIGURE_DIR", str(temp_dir))
 
         # Mock the correlation calculation to avoid issues with tensor shapes
@@ -114,7 +118,9 @@ class TestRouterCorrelations:
         )
 
         # Set up patches
-        monkeypatch.setattr("viz.router_correlations.ROUTER_LOGITS_DIR", str(temp_dir))
+        monkeypatch.setattr(
+            "viz.router_correlations.ROUTER_LOGITS_DIRNAME", str(temp_dir)
+        )
         monkeypatch.setattr("viz.router_correlations.FIGURE_DIR", str(temp_dir))
 
         # Create a mock correlation matrix with known values
@@ -174,7 +180,9 @@ class TestRouterCorrelations:
         )
 
         # Set up patches
-        monkeypatch.setattr("viz.router_correlations.ROUTER_LOGITS_DIR", str(temp_dir))
+        monkeypatch.setattr(
+            "viz.router_correlations.ROUTER_LOGITS_DIRNAME", str(temp_dir)
+        )
         monkeypatch.setattr("viz.router_correlations.FIGURE_DIR", str(temp_dir))
 
         with (

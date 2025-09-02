@@ -7,7 +7,9 @@ from exp import MODEL_DIRNAME
 
 
 @arguably.command()
-def download(hf_name: str = "allenai/OLMoE-1B-7B-0125-Instruct", revision: str | None = None) -> None:
+def download(
+    hf_name: str = "allenai/OLMoE-1B-7B-0125-Instruct", revision: str | None = None
+) -> None:
     if revision is None:
         snapshot_download(
             repo_id=hf_name,

@@ -60,15 +60,12 @@ class TestExperimentManagement:
         # Verify the config (should not raise an exception)
         verify_config(config, experiment_dir)
 
-        # Try to verify with a different config (should raise ValueError)
+        # Try to verify with a different config
+        # Note: Only model_name, dataset_name, and tokens_per_file are verified
         different_config = config.copy()
-        different_config["batch_size"] = 8
+        different_config["tokens_per_file"] = 8000  # This key is verified
         with pytest.raises(ValueError):
             verify_config(different_config, experiment_dir)
-
-
-class TestProcessBatch:
-    """Test process_batch function."""
 
     def test_process_batch(self):
         """Test process_batch function with simplified mocking."""

@@ -6,8 +6,7 @@ import matplotlib.pyplot as plt
 import torch as th
 from tqdm import tqdm
 
-from exp import OUTPUT_DIR
-from exp.get_router_activations import ROUTER_LOGITS_DIRNAME
+from exp import OUTPUT_DIR, ROUTER_LOGITS_DIRNAME
 from viz import FIGURE_DIR
 
 
