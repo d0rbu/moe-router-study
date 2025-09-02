@@ -231,7 +231,6 @@ def tokenizer_worker(
                 break
 
             # Tokenize text
-            logger.debug("Tokenizing text")
             tokens = tokenizer.tokenize(text)
             count = len(tokens)
 
