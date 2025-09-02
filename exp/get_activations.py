@@ -282,7 +282,7 @@ def tokenizer_worker(
             count = len(tokens)
 
             if text_idx % 1000 == 0:
-                logger.info(f"Tokenized {text_idx} into {count} tokens")
+                logger.debug(f"Tokenized text {text_idx} into {count} tokens")
 
             # Add to buffer
             buffer.append((text, tokens))
