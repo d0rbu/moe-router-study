@@ -133,7 +133,7 @@ def process_batch(
     with model.trace(encoded_batch):
         # Get attention mask to filter out padding tokens
         attention_mask = encoded_batch["attention_mask"]
-        padding_mask = attention_mask.bool().flatten()
+        padding_mask = attention_mask.cpu().bool().flatten()
 
         # Extract activations for each layer
         for layer_idx, layer in enumerate(model.layers):
