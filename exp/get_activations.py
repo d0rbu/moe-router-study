@@ -654,8 +654,13 @@ def get_router_activations(
         resume: Whether to resume from a previous run
         name: Custom name for the experiment
     """
+    print(f"Running with log level: {log_level}")
+
     logger.remove()
-    logger.add(sys.stderr, level=log_level)
+    logger.add(sys.stdout, level=log_level)
+
+    logger.debug(f"Running with log level: {log_level}")
+    logger.debug("Getting SLURM environment")
 
     # Detect SLURM environment
     slurm_env = get_slurm_env()
