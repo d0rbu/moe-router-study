@@ -103,7 +103,12 @@ def verify_config(config: dict, experiment_dir: str) -> None:
 
 
 # Define the set of activation keys that can be stored
-ACTIVATION_KEYS_SET: set[str] = {"attn_output", "router_logits", "mlp_output", "layer_output"}
+ACTIVATION_KEYS_SET: set[str] = {
+    "attn_output",
+    "router_logits",
+    "mlp_output",
+    "layer_output",
+}
 ACTIVATION_KEYS = frozenset(ACTIVATION_KEYS_SET)
 
 
