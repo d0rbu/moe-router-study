@@ -618,7 +618,7 @@ def get_router_activations(
     dataset_name: str = "lmsys",
     *_args,
     context_length: int = 2048,
-    gpu_minibatch_size: int = 4,
+    gpu_minibatch_size: int = 2,
     gpus_per_worker: int = 2,
     cuda_devices: str = "",
     tokens_per_file: int = 20_000,
