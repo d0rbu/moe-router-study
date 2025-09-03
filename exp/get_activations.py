@@ -261,7 +261,7 @@ def tokenizer_worker(
     # Import here to avoid circular imports
     from transformers import AutoTokenizer
 
-    hf_name = MODELS[model_name].hf_name
+    hf_name = model_config.hf_name
     local_path = os.path.join(os.path.abspath(MODEL_DIRNAME), hf_name)
 
     path = local_path if os.path.exists(local_path) else hf_name
@@ -488,7 +488,7 @@ def gpu_worker(
     if model_config is None:
         raise ValueError(f"Model {model_name} not found")
 
-    hf_name = MODELS[model_name].hf_name
+    hf_name = model_config.hf_name
     local_path = os.path.join(os.path.abspath(MODEL_DIRNAME), hf_name)
     path = local_path if os.path.exists(local_path) else hf_name
 

@@ -1,13 +1,15 @@
 from collections import defaultdict
 from collections.abc import Iterator
+import gc
 from itertools import batched, count, pairwise
 import os
 
+from loguru import logger
 import torch as th
+import torch.distributed as dist
 import torch.multiprocessing as mp
 from tqdm import tqdm
 
-from core.slurm import SlurmEnv
 from exp import ACTIVATION_DIRNAME, OUTPUT_DIR
 
 
@@ -15,31 +17,28 @@ class Activations:
     def __init__(
         self,
         experiment_name: str,
-        slurm_env: SlurmEnv,
         device: str = "cpu",
         reshuffle: bool = False,
-        tokens_per_file_in_reshuffled: int = 100_000,
-        shuffle_batch_size: int = 100,
+        tokens_per_file_in_reshuffled: int = 10_000,
+        shuffle_batch_size: int = 10,
         seed: int = 0,
         max_cache_size: int = 2,
     ):
         """
         Args:
             experiment_name: Name of the experiment
-            device: Device to use
+            device: Device to return the activations on
             reshuffle: Whether to shuffle the activations
             tokens_per_file_in_reshuffled: Number of tokens per file, only used if reshuffling
             shuffle_batch_size: How many batches to shuffle at a time
             seed: Seed for the random number generator
-            max_cache_size: Maximum number of file data entries to cache
+            max_cache_size: Maximum number of file data entries to cache when iterating
         """
         activation_dir = os.path.join(OUTPUT_DIR, experiment_name, ACTIVATION_DIRNAME)
 
-        self.slurm_env = slurm_env
         self.device = device
         self.activation_filepaths = self.load_files(
             activation_dir=activation_dir,
-            slurm_env=slurm_env,
             reshuffle=reshuffle,
             seed=seed,
             tokens_per_file=tokens_per_file_in_reshuffled,
@@ -90,7 +89,7 @@ class Activations:
                                             + batch_size,
                                             :,
                                             :ctx_len,
-                                        ],
+                                        ].to(self.device),
                                         dim=0,
                                     )
                                 else:
@@ -99,7 +98,7 @@ class Activations:
                                         + batch_size,
                                         :,
                                         :ctx_len,
-                                    ]
+                                    ].to(self.device)
                             case list():
                                 truncated_sequences = [
                                     sequence[:ctx_len]
@@ -141,7 +140,7 @@ class Activations:
                                             + batch_size,
                                             :,
                                             :ctx_len,
-                                        ],
+                                        ].to(self.device),
                                         dim=0,
                                     )
                                 else:
@@ -150,7 +149,7 @@ class Activations:
                                         + batch_size,
                                         :,
                                         :ctx_len,
-                                    ]
+                                    ].to(self.device)
                             case list():
                                 truncated_sequences = [
                                     sequence[:ctx_len]
@@ -171,12 +170,17 @@ class Activations:
                                 else:
                                     current_batch[key] = value
 
-                    if batch_idx % self.slurm_env.world_size == self.slurm_env.world_rank:
+                    if batch_idx % dist.get_world_size() == dist.get_rank():
                         yield current_batch
+                    else:
+                        logger.debug(f"Skipping batch {batch_idx}")
 
                     current_batch = {}
                     current_local_idx += remaining_batch_size
                     remaining_batch_size = batch_size
+
+                    th.cuda.empty_cache()
+                    gc.collect()
 
         return data_generator(batch_size, ctx_len)
 
@@ -186,7 +190,6 @@ class Activations:
     @staticmethod
     def load_files(
         activation_dir: str,
-        slurm_env: SlurmEnv,
         reshuffle: bool = False,
         seed: int = 0,
         tokens_per_file_in_reshuffled: int = 100_000,
@@ -195,7 +198,7 @@ class Activations:
         if reshuffle:
             shuffle_dirname = f"reshuffled-seed={seed}-tokens_per_file={tokens_per_file_in_reshuffled}"
             activation_files_dir = os.path.join(activation_dir, shuffle_dirname)
-            if slurm_env.world_rank == 0:
+            if dist.get_rank() == 0:
                 os.makedirs(activation_files_dir, exist_ok=True)
         else:
             activation_files_dir = activation_dir
@@ -212,7 +215,10 @@ class Activations:
         # if we are here then there are no activation files
         if reshuffle:
             num_new_activation_filepaths = [0]
-            if slurm_env.world_rank == 0:
+            if dist.get_rank() == 0:
+                logger.info(
+                    f"Reshuffling activations from {activation_dir} to {activation_files_dir}"
+                )
                 new_activation_filepaths = Activations.reshuffle(
                     activation_dir=activation_dir,
                     output_dir=activation_files_dir,
@@ -225,17 +231,20 @@ class Activations:
                 th.distributed.broadcast_object_list(
                     num_new_activation_filepaths, src=0
                 )
-                th.distributed.broadcast_object_list(
-                    new_activation_filepaths, src=0
+                logger.info(
+                    f"Broadcasting {num_new_activation_filepaths[0]} new activation files"
                 )
+                th.distributed.broadcast_object_list(new_activation_filepaths, src=0)
             else:
+                logger.info("Waiting for reshuffling to finish")
                 th.distributed.broadcast_object_list(
                     num_new_activation_filepaths, src=0
                 )
                 new_activation_filepaths = [None] * num_new_activation_filepaths[0]
-                th.distributed.broadcast_object_list(
-                    new_activation_filepaths, src=0
+                logger.info(
+                    f"Receiving {num_new_activation_filepaths[0]} new activation files"
                 )
+                th.distributed.broadcast_object_list(new_activation_filepaths, src=0)
 
             return new_activation_filepaths
 
@@ -272,6 +281,7 @@ class Activations:
         shuffle_batch_size: int = 100,
         seed: int = 0,
     ) -> list[str]:
+        new_activation_filepaths = []
         activation_filepaths = Activations.get_activation_filepaths(activation_dir)
         batch_sizes = th.zeros(len(activation_filepaths), dtype=th.int32)
 
@@ -323,24 +333,44 @@ class Activations:
 
                 if num_batch_tokens >= tokens_per_file_in_reshuffled:
                     output_filepath = os.path.join(
-                        output_dir, f"{current_batch_idx}.pt"
+                        output_dir, f"{current_batch_idx}.pt-temp"
                     )
-                    Activations._collate_and_save_batch(current_batch, output_filepath)
+                    new_activation_filepaths.append(
+                        Activations._collate_and_save_batch(
+                            current_batch, output_filepath
+                        )
+                    )
 
                     current_batch = defaultdict(list)
                     num_batch_tokens = 0
                     current_batch_idx += 1
 
         if current_batch:
-            output_filepath = os.path.join(output_dir, f"{current_batch_idx}.pt")
-            Activations._collate_and_save_batch(current_batch, output_filepath)
+            output_filepath = os.path.join(output_dir, f"{current_batch_idx}.pt-temp")
+            new_activation_filepaths.append(
+                Activations._collate_and_save_batch(current_batch, output_filepath)
+            )
+
+        reshuffled_indices = th.randperm(len(new_activation_filepaths), generator=th.Generator().manual_seed(seed))
+
+        for new_idx, filepath in tqdm(
+            zip(reshuffled_indices, new_activation_filepaths, strict=True),
+            desc="Reshuffling output files",
+            leave=False,
+            total=len(new_activation_filepaths),
+        ):
+            os.rename(filepath, os.path.join(output_dir, f"{new_idx}.pt"))
+
+        return new_activation_filepaths
 
     @staticmethod
-    def _collate_and_save_batch(batch: dict, output_filepath: str):
+    def _collate_and_save_batch(batch: dict, output_filepath: str) -> str:
         for key, value in batch.items():
             if isinstance(value, th.Tensor):
                 batch[key] = th.stack(value, dim=0)
         th.save(batch, output_filepath)
+
+        return output_filepath
 
     @staticmethod
     def _batch_idx_to_file_and_local_idx(
