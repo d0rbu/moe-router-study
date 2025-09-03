@@ -19,6 +19,7 @@ import yaml
 
 from core.data import DATASETS
 from core.model import MODELS
+from core.slurm import SlurmEnv, get_slurm_env
 from exp import ACTIVATION_DIRNAME, MODEL_DIRNAME, OUTPUT_DIR
 
 # Constants
@@ -238,6 +239,7 @@ def tokenizer_worker(
     main_queue: mp.Queue,
     stop_event: Any,  # mp.Event is not properly typed
     log_queue: mp.Queue,
+    slurm_env: SlurmEnv,
     resume_from_batch: int = 0,
     num_tokens: int = 1_000_000_000,  # 1B tokens
     log_level: str = "INFO",
@@ -280,6 +282,9 @@ def tokenizer_worker(
 
     assert num_tokens > 0, "Total number of tokens to process must be greater than 0"
 
+    slurm_rank = slurm_env.world_rank
+    slurm_world_size = slurm_env.world_size
+
     logger.info(f"Starting tokenizer worker for {dataset_name}")
     # Process dataset
     try:
@@ -305,7 +310,7 @@ def tokenizer_worker(
                 buffer_token_count = 0
                 batch_idx += 1
 
-                if batch_idx < resume_from_batch:
+                if batch_idx < resume_from_batch or batch_idx % slurm_world_size != slurm_rank:
                     logger.debug(f"Skipping batch {batch_idx}")
                     log_queue.put({"tokenizer/skipping_batches": batch_idx})
 
@@ -648,6 +653,14 @@ def get_router_activations(
     logger.remove()
     logger.add(sys.stderr, level=log_level)
 
+    # Detect SLURM environment
+    slurm_env = get_slurm_env()
+    if slurm_env.is_slurm:
+        logger.info(f"Running in SLURM environment: rank {slurm_env.world_rank}/{slurm_env.world_size}")
+        logger.info(f"Node: {slurm_env.node_rank}/{slurm_env.num_nodes}, Local rank: {slurm_env.local_rank}")
+    else:
+        logger.info("Running in local environment (not SLURM)")
+
     cuda_devices_raw = cuda_devices or os.environ.get("CUDA_VISIBLE_DEVICES", "")
     cpu_only = cuda_devices_raw == ""
     device_ids = [int(i) for i in cuda_devices_raw.split(",")] if not cpu_only else [0]
@@ -692,6 +705,7 @@ def get_router_activations(
         "device_ids": device_ids,
         "gpus_per_worker": gpus_per_worker,
         "worker_gpu_map": worker_gpu_map,
+        "slurm_env": slurm_env,
     }
 
     # Generate experiment name if not provided
@@ -760,6 +774,7 @@ def get_router_activations(
             main_queue,
             stop_event,
             log_queue,
+            slurm_env,
             resume_batch_idx,
             num_tokens,
             log_level,
