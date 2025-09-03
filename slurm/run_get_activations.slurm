@@ -5,7 +5,7 @@
 #SBATCH --time=6:00:00                  # Set the wall clock limit to 6 hours
 #SBATCH --ntasks=4                      # Total number of tasks (processes) across all nodes
 #SBATCH --ntasks-per-node=1             # Number of tasks per node
-#SBATCH --mem=64G                      # Request 192GB per node
+#SBATCH --mem=64G                       # Request 64GB per node
 #SBATCH --output=get_activations.%j     # Send stdout/err to "get_activations.[jobID]"
 #SBATCH --error=get_activations.%j.err  # Send stderr to separate file
 #SBATCH --gres=gpu:a100:2               # Request 2 "a100" GPUs per node
@@ -31,7 +31,7 @@ echo "SLURM Node ID: $SLURM_NODEID"
 echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 
 # Change to the project directory
-cd moe-router-study
+cd ~/moe-router-study
 
 # Run the distributed job
 srun --mpi=pmi2 uv run exp/get_activations.py olmoe-i lmsys --tokens-per-file 5000

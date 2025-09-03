@@ -738,7 +738,8 @@ def get_router_activations(
     logger.info(f"Experiment name: {name}")
 
     # Initialize WandB
-    wandb.init(project="router_activations", resume="allow", config=config)
+    if slurm_env.global_rank == 0:
+        wandb.init(project="router_activations", resume="allow", config=config)
 
     # Find completed batches if resuming
     resume_batch_idx = 0
@@ -748,7 +749,8 @@ def get_router_activations(
             max_batch_idx = max(completed_batches) if completed_batches else 0
             resume_batch_idx = max_batch_idx + 1
             logger.info(f"Resuming from batch {resume_batch_idx}")
-            wandb.log({"resume/batch_idx": resume_batch_idx})
+            if slurm_env.global_rank == 0:
+                wandb.log({"resume/batch_idx": resume_batch_idx})
 
     # Initialize multiprocessing resources
     mp.set_start_method("spawn", force=True)
@@ -831,7 +833,10 @@ def get_router_activations(
         while processes_are_running:
             try:
                 log = log_queue.get(block=True, timeout=10.0)
-                wandb.log(log)
+                if slurm_env.global_rank == 0:
+                    wandb.log(log)
+                else:
+                    pass
             except queue.Empty:
                 warnings.warn(
                     "No logs received from log queue after 10 seconds", stacklevel=2
