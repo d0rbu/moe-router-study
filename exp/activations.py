@@ -7,6 +7,7 @@ import torch as th
 import torch.multiprocessing as mp
 from tqdm import tqdm
 
+from core.slurm import SlurmEnv
 from exp import ACTIVATION_DIRNAME, OUTPUT_DIR
 
 
@@ -14,6 +15,7 @@ class Activations:
     def __init__(
         self,
         experiment_name: str,
+        slurm_env: SlurmEnv,
         device: str = "cpu",
         reshuffle: bool = False,
         tokens_per_file_in_reshuffled: int = 100_000,
@@ -33,9 +35,11 @@ class Activations:
         """
         activation_dir = os.path.join(OUTPUT_DIR, experiment_name, ACTIVATION_DIRNAME)
 
+        self.slurm_env = slurm_env
         self.device = device
         self.activation_filepaths = self.load_files(
             activation_dir=activation_dir,
+            slurm_env=slurm_env,
             reshuffle=reshuffle,
             seed=seed,
             tokens_per_file=tokens_per_file_in_reshuffled,
@@ -167,7 +171,9 @@ class Activations:
                                 else:
                                     current_batch[key] = value
 
-                    yield current_batch
+                    if batch_idx % self.slurm_env.world_size == self.slurm_env.world_rank:
+                        yield current_batch
+
                     current_batch = {}
                     current_local_idx += remaining_batch_size
                     remaining_batch_size = batch_size
@@ -180,6 +186,7 @@ class Activations:
     @staticmethod
     def load_files(
         activation_dir: str,
+        slurm_env: SlurmEnv,
         reshuffle: bool = False,
         seed: int = 0,
         tokens_per_file_in_reshuffled: int = 100_000,
@@ -188,7 +195,8 @@ class Activations:
         if reshuffle:
             shuffle_dirname = f"reshuffled-seed={seed}-tokens_per_file={tokens_per_file_in_reshuffled}"
             activation_files_dir = os.path.join(activation_dir, shuffle_dirname)
-            os.makedirs(activation_files_dir, exist_ok=True)
+            if slurm_env.world_rank == 0:
+                os.makedirs(activation_files_dir, exist_ok=True)
         else:
             activation_files_dir = activation_dir
 
@@ -199,15 +207,37 @@ class Activations:
         if activation_filepaths:
             return activation_filepaths
 
+        th.distributed.barrier()
+
         # if we are here then there are no activation files
         if reshuffle:
-            return Activations.reshuffle(
-                activation_dir=activation_dir,
-                output_dir=activation_files_dir,
-                tokens_per_file=tokens_per_file_in_reshuffled,
-                seed=seed,
-                shuffle_batch_size=shuffle_batch_size,
-            )
+            num_new_activation_filepaths = [0]
+            if slurm_env.world_rank == 0:
+                new_activation_filepaths = Activations.reshuffle(
+                    activation_dir=activation_dir,
+                    output_dir=activation_files_dir,
+                    tokens_per_file=tokens_per_file_in_reshuffled,
+                    seed=seed,
+                    shuffle_batch_size=shuffle_batch_size,
+                )
+                num_new_activation_filepaths[0] = len(new_activation_filepaths)
+
+                th.distributed.broadcast_object_list(
+                    num_new_activation_filepaths, src=0
+                )
+                th.distributed.broadcast_object_list(
+                    new_activation_filepaths, src=0
+                )
+            else:
+                th.distributed.broadcast_object_list(
+                    num_new_activation_filepaths, src=0
+                )
+                new_activation_filepaths = [None] * num_new_activation_filepaths[0]
+                th.distributed.broadcast_object_list(
+                    new_activation_filepaths, src=0
+                )
+
+            return new_activation_filepaths
 
         raise FileNotFoundError(f"No activation files found in {activation_dir}")
 
