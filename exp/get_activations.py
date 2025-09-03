@@ -149,9 +149,6 @@ def process_batch(
     for minibatch_idx in tqdm(
         range(num_minibatches), desc=f"Batch {batch_idx}", total=num_minibatches, leave=False,
     ):
-        th.cuda.empty_cache()
-        gc.collect()
-
         minibatch_start = minibatch_idx * gpu_minibatch_size
         minibatch_end = min(minibatch_start + gpu_minibatch_size, batch_size)
         encoded_minibatch = {
