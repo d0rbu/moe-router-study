@@ -657,7 +657,7 @@ def get_router_activations(
     print(f"Running with log level: {log_level}")
 
     logger.remove()
-    logger.add(sys.stdout, level=log_level)
+    logger.add(sys.stderr, level=log_level)
 
     logger.debug(f"Running with log level: {log_level}")
     logger.debug("Getting SLURM environment")
@@ -730,8 +730,6 @@ def get_router_activations(
     experiment_dir = os.path.join(OUTPUT_DIR, name)
     activations_dir = os.path.join(experiment_dir, ACTIVATION_DIRNAME)
 
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    os.makedirs(experiment_dir, exist_ok=True)
     os.makedirs(activations_dir, exist_ok=True)
 
     # Verify configuration against existing one (if any)
@@ -840,8 +838,6 @@ def get_router_activations(
                 log = log_queue.get(block=True, timeout=10.0)
                 if slurm_env.global_rank == 0:
                     wandb.log(log)
-                else:
-                    pass
             except queue.Empty:
                 warnings.warn(
                     "No logs received from log queue after 10 seconds", stacklevel=2
