@@ -34,4 +34,4 @@ echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 cd ~/moe-router-study
 
 # Run the distributed job
-srun --mpi=pmi2 uv run exp/get_activations.py olmoe-i lmsys --tokens-per-file 5000
+srun uv run exp/get_activations.py olmoe-i lmsys --tokens-per-file 5000
