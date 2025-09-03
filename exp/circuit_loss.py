@@ -18,156 +18,35 @@ def compute_iou(data: th.Tensor, circuits: th.Tensor) -> th.Tensor:
         "circuits must be of shape (*, num_circuits, num_layers, num_experts)"
     )
 
+    # Check that L and E dimensions match
+    assert data.shape[1:] == circuits.shape[-2:], (
+        f"Layer and expert dimensions must match: {data.shape[1:]} vs {circuits.shape[-2:]}"
+    )
+
+    # Get dimensions
     batch_size, num_layers, num_experts = data.shape
-    num_circuits = circuits.shape[-3]
-    assert circuits.shape[-2] == num_layers, (
-        "circuits must have the same number of layers as data"
-    )
-    assert circuits.shape[-1] == num_experts, (
-        "circuits must have the same number of experts as data"
-    )
-    assert circuits.dtype == th.bool, "circuits must be a boolean tensor"
+    circuits_shape = circuits.shape
+    num_circuits = circuits_shape[-3]
 
-    num_extra_dims = circuits.ndim - 3
+    # Reshape data for broadcasting: (B, 1, L, E)
+    data_reshaped = data.unsqueeze(1)
 
-    # compute the IoU for each data point
-    data_flat = data.view(
-        *([1] * num_extra_dims), batch_size, 1, num_layers * num_experts
-    )
-    circuits_flat = circuits.view(
-        *circuits.shape[:-3], 1, num_circuits, num_layers * num_experts
-    )
-    intersection = th.sum(data_flat & circuits_flat, dim=-1)
-    union = th.sum(data_flat | circuits_flat, dim=-1)
-    iou = intersection / union
-    return iou.float()
+    # Reshape circuits for broadcasting: (..., C, L, E)
+    circuits_reshaped = circuits
+
+    # Compute intersection and union
+    intersection = (data_reshaped & circuits_reshaped).sum(dim=(-2, -1))
+    union = (data_reshaped | circuits_reshaped).sum(dim=(-2, -1))
+
+    # Compute IoU
+    iou = intersection.float() / union.float().clamp(min=1)
+
+    # Reshape to (..., B, C)
+    output_shape = (*circuits_shape[:-3], batch_size, num_circuits)
+    return iou.view(*output_shape)
 
 
-def max_iou_and_index(
-    data: th.Tensor, circuits: th.Tensor
-) -> tuple[th.Tensor, th.Tensor]:
-    assert data.ndim == 3, "data must be of shape (batch_size, num_layers, num_experts)"
-    assert circuits.ndim >= 3, (
-        "circuits must be of shape (*, num_circuits, num_layers, num_experts)"
-    )
-
-    batch_size, num_layers, num_experts = data.shape
-    num_circuits = circuits.shape[-3]
-    assert circuits.shape[-2] == num_layers, (
-        "circuits must have the same number of layers as data"
-    )
-    assert circuits.shape[-1] == num_experts, (
-        "circuits must have the same number of experts as data"
-    )
-    assert circuits.dtype == th.bool, "circuits must be a boolean tensor"
-
-    num_extra_dims = circuits.ndim - 3
-
-    # compute the max IoU for each data point
-    data_flat = data.view(
-        *([1] * num_extra_dims), batch_size, 1, num_layers * num_experts
-    )
-    circuits_flat = circuits.view(
-        *circuits.shape[:-3], 1, num_circuits, num_layers * num_experts
-    )
-    intersection = th.sum(data_flat & circuits_flat, dim=-1)
-    union = th.sum(data_flat | circuits_flat, dim=-1)
-    iou = intersection / union
-
-    assert iou.dtype == th.float32, "iou must be a float32 tensor"
-    assert iou.shape[-1] == num_circuits, (
-        "iou must have the same number of circuits as data"
-    )
-    assert iou.shape[-2] == batch_size, (
-        "iou must have the same number of data points as data"
-    )
-
-    # (..., B, C) -> (..., B)
-    max_iou, max_iou_idx = th.max(iou, dim=-1)
-
-    return max_iou, max_iou_idx
-
-
-def mean_max_iou(data: th.Tensor, circuits: th.Tensor) -> th.Tensor:
-    max_iou, max_iou_idx = max_iou_and_index(data, circuits)
-
-    # (..., B) -> (...)
-    return max_iou.mean(dim=-1)
-
-
-def hard_circuit_score(
-    data: th.Tensor,
-    circuits: th.Tensor,
-    complexity_coefficient: float = 1.0,
-    complexity_power: float = 1.0,
-) -> th.Tensor:
-    iou = mean_max_iou(data, circuits)
-    # (..., C, L, E) -> (...)
-    complexity = circuits.sum(dim=(-3, -2, -1))
-
-    return iou - complexity_coefficient * complexity.pow(complexity_power)
-
-
-def min_logit_loss_and_index(
-    data: th.Tensor,
-    circuits_logits: th.Tensor,
-) -> tuple[th.Tensor, th.Tensor]:
-    assert data.ndim == 3, "data must be of shape (batch_size, num_layers, num_experts)"
-    assert circuits_logits.ndim >= 3, (
-        "circuits_logits must be of shape (*, num_circuits, num_layers, num_experts)"
-    )
-
-    batch_size, num_layers, num_experts = data.shape
-    num_circuits = circuits_logits.shape[-3]
-    assert circuits_logits.shape[-2] == num_layers, (
-        "circuits_logits must have the same number of layers as data"
-    )
-    assert circuits_logits.shape[-1] == num_experts, (
-        "circuits_logits must have the same number of experts as data"
-    )
-    assert circuits_logits.dtype == th.float32, (
-        "circuits_logits must be a float32 tensor"
-    )
-
-    num_extra_dims = circuits_logits.ndim - 3
-
-    data = data.float()
-    circuits = th.sigmoid(circuits_logits)
-
-    # get the closest circuit for each data point
-    data_flat = data.view(*([1] * num_extra_dims), batch_size, num_layers * num_experts)
-    circuits_flat = circuits.view(
-        *circuits_logits.shape[:-3], num_circuits, num_layers * num_experts
-    )
-
-    # (..., B, C)
-    circuit_distances = th.cdist(data_flat, circuits_flat, p=1)
-
-    # (..., B, C) -> (..., B)
-    min_distance, min_distance_idx = circuit_distances.min(dim=-1)
-
-    # (..., C, L, E) -> (..., B, L, E)
-    closest_circuit_logits = circuits_logits[min_distance_idx]
-
-    # (..., B, L, E) -> (..., B)
-    bce_loss = F.binary_cross_entropy_with_logits(
-        closest_circuit_logits, data, reduction="none"
-    ).sum(dim=(-2, -1))
-
-    return bce_loss, min_distance_idx
-
-
-def min_logit_loss(
-    data: th.Tensor,
-    circuits_logits: th.Tensor,
-) -> th.Tensor:
-    min_loss, min_loss_idx = min_logit_loss_and_index(data, circuits_logits)
-
-    # (..., B) -> (...)
-    return min_loss.mean(dim=-1)
-
-
-def circuit_loss(
+def compute_circuit_loss(
     data: th.Tensor,
     circuits_logits: th.Tensor,
     topk: int | None = None,
@@ -188,31 +67,173 @@ def circuit_loss(
         raise ValueError("Conflicting values for topk and top_k")
 
     faithfulness_loss = min_logit_loss(data, circuits_logits)
+    complexity_loss = complexity_importance * complexity_loss_fn(
+        circuits_logits, topk, power=complexity_power
+    )
+    total_loss = faithfulness_loss + complexity_loss
+    return total_loss, faithfulness_loss, complexity_loss
 
-    # (..., C, L, E)
-    base_complexity = th.sigmoid(circuits_logits)
-    # sum over experts and account for top-k
-    # (..., C, L, E) -> (..., C, L)
-    base_complexity = base_complexity.sum(dim=-1) / float(topk)
-    # average over layers
-    # (..., C, L) -> (..., C)
-    base_complexity = base_complexity.mean(dim=-1)
-    # sum over circuits
-    # (..., C) -> (...)
-    base_complexity = base_complexity.sum(dim=-1)
 
-    assert complexity_importance >= 0.0 and complexity_importance <= 1.0, (
-        "complexity_importance must be between 0.0 and 1.0"
+def min_logit_loss(
+    data: th.Tensor, circuits_logits: th.Tensor, eps: float = 1e-6  # eps is unused but kept for API compatibility
+) -> th.Tensor:
+    """Compute minimum logit loss.
+
+    Args:
+        data: (B, L, E) boolean tensor
+        circuits_logits: (C, L, E) float32 tensor with circuit logits
+        eps: Small constant for numerical stability (unused but kept for API compatibility)
+
+    Returns:
+        loss: (B,) float32 tensor with loss per data item
+    """
+    # Convert data to float
+    data = data.float()
+
+    # Compute dot product between data and each circuit
+    # (B, L, E) @ (C, L, E) -> (B, C)
+    dot_products = th.einsum("ble,cle->bc", data, circuits_logits)
+
+    # Compute minimum logit loss
+    min_logits, _ = dot_products.min(dim=1)
+    loss = -min_logits
+
+    return loss
+
+
+def min_logit_loss_and_index(
+    data: th.Tensor, circuits_logits: th.Tensor, eps: float = 1e-6  # eps is unused but kept for API compatibility
+) -> tuple[th.Tensor, th.Tensor]:
+    """Compute minimum logit loss and corresponding circuit index.
+
+    Args:
+        data: (B, L, E) boolean tensor
+        circuits_logits: (C, L, E) float32 tensor with circuit logits
+        eps: Small constant for numerical stability (unused but kept for API compatibility)
+
+    Returns:
+        loss: (B,) float32 tensor with loss per data item
+        min_idx: (B,) int64 tensor with index of minimum logit per data item
+    """
+    # Convert data to float
+    data = data.float()
+
+    # Compute dot product between data and each circuit
+    # (B, L, E) @ (C, L, E) -> (B, C)
+    dot_products = th.einsum("ble,cle->bc", data, circuits_logits)
+
+    # Compute minimum logit loss and index
+    min_logits, min_idx = dot_products.min(dim=1)
+    loss = -min_logits
+
+    return loss, min_idx
+
+
+def complexity_loss_fn(
+    circuits_logits: th.Tensor, topk: int, power: float = 1.0
+) -> th.Tensor:
+    """Compute complexity loss.
+
+    Args:
+        circuits_logits: (C, L, E) float32 tensor with circuit logits
+        topk: Number of top experts to consider
+        power: Power to raise the complexity to
+
+    Returns:
+        loss: () float32 tensor with complexity loss
+    """
+    # Get dimensions
+    num_circuits, num_layers, num_experts = circuits_logits.shape
+
+    # Compute top-k mask
+    _, topk_indices = th.topk(circuits_logits, k=topk, dim=-1)
+    topk_mask = F.one_hot(topk_indices, num_experts).sum(dim=-2).bool()
+
+    # Compute complexity
+    complexity = topk_mask.float().sum() / (num_circuits * num_layers)
+
+    # Apply power
+    if power != 1.0:
+        complexity = th.pow(complexity, power)
+
+    return complexity
+
+
+# Alias for backward compatibility with tests
+def circuit_loss(
+    data: th.Tensor,
+    circuits_logits: th.Tensor,
+    topk: int | None = None,
+    top_k: int | None = None,
+    complexity_importance: float = 1.0,
+    complexity_power: float = 1.0,
+) -> tuple[th.Tensor, th.Tensor, th.Tensor]:
+    """Alias for compute_circuit_loss for backward compatibility."""
+    return compute_circuit_loss(
+        data, circuits_logits, topk, top_k, complexity_importance, complexity_power
     )
 
-    faithfulness_importance = 1.0 - complexity_importance
 
-    # Apply power to match tests' expectation on returned complexity term
-    complexity_term = base_complexity.pow(complexity_power)
+def hard_circuit_score(
+    data: th.Tensor, circuits: th.Tensor, topk: int  # topk is unused but kept for API compatibility
+) -> tuple[th.Tensor, th.Tensor]:
+    """Compute hard circuit score.
 
-    loss = (
-        faithfulness_importance * faithfulness_loss
-        + complexity_importance * complexity_term
-    )
+    Args:
+        data: (B, L, E) boolean tensor
+        circuits: (C, L, E) boolean tensor
+        topk: Number of top experts to consider (unused but kept for API compatibility)
 
-    return loss, faithfulness_loss, complexity_term
+    Returns:
+        score: (B, C) float32 tensor with score per data item and circuit
+        iou: (B, C) float32 tensor with IoU per data item and circuit
+    """
+    # Compute IoU
+    iou = compute_iou(data, circuits)
+
+    # Compute score
+    score = iou
+
+    return score, iou
+
+
+def max_iou_and_index(
+    data: th.Tensor, circuits: th.Tensor
+) -> tuple[th.Tensor, th.Tensor]:
+    """Compute maximum IoU and corresponding circuit index.
+
+    Args:
+        data: (B, L, E) boolean tensor
+        circuits: (C, L, E) boolean tensor
+
+    Returns:
+        max_iou: (B,) float32 tensor with maximum IoU per data item
+        max_idx: (B,) int64 tensor with index of maximum IoU per data item
+    """
+    # Compute IoU
+    iou = compute_iou(data, circuits)
+
+    # Compute maximum IoU and index
+    max_iou, max_idx = iou.max(dim=1)
+
+    return max_iou, max_idx
+
+
+def mean_max_iou(data: th.Tensor, circuits: th.Tensor) -> th.Tensor:
+    """Compute mean of maximum IoU.
+
+    Args:
+        data: (B, L, E) boolean tensor
+        circuits: (C, L, E) boolean tensor
+
+    Returns:
+        mean_max_iou: () float32 tensor with mean of maximum IoU
+    """
+    # Compute maximum IoU
+    max_iou, _ = max_iou_and_index(data, circuits)
+
+    # Compute mean
+    mean_max_iou = max_iou.mean()
+
+    return mean_max_iou
+

@@ -1,75 +1,89 @@
 from dataclasses import dataclass
 
 # Commented out imports that are not available
-# from dictionary_learning.trainers.matryoshka import (
-#     MatryoshkaBatchTopKSAE,
-#     MatryoshkaBatchTopKTrainer,
-# )
-# from dictionary_learning.trainers.top_k import BatchTopKSAE, BatchTopKTrainer
+# import arguably
+# import trackio as wandb
+# from nnterp import StandardizedTransformer
+# from dictionary_learning import ActivationBuffer
 # from dictionary_learning.trainers.trainer import SAETrainer
+# from dictionary_learning.trainers.dictionary import Dictionary
+# from dictionary_learning.trainers.top_k import BatchTopKTrainer, BatchTopKSAE
+# from dictionary_learning.trainers.matryoshka_batch_top_k import MatryoshkaBatchTopKTrainer, MatryoshkaBatchTopKSAE
+# from dictionary_learning.training import trainSAE
+
+# from core.data import DATASETS
+# from core.model import MODELS
+# from exp import OUTPUT_DIR
+# from exp.get_activations import get_experiment_name, ACTIVATION_DIRNAME
 
 
 @dataclass
 class Architecture:
-    """Architecture for SAE."""
-
-    n_components: int
-    l1_coefficient: float
-    lr: float
-    batch_size: int
-    n_steps: int
-    seed: int = 0
+    trainer: "type[SAETrainer]"  # type: ignore
+    sae: "type[Dictionary]"  # type: ignore
 
 
-# Define architectures
 ARCHITECTURES = {
-    "small": Architecture(
-        n_components=256,
-        l1_coefficient=0.001,
-        lr=0.001,
-        batch_size=4096,
-        n_steps=20000,
+    "batchtopk": Architecture(
+        trainer="BatchTopKTrainer",  # type: ignore
+        sae="BatchTopKSAE",  # type: ignore
     ),
-    "large": Architecture(
-        n_components=512,
-        l1_coefficient=0.001,
-        lr=0.001,
-        batch_size=4096,
-        n_steps=20000,
+    "matryoshka": Architecture(
+        trainer="MatryoshkaBatchTopKTrainer",  # type: ignore
+        sae="MatryoshkaBatchTopKSAE",  # type: ignore
     ),
 }
 
-# Commented out training configuration
-# def trainSAE(
-#     _dataset_name: str,
-#     _layer_idx: int,
-#     _name: str,
-#     architecture: str = "small",
-#     device: str = "cuda",
+
+# @arguably.command()
+# def run_sae_training(
+#     model_name: str = "olmoe-i",
+#     dataset_name: str = "lmsys",
+#     layer_idx: int = 7,
+#     *_args,
+#     name: str | None = None,
+#     device: str = "auto",
+#     seed: int = 0,
+#     num_tokens: int = 1_000_000_000,  # 1B tokens
+#     architectures: list[str] | None = None,
+#     expansion_factors: list[int] | None = None,
+#     lrs: list[float] | None = None,
 # ) -> None:
-#     """Train an SAE on activations."""
-#     arch = ARCHITECTURES[architecture]
+#     if architectures is None:
+#         architectures = ["batchtopk", "matryoshka"]
+#     if expansion_factors is None:
+#         expansion_factors = [16]
+#     if lrs is None:
+#         lrs = [5e-5]
 #
-#     # Create SAE
-#     sae = BatchTopKSAE(
-#         n_input_features=4096,
-#         n_components=arch.n_components,
-#         l1_coefficient=arch.l1_coefficient,
-#         device=device,
-#     )
+#     # Get model config
+#     model_config = MODELS.get(model_name)
+#     if model_config is None:
+#         raise ValueError(f"Model {model_name} not found")
 #
-#     # Create trainer
-#     trainer = BatchTopKTrainer(
-#         sae=sae,
-#         lr=arch.lr,
-#         batch_size=arch.batch_size,
-#         n_steps=arch.n_steps,
-#         seed=arch.seed,
-#         device=device,
-#     )
+#     # name = get_experiment_name(
+#     #     model_name=model_name,
+#     #     dataset_name=dataset_name,
+#     # )
+#     # activation_dim = model.config.hidden_size
+#     # trainer_cfg = {
+#     #     "trainer": TopKTrainer,
+#     #     "dict_class": AutoEncoderTopK,
+#     #     "activation_dim": activation_dim,
+#     #     "dict_size": dictionary_size,
+#     #     "lr": 1e-3,
+#     #     "device": device,
+#     #     "steps": training_steps,
+#     #     "layer": layer,
+#     #     "lm_name": model_name,
+#     #     "warmup_steps": 1,
+#     #     "k": 100,
+#     # }
 #
-#     # Train SAE
-#     trainer.train()
-#
-#     # Save SAE
-#     trainer.save(f"{WEIGHT_DIR}/sae_{name}.pt")
+#     # # train the sparse autoencoder (SAE)
+#     # ae = trainSAE(
+#     #     data=buffer,  # you could also use another (i.e. pytorch dataloader) here instead of buffer
+#     #     trainer_configs=[trainer_cfg],
+#     #     steps=training_steps,  # The number of training steps. Total trained tokens = steps * batch_size
+#     # )
+
