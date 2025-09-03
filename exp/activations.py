@@ -18,7 +18,6 @@ class Activations:
         self,
         experiment_name: str,
         device: str = "cpu",
-        reshuffle: bool = False,
         tokens_per_file_in_reshuffled: int = 10_000,
         shuffle_batch_size: int = 10,
         seed: int = 0,
@@ -28,7 +27,6 @@ class Activations:
         Args:
             experiment_name: Name of the experiment
             device: Device to return the activations on
-            reshuffle: Whether to shuffle the activations
             tokens_per_file_in_reshuffled: Number of tokens per file, only used if reshuffling
             shuffle_batch_size: How many batches to shuffle at a time
             seed: Seed for the random number generator
@@ -39,7 +37,6 @@ class Activations:
         self.device = device
         self.activation_filepaths = self.load_files(
             activation_dir=activation_dir,
-            reshuffle=reshuffle,
             seed=seed,
             tokens_per_file=tokens_per_file_in_reshuffled,
             shuffle_batch_size=shuffle_batch_size,
@@ -190,18 +187,14 @@ class Activations:
     @staticmethod
     def load_files(
         activation_dir: str,
-        reshuffle: bool = False,
         seed: int = 0,
         tokens_per_file_in_reshuffled: int = 100_000,
         shuffle_batch_size: int = 100,
     ) -> list[str]:
-        if reshuffle:
-            shuffle_dirname = f"reshuffled-seed={seed}-tokens_per_file={tokens_per_file_in_reshuffled}"
-            activation_files_dir = os.path.join(activation_dir, shuffle_dirname)
-            if dist.get_rank() == 0:
-                os.makedirs(activation_files_dir, exist_ok=True)
-        else:
-            activation_files_dir = activation_dir
+        shuffle_dirname = f"reshuffled-seed={seed}-tokens_per_file={tokens_per_file_in_reshuffled}"
+        activation_files_dir = os.path.join(activation_dir, shuffle_dirname)
+        if dist.get_rank() == 0:
+            os.makedirs(activation_files_dir, exist_ok=True)
 
         activation_filepaths = Activations.get_activation_filepaths(
             activation_files_dir
@@ -213,42 +206,39 @@ class Activations:
         th.distributed.barrier()
 
         # if we are here then there are no activation files
-        if reshuffle:
-            num_new_activation_filepaths = [0]
-            if dist.get_rank() == 0:
-                logger.info(
-                    f"Reshuffling activations from {activation_dir} to {activation_files_dir}"
-                )
-                new_activation_filepaths = Activations.reshuffle(
-                    activation_dir=activation_dir,
-                    output_dir=activation_files_dir,
-                    tokens_per_file=tokens_per_file_in_reshuffled,
-                    seed=seed,
-                    shuffle_batch_size=shuffle_batch_size,
-                )
-                num_new_activation_filepaths[0] = len(new_activation_filepaths)
+        num_new_activation_filepaths = [0]
+        if dist.get_rank() == 0:
+            logger.info(
+                f"Reshuffling activations from {activation_dir} to {activation_files_dir}"
+            )
+            new_activation_filepaths = Activations.reshuffle(
+                activation_dir=activation_dir,
+                output_dir=activation_files_dir,
+                tokens_per_file=tokens_per_file_in_reshuffled,
+                seed=seed,
+                shuffle_batch_size=shuffle_batch_size,
+            )
+            num_new_activation_filepaths[0] = len(new_activation_filepaths)
 
-                th.distributed.broadcast_object_list(
-                    num_new_activation_filepaths, src=0
-                )
-                logger.info(
-                    f"Broadcasting {num_new_activation_filepaths[0]} new activation files"
-                )
-                th.distributed.broadcast_object_list(new_activation_filepaths, src=0)
-            else:
-                logger.info("Waiting for reshuffling to finish")
-                th.distributed.broadcast_object_list(
-                    num_new_activation_filepaths, src=0
-                )
-                new_activation_filepaths = [None] * num_new_activation_filepaths[0]
-                logger.info(
-                    f"Receiving {num_new_activation_filepaths[0]} new activation files"
-                )
-                th.distributed.broadcast_object_list(new_activation_filepaths, src=0)
+            th.distributed.broadcast_object_list(
+                num_new_activation_filepaths, src=0
+            )
+            logger.info(
+                f"Broadcasting {num_new_activation_filepaths[0]} new activation files"
+            )
+            th.distributed.broadcast_object_list(new_activation_filepaths, src=0)
+        else:
+            logger.info("Waiting for reshuffling to finish")
+            th.distributed.broadcast_object_list(
+                num_new_activation_filepaths, src=0
+            )
+            new_activation_filepaths = [None] * num_new_activation_filepaths[0]
+            logger.info(
+                f"Receiving {num_new_activation_filepaths[0]} new activation files"
+            )
+            th.distributed.broadcast_object_list(new_activation_filepaths, src=0)
 
-            return new_activation_filepaths
-
-        raise FileNotFoundError(f"No activation files found in {activation_dir}")
+        return new_activation_filepaths
 
     @staticmethod
     def get_activation_filepaths(activation_dir: str) -> list[str]:
@@ -283,11 +273,11 @@ class Activations:
     ) -> list[str]:
         new_activation_filepaths = []
         activation_filepaths = Activations.get_activation_filepaths(activation_dir)
-        batch_sizes = th.zeros(len(activation_filepaths), dtype=th.int32)
+        batch_sizes = th.empty(len(activation_filepaths), dtype=th.int32)
 
         for i, filepath in enumerate(activation_filepaths):
             with th.load(filepath) as data:
-                batch_sizes[i] = len(data["tokens"])
+                batch_sizes[i] = data["mlp_output"].shape[0] * data["mlp_output"].shape[1]
 
         th.random.seed(seed)
 
