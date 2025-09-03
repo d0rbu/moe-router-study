@@ -12,6 +12,7 @@ import arguably
 from loguru import logger
 from nnterp import StandardizedTransformer
 import torch as th
+import torch.distributed as dist
 import torch.multiprocessing as mp
 from tqdm import tqdm
 import trackio as wandb
@@ -19,7 +20,6 @@ import yaml
 
 from core.data import DATASETS
 from core.model import MODELS
-from core.slurm import SlurmEnv, get_slurm_env
 from exp import ACTIVATION_DIRNAME, MODEL_DIRNAME, OUTPUT_DIR
 
 # Constants
@@ -243,7 +243,8 @@ def tokenizer_worker(
     main_queue: mp.Queue,
     stop_event: Any,  # mp.Event is not properly typed
     log_queue: mp.Queue,
-    slurm_env: SlurmEnv,
+    rank: int,
+    world_size: int,
     resume_from_batch: int = 0,
     num_tokens: int = 1_000_000_000,  # 1B tokens
     log_level: str = "INFO",
@@ -286,9 +287,6 @@ def tokenizer_worker(
 
     assert num_tokens > 0, "Total number of tokens to process must be greater than 0"
 
-    slurm_rank = slurm_env.world_rank
-    slurm_world_size = slurm_env.world_size
-
     logger.info(f"Starting tokenizer worker for {dataset_name}")
     # Process dataset
     try:
@@ -314,7 +312,7 @@ def tokenizer_worker(
                 buffer_token_count = 0
                 batch_idx += 1
 
-                if batch_idx < resume_from_batch or batch_idx % slurm_world_size != slurm_rank:
+                if batch_idx < resume_from_batch or batch_idx % world_size != rank:
                     logger.debug(f"Skipping batch {batch_idx}")
                     log_queue.put({"tokenizer/skipping_batches": batch_idx})
 
@@ -662,11 +660,11 @@ def get_router_activations(
     logger.debug(f"Running with log level: {log_level}")
     logger.debug("Getting SLURM environment")
 
-    # Detect SLURM environment
-    slurm_env = get_slurm_env()
-    if slurm_env.is_slurm:
-        logger.info(f"Running in SLURM environment: rank {slurm_env.world_rank}/{slurm_env.world_size}")
-        logger.info(f"Node: {slurm_env.node_rank}/{slurm_env.num_nodes}, Local rank: {slurm_env.local_rank}")
+    # Detect distributed environment
+    dist.init_process_group("nccl")
+
+    if dist.is_initialized():
+        logger.info(f"Running in SLURM environment: rank {dist.get_rank()}/{dist.get_world_size()}")
     else:
         logger.info("Running in local environment (not SLURM)")
 
@@ -714,7 +712,6 @@ def get_router_activations(
         "device_ids": device_ids,
         "gpus_per_worker": gpus_per_worker,
         "worker_gpu_map": worker_gpu_map,
-        "slurm_env": slurm_env,
     }
 
     # Generate experiment name if not provided
@@ -741,7 +738,7 @@ def get_router_activations(
     logger.info(f"Experiment name: {name}")
 
     # Initialize WandB
-    if slurm_env.global_rank == 0:
+    if not dist.is_initialized() or dist.get_rank() == 0:
         wandb.init(project="router_activations", resume="allow", config=config)
 
     # Find completed batches if resuming
@@ -752,7 +749,7 @@ def get_router_activations(
             max_batch_idx = max(completed_batches) if completed_batches else 0
             resume_batch_idx = max_batch_idx + 1
             logger.info(f"Resuming from batch {resume_batch_idx}")
-            if slurm_env.global_rank == 0:
+            if not dist.is_initialized() or dist.get_rank() == 0:
                 wandb.log({"resume/batch_idx": resume_batch_idx})
 
     # Initialize multiprocessing resources
@@ -783,7 +780,8 @@ def get_router_activations(
             main_queue,
             stop_event,
             log_queue,
-            slurm_env,
+            dist.get_rank(),
+            dist.get_world_size(),
             resume_batch_idx,
             num_tokens,
             log_level,
@@ -836,7 +834,7 @@ def get_router_activations(
         while processes_are_running:
             try:
                 log = log_queue.get(block=True, timeout=10.0)
-                if slurm_env.global_rank == 0:
+                if not dist.is_initialized() or dist.get_rank() == 0:
                     wandb.log(log)
             except queue.Empty:
                 warnings.warn(
