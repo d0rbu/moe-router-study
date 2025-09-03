@@ -25,6 +25,10 @@ from exp import ACTIVATION_DIRNAME, MODEL_DIRNAME, OUTPUT_DIR
 # Constants
 CONFIG_FILENAME = "config.yaml"
 
+# within-node parallelism constants
+MAIN_QUEUE_MAXSIZE = 10
+GPU_QUEUE_MAXSIZE = 2
+
 
 def get_experiment_name(model_name: str, dataset_name: str, **kwargs) -> str:
     """Generate a unique experiment name based on configuration parameters."""
@@ -750,8 +754,8 @@ def get_router_activations(
     mp.set_start_method("spawn", force=True)
 
     # Create queues and events
-    main_queue = mp.Queue(maxsize=100)  # Buffer between tokenizer and multiplexer
-    gpu_queues = [mp.Queue(maxsize=10) for _ in range(num_workers)]
+    main_queue = mp.Queue(maxsize=MAIN_QUEUE_MAXSIZE)  # Buffer between tokenizer and multiplexer
+    gpu_queues = [mp.Queue(maxsize=GPU_QUEUE_MAXSIZE) for _ in range(num_workers)]
     log_queue = mp.Queue()  # For sending logs back to main process
     stop_event = mp.Event()  # For signaling processes to stop
 
