@@ -514,3 +514,105 @@ class Activations:
 
         # Return the list of output filepaths
         return output_filepaths
+
+def get_router_logits(activation_filepaths: List[str]) -> Dict[int, th.Tensor]:
+    """
+    Load router logits from activation files.
+
+    Args:
+        activation_filepaths: List of paths to activation files
+
+    Returns:
+        Dictionary mapping layer indices to router logits tensors
+    """
+    router_logits_by_layer = {}
+    
+    for filepath in activation_filepaths:
+        try:
+            data = th.load(filepath)
+            for layer_idx, layer_logits in enumerate(data):
+                if layer_idx not in router_logits_by_layer:
+                    router_logits_by_layer[layer_idx] = []
+                router_logits_by_layer[layer_idx].append(layer_logits)
+        except Exception as e:
+            logger.warning(f"Error loading {filepath}: {e}")
+    
+    # Concatenate tensors for each layer
+    for layer_idx in router_logits_by_layer:
+        router_logits_by_layer[layer_idx] = th.cat(router_logits_by_layer[layer_idx], dim=0)
+    
+    return router_logits_by_layer
+
+
+def get_router_probs(router_logits_by_layer: Dict[int, th.Tensor]) -> Dict[int, th.Tensor]:
+    """
+    Convert router logits to probabilities.
+
+    Args:
+        router_logits_by_layer: Dictionary mapping layer indices to router logits tensors
+
+    Returns:
+        Dictionary mapping layer indices to router probability tensors
+    """
+    router_probs_by_layer = {}
+    
+    for layer_idx, logits in router_logits_by_layer.items():
+        # Apply softmax along the expert dimension (dim=2)
+        probs = th.softmax(logits, dim=2)
+        router_probs_by_layer[layer_idx] = probs
+    
+    return router_probs_by_layer
+
+
+def get_router_tokens(
+    experiment_name: str,
+    dataset_name: Optional[str] = None,
+) -> List[str]:
+    """
+    Load tokens corresponding to router activations.
+
+    Args:
+        experiment_name: Name of the experiment
+        dataset_name: Name of the dataset (if None, inferred from experiment_name)
+
+    Returns:
+        List of tokens
+    """
+    if dataset_name is None:
+        # Extract dataset name from experiment name
+        parts = experiment_name.split("_")
+        for i, part in enumerate(parts):
+            if part == "dataset":
+                dataset_name = parts[i + 1]
+                break
+        
+        if dataset_name is None:
+            raise ValueError(f"Could not extract dataset name from experiment name: {experiment_name}")
+    
+    # Load tokens from dataset
+    try:
+        from datasets import load_dataset
+        
+        dataset = load_dataset(dataset_name)
+        if "train" in dataset:
+            texts = dataset["train"]["text"]
+        elif "validation" in dataset:
+            texts = dataset["validation"]["text"]
+        else:
+            texts = next(iter(dataset.values()))["text"]
+        
+        # Tokenize texts
+        from transformers import AutoTokenizer
+        
+        tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        tokens = []
+        
+        for text in texts:
+            token_ids = tokenizer.encode(text)
+            text_tokens = tokenizer.convert_ids_to_tokens(token_ids)
+            tokens.extend(text_tokens)
+        
+        return tokens
+    except Exception as e:
+        logger.warning(f"Error loading tokens: {e}")
+        return []

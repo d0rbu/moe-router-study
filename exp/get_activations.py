@@ -145,7 +145,8 @@ def process_batch(
         gpu_minibatch_size = min(gpu_minibatch_size, batch_size)
 
     num_minibatches = math.ceil(batch_size / gpu_minibatch_size)
-    num_layers = len(model.layers)
+    # Get number of layers safely with getattr to handle different model structures
+    num_layers = len(getattr(model, "layers", []))
 
     # Extract activations
     activations = {
@@ -182,9 +183,9 @@ def process_batch(
 
             # Extract activations for each layer
             for layer_idx, _layer in tqdm(
-                enumerate(model.layers),
+                enumerate(getattr(model, "layers", [])),
                 desc=f"Batch {batch_idx} minibatch {minibatch_idx}",
-                total=len(model.layers),
+                total=len(getattr(model, "layers", [])),
                 leave=False,
             ):
                 if "attn_output" in activations_to_store:

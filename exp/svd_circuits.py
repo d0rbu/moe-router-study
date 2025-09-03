@@ -1,77 +1,144 @@
-"""Module for SVD-based circuit discovery."""
+"""
+SVD-based circuit discovery for router models.
+"""
 
 import os
+from typing import Dict, List, Optional, Tuple, Union
 
-import arguably
-import matplotlib.pyplot as plt
+import numpy as np
 import torch as th
+from sklearn.decomposition import TruncatedSVD
+from tqdm import tqdm
 
-from exp import OUTPUT_DIR
-from exp.activations import load_activations_and_topk
-from viz import FIGURE_DIR
-
-# Output file path
-OUTPUT_FILE = os.path.join(OUTPUT_DIR, "svd_circuits.pt")
-FIGURE_PATH = os.path.join(FIGURE_DIR, "svd_circuits.png")
+from exp.activations import get_activation_filepaths, get_router_logits
 
 
-@arguably.command()
-def svd_circuits(
-    batch_size: int = 0,
-    num_circuits: int = 10,
-    device: str = "cpu",
-) -> None:
-    """Discover circuits using SVD.
+def discover_circuits_svd(
+    experiment_name: str,
+    n_components: int = 10,
+    layer_idx: Optional[int] = None,
+    random_state: int = 42,
+) -> Dict[int, Dict[str, Union[np.ndarray, List[float]]]]:
+    """
+    Discover circuits using SVD on router logits.
 
     Args:
-        batch_size: Number of samples to use (0 for all)
-        num_circuits: Number of circuits to extract
-        device: Device to use for computation
+        experiment_name: Name of the experiment
+        n_components: Number of SVD components to extract
+        layer_idx: Layer index to analyze (if None, analyze all layers)
+        random_state: Random seed for SVD
+
+    Returns:
+        Dictionary mapping layer indices to dictionaries containing:
+            - 'components': SVD components (n_components, n_experts)
+            - 'singular_values': Singular values
+            - 'explained_variance_ratio': Explained variance ratio
     """
-    # Load activations
-    activated_experts, top_k = load_activations_and_topk(device=device)
-
-    # Reshape to (batch_size, layers * experts)
-    batch_size_actual = activated_experts.shape[0]
-    activated_experts.shape[1]
-    activated_experts.shape[2]
-
-    if batch_size > 0 and batch_size < batch_size_actual:
-        activated_experts = activated_experts[:batch_size]
-        batch_size_actual = batch_size
-
-    activated_experts_flat = activated_experts.view(batch_size_actual, -1).float()
-
-    # Perform SVD
-    u, s, vh = th.linalg.svd(activated_experts_flat, full_matrices=False)
-
-    # Extract top circuits
-    num_circuits = min(num_circuits, vh.shape[0])
-    circuits = vh[:num_circuits]
-
-    # Ensure directories exist
-    os.makedirs(os.path.dirname(FIGURE_PATH), exist_ok=True)
-    os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
-
-    # Plot singular values
-    plt.figure(figsize=(10, 6))
-    plt.plot(s.cpu().numpy())
-    plt.title("Singular Values")
-    plt.xlabel("Index")
-    plt.ylabel("Value")
-    plt.grid(True)
-    plt.savefig(FIGURE_PATH, dpi=300, bbox_inches="tight")
-    plt.close()
-
-    # Save circuits
-    th.save({"circuits": circuits, "top_k": top_k}, OUTPUT_FILE)
-
-    # Print summary
-    print(f"Extracted {num_circuits} circuits from {batch_size_actual} samples")
-    print(f"Circuits shape: {circuits.shape}")
-    print(f"Saved to {OUTPUT_FILE}")
-    print(f"Singular values plot saved to {FIGURE_PATH}")
+    # Get activation filepaths
+    activation_filepaths = get_activation_filepaths(experiment_name, "router_logits")
+    
+    # Get router logits
+    router_logits_by_layer = get_router_logits(activation_filepaths)
+    
+    # If layer_idx is specified, only analyze that layer
+    if layer_idx is not None:
+        if layer_idx not in router_logits_by_layer:
+            raise ValueError(f"Layer {layer_idx} not found in router logits")
+        layers_to_analyze = {layer_idx: router_logits_by_layer[layer_idx]}
+    else:
+        layers_to_analyze = router_logits_by_layer
+    
+    # Perform SVD on each layer
+    results = {}
+    for layer_idx, router_logits in tqdm(layers_to_analyze.items(), desc="SVD analysis"):
+        # Reshape to (n_tokens, n_experts)
+        n_tokens = router_logits.shape[0] * router_logits.shape[1]
+        n_experts = router_logits.shape[2]
+        reshaped_logits = router_logits.reshape(n_tokens, n_experts)
+        
+        # Convert to numpy for sklearn
+        if isinstance(reshaped_logits, th.Tensor):
+            reshaped_logits = reshaped_logits.numpy()
+        
+        # Perform SVD
+        svd = TruncatedSVD(n_components=min(n_components, n_experts - 1), random_state=random_state)
+        svd.fit(reshaped_logits)
+        
+        # Store results
+        results[layer_idx] = {
+            'components': svd.components_,
+            'singular_values': svd.singular_values_,
+            'explained_variance_ratio': svd.explained_variance_ratio_.tolist(),
+        }
+    
+    return results
 
 
-if __name__ == "__main__":
-    arguably.run()
+def get_circuit_experts(
+    components: np.ndarray,
+    threshold: float = 0.2,
+) -> List[List[int]]:
+    """
+    Extract expert indices for each circuit based on SVD components.
+
+    Args:
+        components: SVD components (n_components, n_experts)
+        threshold: Threshold for including an expert in a circuit
+
+    Returns:
+        List of lists, where each inner list contains expert indices for a circuit
+    """
+    circuits = []
+    for component_idx in range(components.shape[0]):
+        component = components[component_idx]
+        
+        # Normalize component
+        component = component / np.linalg.norm(component)
+        
+        # Find experts with absolute value above threshold
+        circuit_experts = np.where(np.abs(component) > threshold)[0].tolist()
+        circuits.append(circuit_experts)
+    
+    return circuits
+
+
+def analyze_circuits(
+    experiment_name: str,
+    n_components: int = 10,
+    threshold: float = 0.2,
+    layer_idx: Optional[int] = None,
+    random_state: int = 42,
+) -> Dict[int, Dict[str, Union[np.ndarray, List[float], List[List[int]]]]]:
+    """
+    Analyze circuits using SVD and extract expert indices.
+
+    Args:
+        experiment_name: Name of the experiment
+        n_components: Number of SVD components to extract
+        threshold: Threshold for including an expert in a circuit
+        layer_idx: Layer index to analyze (if None, analyze all layers)
+        random_state: Random seed for SVD
+
+    Returns:
+        Dictionary mapping layer indices to dictionaries containing:
+            - 'components': SVD components (n_components, n_experts)
+            - 'singular_values': Singular values
+            - 'explained_variance_ratio': Explained variance ratio
+            - 'circuits': List of lists, where each inner list contains expert indices for a circuit
+    """
+    # Discover circuits using SVD
+    svd_results = discover_circuits_svd(
+        experiment_name=experiment_name,
+        n_components=n_components,
+        layer_idx=layer_idx,
+        random_state=random_state,
+    )
+    
+    # Extract expert indices for each circuit
+    for layer_idx, layer_results in svd_results.items():
+        components = layer_results['components']
+        circuits = get_circuit_experts(components, threshold=threshold)
+        layer_results['circuits'] = circuits
+    
+    return svd_results
+

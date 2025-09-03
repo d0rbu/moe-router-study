@@ -1,98 +1,71 @@
-"""Module for router activations experiment configuration."""
+"""
+Experiment to extract router activations from a model.
+"""
 
 import os
-import warnings
+from typing import Optional, Set
 
-import yaml
+import torch as th
+from nnterp.standardized_transformer import StandardizedTransformer
 
-# Constants
-ROUTER_LOGITS_DIRNAME = "router_logits"
-CONFIG_FILENAME = "config.yaml"
+from exp.activations import (
+    get_activation_filepaths,
+    get_router_logits,
+    get_router_probs,
+    get_router_tokens,
+)
+from exp.get_activations import get_experiment_name, process_batch
 
-# Keys to verify in config
-CONFIG_KEYS_TO_VERIFY = ["model_name", "dataset_name", "tokens_per_file", "batch_size"]
 
-
-def get_experiment_name(model_name: str, dataset_name: str, **kwargs) -> str:
-    """Get experiment name from model name, dataset name, and kwargs.
+def get_router_activations(
+    model_name: str,
+    dataset_name: str,
+    num_batches: int = 1,
+    batch_size: int = 32,
+    gpu_minibatch_size: int = 8,
+    seed: int = 42,
+    experiment_name: Optional[str] = None,
+    activations_to_store: Set[str] = {"router_logits"},
+    router_layers: Optional[Set[int]] = None,
+) -> str:
+    """
+    Extract router activations from a model.
 
     Args:
-        model_name: Name of the model
-        dataset_name: Name of the dataset
-        **kwargs: Additional parameters to include in the experiment name
+        model_name: Name of the model to use
+        dataset_name: Name of the dataset to use
+        num_batches: Number of batches to process
+        batch_size: Number of examples per batch
+        gpu_minibatch_size: Number of examples to process at once on the GPU
+        seed: Random seed
+        experiment_name: Name of the experiment (default: auto-generated)
+        activations_to_store: Set of activation types to store
+        router_layers: Set of router layers to extract activations from (default: all)
 
     Returns:
-        Experiment name
+        Name of the experiment
     """
-    # Start with base name
-    experiment_name = f"{model_name}_{dataset_name}"
-
-    # Filter out keys that should not be part of the experiment name
-    filtered_keys = []
-    for key in list(kwargs.keys()):
-        if key == "device" or key == "resume" or key.startswith("_"):
-            filtered_keys.append(key)
-            kwargs.pop(key)
-
-    # Warn about filtered keys
-    if filtered_keys:
-        warnings.warn(
-            f"The following keys were excluded from the experiment name: {filtered_keys}",
-            stacklevel=2,
+    if experiment_name is None:
+        experiment_name = get_experiment_name(
+            model_name=model_name,
+            dataset_name=dataset_name,
+            num_batches=num_batches,
+            batch_size=batch_size,
+            seed=seed,
         )
 
-    # Add remaining kwargs to experiment name
-    if kwargs:
-        # Sort keys for deterministic experiment names
-        sorted_kwargs = sorted(kwargs.items())
-        experiment_name += "_" + "_".join(f"{k}={v}" for k, v in sorted_kwargs)
+    # Process batches to extract activations
+    process_batch(
+        model_name=model_name,
+        dataset_name=dataset_name,
+        num_batches=num_batches,
+        batch_size=batch_size,
+        gpu_minibatch_size=gpu_minibatch_size,
+        seed=seed,
+        experiment_name=experiment_name,
+        activations_to_store=activations_to_store,
+        router_layers=router_layers,
+    )
 
     return experiment_name
 
-
-def save_config(config: dict, experiment_dir: str) -> None:
-    """Save config to experiment directory.
-
-    Args:
-        config: Configuration dictionary
-        experiment_dir: Directory to save config to
-    """
-    # Ensure experiment directory exists
-    os.makedirs(experiment_dir, exist_ok=True)
-
-    # Save config to file
-    config_path = os.path.join(experiment_dir, CONFIG_FILENAME)
-    with open(config_path, "w") as f:
-        yaml.dump(config, f)
-
-
-def verify_config(config: dict, experiment_dir: str) -> None:
-    """Verify that config matches saved config.
-
-    Args:
-        config: Configuration dictionary
-        experiment_dir: Directory with saved config
-
-    Raises:
-        ValueError: If config does not match saved config
-    """
-    config_path = os.path.join(experiment_dir, CONFIG_FILENAME)
-    if not os.path.exists(config_path):
-        return
-
-    # Load saved config
-    with open(config_path) as f:
-        saved_config = yaml.safe_load(f)
-
-    # Check for mismatches in important keys
-    mismatches = [
-        f"{key}: {saved_config[key]} (saved) != {config[key]} (current)"
-        for key in CONFIG_KEYS_TO_VERIFY
-        if key in config and key in saved_config and config[key] != saved_config[key]
-    ]
-
-    # Raise error if mismatches found
-    if mismatches:
-        raise ValueError(
-            "Config mismatch with saved experiment:\n" + "\n".join(mismatches)
-        )
