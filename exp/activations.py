@@ -97,17 +97,7 @@ class Activations:
                                         :ctx_len,
                                     ].to(self.device)
                             case list():
-                                truncated_sequences = [
-                                    sequence[:ctx_len]
-                                    for sequence in value[
-                                        current_local_idx : current_local_idx
-                                        + batch_size
-                                    ]
-                                ]
-                                if key in current_batch:
-                                    current_batch[key].extend(truncated_sequences)
-                                else:
-                                    current_batch[key] = truncated_sequences
+                                pass
                             case _:
                                 if key in current_batch:
                                     assert current_batch[key] == value, (
@@ -148,17 +138,7 @@ class Activations:
                                         :ctx_len,
                                     ].to(self.device)
                             case list():
-                                truncated_sequences = [
-                                    sequence[:ctx_len]
-                                    for sequence in value[
-                                        current_local_idx : current_local_idx
-                                        + batch_size
-                                    ]
-                                ]
-                                if key in current_batch:
-                                    current_batch[key].extend(truncated_sequences)
-                                else:
-                                    current_batch[key] = truncated_sequences
+                                pass
                             case _:
                                 if key in current_batch:
                                     assert current_batch[key] == value, (
