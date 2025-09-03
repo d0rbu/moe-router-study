@@ -273,21 +273,22 @@ class Activations:
     ) -> list[str]:
         new_activation_filepaths = []
         activation_filepaths = Activations.get_activation_filepaths(activation_dir)
-        batch_sizes = th.empty(len(activation_filepaths), dtype=th.int32)
+        all_batch_sizes = th.empty(len(activation_filepaths), dtype=th.int32)
 
         for i, filepath in enumerate(activation_filepaths):
             with th.load(filepath) as data:
-                batch_sizes[i] = data["mlp_output"].shape[0] * data["mlp_output"].shape[1]
+                all_batch_sizes[i] = data["mlp_output"].shape[0]
 
         th.random.seed(seed)
 
         current_batch = defaultdict(list)
         current_batch_idx = 0
+        total_tokens = 0
         num_batch_tokens = 0
 
         for shuffle_batch, batch_sizes in tqdm(
             batched(
-                zip(activation_filepaths, batch_sizes, strict=False), shuffle_batch_size
+                zip(activation_filepaths, all_batch_sizes, strict=False), shuffle_batch_size
             ),
             desc="Reshuffling",
             total=len(activation_filepaths) // shuffle_batch_size,
@@ -319,7 +320,7 @@ class Activations:
                             else:
                                 current_batch[key] = value
 
-                num_batch_tokens += len(data["tokens"][local_idx])
+                num_batch_tokens += 1
 
                 if num_batch_tokens >= tokens_per_file_in_reshuffled:
                     output_filepath = os.path.join(
@@ -332,6 +333,7 @@ class Activations:
                     )
 
                     current_batch = defaultdict(list)
+                    total_tokens += num_batch_tokens
                     num_batch_tokens = 0
                     current_batch_idx += 1
 
@@ -340,6 +342,7 @@ class Activations:
             new_activation_filepaths.append(
                 Activations._collate_and_save_batch(current_batch, output_filepath)
             )
+            total_tokens += num_batch_tokens
 
         reshuffled_indices = th.randperm(len(new_activation_filepaths), generator=th.Generator().manual_seed(seed))
 
