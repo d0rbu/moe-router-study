@@ -399,7 +399,6 @@ def multiplexer_worker(
                 size += gpu_busy[i]
                 queue_sizes.append(size)
 
-            # Use torch for argmin
             min_queue_idx = th.argmin(th.tensor(queue_sizes)).item()
 
             # Put batch in the selected GPU queue
@@ -738,7 +737,7 @@ def get_router_activations(
 
     # Create queues and events
     main_queue = mp.Queue(maxsize=100)  # Buffer between tokenizer and multiplexer
-    gpu_queues = [mp.Queue(maxsize=10) for _ in range(world_size)]  # One queue per GPU
+    gpu_queues = [mp.Queue(maxsize=10) for _ in range(num_workers)]
     log_queue = mp.Queue()  # For sending logs back to main process
     stop_event = mp.Event()  # For signaling processes to stop
 
