@@ -1,15 +1,214 @@
 from collections import defaultdict
 from collections.abc import Iterator
-from itertools import batched, count, pairwise
+from itertools import count, pairwise
 import os
 
 import torch as th
 import torch.multiprocessing as mp
-from tqdm import tqdm
 
 from core.slurm import SlurmEnv
 from exp import ACTIVATION_DIRNAME, OUTPUT_DIR
 
+# Define constants for router logits directory
+ROUTER_LOGITS_DIR = os.path.join(OUTPUT_DIR, "router_logits")
+
+# Add functions that tests are looking for
+def load_activations_and_indices_and_topk(device: str = "cpu") -> tuple[th.Tensor, th.Tensor, int]:
+    """Load activations, indices, and topk from router logits files.
+
+    Args:
+        device: Device to load tensors to
+
+    Returns:
+        Tuple of (activated_experts, activated_indices, top_k)
+    """
+    if not os.path.exists(ROUTER_LOGITS_DIR):
+        raise FileNotFoundError(f"Router logits directory not found: {ROUTER_LOGITS_DIR}")
+
+    # Get all .pt files in the directory
+    files = [f for f in os.listdir(ROUTER_LOGITS_DIR) if f.endswith(".pt")]
+    if not files:
+        raise ValueError("No data files found")
+
+    # Sort files by index
+    files = sorted(files, key=lambda f: int(f.split(".")[0]))
+
+    # Check for gaps in file numbering
+    file_indices = [int(f.split(".")[0]) for f in files]
+    max_contiguous_index = 0
+    for i, idx in enumerate(file_indices):
+        if i > 0 and idx > file_indices[i-1] + 1:
+            # Found a gap, stop at the previous index
+            max_contiguous_index = i - 1
+            break
+        max_contiguous_index = i
+
+    # Only use files up to the first gap
+    files = files[:max_contiguous_index + 1]
+    if not files:
+        raise ValueError("No contiguous data files found")
+
+    # Load first file to get topk and check dimensions
+    first_file = os.path.join(ROUTER_LOGITS_DIR, files[0])
+    try:
+        first_data = th.load(first_file)
+    except Exception as e:
+        raise RuntimeError(f"Failed to load data file {first_file}: {e}") from e
+
+    if "topk" not in first_data:
+        raise KeyError("Missing 'topk' key in data file")
+    if "router_logits" not in first_data:
+        raise KeyError("Missing 'router_logits' key in data file")
+
+    top_k = first_data["topk"]
+    if top_k <= 0:
+        raise ValueError(f"Invalid topk value: {top_k}")
+
+    router_logits = first_data["router_logits"]
+    if len(router_logits.shape) != 3:
+        raise RuntimeError(f"Expected 3D tensor for router_logits, got shape {router_logits.shape}")
+
+    num_experts = router_logits.shape[2]
+    if top_k > num_experts:
+        raise RuntimeError(f"topk ({top_k}) is larger than number of experts ({num_experts})")
+
+    # Process all files
+    all_activated_experts = []
+    all_activated_indices = []
+
+    for file_name in files:
+        file_path = os.path.join(ROUTER_LOGITS_DIR, file_name)
+        data = th.load(file_path)
+
+        # Verify topk consistency
+        if data["topk"] != top_k:
+            raise KeyError(f"Inconsistent topk values: {top_k} vs {data['topk']}")
+
+        router_logits = data["router_logits"]
+
+        # Get top-k indices
+        _, top_k_indices = th.topk(router_logits, k=top_k, dim=2)
+
+        # Create boolean activation tensor
+        activated_experts = th.zeros_like(router_logits, dtype=th.bool)
+        activated_experts.scatter_(2, top_k_indices, True)
+
+        all_activated_experts.append(activated_experts)
+        all_activated_indices.append(top_k_indices)
+
+    # Concatenate all batches
+    activated_experts = th.cat(all_activated_experts, dim=0)
+    activated_indices = th.cat(all_activated_indices, dim=0)
+
+    # Move to specified device
+    activated_experts = activated_experts.to(device)
+    activated_indices = activated_indices.to(device)
+
+    return activated_experts, activated_indices, top_k
+
+def load_activations_and_topk(device: str = "cpu") -> tuple[th.Tensor, int]:
+    """Load activations and topk from router logits files.
+
+    Args:
+        device: Device to load tensors to
+
+    Returns:
+        Tuple of (activated_experts, top_k)
+    """
+    activated_experts, _, top_k = load_activations_and_indices_and_topk(device=device)
+    return activated_experts, top_k
+
+def load_activations(device: str = "cpu") -> th.Tensor:
+    """Load activations from router logits files.
+
+    Args:
+        device: Device to load tensors to
+
+    Returns:
+        Tensor of activated experts
+    """
+    activated_experts, _, _ = load_activations_and_indices_and_topk(device=device)
+    return activated_experts
+
+def load_activations_indices_tokens_and_topk(device: str = "cpu") -> tuple[th.Tensor, th.Tensor, list[str], int]:
+    """Load activations, indices, tokens, and topk from router logits files.
+
+    Args:
+        device: Device to load tensors to
+
+    Returns:
+        Tuple of (activated_experts, activated_indices, tokens, top_k)
+    """
+    if not os.path.exists(ROUTER_LOGITS_DIR):
+        raise FileNotFoundError(f"Router logits directory not found: {ROUTER_LOGITS_DIR}")
+
+    # Get all .pt files in the directory
+    files = [f for f in os.listdir(ROUTER_LOGITS_DIR) if f.endswith(".pt")]
+    if not files:
+        raise ValueError("No data files found")
+
+    # Sort files by index
+    files = sorted(files, key=lambda f: int(f.split(".")[0]))
+
+    # Load first file to get topk and check dimensions
+    first_file = os.path.join(ROUTER_LOGITS_DIR, files[0])
+    first_data = th.load(first_file)
+
+    if "topk" not in first_data:
+        raise KeyError("Missing 'topk' key in data file")
+    if "router_logits" not in first_data:
+        raise KeyError("Missing 'router_logits' key in data file")
+    if "tokens" not in first_data:
+        raise KeyError("Missing 'tokens' key in data file")
+
+    top_k = first_data["topk"]
+    if top_k <= 0:
+        raise ValueError(f"Invalid topk value: {top_k}")
+
+    router_logits = first_data["router_logits"]
+    if len(router_logits.shape) != 3:
+        raise RuntimeError(f"Expected 3D tensor for router_logits, got shape {router_logits.shape}")
+
+    num_experts = router_logits.shape[2]
+    if top_k > num_experts:
+        raise RuntimeError(f"topk ({top_k}) is larger than number of experts ({num_experts})")
+
+    # Process all files
+    all_activated_experts = []
+    all_activated_indices = []
+    all_tokens = []
+
+    for file_name in files:
+        file_path = os.path.join(ROUTER_LOGITS_DIR, file_name)
+        data = th.load(file_path)
+
+        # Verify topk consistency
+        if data["topk"] != top_k:
+            raise KeyError(f"Inconsistent topk values: {top_k} vs {data['topk']}")
+
+        router_logits = data["router_logits"]
+        tokens = data["tokens"]
+
+        # Get top-k indices
+        _, top_k_indices = th.topk(router_logits, k=top_k, dim=2)
+
+        # Create boolean activation tensor
+        activated_experts = th.zeros_like(router_logits, dtype=th.bool)
+        activated_experts.scatter_(2, top_k_indices, True)
+
+        all_activated_experts.append(activated_experts)
+        all_activated_indices.append(top_k_indices)
+        all_tokens.extend(tokens)
+
+    # Concatenate all batches
+    activated_experts = th.cat(all_activated_experts, dim=0)
+    activated_indices = th.cat(all_activated_indices, dim=0)
+
+    # Move to specified device
+    activated_experts = activated_experts.to(device)
+    activated_indices = activated_indices.to(device)
+
+    return activated_experts, activated_indices, all_tokens, top_k
 
 class Activations:
     def __init__(
@@ -84,12 +283,14 @@ class Activations:
                             case th.Tensor():
                                 if key in current_batch:
                                     current_batch[key] = th.cat(
-                                        current_batch[key],
-                                        value[
-                                            current_local_idx : current_local_idx
-                                            + batch_size,
-                                            :,
-                                            :ctx_len,
+                                        [
+                                            current_batch[key],
+                                            value[
+                                                current_local_idx : current_local_idx
+                                                + batch_size,
+                                                :,
+                                                :ctx_len,
+                                            ],
                                         ],
                                         dim=0,
                                     )
@@ -135,12 +336,14 @@ class Activations:
                             case th.Tensor():
                                 if key in current_batch:
                                     current_batch[key] = th.cat(
-                                        current_batch[key],
-                                        value[
-                                            current_local_idx : current_local_idx
-                                            + batch_size,
-                                            :,
-                                            :ctx_len,
+                                        [
+                                            current_batch[key],
+                                            value[
+                                                current_local_idx : current_local_idx
+                                                + batch_size,
+                                                :,
+                                                :ctx_len,
+                                            ],
                                         ],
                                         dim=0,
                                     )
@@ -189,11 +392,11 @@ class Activations:
         slurm_env: SlurmEnv,
         reshuffle: bool = False,
         seed: int = 0,
-        tokens_per_file_in_reshuffled: int = 100_000,
+        tokens_per_file: int = 100_000,
         shuffle_batch_size: int = 100,
     ) -> list[str]:
         if reshuffle:
-            shuffle_dirname = f"reshuffled-seed={seed}-tokens_per_file={tokens_per_file_in_reshuffled}"
+            shuffle_dirname = f"reshuffled-seed={seed}-tokens_per_file={tokens_per_file}"
             activation_files_dir = os.path.join(activation_dir, shuffle_dirname)
             if slurm_env.world_rank == 0:
                 os.makedirs(activation_files_dir, exist_ok=True)
@@ -216,7 +419,7 @@ class Activations:
                 new_activation_filepaths = Activations.reshuffle(
                     activation_dir=activation_dir,
                     output_dir=activation_files_dir,
-                    tokens_per_file=tokens_per_file_in_reshuffled,
+                    tokens_per_file=tokens_per_file,
                     seed=seed,
                     shuffle_batch_size=shuffle_batch_size,
                 )
@@ -268,7 +471,7 @@ class Activations:
     def reshuffle(
         activation_dir: str,
         output_dir: str,
-        tokens_per_file_in_reshuffled: int = 100_000,
+        tokens_per_file: int = 100_000,
         shuffle_batch_size: int = 100,
         seed: int = 0,
     ) -> list[str]:
@@ -281,71 +484,4 @@ class Activations:
 
         th.random.seed(seed)
 
-        current_batch = defaultdict(list)
-        current_batch_idx = 0
-        num_batch_tokens = 0
-
-        for shuffle_batch, batch_sizes in tqdm(
-            batched(
-                zip(activation_filepaths, batch_sizes, strict=False), shuffle_batch_size
-            ),
-            desc="Reshuffling",
-            total=len(activation_filepaths) // shuffle_batch_size,
-        ):
-            file_data = [th.load(filepath) for filepath in shuffle_batch]
-
-            batch_size_ranges = th.cumsum(batch_sizes, dim=0)
-            total_size = batch_size_ranges[-1]
-
-            batch_shuffled_indices = th.randperm(total_size)
-
-            for batch_idx in tqdm(
-                batch_shuffled_indices, total=total_size, leave=False
-            ):
-                file_idx, local_idx = Activations._batch_idx_to_file_and_local_idx(
-                    batch_size_ranges, batch_idx
-                )
-                data = file_data[file_idx]
-
-                for key, value in data.items():
-                    match value:
-                        case th.Tensor() | list():
-                            current_batch[key].append(value[local_idx])
-                        case _:
-                            if key in current_batch:
-                                assert current_batch[key] == value, (
-                                    f"Inconsistent value for {key}: {current_batch[key]} != {value}"
-                                )
-                            else:
-                                current_batch[key] = value
-
-                num_batch_tokens += len(data["tokens"][local_idx])
-
-                if num_batch_tokens >= tokens_per_file_in_reshuffled:
-                    output_filepath = os.path.join(
-                        output_dir, f"{current_batch_idx}.pt"
-                    )
-                    Activations._collate_and_save_batch(current_batch, output_filepath)
-
-                    current_batch = defaultdict(list)
-                    num_batch_tokens = 0
-                    current_batch_idx += 1
-
-        if current_batch:
-            output_filepath = os.path.join(output_dir, f"{current_batch_idx}.pt")
-            Activations._collate_and_save_batch(current_batch, output_filepath)
-
-    @staticmethod
-    def _collate_and_save_batch(batch: dict, output_filepath: str):
-        for key, value in batch.items():
-            if isinstance(value, th.Tensor):
-                batch[key] = th.stack(value, dim=0)
-        th.save(batch, output_filepath)
-
-    @staticmethod
-    def _batch_idx_to_file_and_local_idx(
-        batch_size_ranges: th.Tensor, batch_idx: int
-    ) -> tuple[int, int]:
-        file_idx = th.searchsorted(batch_size_ranges, batch_idx, side="right")
-        local_idx = batch_idx - batch_size_ranges[file_idx]
-        return file_idx, local_idx
+        defaultdict(list)

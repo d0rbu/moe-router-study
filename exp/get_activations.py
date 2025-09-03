@@ -174,7 +174,7 @@ def process_batch(
             padding_mask = attention_mask.cpu().bool().flatten()
 
             # Extract activations for each layer
-            for layer_idx, layer in tqdm(
+            for layer_idx, _layer in tqdm(
                 enumerate(model.layers),
                 desc=f"Batch {batch_idx} minibatch {minibatch_idx}",
                 total=len(model.layers),

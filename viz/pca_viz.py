@@ -25,7 +25,7 @@ def pca_figure(device: str = "cpu") -> None:
     activated_experts_pca = pca.fit_transform(activated_experts)
 
     # Ensure figure directory exists before saving
-    os.makedirs(FIGURE_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(FIGURE_PATH), exist_ok=True)
 
     # scatter plot the expert activations
     plt.scatter(activated_experts_pca[:, 0], activated_experts_pca[:, 1])

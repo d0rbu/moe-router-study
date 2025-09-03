@@ -1,6 +1,5 @@
-import os
-from typing import Any
 from dataclasses import dataclass
+import os
 
 
 @dataclass
@@ -42,7 +41,7 @@ def get_slurm_env() -> SlurmEnv:
         num_nodes=1,
         ntasks_per_node=1,
         node_list=["localhost"],
-        job_id=None,
+        job_id="",  # Changed from None to empty string to fix type error
         is_slurm=False,
     )
 
@@ -61,7 +60,7 @@ def get_slurm_env() -> SlurmEnv:
     env.ntasks_per_node = int(os.environ.get("SLURM_NTASKS_PER_NODE", 1))
     env.local_rank = int(os.environ.get("SLURM_LOCALID", 0))
     env.node_list = os.environ.get("SLURM_NODELIST", "").split(",")
-    env.job_id = os.environ.get("SLURM_JOB_ID")
+    env.job_id = os.environ.get("SLURM_JOB_ID", "")  # Provide default empty string
 
     # For rank within node, prefer SLURM_LOCALID, fallback to calculating from PROCID
     if "SLURM_LOCALID" in os.environ:
@@ -71,3 +70,4 @@ def get_slurm_env() -> SlurmEnv:
         env.rank = env.world_rank % env.ntasks_per_node
 
     return env
+

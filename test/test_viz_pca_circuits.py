@@ -19,10 +19,10 @@ def test_pca_figure_creates_file(tmp_path: Path, monkeypatch) -> None:
     th.save(data, router_logits_dir / "0.pt")
 
     # 2) Send exp paths and figure dir to temp
-    monkeypatch.setattr("exp.ROUTER_LOGITS_DIR", str(router_logits_dir), raising=False)
+    monkeypatch.setattr("exp.activations.ROUTER_LOGITS_DIR", str(router_logits_dir))
 
     fig_dir = tmp_path / "fig"
-    monkeypatch.setattr("viz.FIGURE_DIR", str(fig_dir), raising=False)
+    monkeypatch.setattr("viz.FIGURE_DIR", str(fig_dir))
 
     # 3) Call pca_figure on CPU
     from viz.pca_viz import FIGURE_PATH, pca_figure
@@ -33,3 +33,4 @@ def test_pca_figure_creates_file(tmp_path: Path, monkeypatch) -> None:
     out_path = Path(FIGURE_PATH)
     assert out_path.exists() and out_path.is_file()
     assert out_path.stat().st_size > 0
+
