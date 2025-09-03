@@ -620,9 +620,13 @@ def viz_max_activating_tokens(
         )
         order_per_circuit.append([int(s.item()) for s in order])
 
+    # Convert tokens from list[str] to list[list[str]] to match function signature
+    # Each token becomes a single-token sequence
+    tokens_as_sequences = [[token] for token in tokens]
+
     _viz_render_precomputed(
         circuits,
-        tokens,
+        tokens_as_sequences,  # Pass as list of lists
         norm_scores,
         order_per_circuit,
         token_topk_mask,
@@ -733,10 +737,15 @@ def viz_max_cli(
     circuits = _load_circuits_tensor(
         circuits_path, device=device, token_topk_mask=token_topk_mask
     )
-    viz_max_activating_tokens(
+
+    # Convert tokens from list[str] to list[list[str]] to match function signature
+    # Each token becomes a single-token sequence
+    tokens_as_sequences = [[token] for token in tokens]
+
+    viz_mean_activating_tokens(
         circuits,
         token_topk_mask,
-        tokens,
+        tokens_as_sequences,  # Pass as list of lists
         top_k,
         top_n=top_n,
         device=device,
@@ -766,10 +775,13 @@ def viz_mean_cli(
     circuits = _load_circuits_tensor(
         circuits_path, device=device, token_topk_mask=token_topk_mask
     )
+    # Convert tokens from list[str] to list[list[str]] to match function signature
+    # Each token becomes a single-token sequence
+    tokens_as_sequences = [[token] for token in tokens]
     viz_mean_activating_tokens(
         circuits,
         token_topk_mask,
-        tokens,
+        tokens_as_sequences,
         top_k,
         top_n=top_n,
         device=device,

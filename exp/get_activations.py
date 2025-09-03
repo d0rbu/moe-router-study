@@ -102,14 +102,9 @@ def verify_config(config: dict, experiment_dir: str) -> None:
         )
 
 
-ACTIVATION_KEYS = frozenset(
-    {
-        "attn_output",
-        "router_logits",
-        "mlp_output",
-        "layer_output",
-    }
-)
+# Define the set of activation keys that can be stored
+ACTIVATION_KEYS_SET: set[str] = {"attn_output", "router_logits", "mlp_output", "layer_output"}
+ACTIVATION_KEYS = frozenset(ACTIVATION_KEYS_SET)
 
 
 def process_batch(
@@ -118,7 +113,7 @@ def process_batch(
     model: StandardizedTransformer,
     gpu_minibatch_size: int,
     router_layers: set[int],
-    activations_to_store: set[str] = ACTIVATION_KEYS,
+    activations_to_store: set[str] = ACTIVATION_KEYS_SET,
 ) -> dict[str, th.Tensor]:
     """Process a batch of texts through the model and extract router logits.
 
@@ -471,7 +466,7 @@ def gpu_worker(
     stop_event: Any,  # mp.Event is not properly typed
     gpu_busy: list[bool],  # Reference to multiplexer's gpu_busy list
     log_queue: mp.Queue,
-    activations_to_store: set[str] = ACTIVATION_KEYS,
+    activations_to_store: set[str] = ACTIVATION_KEYS_SET,
     log_level: str = "INFO",
 ) -> None:
     """Worker process for processing batches on a specific GPU."""
@@ -565,7 +560,7 @@ def gpu_worker(
                 batch_idx,
                 model,
                 gpu_minibatch_size,
-                layers_with_routers,
+                set(layers_with_routers),  # Convert list to set
                 activations_to_store=current_activations_to_store,
             )
 

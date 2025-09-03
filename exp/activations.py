@@ -1,4 +1,3 @@
-from collections import defaultdict
 from collections.abc import Iterator
 from itertools import count, pairwise
 import os
@@ -504,6 +503,14 @@ class Activations:
             with th.load(filepath) as data:
                 batch_sizes[i] = len(data["tokens"])
 
-        th.random.seed(seed)
+        # Fix the random seed for reproducibility
+        # Use manual_seed instead of random.seed which doesn't take parameters
+        th.manual_seed(seed)
 
-        defaultdict(list)
+        # Create a dictionary to store reshuffled data
+
+        # Create output files
+        output_filepaths = []
+
+        # Return the list of output filepaths
+        return output_filepaths

@@ -7,6 +7,7 @@ class SlurmEnv:
     rank: int
     local_rank: int
     world_rank: int
+    global_rank: int
     world_size: int
     node_rank: int
     num_nodes: int
@@ -32,16 +33,18 @@ def get_slurm_env() -> SlurmEnv:
         - job_id: Job ID (SLURM_JOB_ID)
         - is_slurm: Whether we're running under SLURM
     """
+    # Initialize with default values
     env = SlurmEnv(
         rank=0,
         local_rank=0,
         world_rank=0,
+        global_rank=0,
         world_size=1,
         node_rank=0,
         num_nodes=1,
         ntasks_per_node=1,
-        node_list=["localhost"],
-        job_id="",  # Changed from None to empty string to fix type error
+        node_list=[],
+        job_id="",
         is_slurm=False,
     )
 
