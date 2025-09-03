@@ -28,8 +28,14 @@ class TestSvdCircuits:
         # Set up patches
         monkeypatch.setattr("exp.svd_circuits.OUTPUT_DIR", str(temp_dir))
         monkeypatch.setattr("exp.svd_circuits.FIGURE_DIR", str(temp_dir))
-        monkeypatch.setattr("exp.svd_circuits.OUTPUT_FILE", os.path.join(str(temp_dir), "svd_circuits.pt"))
-        monkeypatch.setattr("exp.svd_circuits.FIGURE_PATH", os.path.join(str(temp_dir), "svd_circuits.png"))
+        monkeypatch.setattr(
+            "exp.svd_circuits.OUTPUT_FILE",
+            os.path.join(str(temp_dir), "svd_circuits.pt"),
+        )
+        monkeypatch.setattr(
+            "exp.svd_circuits.FIGURE_PATH",
+            os.path.join(str(temp_dir), "svd_circuits.png"),
+        )
 
         with (
             patch(
@@ -77,8 +83,14 @@ class TestSvdCircuits:
         # Set up patches
         monkeypatch.setattr("exp.svd_circuits.OUTPUT_DIR", str(temp_dir))
         monkeypatch.setattr("exp.svd_circuits.FIGURE_DIR", str(temp_dir))
-        monkeypatch.setattr("exp.svd_circuits.OUTPUT_FILE", os.path.join(str(temp_dir), "svd_circuits.pt"))
-        monkeypatch.setattr("exp.svd_circuits.FIGURE_PATH", os.path.join(str(temp_dir), "svd_circuits.png"))
+        monkeypatch.setattr(
+            "exp.svd_circuits.OUTPUT_FILE",
+            os.path.join(str(temp_dir), "svd_circuits.pt"),
+        )
+        monkeypatch.setattr(
+            "exp.svd_circuits.FIGURE_PATH",
+            os.path.join(str(temp_dir), "svd_circuits.png"),
+        )
 
         with (
             patch(
@@ -120,8 +132,14 @@ class TestSvdCircuits:
         # Set up patches
         monkeypatch.setattr("exp.svd_circuits.OUTPUT_DIR", str(temp_dir))
         monkeypatch.setattr("exp.svd_circuits.FIGURE_DIR", str(temp_dir))
-        monkeypatch.setattr("exp.svd_circuits.OUTPUT_FILE", os.path.join(str(temp_dir), "svd_circuits.pt"))
-        monkeypatch.setattr("exp.svd_circuits.FIGURE_PATH", os.path.join(str(temp_dir), "svd_circuits.png"))
+        monkeypatch.setattr(
+            "exp.svd_circuits.OUTPUT_FILE",
+            os.path.join(str(temp_dir), "svd_circuits.pt"),
+        )
+        monkeypatch.setattr(
+            "exp.svd_circuits.FIGURE_PATH",
+            os.path.join(str(temp_dir), "svd_circuits.png"),
+        )
 
         with (
             patch(
@@ -160,8 +178,14 @@ class TestSvdCircuits:
         # Set up patches
         monkeypatch.setattr("exp.svd_circuits.OUTPUT_DIR", str(temp_dir))
         monkeypatch.setattr("exp.svd_circuits.FIGURE_DIR", str(temp_dir))
-        monkeypatch.setattr("exp.svd_circuits.OUTPUT_FILE", os.path.join(str(temp_dir), "svd_circuits.pt"))
-        monkeypatch.setattr("exp.svd_circuits.FIGURE_PATH", os.path.join(str(temp_dir), "svd_circuits.png"))
+        monkeypatch.setattr(
+            "exp.svd_circuits.OUTPUT_FILE",
+            os.path.join(str(temp_dir), "svd_circuits.pt"),
+        )
+        monkeypatch.setattr(
+            "exp.svd_circuits.FIGURE_PATH",
+            os.path.join(str(temp_dir), "svd_circuits.png"),
+        )
 
         with (
             patch(
@@ -201,4 +225,3 @@ class TestSvdCircuits:
 
             # At least one of the circuits should have a high value for expert 2 in layer 1
             assert (abs(circuit1[1, 2]) > 0.1) or (abs(circuit2[1, 2]) > 0.1)
-

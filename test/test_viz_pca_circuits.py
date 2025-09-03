@@ -33,4 +33,3 @@ def test_pca_figure_creates_file(tmp_path: Path, monkeypatch) -> None:
     out_path = Path(FIGURE_PATH)
     assert out_path.exists() and out_path.is_file()
     assert out_path.stat().st_size > 0
-

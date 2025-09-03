@@ -12,8 +12,11 @@ from exp import ACTIVATION_DIRNAME, OUTPUT_DIR
 # Define constants for router logits directory
 ROUTER_LOGITS_DIR = os.path.join(OUTPUT_DIR, "router_logits")
 
+
 # Add functions that tests are looking for
-def load_activations_and_indices_and_topk(device: str = "cpu") -> tuple[th.Tensor, th.Tensor, int]:
+def load_activations_and_indices_and_topk(
+    device: str = "cpu",
+) -> tuple[th.Tensor, th.Tensor, int]:
     """Load activations, indices, and topk from router logits files.
 
     Args:
@@ -23,7 +26,9 @@ def load_activations_and_indices_and_topk(device: str = "cpu") -> tuple[th.Tenso
         Tuple of (activated_experts, activated_indices, top_k)
     """
     if not os.path.exists(ROUTER_LOGITS_DIR):
-        raise FileNotFoundError(f"Router logits directory not found: {ROUTER_LOGITS_DIR}")
+        raise FileNotFoundError(
+            f"Router logits directory not found: {ROUTER_LOGITS_DIR}"
+        )
 
     # Get all .pt files in the directory
     files = [f for f in os.listdir(ROUTER_LOGITS_DIR) if f.endswith(".pt")]
@@ -37,14 +42,14 @@ def load_activations_and_indices_and_topk(device: str = "cpu") -> tuple[th.Tenso
     file_indices = [int(f.split(".")[0]) for f in files]
     max_contiguous_index = 0
     for i, idx in enumerate(file_indices):
-        if i > 0 and idx > file_indices[i-1] + 1:
+        if i > 0 and idx > file_indices[i - 1] + 1:
             # Found a gap, stop at the previous index
             max_contiguous_index = i - 1
             break
         max_contiguous_index = i
 
     # Only use files up to the first gap
-    files = files[:max_contiguous_index + 1]
+    files = files[: max_contiguous_index + 1]
     if not files:
         raise ValueError("No contiguous data files found")
 
@@ -66,11 +71,15 @@ def load_activations_and_indices_and_topk(device: str = "cpu") -> tuple[th.Tenso
 
     router_logits = first_data["router_logits"]
     if len(router_logits.shape) != 3:
-        raise RuntimeError(f"Expected 3D tensor for router_logits, got shape {router_logits.shape}")
+        raise RuntimeError(
+            f"Expected 3D tensor for router_logits, got shape {router_logits.shape}"
+        )
 
     num_experts = router_logits.shape[2]
     if top_k > num_experts:
-        raise RuntimeError(f"topk ({top_k}) is larger than number of experts ({num_experts})")
+        raise RuntimeError(
+            f"topk ({top_k}) is larger than number of experts ({num_experts})"
+        )
 
     # Process all files
     all_activated_experts = []
@@ -106,6 +115,7 @@ def load_activations_and_indices_and_topk(device: str = "cpu") -> tuple[th.Tenso
 
     return activated_experts, activated_indices, top_k
 
+
 def load_activations_and_topk(device: str = "cpu") -> tuple[th.Tensor, int]:
     """Load activations and topk from router logits files.
 
@@ -117,6 +127,7 @@ def load_activations_and_topk(device: str = "cpu") -> tuple[th.Tensor, int]:
     """
     activated_experts, _, top_k = load_activations_and_indices_and_topk(device=device)
     return activated_experts, top_k
+
 
 def load_activations(device: str = "cpu") -> th.Tensor:
     """Load activations from router logits files.
@@ -130,7 +141,10 @@ def load_activations(device: str = "cpu") -> th.Tensor:
     activated_experts, _, _ = load_activations_and_indices_and_topk(device=device)
     return activated_experts
 
-def load_activations_indices_tokens_and_topk(device: str = "cpu") -> tuple[th.Tensor, th.Tensor, list[str], int]:
+
+def load_activations_indices_tokens_and_topk(
+    device: str = "cpu",
+) -> tuple[th.Tensor, th.Tensor, list[str], int]:
     """Load activations, indices, tokens, and topk from router logits files.
 
     Args:
@@ -140,7 +154,9 @@ def load_activations_indices_tokens_and_topk(device: str = "cpu") -> tuple[th.Te
         Tuple of (activated_experts, activated_indices, tokens, top_k)
     """
     if not os.path.exists(ROUTER_LOGITS_DIR):
-        raise FileNotFoundError(f"Router logits directory not found: {ROUTER_LOGITS_DIR}")
+        raise FileNotFoundError(
+            f"Router logits directory not found: {ROUTER_LOGITS_DIR}"
+        )
 
     # Get all .pt files in the directory
     files = [f for f in os.listdir(ROUTER_LOGITS_DIR) if f.endswith(".pt")]
@@ -167,11 +183,15 @@ def load_activations_indices_tokens_and_topk(device: str = "cpu") -> tuple[th.Te
 
     router_logits = first_data["router_logits"]
     if len(router_logits.shape) != 3:
-        raise RuntimeError(f"Expected 3D tensor for router_logits, got shape {router_logits.shape}")
+        raise RuntimeError(
+            f"Expected 3D tensor for router_logits, got shape {router_logits.shape}"
+        )
 
     num_experts = router_logits.shape[2]
     if top_k > num_experts:
-        raise RuntimeError(f"topk ({top_k}) is larger than number of experts ({num_experts})")
+        raise RuntimeError(
+            f"topk ({top_k}) is larger than number of experts ({num_experts})"
+        )
 
     # Process all files
     all_activated_experts = []
@@ -209,6 +229,7 @@ def load_activations_indices_tokens_and_topk(device: str = "cpu") -> tuple[th.Te
     activated_indices = activated_indices.to(device)
 
     return activated_experts, activated_indices, all_tokens, top_k
+
 
 class Activations:
     def __init__(
@@ -374,7 +395,10 @@ class Activations:
                                 else:
                                     current_batch[key] = value
 
-                    if batch_idx % self.slurm_env.world_size == self.slurm_env.world_rank:
+                    if (
+                        batch_idx % self.slurm_env.world_size
+                        == self.slurm_env.world_rank
+                    ):
                         yield current_batch
 
                     current_batch = {}
@@ -396,7 +420,9 @@ class Activations:
         shuffle_batch_size: int = 100,
     ) -> list[str]:
         if reshuffle:
-            shuffle_dirname = f"reshuffled-seed={seed}-tokens_per_file={tokens_per_file}"
+            shuffle_dirname = (
+                f"reshuffled-seed={seed}-tokens_per_file={tokens_per_file}"
+            )
             activation_files_dir = os.path.join(activation_dir, shuffle_dirname)
             if slurm_env.world_rank == 0:
                 os.makedirs(activation_files_dir, exist_ok=True)
@@ -428,17 +454,13 @@ class Activations:
                 th.distributed.broadcast_object_list(
                     num_new_activation_filepaths, src=0
                 )
-                th.distributed.broadcast_object_list(
-                    new_activation_filepaths, src=0
-                )
+                th.distributed.broadcast_object_list(new_activation_filepaths, src=0)
             else:
                 th.distributed.broadcast_object_list(
                     num_new_activation_filepaths, src=0
                 )
                 new_activation_filepaths = [None] * num_new_activation_filepaths[0]
-                th.distributed.broadcast_object_list(
-                    new_activation_filepaths, src=0
-                )
+                th.distributed.broadcast_object_list(new_activation_filepaths, src=0)
 
             return new_activation_filepaths
 

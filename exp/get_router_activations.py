@@ -36,7 +36,10 @@ def get_experiment_name(model_name: str, dataset_name: str, **kwargs) -> str:
 
     # Warn about filtered keys
     if filtered_keys:
-        warnings.warn(f"The following keys were excluded from the experiment name: {filtered_keys}", stacklevel=2)
+        warnings.warn(
+            f"The following keys were excluded from the experiment name: {filtered_keys}",
+            stacklevel=2,
+        )
 
     # Add remaining kwargs to experiment name
     if kwargs:

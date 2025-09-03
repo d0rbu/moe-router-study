@@ -70,4 +70,3 @@ def get_slurm_env() -> SlurmEnv:
         env.rank = env.world_rank % env.ntasks_per_node
 
     return env
-

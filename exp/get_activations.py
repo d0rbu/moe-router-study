@@ -133,7 +133,9 @@ def process_batch(
     Returns:
         Dictionary of activations.
     """
-    logger.debug(f"Processing batch {batch_idx} with activations to store: {activations_to_store}")
+    logger.debug(
+        f"Processing batch {batch_idx} with activations to store: {activations_to_store}"
+    )
 
     batch_size = encoded_batch["input_ids"].shape[0]
 
@@ -152,7 +154,10 @@ def process_batch(
     }
 
     for minibatch_idx in tqdm(
-        range(num_minibatches), desc=f"Batch {batch_idx}", total=num_minibatches, leave=False,
+        range(num_minibatches),
+        desc=f"Batch {batch_idx}",
+        total=num_minibatches,
+        leave=False,
     ):
         th.cuda.empty_cache()
         gc.collect()
@@ -165,7 +170,9 @@ def process_batch(
         }
 
         minibatch_token_count = encoded_minibatch["attention_mask"].sum().item()
-        logger.debug(f"Batch {batch_idx} minibatch {minibatch_idx} has {minibatch_token_count} tokens")
+        logger.debug(
+            f"Batch {batch_idx} minibatch {minibatch_idx} has {minibatch_token_count} tokens"
+        )
 
         # Use trace context manager to capture router outputs
         with model.trace(encoded_minibatch):
@@ -314,7 +321,10 @@ def tokenizer_worker(
                 buffer_token_count = 0
                 batch_idx += 1
 
-                if batch_idx < resume_from_batch or batch_idx % slurm_world_size != slurm_rank:
+                if (
+                    batch_idx < resume_from_batch
+                    or batch_idx % slurm_world_size != slurm_rank
+                ):
                     logger.debug(f"Skipping batch {batch_idx}")
                     log_queue.put({"tokenizer/skipping_batches": batch_idx})
 
@@ -544,9 +554,7 @@ def gpu_worker(
 
         # Move tensors to device
         if not cpu_only:
-            encoded_batch = {
-                k: v.to(device_ids[0]) for k, v in encoded_batch.items()
-            }
+            encoded_batch = {k: v.to(device_ids[0]) for k, v in encoded_batch.items()}
 
         # Process batch and get router logits
         logger.debug(f"Rank {rank} processing batch {batch_idx}")
@@ -665,8 +673,12 @@ def get_router_activations(
     # Detect SLURM environment
     slurm_env = get_slurm_env()
     if slurm_env.is_slurm:
-        logger.info(f"Running in SLURM environment: rank {slurm_env.world_rank}/{slurm_env.world_size}")
-        logger.info(f"Node: {slurm_env.node_rank}/{slurm_env.num_nodes}, Local rank: {slurm_env.local_rank}")
+        logger.info(
+            f"Running in SLURM environment: rank {slurm_env.world_rank}/{slurm_env.world_size}"
+        )
+        logger.info(
+            f"Node: {slurm_env.node_rank}/{slurm_env.num_nodes}, Local rank: {slurm_env.local_rank}"
+        )
     else:
         logger.info("Running in local environment (not SLURM)")
 
@@ -761,7 +773,9 @@ def get_router_activations(
     mp.set_start_method("spawn", force=True)
 
     # Create queues and events
-    main_queue = mp.Queue(maxsize=MAIN_QUEUE_MAXSIZE)  # Buffer between tokenizer and multiplexer
+    main_queue = mp.Queue(
+        maxsize=MAIN_QUEUE_MAXSIZE
+    )  # Buffer between tokenizer and multiplexer
     gpu_queues = [mp.Queue(maxsize=GPU_QUEUE_MAXSIZE) for _ in range(num_workers)]
     log_queue = mp.Queue()  # For sending logs back to main process
     stop_event = mp.Event()  # For signaling processes to stop
