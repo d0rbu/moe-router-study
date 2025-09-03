@@ -1,16 +1,13 @@
 from collections import defaultdict
 from collections.abc import Iterator
-from itertools import batched, count, pairwise
+from itertools import batched, count
 import os
 
 import torch as th
 import torch.multiprocessing as mp
 from tqdm import tqdm
 
-from exp import ACTIVATION_DIRNAME, OUTPUT_DIR, ROUTER_LOGITS_DIRNAME
-
-# For backward compatibility with tests
-ROUTER_LOGITS_DIR = ROUTER_LOGITS_DIRNAME
+from exp import ACTIVATION_DIRNAME, OUTPUT_DIR
 
 
 class Activations:
@@ -31,430 +28,223 @@ class Activations:
             reshuffle: Whether to shuffle the activations
             tokens_per_file_in_reshuffled: Number of tokens per file, only used if reshuffling
             shuffle_batch_size: How many batches to shuffle at a time
-            seed: Seed for the random number generator
-            max_cache_size: Maximum number of file data entries to cache
+            seed: Random seed
+            max_cache_size: Maximum number of files to cache
         """
-        activation_dir = os.path.join(OUTPUT_DIR, experiment_name, ACTIVATION_DIRNAME)
-
+        self.experiment_name = experiment_name
         self.device = device
-        self.activation_filepaths = self.load_files(
-            activation_dir=activation_dir,
-            reshuffle=reshuffle,
-            seed=seed,
-            tokens_per_file=tokens_per_file_in_reshuffled,
-            shuffle_batch_size=shuffle_batch_size,
-        )
+        self.reshuffle = reshuffle
+        self.tokens_per_file_in_reshuffled = tokens_per_file_in_reshuffled
+        self.shuffle_batch_size = shuffle_batch_size
+        self.seed = seed
         self.max_cache_size = max_cache_size
 
-    # worker to fetch data from disk
-    def _get_file_data(self, cached_file_data: mp.Queue):
-        for activation_filepath in self.activation_filepaths:
-            file_data = th.load(activation_filepath)
-            cached_file_data.put(file_data, block=True)
-        cached_file_data.put(None)
-
-    def __call__(self, batch_size: int = 4096, ctx_len: int = 128) -> Iterator[dict]:
-        def data_generator(batch_size: int, ctx_len: int) -> Iterator[dict]:
-            # cache of file data to come
-            cached_file_data = mp.Queue(maxsize=self.max_cache_size)
-
-            # create worker process to get file data
-            worker_process = mp.Process(
-                target=self._get_file_data, args=(cached_file_data,)
-            )
-            worker_process.start()
-
-            current_data = cached_file_data.get(block=True)
-            current_local_idx = 0
-            current_data_size = len(current_data["tokens"])
-
-            if ctx_len <= 0:
-                ctx_len = (
-                    1024 * 1024
-                )  # probably not very future proof given the scary pace of progress
-
-            current_batch = {}
-            remaining_batch_size = batch_size
-
-            for _batch_idx in count():
-                while current_data_size - current_local_idx < remaining_batch_size:
-                    for key, value in current_data.items():
-                        match value:
-                            case th.Tensor():
-                                if key in current_batch:
-                                    current_batch[key] = th.cat(
-                                        current_batch[key],
-                                        value[
-                                            current_local_idx : current_local_idx
-                                            + batch_size,
-                                            :,
-                                            :ctx_len,
-                                        ],
-                                        dim=0,
-                                    )
-                                else:
-                                    current_batch[key] = value[
-                                        current_local_idx : current_local_idx
-                                        + batch_size,
-                                        :,
-                                        :ctx_len,
-                                    ]
-                            case list():
-                                truncated_sequences = [
-                                    sequence[:ctx_len]
-                                    for sequence in value[
-                                        current_local_idx : current_local_idx
-                                        + batch_size
-                                    ]
-                                ]
-                                if key in current_batch:
-                                    current_batch[key].extend(truncated_sequences)
-                                else:
-                                    current_batch[key] = truncated_sequences
-                            case _:
-                                if key in current_batch:
-                                    assert current_batch[key] == value, (
-                                        f"Inconsistent value for {key}: {current_batch[key]} != {value}"
-                                    )
-                                else:
-                                    current_batch[key] = value
-
-                    remaining_batch_size -= current_data_size - current_local_idx
-                    current_data = cached_file_data.get(block=True)
-
-                    if current_data is None:
-                        worker_process.join()
-                        return
-
-                    current_local_idx = 0
-                    current_data_size = len(current_data["tokens"])
-                else:
-                    for key, value in current_data.items():
-                        match value:
-                            case th.Tensor():
-                                if key in current_batch:
-                                    current_batch[key] = th.cat(
-                                        current_batch[key],
-                                        value[
-                                            current_local_idx : current_local_idx
-                                            + batch_size,
-                                            :,
-                                            :ctx_len,
-                                        ],
-                                        dim=0,
-                                    )
-                                else:
-                                    current_batch[key] = value[
-                                        current_local_idx : current_local_idx
-                                        + batch_size,
-                                        :,
-                                        :ctx_len,
-                                    ]
-                            case list():
-                                truncated_sequences = [
-                                    sequence[:ctx_len]
-                                    for sequence in value[
-                                        current_local_idx : current_local_idx
-                                        + batch_size
-                                    ]
-                                ]
-                                if key in current_batch:
-                                    current_batch[key].extend(truncated_sequences)
-                                else:
-                                    current_batch[key] = truncated_sequences
-                            case _:
-                                if key in current_batch:
-                                    assert current_batch[key] == value, (
-                                        f"Inconsistent value for {key}: {current_batch[key]} != {value}"
-                                    )
-                                else:
-                                    current_batch[key] = value
-
-                    yield current_batch
-                    current_batch = {}
-                    current_local_idx += remaining_batch_size
-                    remaining_batch_size = batch_size
-
-        return data_generator(batch_size, ctx_len)
-
-    def __iter__(self) -> Iterator[dict]:
-        return self()
-
-    @staticmethod
-    def load_files(
-        activation_dir: str,
-        reshuffle: bool = False,
-        seed: int = 0,
-        tokens_per_file_in_reshuffled: int = 100_000,
-        shuffle_batch_size: int = 100,
-    ) -> list[str]:
-        if reshuffle:
-            shuffle_dirname = f"reshuffled-seed={seed}-tokens_per_file={tokens_per_file_in_reshuffled}"
-            activation_files_dir = os.path.join(activation_dir, shuffle_dirname)
-            os.makedirs(activation_files_dir, exist_ok=True)
-        else:
-            activation_files_dir = activation_dir
-
-        activation_filepaths = Activations.get_activation_filepaths(
-            activation_files_dir
+        self.activation_dir = os.path.join(
+            OUTPUT_DIR, experiment_name, ACTIVATION_DIRNAME
         )
 
-        if activation_filepaths:
-            return activation_filepaths
+        # Load files
+        self.filepaths = self.load_files(self.activation_dir, reshuffle)
 
-        # if we are here then there are no activation files
-        if reshuffle:
-            return Activations.reshuffle(
-                activation_dir=activation_dir,
-                output_dir=activation_files_dir,
-                tokens_per_file=tokens_per_file_in_reshuffled,
-                seed=seed,
-                shuffle_batch_size=shuffle_batch_size,
-            )
+        # Cache for loaded files
+        self.cache = {}
 
-        raise FileNotFoundError(f"No activation files found in {activation_dir}")
+    def __call__(self) -> Iterator[dict[str, th.Tensor]]:
+        """Yield batches of activations.
+
+        Yields:
+            Batch of activations
+        """
+        # Create a queue for loading files
+        queue = mp.Queue(maxsize=self.max_cache_size)
+        stop_event = mp.Event()
+
+        # Start a process to load files
+        process = mp.Process(
+            target=self._get_file_data,
+            args=(queue, stop_event, self.filepaths, self.device),
+        )
+        process.start()
+
+        # Yield batches from the queue
+        try:
+            while True:
+                try:
+                    batch = queue.get(block=True, timeout=1.0)
+                    if batch is None:
+                        break
+                    yield batch
+                except Exception:  # Use a generic exception to avoid mp.queues.Empty
+                    if not process.is_alive():
+                        break
+        finally:
+            stop_event.set()
+            process.join()
+
+    @staticmethod
+    def _get_file_data(
+        queue: mp.Queue,
+        stop_event: mp.Event,  # type: ignore
+        filepaths: list[str],
+        device: str,
+    ) -> None:
+        """Load files into the queue.
+
+        Args:
+            queue: Queue to put data into
+            stop_event: Event to signal stopping
+            filepaths: List of filepaths to load
+            device: Device to load data to
+        """
+        for filepath in filepaths:
+            if stop_event.is_set():
+                break
+
+            # Load file
+            data = th.load(filepath)
+            data = {k: v.to(device) for k, v in data.items()}
+
+            # Put data in queue
+            queue.put(data)
+
+        # Signal end of data
+        queue.put(None)
+
+    @classmethod
+    def load_files(
+        cls, activation_dir: str, reshuffle: bool = False
+    ) -> list[str]:
+        """Load activation files.
+
+        Args:
+            activation_dir: Directory containing activation files
+            reshuffle: Whether to shuffle the activations
+
+        Returns:
+            List of filepaths
+        """
+        # Get filepaths
+        filepaths = cls.get_activation_filepaths(activation_dir)
+
+        # If no files and reshuffle is True, reshuffle
+        if not filepaths and reshuffle:
+            cls.reshuffle(activation_dir)
+            filepaths = cls.get_activation_filepaths(activation_dir)
+
+        # If still no files, raise error
+        if not filepaths:
+            raise FileNotFoundError(f"No activation files found in {activation_dir}")
+
+        return filepaths
 
     @staticmethod
     def get_activation_filepaths(activation_dir: str) -> list[str]:
-        all_activation_filenames = [
-            filename
-            for filename in os.listdir(activation_dir)
-            if filename.endswith(".pt")
-        ]
+        """Get activation filepaths.
 
-        activation_indices = [
-            int(filename.split(".")[0]) for filename in all_activation_filenames
-        ]
-        max_contiguous_activation_index = max(activation_indices)
-        for prev_index, next_index in pairwise(activation_indices):
-            if next_index - prev_index > 1:
-                max_contiguous_activation_index = prev_index
+        Args:
+            activation_dir: Directory containing activation files
+
+        Returns:
+            List of filepaths
+        """
+        # Check if directory exists
+        if not os.path.exists(activation_dir):
+            return []
+
+        # Get all .pt files
+        filepaths = []
+        for i in count():
+            filepath = os.path.join(activation_dir, f"{i}.pt")
+            if not os.path.exists(filepath):
                 break
+            filepaths.append(filepath)
 
-        contiguous_activation_filepaths = [
-            os.path.join(activation_dir, f"{i}.pt")
-            for i in range(max_contiguous_activation_index + 1)
-        ]
-        return contiguous_activation_filepaths
+        return filepaths
 
-    @staticmethod
+    @classmethod
     def reshuffle(
+        cls,
         activation_dir: str,
-        output_dir: str,
-        tokens_per_file_in_reshuffled: int = 100_000,
-        shuffle_batch_size: int = 100,
+        tokens_per_file: int = 100_000,
+        batch_size: int = 100,
         seed: int = 0,
-    ) -> list[str]:
-        activation_filepaths = Activations.get_activation_filepaths(activation_dir)
-        batch_sizes = th.zeros(len(activation_filepaths), dtype=th.int32)
+    ) -> None:
+        """Reshuffle activations.
 
-        for i, filepath in enumerate(activation_filepaths):
-            with th.load(filepath) as data:
-                batch_sizes[i] = len(data["tokens"])
+        Args:
+            activation_dir: Directory containing activation files
+            tokens_per_file: Number of tokens per file
+            batch_size: How many batches to shuffle at a time
+            seed: Random seed
+        """
+        # Set random seed
+        th.manual_seed(seed)
 
-        th.random.seed(seed)
+        # Get filepaths
+        filepaths = cls.get_activation_filepaths(activation_dir)
 
-        current_batch = defaultdict(list)
-        current_batch_idx = 0
-        num_batch_tokens = 0
+        # If no files, raise error
+        if not filepaths:
+            raise FileNotFoundError(f"No activation files found in {activation_dir}")
 
-        for shuffle_batch, batch_sizes_data in tqdm(
-            batched(
-                zip(activation_filepaths, batch_sizes, strict=False), shuffle_batch_size
-            ),
-            desc="Reshuffling",
-            total=len(activation_filepaths) // shuffle_batch_size,
+        # Load all files
+        all_data = defaultdict(list)
+        batch_sizes = []
+        for filepath in tqdm(filepaths, desc="Loading files"):
+            data = th.load(filepath)
+            batch_sizes.append(data["topk"].shape[0])
+            for k, v in data.items():
+                all_data[k].append(v)
+
+        # Concatenate data
+        all_data = {k: th.cat(v, dim=0) for k, v in all_data.items()}
+
+        # Get total number of tokens
+        total_tokens = all_data["topk"].shape[0]
+
+        # Shuffle indices
+        indices = th.randperm(total_tokens)
+
+        # Create batches
+        for i, batch_indices in enumerate(
+            batched(indices, tokens_per_file)
         ):
-            file_data = [th.load(filepath) for filepath in shuffle_batch]
-
-            batch_size_ranges = th.cumsum(batch_sizes_data, dim=0)
-            total_size = batch_size_ranges[-1]
-
-            batch_shuffled_indices = th.randperm(total_size)
-
-            for batch_idx in tqdm(
-                batch_shuffled_indices, total=total_size, leave=False
-            ):
-                file_idx, local_idx = Activations._batch_idx_to_file_and_local_idx(
-                    batch_size_ranges, batch_idx
-                )
-                data = file_data[file_idx]
-
-                for key, value in data.items():
-                    match value:
-                        case th.Tensor() | list():
-                            current_batch[key].append(value[local_idx])
-                        case _:
-                            if key in current_batch:
-                                assert current_batch[key] == value, (
-                                    f"Inconsistent value for {key}: {current_batch[key]} != {value}"
-                                )
-                            else:
-                                current_batch[key] = value
-
-                num_batch_tokens += len(data["tokens"][local_idx])
-
-                if num_batch_tokens >= tokens_per_file_in_reshuffled:
-                    output_filepath = os.path.join(
-                        output_dir, f"{current_batch_idx}.pt"
-                    )
-                    Activations._collate_and_save_batch(current_batch, output_filepath)
-
-                    current_batch = defaultdict(list)
-                    num_batch_tokens = 0
-                    current_batch_idx += 1
-
-        if current_batch:
-            output_filepath = os.path.join(output_dir, f"{current_batch_idx}.pt")
-            Activations._collate_and_save_batch(current_batch, output_filepath)
+            batch_indices = th.tensor(batch_indices)
+            batch = {k: v[batch_indices] for k, v in all_data.items()}
+            cls._collate_and_save_batch(batch, i, activation_dir)
 
     @staticmethod
-    def _collate_and_save_batch(batch: dict, output_filepath: str):
-        for key, value in batch.items():
-            if isinstance(value, th.Tensor):
-                batch[key] = th.stack(value, dim=0)
-        th.save(batch, output_filepath)
+    def _collate_and_save_batch(
+        batch: dict[str, th.Tensor], batch_idx: int, activation_dir: str
+    ) -> None:
+        """Collate and save a batch.
+
+        Args:
+            batch: Batch to save
+            batch_idx: Batch index
+            activation_dir: Directory to save to
+        """
+        # Create directory if it doesn't exist
+        os.makedirs(activation_dir, exist_ok=True)
+
+        # Save batch
+        filepath = os.path.join(activation_dir, f"{batch_idx}.pt")
+        th.save(batch, filepath)
 
     @staticmethod
     def _batch_idx_to_file_and_local_idx(
         batch_size_ranges: th.Tensor, batch_idx: int
     ) -> tuple[int, int]:
-        file_idx = th.searchsorted(batch_size_ranges, batch_idx, side="right")
-        local_idx = batch_idx - batch_size_ranges[file_idx]
+        """Convert batch index to file index and local index.
+
+        Args:
+            batch_size_ranges: Cumulative sum of batch sizes
+            batch_idx: Batch index
+
+        Returns:
+            Tuple of (file_idx, local_idx)
+        """
+        file_idx = int(th.searchsorted(batch_size_ranges, batch_idx, side="right").item())
+        local_idx = int(batch_idx - (batch_size_ranges[file_idx - 1].item() if file_idx > 0 else 0))
         return file_idx, local_idx
 
-
-def load_activations_and_indices_and_topk(
-    device: str = "cpu",
-) -> tuple[th.Tensor, th.Tensor, int]:
-    """Load router activations, indices, and top-k value from saved files.
-
-    Args:
-        device: Device to load tensors to.
-
-    Returns:
-        Tuple of (activated_experts, activated_indices, top_k) where:
-            activated_experts: Boolean tensor of shape (batch_size, num_layers, num_experts)
-            activated_indices: Integer tensor of shape (batch_size, num_layers, top_k)
-            top_k: Integer value of top-k used in router
-    """
-    router_logits_dir = ROUTER_LOGITS_DIR
-
-    # Check if directory exists
-    if not os.path.exists(router_logits_dir):
-        raise FileNotFoundError(
-            f"Router logits directory not found: {router_logits_dir}"
-        )
-
-    # Find all data files
-    data_files = []
-    for file_idx in count():
-        file_path = os.path.join(router_logits_dir, f"{file_idx}.pt")
-        if not os.path.exists(file_path):
-            break
-        data_files.append(file_path)
-
-    if not data_files:
-        raise ValueError("No data files found in router logits directory")
-
-    # Load first file to get dimensions and top-k value
-    first_data = th.load(data_files[0])
-    top_k = first_data["topk"]
-    router_logits = first_data["router_logits"]
-
-    # Validate top-k value
-    if top_k <= 0:
-        raise ValueError(f"Invalid top-k value: {top_k}")
-
-    # Get dimensions
-    batch_size, num_layers, num_experts = router_logits.shape
-
-    # Validate dimensions
-    if top_k > num_experts:
-        raise RuntimeError(f"Top-k ({top_k}) exceeds number of experts ({num_experts})")
-
-    # Process all files
-    all_activated_experts = []
-    all_activated_indices = []
-
-    for file_path in data_files:
-        data = th.load(file_path)
-
-        # Verify consistent top-k across files
-        if data["topk"] != top_k:
-            raise KeyError(f"Inconsistent top-k values: {top_k} vs {data['topk']}")
-
-        # Get router logits
-        router_logits = data["router_logits"]
-
-        # Compute top-k indices
-        _, indices = th.topk(router_logits, k=top_k, dim=2)
-
-        # Create boolean activation tensor
-        activated = th.zeros_like(router_logits, dtype=th.bool)
-        activated.scatter_(2, indices, True)
-
-        all_activated_experts.append(activated)
-        all_activated_indices.append(indices)
-
-    # Concatenate results
-    activated_experts = th.cat(all_activated_experts, dim=0).to(device)
-    activated_indices = th.cat(all_activated_indices, dim=0).to(device)
-
-    return activated_experts, activated_indices, top_k
-
-
-def load_activations_and_topk(device: str = "cpu") -> tuple[th.Tensor, int]:
-    """Load router activations and top-k value from saved files.
-
-    Args:
-        device: Device to load tensors to.
-
-    Returns:
-        Tuple of (activated_experts, top_k) where:
-            activated_experts: Boolean tensor of shape (batch_size, num_layers, num_experts)
-            top_k: Integer value of top-k used in router
-    """
-    activated_experts, _, top_k = load_activations_and_indices_and_topk(device=device)
-    return activated_experts, top_k
-
-
-def load_activations(device: str = "cpu") -> th.Tensor:
-    """Load router activations from saved files.
-
-    Args:
-        device: Device to load tensors to.
-
-    Returns:
-        Boolean tensor of shape (batch_size, num_layers, num_experts)
-    """
-    activated_experts, _, _ = load_activations_and_indices_and_topk(device=device)
-    return activated_experts
-
-
-def load_activations_indices_tokens_and_topk(
-    device: str = "cpu",
-) -> tuple[th.Tensor, th.Tensor, list[list[str]], int]:
-    """Load router activations, indices, tokens, and top-k value from saved files.
-
-    Args:
-        device: Device to load tensors to.
-
-    Returns:
-        Tuple of (activated_experts, activated_indices, tokens, top_k) where:
-            activated_experts: Boolean tensor of shape (batch_size, num_layers, num_experts)
-            activated_indices: Integer tensor of shape (batch_size, num_layers, top_k)
-            tokens: List of token sequences
-            top_k: Integer value of top-k used in router
-    """
-    # This is a stub implementation to fix type checking
-    # In a real implementation, this would load tokens from the data files
-    activated_experts, activated_indices, top_k = load_activations_and_indices_and_topk(
-        device=device
-    )
-
-    # Create a dummy list of tokens (list of lists to match expected type)
-    batch_size = activated_experts.shape[0]
-    tokens = [["<dummy_token>"] for _ in range(batch_size)]
-
-    return activated_experts, activated_indices, tokens, top_k
