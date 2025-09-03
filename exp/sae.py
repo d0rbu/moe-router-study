@@ -17,22 +17,22 @@ from dataclasses import dataclass
 # from exp.get_activations import get_experiment_name, ACTIVATION_DIRNAME
 
 
-@dataclass
-class Architecture:
-    trainer: "type[SAETrainer]"  # type: ignore
-    sae: "type[Dictionary]"  # type: ignore
+# @dataclass
+# class Architecture:
+#     trainer: type[SAETrainer]
+#     sae: type[Dictionary]
 
 
-ARCHITECTURES = {
-    "batchtopk": Architecture(
-        trainer="BatchTopKTrainer",  # type: ignore
-        sae="BatchTopKSAE",  # type: ignore
-    ),
-    "matryoshka": Architecture(
-        trainer="MatryoshkaBatchTopKTrainer",  # type: ignore
-        sae="MatryoshkaBatchTopKSAE",  # type: ignore
-    ),
-}
+# ARCHITECTURES = {
+#     "batchtopk": Architecture(
+#         trainer=BatchTopKTrainer,
+#         sae=BatchTopKSAE,
+#     ),
+#     "matryoshka": Architecture(
+#         trainer=MatryoshkaBatchTopKTrainer,
+#         sae=MatryoshkaBatchTopKSAE,
+#     ),
+# }
 
 
 # @arguably.command()
@@ -61,29 +61,29 @@ ARCHITECTURES = {
 #     if model_config is None:
 #         raise ValueError(f"Model {model_name} not found")
 #
-#     # name = get_experiment_name(
-#     #     model_name=model_name,
-#     #     dataset_name=dataset_name,
-#     # )
-#     # activation_dim = model.config.hidden_size
-#     # trainer_cfg = {
-#     #     "trainer": TopKTrainer,
-#     #     "dict_class": AutoEncoderTopK,
-#     #     "activation_dim": activation_dim,
-#     #     "dict_size": dictionary_size,
-#     #     "lr": 1e-3,
-#     #     "device": device,
-#     #     "steps": training_steps,
-#     #     "layer": layer,
-#     #     "lm_name": model_name,
-#     #     "warmup_steps": 1,
-#     #     "k": 100,
-#     # }
+#     name = get_experiment_name(
+#         model_name=model_name,
+#         dataset_name=dataset_name,
+#     )
+#     activation_dim = model.config.hidden_size
+#     trainer_cfg = {
+#         "trainer": TopKTrainer,
+#         "dict_class": AutoEncoderTopK,
+#         "activation_dim": activation_dim,
+#         "dict_size": dictionary_size,
+#         "lr": 1e-3,
+#         "device": device,
+#         "steps": training_steps,
+#         "layer": layer,
+#         "lm_name": model_name,
+#         "warmup_steps": 1,
+#         "k": 100,
+#     }
 #
-#     # # train the sparse autoencoder (SAE)
-#     # ae = trainSAE(
-#     #     data=buffer,  # you could also use another (i.e. pytorch dataloader) here instead of buffer
-#     #     trainer_configs=[trainer_cfg],
-#     #     steps=training_steps,  # The number of training steps. Total trained tokens = steps * batch_size
-#     # )
+#     # train the sparse autoencoder (SAE)
+#     ae = trainSAE(
+#         data=buffer,  # you could also use another (i.e. pytorch dataloader) here instead of buffer
+#         trainer_configs=[trainer_cfg],
+#         steps=training_steps,  # The number of training steps. Total trained tokens = steps * batch_size
+#     )
 
