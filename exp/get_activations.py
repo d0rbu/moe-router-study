@@ -355,9 +355,6 @@ def tokenizer_worker(
                         "tokenizer/tokens_per_second": total_tokens / elapsed,
                     }
                 )
-    except Exception as e:
-        log_queue.put({"tokenizer/error": str(e)})
-        logger.error(f"Tokenizer worker error: {e}")
     finally:
         main_queue.put(None)
 
@@ -439,9 +436,6 @@ def multiplexer_worker(
                 }
             )
 
-    except Exception as e:
-        log_queue.put({"multiplexer/error": str(e)})
-        logger.error(f"Multiplexer worker error: {e}")
     finally:
         # Signal all GPU queues that we're done
         for q in gpu_queues:
@@ -481,127 +475,120 @@ def gpu_worker(
     logger.remove()
     logger.add(sys.stderr, level=log_level)
 
-    try:
-        # Get model config
-        model_config = MODELS.get(model_name)
-        if model_config is None:
-            raise ValueError(f"Model {model_name} not found")
+    # Get model config
+    model_config = MODELS.get(model_name)
+    if model_config is None:
+        raise ValueError(f"Model {model_name} not found")
 
-        hf_name = MODELS[model_name].hf_name
-        local_path = os.path.join(os.path.abspath(MODEL_DIRNAME), hf_name)
-        path = local_path if os.path.exists(local_path) else hf_name
+    hf_name = MODELS[model_name].hf_name
+    local_path = os.path.join(os.path.abspath(MODEL_DIRNAME), hf_name)
+    path = local_path if os.path.exists(local_path) else hf_name
 
-        logger.info(f"Using model from {path}")
-        # Initialize model
-        model = StandardizedTransformer(
-            path,
-            check_attn_probs_with_trace=False,
-            device_map="auto",
-        )
-        logger.debug("Model initialized")
-        layers_with_routers = model.layers_with_routers
-        top_k = model.router_probabilities.get_top_k()
+    logger.info(f"Using model from {path}")
+    # Initialize model
+    model = StandardizedTransformer(
+        path,
+        check_attn_probs_with_trace=False,
+        device_map="auto",
+    )
+    logger.debug("Model initialized")
+    layers_with_routers = model.layers_with_routers
+    top_k = model.router_probabilities.get_top_k()
 
-        # Create output directory
-        experiment_dir = os.path.join(OUTPUT_DIR, experiment_name)
-        activations_dir = os.path.join(experiment_dir, ACTIVATION_DIRNAME)
-        os.makedirs(activations_dir, exist_ok=True)
+    # Create output directory
+    experiment_dir = os.path.join(OUTPUT_DIR, experiment_name)
+    activations_dir = os.path.join(experiment_dir, ACTIVATION_DIRNAME)
+    os.makedirs(activations_dir, exist_ok=True)
 
-        # Initialize statistics
-        total_batches = 0
-        total_tokens = 0
-        processing_times: list[float] = []
-        start_time = time.time()
+    # Initialize statistics
+    total_batches = 0
+    total_tokens = 0
+    processing_times: list[float] = []
+    start_time = time.time()
 
-        logger.info(
-            f"Starting GPU worker {rank} on {', '.join(f'cuda:{device_id}' for device_id in device_ids)}"
-        )
+    logger.info(
+        f"Starting GPU worker {rank} on {', '.join(f'cuda:{device_id}' for device_id in device_ids)}"
+    )
 
-        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(
-            str(device_id) for device_id in device_ids
-        )
+    os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(
+        str(device_id) for device_id in device_ids
+    )
 
-        # Process batches
-        while not stop_event.is_set():
-            # Signal that we're ready for a new batch
-            gpu_busy[rank] = False
+    # Process batches
+    while not stop_event.is_set():
+        # Signal that we're ready for a new batch
+        gpu_busy[rank] = False
 
-            # Get batch from queue
-            item = gpu_queue.get()
+        # Get batch from queue
+        item = gpu_queue.get()
 
-            logger.debug(f"Rank {rank} picked up batch from queue")
+        logger.debug(f"Rank {rank} picked up batch from queue")
 
-            # Signal that we're busy processing
-            gpu_busy[rank] = True
+        # Signal that we're busy processing
+        gpu_busy[rank] = True
 
-            # Check if we're done
-            if item is None:
-                break
+        # Check if we're done
+        if item is None:
+            break
 
-            # Process batch
-            batch_idx, encoded_batch, batch_tokens, tokens_count = item
+        # Process batch
+        batch_idx, encoded_batch, batch_tokens, tokens_count = item
 
-            # Move tensors to device
-            if not cpu_only:
-                encoded_batch = {
-                    k: v.to(device_ids[0]) for k, v in encoded_batch.items()
-                }
-
-            # Process batch and get router logits
-            logger.debug(f"Rank {rank} processing batch {batch_idx}")
-            batch_start = time.time()
-            with th.inference_mode():
-                activations = process_batch(
-                    encoded_batch,
-                    batch_idx,
-                    model,
-                    gpu_minibatch_size,
-                    layers_with_routers,
-                    activations_to_store=current_activations_to_store,
-                )
-
-            logger.debug(f"Rank {rank} processed batch {batch_idx}")
-
-            # Save results
-            output_path = os.path.join(activations_dir, f"{batch_idx}.pt")
-            output = {
-                "topk": top_k,
-                "tokens": batch_tokens,
-                **activations,
+        # Move tensors to device
+        if not cpu_only:
+            encoded_batch = {
+                k: v.to(device_ids[0]) for k, v in encoded_batch.items()
             }
-            logger.debug(f"Rank {rank} saving results to {output_path}")
-            th.save(output, output_path)
 
-            # Update statistics
-            batch_time = time.time() - batch_start
-            processing_times.append(batch_time)
-            total_batches += 1
-            total_tokens += tokens_count
-            elapsed = time.time() - start_time
-
-            # Log statistics
-            logger.debug(f"Rank {rank} logging statistics for batch {batch_idx}")
-            log_queue.put(
-                {
-                    f"gpu_{rank}/batch_idx": batch_idx,
-                    f"gpu_{rank}/queue_size": gpu_queue.qsize(),
-                    f"gpu_{rank}/batch_time": batch_time,
-                    f"gpu_{rank}/batch_tokens": tokens_count,
-                    f"gpu_{rank}/tokens_per_second": tokens_count / batch_time
-                    if batch_time > 0
-                    else 0,
-                    f"gpu_{rank}/total_batches": total_batches,
-                    f"gpu_{rank}/total_tokens": total_tokens,
-                    f"gpu_{rank}/avg_batch_time": sum(processing_times)
-                    / len(processing_times),
-                    f"gpu_{rank}/elapsed_time": elapsed,
-                }
+        # Process batch and get router logits
+        logger.debug(f"Rank {rank} processing batch {batch_idx}")
+        batch_start = time.time()
+        with th.inference_mode():
+            activations = process_batch(
+                encoded_batch,
+                batch_idx,
+                model,
+                gpu_minibatch_size,
+                layers_with_routers,
+                activations_to_store=current_activations_to_store,
             )
 
-    except Exception as e:
-        log_queue.put({f"gpu_{rank}/error": str(e)})
-        logger.error(
-            f"GPU {rank} worker error at line {e.__traceback__.tb_lineno}: {e}"
+        logger.debug(f"Rank {rank} processed batch {batch_idx}")
+
+        # Save results
+        output_path = os.path.join(activations_dir, f"{batch_idx}.pt")
+        output = {
+            "topk": top_k,
+            "tokens": batch_tokens,
+            **activations,
+        }
+        logger.debug(f"Rank {rank} saving results to {output_path}")
+        th.save(output, output_path)
+
+        # Update statistics
+        batch_time = time.time() - batch_start
+        processing_times.append(batch_time)
+        total_batches += 1
+        total_tokens += tokens_count
+        elapsed = time.time() - start_time
+
+        # Log statistics
+        logger.debug(f"Rank {rank} logging statistics for batch {batch_idx}")
+        log_queue.put(
+            {
+                f"gpu_{rank}/batch_idx": batch_idx,
+                f"gpu_{rank}/queue_size": gpu_queue.qsize(),
+                f"gpu_{rank}/batch_time": batch_time,
+                f"gpu_{rank}/batch_tokens": tokens_count,
+                f"gpu_{rank}/tokens_per_second": tokens_count / batch_time
+                if batch_time > 0
+                else 0,
+                f"gpu_{rank}/total_batches": total_batches,
+                f"gpu_{rank}/total_tokens": total_tokens,
+                f"gpu_{rank}/avg_batch_time": sum(processing_times)
+                / len(processing_times),
+                f"gpu_{rank}/elapsed_time": elapsed,
+            }
         )
 
 
