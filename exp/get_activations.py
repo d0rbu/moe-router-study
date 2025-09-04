@@ -661,6 +661,8 @@ def get_router_activations(
     logger.debug("Getting SLURM environment")
 
     # Detect distributed environment
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "29500"
     os.environ["RANK"] = os.environ.get("SLURM_PROCID", "0")
     os.environ["WORLD_SIZE"] = os.environ.get("SLURM_NTASKS", "1")
 
