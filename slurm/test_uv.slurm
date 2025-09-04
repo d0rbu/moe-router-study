@@ -17,6 +17,9 @@
 ##SBATCH --mail-type=ALL                 # Send email on all job events
 ##SBATCH --mail-user=email_address       # Send all emails to email_address
 
+# Enable detailed logging
+set -x
+
 export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
 export MASTER_PORT=$(expr 10000 + $(echo -n $SLURM_JOBID | tail -c 4))
 

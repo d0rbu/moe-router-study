@@ -40,8 +40,14 @@ echo "RANK: $RANK"
 echo "WORLD_SIZE: $WORLD_SIZE"
 echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 
+export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
+export MASTER_PORT=$(expr 10000 + $(echo -n $SLURM_JOBID | tail -c 4))
+
+export WORLD_SIZE=$SLURM_NTASKS
+
 # Change to the project directory
 cd ~/moe-router-study
+source .venv/bin/activate
 
 # Run the distributed job
-srun uv run exp/get_activations.py --tokens-per-file 5000
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE python exp/get_activations.py --tokens-per-file 5000
