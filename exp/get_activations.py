@@ -1,4 +1,5 @@
 from collections import deque
+import datetime
 import gc
 import math
 import os
@@ -133,7 +134,9 @@ def process_batch(
     Returns:
         Dictionary of activations.
     """
-    logger.debug(f"Processing batch {batch_idx} with activations to store: {activations_to_store}")
+    logger.debug(
+        f"Processing batch {batch_idx} with activations to store: {activations_to_store}"
+    )
 
     batch_size = encoded_batch["input_ids"].shape[0]
 
@@ -152,7 +155,10 @@ def process_batch(
     }
 
     for minibatch_idx in tqdm(
-        range(num_minibatches), desc=f"Batch {batch_idx}", total=num_minibatches, leave=False,
+        range(num_minibatches),
+        desc=f"Batch {batch_idx}",
+        total=num_minibatches,
+        leave=False,
     ):
         th.cuda.empty_cache()
         gc.collect()
@@ -165,7 +171,9 @@ def process_batch(
         }
 
         minibatch_token_count = encoded_minibatch["attention_mask"].sum().item()
-        logger.debug(f"Batch {batch_idx} minibatch {minibatch_idx} has {minibatch_token_count} tokens")
+        logger.debug(
+            f"Batch {batch_idx} minibatch {minibatch_idx} has {minibatch_token_count} tokens"
+        )
 
         # Use trace context manager to capture router outputs
         with model.trace(encoded_minibatch):
@@ -542,9 +550,7 @@ def gpu_worker(
 
         # Move tensors to device
         if not cpu_only:
-            encoded_batch = {
-                k: v.to(device_ids[0]) for k, v in encoded_batch.items()
-            }
+            encoded_batch = {k: v.to(device_ids[0]) for k, v in encoded_batch.items()}
 
         # Process batch and get router logits
         logger.debug(f"Rank {rank} processing batch {batch_idx}")
@@ -660,17 +666,15 @@ def get_router_activations(
     logger.debug(f"Running with log level: {log_level}")
     logger.debug("Getting SLURM environment")
 
-    # Detect distributed environment
-    os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "29500"
-    os.environ["RANK"] = os.environ.get("SLURM_PROCID", "0")
-    os.environ["WORLD_SIZE"] = os.environ.get("SLURM_NTASKS", "1")
-
     # we don't communicate with other processes so we don't need nccl
-    dist.init_process_group(rank=int(os.environ["RANK"]), world_size=int(os.environ["WORLD_SIZE"]))
+    dist.init_process_group(
+        backend="gloo", init_method="env://", timeout=datetime.timedelta(minutes=10)
+    )
 
     if dist.is_initialized():
-        logger.info(f"Running in SLURM environment: rank {dist.get_rank()}/{dist.get_world_size()}")
+        logger.info(
+            f"Running in SLURM environment: rank {dist.get_rank()}/{dist.get_world_size()}"
+        )
     else:
         logger.info("Running in local environment (not SLURM)")
 
@@ -762,7 +766,9 @@ def get_router_activations(
     mp.set_start_method("spawn", force=True)
 
     # Create queues and events
-    main_queue = mp.Queue(maxsize=MAIN_QUEUE_MAXSIZE)  # Buffer between tokenizer and multiplexer
+    main_queue = mp.Queue(
+        maxsize=MAIN_QUEUE_MAXSIZE
+    )  # Buffer between tokenizer and multiplexer
     gpu_queues = [mp.Queue(maxsize=GPU_QUEUE_MAXSIZE) for _ in range(num_workers)]
     log_queue = mp.Queue()  # For sending logs back to main process
     stop_event = mp.Event()  # For signaling processes to stop

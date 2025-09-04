@@ -3,7 +3,7 @@
 ##NECESSARY JOB SPECIFICATIONS
 #SBATCH --job-name=get_activations      # Set the job name to "get_activations"
 #SBATCH --time=24:00:00                  # Set the wall clock limit to 6 hours
-#SBATCH --ntasks=4                      # Total number of tasks (processes) across all nodes
+#SBATCH --ntasks=2                      # Total number of tasks (processes) across all nodes
 #SBATCH --ntasks-per-node=1             # Number of tasks per node
 #SBATCH --cpus-per-task=16              # Number of CPUs per task
 #SBATCH --mem=64G                       # Request 64GB per node
@@ -20,6 +20,12 @@
 # Enable detailed logging
 set -x
 
+MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
+export MASTER_ADDR
+export MASTER_PORT=29500
+export RANK=$SLURM_PROCID
+export WORLD_SIZE=$SLURM_NTASKS
+
 # Print SLURM environment information for debugging
 echo "SLURM Job ID: $SLURM_JOB_ID"
 echo "SLURM Node List: $SLURM_NODELIST"
@@ -29,6 +35,10 @@ echo "SLURM Tasks per Node: $SLURM_NTASKS_PER_NODE"
 echo "SLURM Local ID: $SLURM_LOCALID"
 echo "SLURM Procedure ID: $SLURM_PROCID"
 echo "SLURM Node ID: $SLURM_NODEID"
+echo "MASTER_ADDR: $MASTER_ADDR"
+echo "MASTER_PORT: $MASTER_PORT"
+echo "RANK: $RANK"
+echo "WORLD_SIZE: $WORLD_SIZE"
 echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 
 # Change to the project directory
