@@ -3,6 +3,9 @@ print("Starting test_slurm.py")
 from datetime import timedelta  # noqa: E402
 import os  # noqa: E402
 
+os.environ["RANK"] = os.environ["SLURM_PROCID"]
+os.environ["WORLD_SIZE"] = os.environ["SLURM_NTASKS"]
+
 print("RANK:", os.environ.get("RANK"))
 print("WORLD_SIZE:", os.environ.get("WORLD_SIZE"))
 

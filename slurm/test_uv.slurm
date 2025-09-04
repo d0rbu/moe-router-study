@@ -2,7 +2,7 @@
 
 ##NECESSARY JOB SPECIFICATIONS
 #SBATCH --job-name=test                 # Set the job name to "test"
-#SBATCH --time=00:30:00                 # Set the wall clock limit to 30 minutes
+#SBATCH --time=00:01:00                 # Set the wall clock limit to 1 minute
 #SBATCH --ntasks=2                      # Total number of tasks (processes) across all nodes
 #SBATCH --ntasks-per-node=1             # Number of tasks per node
 #SBATCH --cpus-per-task=4               # Number of CPUs per task
@@ -20,11 +20,8 @@
 # Enable detailed logging
 set -x
 
-export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
-export MASTER_PORT=$(expr 10000 + $(echo -n $SLURM_JOBID | tail -c 4))
-
-export RANK=$SLURM_PROCID
-export WORLD_SIZE=$SLURM_NTASKS
+# export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
+# export MASTER_PORT=$(expr 10000 + $(echo -n $SLURM_JOBID | tail -c 4))
 
 echo "SLURM_JOB_ID: $SLURM_JOB_ID"
 echo "SLURM_JOB_NODELIST: $SLURM_JOB_NODELIST"
