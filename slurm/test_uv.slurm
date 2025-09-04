@@ -20,6 +20,9 @@
 # Enable detailed logging
 set -x
 
+export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
+export MASTER_PORT=$(expr 10000 + $(echo -n $SLURM_JOBID | tail -c 4))
+
 export RANK=$SLURM_PROCID
 export WORLD_SIZE=$SLURM_NTASKS
 
