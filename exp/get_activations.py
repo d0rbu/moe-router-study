@@ -667,7 +667,7 @@ def get_router_activations(
     os.environ["WORLD_SIZE"] = os.environ.get("SLURM_NTASKS", "1")
 
     # we don't communicate with other processes so we don't need nccl
-    dist.init_process_group()
+    dist.init_process_group(rank=int(os.environ["RANK"]), world_size=int(os.environ["WORLD_SIZE"]))
 
     if dist.is_initialized():
         logger.info(f"Running in SLURM environment: rank {dist.get_rank()}/{dist.get_world_size()}")
