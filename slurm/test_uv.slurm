@@ -17,28 +17,14 @@
 ##SBATCH --mail-type=ALL                 # Send email on all job events
 ##SBATCH --mail-user=email_address       # Send all emails to email_address
 
-# Enable detailed logging
-set -x
-
 export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
 export MASTER_PORT=$(expr 10000 + $(echo -n $SLURM_JOBID | tail -c 4))
 
 export WORLD_SIZE=$SLURM_NTASKS
 
-echo "SLURM_JOB_ID: $SLURM_JOB_ID"
-echo "SLURM_JOB_NODELIST: $SLURM_JOB_NODELIST"
-echo "SLURM_NTASKS: $SLURM_NTASKS"
-echo "SLURM_NTASKS_PER_NODE: $SLURM_NTASKS_PER_NODE"
-echo "SLURM_PROCID: $SLURM_PROCID"
-echo "SLURM_LOCALID: $SLURM_LOCALID"
-echo "SLURM_NODEID: $SLURM_NODEID"
-echo "MASTER_ADDR: $MASTER_ADDR"
-echo "MASTER_PORT: $MASTER_PORT"
-echo "SLURM_NNODES: $SLURM_NNODES"
-echo "SLURM_CPUS_PER_TASK: $SLURM_CPUS_PER_TASK"
-
-echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
-
+# Change to the project directory
+cd ~/moe-router-study
+source .venv/bin/activate
 
 # Run the distributed job
 srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE python scripts/test_slurm.py
