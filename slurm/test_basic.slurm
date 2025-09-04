@@ -2,7 +2,7 @@
 
 ##NECESSARY JOB SPECIFICATIONS
 #SBATCH --job-name=test                 # Set the job name to "test"
-#SBATCH --time=00:01:00                 # Set the wall clock limit to 30 minutes
+#SBATCH --time=00:01:00                 # Set the wall clock limit to 1 minute
 #SBATCH --ntasks=2                      # Total number of tasks (processes) across all nodes
 #SBATCH --ntasks-per-node=1             # Number of tasks per node
 #SBATCH --cpus-per-task=2               # Number of CPUs per task
