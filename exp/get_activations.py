@@ -661,6 +661,9 @@ def get_router_activations(
     logger.debug("Getting SLURM environment")
 
     # Detect distributed environment
+    os.environ["RANK"] = str(dist.get_rank())
+    os.environ["WORLD_SIZE"] = str(dist.get_world_size())
+
     # we don't communicate with other processes so we don't need nccl
     dist.init_process_group()
 
