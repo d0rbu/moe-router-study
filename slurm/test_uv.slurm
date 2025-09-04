@@ -4,12 +4,12 @@
 #SBATCH --job-name=test                 # Set the job name to "test"
 #SBATCH --time=00:01:00                 # Set the wall clock limit to 1 minute
 #SBATCH --ntasks=2                      # Total number of tasks (processes) across all nodes
+#SBATCH --ntasks-per-node=1             # Number of tasks per node
 #SBATCH --cpus-per-task=4               # Number of CPUs per task
-#SBATCH --gpus-per-task=1               # Number of GPUs per task
 #SBATCH --mem=16G                       # Request 16GB per node
 #SBATCH --output=test_uv.%j             # Send stdout/err to "get_activations.[jobID]"
 #SBATCH --error=test_uv.%j.err          # Send stderr to separate file
-#SBATCH --gres=gpu:t4                   # Request t4 GPUs
+#SBATCH --gres=gpu:t4:1                 # Request 1 "t4" GPUs per node
 #SBATCH --partition=gpu                 # Request the GPU partition/queue
 
 ##OPTIONAL JOB SPECIFICATIONS
@@ -22,6 +22,8 @@ set -x
 
 export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
 export MASTER_PORT=$(expr 10000 + $(echo -n $SLURM_JOBID | tail -c 4))
+
+export WORLD_SIZE=$SLURM_NTASKS
 
 echo "SLURM_JOB_ID: $SLURM_JOB_ID"
 echo "SLURM_JOB_NODELIST: $SLURM_JOB_NODELIST"
@@ -39,6 +41,7 @@ echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 
 # Change to the project directory
 cd ~/moe-router-study
+source .venv/bin/activate
 
 # Run the distributed job
-srun -n $SLURM_NTASKS uv run scripts/test_slurm.py
+srun python scripts/test_slurm.py
