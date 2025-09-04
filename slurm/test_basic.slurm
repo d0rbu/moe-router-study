@@ -2,11 +2,11 @@
 
 ##NECESSARY JOB SPECIFICATIONS
 #SBATCH --job-name=test                 # Set the job name to "test"
-#SBATCH --time=00:30:00                 # Set the wall clock limit to 30 minutes
+#SBATCH --time=00:01:00                 # Set the wall clock limit to 30 minutes
 #SBATCH --ntasks=2                      # Total number of tasks (processes) across all nodes
 #SBATCH --ntasks-per-node=1             # Number of tasks per node
-#SBATCH --cpus-per-task=4               # Number of CPUs per task
-#SBATCH --mem=16G                        # Request 8GB per node
+#SBATCH --cpus-per-task=2               # Number of CPUs per task
+#SBATCH --mem=8G                        # Request 8GB per node
 #SBATCH --output=test_slurm.%j          # Send stdout/err to "get_activations.[jobID]"
 #SBATCH --error=test_slurm.%j.err       # Send stderr to separate file
 #SBATCH --gres=gpu:t4:1                 # Request 1 "t4" GPUs per node
