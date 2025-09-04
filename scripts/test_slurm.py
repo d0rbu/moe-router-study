@@ -1,5 +1,7 @@
-from datetime import timedelta
-import os
+print("Starting test_slurm.py")
+
+from datetime import timedelta  # noqa: E402
+import os  # noqa: E402
 
 print("RANK:", os.environ.get("RANK"))
 print("WORLD_SIZE:", os.environ.get("WORLD_SIZE"))

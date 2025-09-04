@@ -20,9 +20,6 @@
 # Enable detailed logging
 set -x
 
-MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
-export MASTER_ADDR
-export MASTER_PORT=29500
 export RANK=$SLURM_PROCID
 export WORLD_SIZE=$SLURM_NTASKS
 
@@ -45,4 +42,4 @@ echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 cd ~/moe-router-study
 
 # Run the distributed job
-srun uv run exp/get_activations.py --tokens-per-file 5000
+srun --mpi=pmi2 uv run exp/get_activations.py --tokens-per-file 5000

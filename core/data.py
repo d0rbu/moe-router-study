@@ -48,7 +48,7 @@ def lmsys_chat_1m_text(
     tokenizer: PreTrainedTokenizer,
     start_idx: int = 0,
     stop_idx: int = 0,
-    streaming: bool = True,
+    streaming: bool = False,
 ) -> IterableColumn:
     """Stream and format conversations from the LMSYS Chat-1M dataset.
 
