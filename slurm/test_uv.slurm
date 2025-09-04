@@ -30,4 +30,4 @@ cd ~/moe-router-study
 source .venv/bin/activate
 
 # Run the distributed job
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE echo "{$SLURM_NTASKS} tasks {$RANK} rank {$WORLD_SIZE} world size {$MASTER_ADDR} master addr {$MASTER_PORT} master port {$SLURM_PROCID} proc id {$SLURM_LOCALID} local id" && python scripts/test_slurm.py
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE echo "hello" && python scripts/test_slurm.py
