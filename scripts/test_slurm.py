@@ -17,8 +17,8 @@ print("SLURM_CPUS_PER_TASK:", os.environ.get("SLURM_CPUS_PER_TASK"))
 print("RANK:", os.environ.get("RANK"))
 print("WORLD_SIZE:", os.environ.get("WORLD_SIZE"))
 
-rank = os.environ.get("SLURM_PROCID")
-world_size = os.environ.get("SLURM_NTASKS")
+rank = int(os.environ.get("SLURM_PROCID"))
+world_size = int(os.environ.get("SLURM_NTASKS"))
 
 import torch.distributed as dist  # noqa: E402
 
