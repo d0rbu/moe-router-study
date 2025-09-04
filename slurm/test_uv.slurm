@@ -7,8 +7,8 @@
 #SBATCH --ntasks-per-node=1             # Number of tasks per node
 #SBATCH --cpus-per-task=4               # Number of CPUs per task
 #SBATCH --mem=16G                       # Request 16GB per node
-#SBATCH --output=test_uv.%j             # Send stdout/err to "get_activations.[jobID]"
-#SBATCH --error=test_uv.%j.err          # Send stderr to separate file
+#SBATCH --output=test_uv.%j.%t.out      # %j jobid, %t task id
+#SBATCH --error=test_uv.%j.%t.err       # %j jobid, %t task id
 #SBATCH --gres=gpu:t4:1                 # Request 1 "t4" GPUs per node
 #SBATCH --partition=gpu                 # Request the GPU partition/queue
 
