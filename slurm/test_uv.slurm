@@ -32,8 +32,10 @@ echo "SLURM_LOCALID: $SLURM_LOCALID"
 echo "SLURM_NODEID: $SLURM_NODEID"
 echo "MASTER_ADDR: $MASTER_ADDR"
 echo "MASTER_PORT: $MASTER_PORT"
-echo "RANK: $RANK"
-echo "WORLD_SIZE: $WORLD_SIZE"
+echo "SLURM_NNODES: $SLURM_NNODES"
+echo "SLURM_CPUS_PER_TASK: $SLURM_CPUS_PER_TASK"
+echo "SLURM_GPUS_PER_NODE: $SLURM_GPUS_PER_NODE"
+echo "SLURM_PARTITION: $SLURM_PARTITION"
 
 echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 
@@ -41,4 +43,4 @@ echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 cd ~/moe-router-study
 
 # Run the distributed job
-srun uv run scripts/test_slurm.py
+srun -n $SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE --cpus-per-task=$SLURM_CPUS_PER_TASK --gres=gpu:t4:$SLURM_GPUS_PER_NODE --partition=$SLURM_PARTITION uv run scripts/test_slurm.py
