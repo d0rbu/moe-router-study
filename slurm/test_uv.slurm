@@ -9,7 +9,7 @@
 #SBATCH --mem=16G                       # Request 16GB per node
 #SBATCH --output=test_uv.%j             # Send stdout/err to "get_activations.[jobID]"
 #SBATCH --error=test_uv.%j.err          # Send stderr to separate file
-#SBATCH --gres=gpu:t4:1                 # Request 1 "t4" GPUs per node
+#SBATCH --gres=gpu:t4                   # Request t4 GPUs
 #SBATCH --partition=gpu                 # Request the GPU partition/queue
 
 ##OPTIONAL JOB SPECIFICATIONS
@@ -34,7 +34,6 @@ echo "MASTER_ADDR: $MASTER_ADDR"
 echo "MASTER_PORT: $MASTER_PORT"
 echo "SLURM_NNODES: $SLURM_NNODES"
 echo "SLURM_CPUS_PER_TASK: $SLURM_CPUS_PER_TASK"
-echo "SLURM_GPUS_PER_TASK: $SLURM_GPUS_PER_TASK"
 
 echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 
