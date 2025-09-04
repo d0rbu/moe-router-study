@@ -30,4 +30,5 @@ cd ~/moe-router-study
 source .venv/bin/activate
 
 # Run the distributed job
-srun echo "Hello, world!" && srun python scripts/test_slurm.py
+srun echo "Hello, world!"
+srun python scripts/test_slurm.py
