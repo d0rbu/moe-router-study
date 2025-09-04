@@ -20,9 +20,6 @@
 # Enable detailed logging
 set -x
 
-export RANK=$SLURM_PROCID
-export WORLD_SIZE=$SLURM_NTASKS
-
 echo "SLURM_JOB_ID: $SLURM_JOB_ID"
 echo "SLURM_JOB_NODELIST: $SLURM_JOB_NODELIST"
 echo "SLURM_NTASKS: $SLURM_NTASKS"
