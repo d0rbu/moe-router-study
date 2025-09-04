@@ -41,4 +41,4 @@ echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 cd ~/moe-router-study
 
 # Run the distributed job
-srun uv run scripts/test_slurm.py
+srun --mpi=pmi2 uv run scripts/test_slurm.py
