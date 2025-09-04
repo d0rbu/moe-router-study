@@ -3,16 +3,13 @@ print("Starting test_slurm.py")
 from datetime import timedelta  # noqa: E402
 import os  # noqa: E402
 
-os.environ["RANK"] = os.environ["SLURM_PROCID"]
-os.environ["WORLD_SIZE"] = os.environ["SLURM_NTASKS"]
-
 print("RANK:", os.environ.get("RANK"))
 print("WORLD_SIZE:", os.environ.get("WORLD_SIZE"))
 
 import torch.distributed as dist  # noqa: E402
 
 dist.init_process_group(
-    backend="nccl", init_method="env://", timeout=timedelta(seconds=30)
+    backend="nccl", timeout=timedelta(seconds=30)
 )
 
 print(f"[Rank {dist.get_rank()}] Hello from {os.uname().nodename}")
