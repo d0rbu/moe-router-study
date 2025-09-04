@@ -42,6 +42,24 @@ echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 # Change to the project directory
 cd ~/moe-router-study
 source .venv/bin/activate
+# inside job script, before srun
+echo "node hostname: $(hostname -s)"
+echo "node fqdn:    $(hostname -f 2>/dev/null || true)"
+echo "ip addr (short):"
+ip -4 addr show scope global | sed -n '1,200p'
+
+# quick TCP connect test from each node to master port (requires nc / netcat)
+echo "Testing TCP connectivity to $MASTER_ADDR:$MASTER_PORT ..."
+if command -v nc >/dev/null 2>&1; then
+  nc -vz -w 3 "$MASTER_ADDR" "$MASTER_PORT" || echo "nc connection failed"
+elif command -v timeout >/dev/null 2>&1 && command -v bash >/dev/null 2>&1; then
+  (echo > /dev/tcp/"$MASTER_ADDR"/"$MASTER_PORT") >/dev/null 2>&1 || echo "tcp redirect to master failed"
+else
+  echo "nc not installed; can't test TCP connection easily"
+fi
+
+# Print which python/venv is active (on each task)
+echo "python: $(which python) ; python -V"
 
 # Run the distributed job
 srun python scripts/test_slurm.py
