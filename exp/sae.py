@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from itertools import chain, partial
+from itertools import chain, cycle, partial, product
 import os
 
 import arguably
@@ -44,38 +44,85 @@ def run_sae_training(
     batch_size: int = 4096,
     steps: int = 1024 * 256,
     num_epochs: int = 1,
-    expansion_factor: int = 16,
-    k: int = 160,
-    layer: int = 7,
-    group_fractions: list[float] | None = None,
-    group_weights: list[float] | None = None,
-    architecture: str = "batchtopk",
-    lr: float = 5e-5,
-    auxk_alpha: float = 1 / 32,
-    warmup_steps: int = 1024,
-    decay_start: int | None = None,
-    threshold_beta: float = 0.999,
-    threshold_start_step: int = 1024,
-    k_anneal_steps: int | None = None,
-    seed: int = 0,
-    device: str = "auto",
-    submodule_name: str = "mlp_output",
-    name: str | None = None,
-    context_length: int = 2048,
+    expansion_factor: list[int] | int = 16,
+    k: list[int] | int = 160,
+    layer: list[int] | int = 7,
+    group_fractions: list[list[float]] | list[float] | None = None,
+    group_weights: list[list[float] | None] | list[float] | None = None,
+    architecture: list[str] | str = "batchtopk",
+    lr: list[float] | float = 5e-5,
+    auxk_alpha: list[float] | float = 1 / 32,
+    warmup_steps: list[int] | int = 1024,
+    decay_start: list[int | None] | int | None = None,
+    threshold_beta: list[float] | float = 0.999,
+    threshold_start_step: list[int] | int = 1024,
+    k_anneal_steps: list[int | None] | int | None = None,
+    seed: list[int] | int = 0,
+    submodule_name: list[str] | str = "mlp_output",
     tokens_per_file: int = 10_000,
 ) -> None:
     """Train a sparse autoencoder on the given model and dataset."""
-    if group_fractions is None:
+    if isinstance(expansion_factor, int):
+        expansion_factor = [expansion_factor]
+
+    if isinstance(k, int):
+        k = [k]
+
+    if isinstance(layer, int):
+        layer = [layer]
+
+    if isinstance(group_fractions, list):
+        assert len(group_fractions) > 0, "Group fractions is an empty list!"
+        if isinstance(group_fractions[0], float):
+            group_fractions = [group_fractions]
+    elif group_fractions is None:
         group_fractions = [1 / 32, 1 / 16, 1 / 8, 1 / 4, 1 / 2 + 1 / 32]
 
-    architecture_config = ARCHITECTURES.get(architecture)
-    if architecture_config is None:
-        raise ValueError(f"Architecture {architecture} not found")
+    if isinstance(group_weights, list):
+        assert len(group_weights) > 0, "Group weights is an empty list!"
+        if isinstance(group_weights[0], float):
+            group_weights = [group_weights]
+    elif group_weights is None:
+        group_weights = [None]
+
+    if isinstance(architecture, str):
+        architecture = [architecture]
+
+    if isinstance(lr, int):
+        lr = [lr]
+
+    if isinstance(auxk_alpha, int):
+        auxk_alpha = [auxk_alpha]
+
+    if isinstance(warmup_steps, int):
+        warmup_steps = [warmup_steps]
+
+    if isinstance(decay_start, int | None):
+        decay_start = [decay_start]
+
+    if isinstance(threshold_beta, float):
+        threshold_beta = [threshold_beta]
+
+    if isinstance(threshold_start_step, int):
+        threshold_start_step = [threshold_start_step]
+
+    if isinstance(k_anneal_steps, int | None):
+        k_anneal_steps = [k_anneal_steps]
+
+    if isinstance(seed, int):
+        seed = [seed]
+
+    if isinstance(submodule_name, str):
+        submodule_name = [submodule_name]
+
+    assert all(
+        current_architecture in ARCHITECTURES for current_architecture in architecture
+    ), "Invalid architecture"
+    assert len(submodule_name) > 0, "Submodule name is an empty list!"
 
     activations_experiment_name = get_experiment_name(
         model_name=model_name,
         dataset_name=dataset_name,
-        context_length=context_length,
         tokens_per_file=tokens_per_file,
     )
 
@@ -90,7 +137,7 @@ def run_sae_training(
     # load a batch of activations to get the dimension
     data_iterable = one_epoch_generator()
     activation = next(data_iterable)
-    activation_dim[0] = activation[submodule_name].shape[1]
+    activation_dim[0] = activation[submodule_name[0]].shape[1]
 
     # clean up the background worker and queue
     data_iterable.send("STOP!")
@@ -103,42 +150,87 @@ def run_sae_training(
     # to train for multiple epochs, we just repeat the data iterator
     data_iterator = chain(*[one_epoch_generator() for _ in range(num_epochs)])
 
-    trainer_cfg = {
+    base_trainer_cfg = {
         "steps": steps,
         "activation_dim": activation_dim,
-        "dict_size": activation_dim * expansion_factor,
-        "k": k,
-        "layer": layer,
         "lm_name": model_name,
-        "group_fractions": group_fractions,
-        "group_weights": group_weights,
-        "dict_class": architecture_config.sae,
-        "lr": lr,
-        "auxk_alpha": auxk_alpha,
-        "warmup_steps": warmup_steps,
-        "decay_start": decay_start,
-        "threshold_beta": threshold_beta,
-        "threshold_start_step": threshold_start_step,
-        "k_anneal_steps": k_anneal_steps,
-        "seed": seed,
-        "device": device,
         "wandb_name": model_name,
-        "submodule_name": submodule_name,
     }
 
-    sae_experiment_name = name or get_experiment_name(
+    trainer_cfgs = []
+
+    num_gpus = th.cuda.device_count()
+
+    for device_idx, (
+        current_expansion_factor,
+        current_k,
+        current_layer,
+        current_group_fractions,
+        current_group_weights,
+        current_architecture,
+        current_lr,
+        current_auxk_alpha,
+        current_warmup_steps,
+        current_decay_start,
+        current_threshold_beta,
+        current_threshold_start_step,
+        current_k_anneal_steps,
+        current_seed,
+        current_submodule_name,
+    ) in cycle(range(num_gpus), product(
+        expansion_factor,
+        k,
+        layer,
+        group_fractions,
+        group_weights,
+        architecture,
+        lr,
+        auxk_alpha,
+        warmup_steps,
+        decay_start,
+        threshold_beta,
+        threshold_start_step,
+        k_anneal_steps,
+        seed,
+        submodule_name,
+    )):
+        architecture_config = ARCHITECTURES[current_architecture]
+
+        trainer_cfg = {
+            **base_trainer_cfg,
+            "expansion_factor": current_expansion_factor,
+            "k": current_k,
+            "layer": current_layer,
+            "group_fractions": current_group_fractions,
+            "group_weights": current_group_weights,
+            "lr": current_lr,
+            "dict_class": architecture_config.sae,
+            "auxk_alpha": current_auxk_alpha,
+            "warmup_steps": current_warmup_steps,
+            "decay_start": current_decay_start,
+            "threshold_beta": current_threshold_beta,
+            "threshold_start_step": current_threshold_start_step,
+            "k_anneal_steps": current_k_anneal_steps,
+            "seed": current_seed,
+            "submodule_name": current_submodule_name,
+            "device": f"cuda:{device_idx}",
+        }
+        trainer_cfgs.append(trainer_cfg)
+
+    sae_experiment_name = get_experiment_name(
         model_name=model_name,
         dataset_name=dataset_name,
-        **trainer_cfg,
+        batch_size=batch_size,
+        steps=steps,
+        num_epochs=num_epochs,
     )
 
     # train the sparse autoencoder (SAE)
     trainSAE(
         data=data_iterator,
-        trainer_configs=[trainer_cfg],
+        trainer_configs=trainer_cfgs,
         steps=steps * num_epochs,
         use_wandb=False,
         save_dir=os.path.join(OUTPUT_DIR, sae_experiment_name),
         normalize_activations=True,
-        device=device,
     )

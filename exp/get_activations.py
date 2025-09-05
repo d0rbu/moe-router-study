@@ -1,5 +1,6 @@
 from collections import deque
 import gc
+import hashlib
 from itertools import pairwise
 import math
 import os
@@ -34,7 +35,7 @@ OUTPUT_QUEUE_MAXSIZE = 2
 
 def get_experiment_name(model_name: str, dataset_name: str, **kwargs) -> str:
     """Generate a unique experiment name based on configuration parameters."""
-    base_name = f"{model_name}_{dataset_name}"
+    experiment_name = f"{model_name}_{dataset_name}"
 
     # Track which keys are being filtered out
     ignored_keys = {"device", "resume"}
@@ -58,9 +59,14 @@ def get_experiment_name(model_name: str, dataset_name: str, **kwargs) -> str:
     param_str = "_".join(param_items)
 
     if param_str:
-        base_name = f"{base_name}_{param_str}"
+        experiment_name = f"{experiment_name}_{param_str}"
 
-    return base_name
+    if len(experiment_name) > 255:
+        # this is too long for the filesystem, so we hash it
+        # the config should be stored in the experiment directory anyway
+        experiment_name = hashlib.sha256(experiment_name.encode()).hexdigest()
+
+    return experiment_name
 
 
 def save_config(config: dict, experiment_dir: str) -> None:
@@ -292,6 +298,12 @@ def tokenizer_worker(
 
     assert num_tokens > 0, "Total number of tokens to process must be greater than 0"
 
+    batch_skip_progress_bar = tqdm(
+        desc="Skipping batches",
+        total=resume_from_batch,
+        leave=False,
+    )
+
     logger.info(f"Starting tokenizer worker for {dataset_name}")
     # Process dataset
     try:
@@ -319,6 +331,7 @@ def tokenizer_worker(
 
                 if batch_idx < resume_from_batch:
                     logger.debug(f"Skipping batch {batch_idx}")
+                    batch_skip_progress_bar.update(1)
                     log_queue.put({"tokenizer/skipping_batches": batch_idx})
 
                     buffer.clear()
@@ -518,7 +531,7 @@ def gpu_worker(
         # take the middle 20% of layers by default
         num_layers_to_store = math.ceil(len(model.layers) * 0.2)
         mid_layer = len(model.layers) // 2
-        start_layer_to_store = mid_layer - num_layers_to_store // 2
+        start_layer_to_store = mid_layer - (num_layers_to_store // 2)
         layers_to_store = set(
             range(start_layer_to_store, start_layer_to_store + num_layers_to_store)
         )
