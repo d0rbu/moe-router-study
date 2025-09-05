@@ -1,12 +1,10 @@
 from collections import defaultdict
-from collections.abc import Iterator
+from collections.abc import Generator
 import gc
 from itertools import batched, count, pairwise
 import os
 
-from loguru import logger
 import torch as th
-import torch.distributed as dist
 import torch.multiprocessing as mp
 from tqdm import tqdm
 
@@ -50,118 +48,100 @@ class Activations:
             cached_file_data.put(file_data, block=True)
         cached_file_data.put(None)
 
-    def __call__(self, batch_size: int = 4096, ctx_len: int = 128) -> Iterator[dict]:
-        def data_generator(batch_size: int, ctx_len: int) -> Iterator[dict]:
-            # cache of file data to come
-            cached_file_data = mp.Queue(maxsize=self.max_cache_size)
+    def __call__(self, batch_size: int = 4096) -> Generator[dict, None, None]:
+        # cache of file data to come
+        cached_file_data = mp.Queue(maxsize=self.max_cache_size)
 
-            # create worker process to get file data
-            worker_process = mp.Process(
-                target=self._get_file_data, args=(cached_file_data,)
-            )
-            worker_process.start()
+        # create worker process to get file data
+        worker_process = mp.Process(
+            target=self._get_file_data, args=(cached_file_data,)
+        )
+        worker_process.start()
 
-            current_data = cached_file_data.get(block=True)
-            current_local_idx = 0
-            current_data_size = len(current_data["tokens"])
+        current_data = cached_file_data.get(block=True)
+        current_local_idx = 0
+        current_data_size = len(current_data["tokens"])
 
-            if ctx_len <= 0:
-                ctx_len = (
-                    1024 * 1024
-                )  # probably not very future proof given the scary pace of progress
+        current_batch = {}
+        remaining_batch_size = batch_size
 
-            current_batch = {}
-            remaining_batch_size = batch_size
-
-            for batch_idx in count():
-                while current_data_size - current_local_idx < remaining_batch_size:
-                    for key, value in current_data.items():
-                        match value:
-                            case th.Tensor():
-                                if key in current_batch:
-                                    current_batch[key] = th.cat(
-                                        current_batch[key],
-                                        value[
-                                            current_local_idx : current_local_idx
-                                            + batch_size,
-                                            :,
-                                            :ctx_len,
-                                        ].to(self.device),
-                                        dim=0,
-                                    )
-                                else:
-                                    current_batch[key] = value[
+        for _batch_idx in count():
+            while current_data_size - current_local_idx < remaining_batch_size:
+                for key, value in current_data.items():
+                    match value:
+                        case th.Tensor():
+                            if key in current_batch:
+                                current_batch[key] = th.cat(
+                                    current_batch[key],
+                                    value[
                                         current_local_idx : current_local_idx
-                                        + batch_size,
-                                        :,
-                                        :ctx_len,
-                                    ].to(self.device)
-                            case list():
-                                pass
-                            case _:
-                                if key in current_batch:
-                                    assert current_batch[key] == value, (
-                                        f"Inconsistent value for {key}: {current_batch[key]} != {value}"
-                                    )
-                                else:
-                                    current_batch[key] = value
+                                        + batch_size
+                                    ].to(self.device),
+                                    dim=0,
+                                )
+                            else:
+                                current_batch[key] = value[
+                                    current_local_idx : current_local_idx
+                                    + batch_size
+                                ].to(self.device)
+                        case list():
+                            pass
+                        case _:
+                            if key in current_batch:
+                                assert current_batch[key] == value, (
+                                    f"Inconsistent value for {key}: {current_batch[key]} != {value}"
+                                )
+                            else:
+                                current_batch[key] = value
 
-                    remaining_batch_size -= current_data_size - current_local_idx
-                    current_data = cached_file_data.get(block=True)
+                remaining_batch_size -= current_data_size - current_local_idx
+                current_data = cached_file_data.get(block=True)
 
-                    if current_data is None:
-                        worker_process.join()
-                        return
+                if current_data is None:
+                    worker_process.join()
+                    cached_file_data.close()
+                    return
 
-                    current_local_idx = 0
-                    current_data_size = len(current_data["tokens"])
-                else:
-                    for key, value in current_data.items():
-                        match value:
-                            case th.Tensor():
-                                if key in current_batch:
-                                    current_batch[key] = th.cat(
-                                        current_batch[key],
-                                        value[
-                                            current_local_idx : current_local_idx
-                                            + batch_size,
-                                            :,
-                                            :ctx_len,
-                                        ].to(self.device),
-                                        dim=0,
-                                    )
-                                else:
-                                    current_batch[key] = value[
-                                        current_local_idx : current_local_idx
-                                        + batch_size,
-                                        :,
-                                        :ctx_len,
-                                    ].to(self.device)
-                            case list():
-                                pass
-                            case _:
-                                if key in current_batch:
-                                    assert current_batch[key] == value, (
-                                        f"Inconsistent value for {key}: {current_batch[key]} != {value}"
-                                    )
-                                else:
-                                    current_batch[key] = value
+                current_local_idx = 0
+                current_data_size = len(current_data["tokens"])
+            else:
+                for key, value in current_data.items():
+                    match value:
+                        case th.Tensor():
+                            if key in current_batch:
+                                current_batch[key] = th.cat(
+                                    current_batch[key],
+                                    value[current_local_idx : current_local_idx + batch_size].to(self.device),
+                                    dim=0,
+                                )
+                            else:
+                                current_batch[key] = value[current_local_idx : current_local_idx + batch_size].to(self.device)
+                        case list():
+                            pass
+                        case _:
+                            if key in current_batch:
+                                assert current_batch[key] == value, (
+                                    f"Inconsistent value for {key}: {current_batch[key]} != {value}"
+                                )
+                            else:
+                                current_batch[key] = value
 
-                    if batch_idx % dist.get_world_size() == dist.get_rank():
-                        yield current_batch
-                    else:
-                        logger.debug(f"Skipping batch {batch_idx}")
+                stop = yield current_batch
 
-                    current_batch = {}
-                    current_local_idx += remaining_batch_size
-                    remaining_batch_size = batch_size
+                if stop is not None:
+                    # this is the stop signal, so we stop the process and queue
+                    worker_process.terminate()
+                    cached_file_data.close()
+                    return
 
-                    th.cuda.empty_cache()
-                    gc.collect()
+                current_batch = {}
+                current_local_idx += remaining_batch_size
+                remaining_batch_size = batch_size
 
-        return data_generator(batch_size, ctx_len)
+                th.cuda.empty_cache()
+                gc.collect()
 
-    def __iter__(self) -> Iterator[dict]:
+    def __iter__(self) -> Generator[dict, None, None]:
         return self()
 
     @staticmethod
@@ -171,10 +151,11 @@ class Activations:
         tokens_per_file_in_reshuffled: int = 100_000,
         shuffle_batch_size: int = 100,
     ) -> list[str]:
-        shuffle_dirname = f"reshuffled-seed={seed}-tokens_per_file={tokens_per_file_in_reshuffled}"
+        shuffle_dirname = (
+            f"reshuffled-seed={seed}-tokens_per_file={tokens_per_file_in_reshuffled}"
+        )
         activation_files_dir = os.path.join(activation_dir, shuffle_dirname)
-        if dist.get_rank() == 0:
-            os.makedirs(activation_files_dir, exist_ok=True)
+        os.makedirs(activation_files_dir, exist_ok=True)
 
         activation_filepaths = Activations.get_activation_filepaths(
             activation_files_dir
@@ -183,40 +164,14 @@ class Activations:
         if activation_filepaths:
             return activation_filepaths
 
-        th.distributed.barrier()
-
         # if we are here then there are no activation files
-        num_new_activation_filepaths = [0]
-        if dist.get_rank() == 0:
-            logger.info(
-                f"Reshuffling activations from {activation_dir} to {activation_files_dir}"
-            )
-            new_activation_filepaths = Activations.reshuffle(
-                activation_dir=activation_dir,
-                output_dir=activation_files_dir,
-                tokens_per_file=tokens_per_file_in_reshuffled,
-                seed=seed,
-                shuffle_batch_size=shuffle_batch_size,
-            )
-            num_new_activation_filepaths[0] = len(new_activation_filepaths)
-
-            th.distributed.broadcast_object_list(
-                num_new_activation_filepaths, src=0
-            )
-            logger.info(
-                f"Broadcasting {num_new_activation_filepaths[0]} new activation files"
-            )
-            th.distributed.broadcast_object_list(new_activation_filepaths, src=0)
-        else:
-            logger.info("Waiting for reshuffling to finish")
-            th.distributed.broadcast_object_list(
-                num_new_activation_filepaths, src=0
-            )
-            new_activation_filepaths = [None] * num_new_activation_filepaths[0]
-            logger.info(
-                f"Receiving {num_new_activation_filepaths[0]} new activation files"
-            )
-            th.distributed.broadcast_object_list(new_activation_filepaths, src=0)
+        new_activation_filepaths = Activations.reshuffle(
+            activation_dir=activation_dir,
+            output_dir=activation_files_dir,
+            tokens_per_file_in_reshuffled=tokens_per_file_in_reshuffled,
+            seed=seed,
+            shuffle_batch_size=shuffle_batch_size,
+        )
 
         return new_activation_filepaths
 
@@ -268,7 +223,8 @@ class Activations:
 
         for shuffle_batch, batch_sizes in tqdm(
             batched(
-                zip(activation_filepaths, all_batch_sizes, strict=False), shuffle_batch_size
+                zip(activation_filepaths, all_batch_sizes, strict=False),
+                shuffle_batch_size,
             ),
             desc="Reshuffling",
             total=len(activation_filepaths) // shuffle_batch_size,
@@ -324,7 +280,9 @@ class Activations:
             )
             total_tokens += num_batch_tokens
 
-        reshuffled_indices = th.randperm(len(new_activation_filepaths), generator=th.Generator().manual_seed(seed))
+        reshuffled_indices = th.randperm(
+            len(new_activation_filepaths), generator=th.Generator().manual_seed(seed)
+        )
 
         for new_idx, filepath in tqdm(
             zip(reshuffled_indices, new_activation_filepaths, strict=True),

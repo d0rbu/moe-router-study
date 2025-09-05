@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from itertools import chain, partial
 import os
 
 import arguably
@@ -11,7 +12,6 @@ from dictionary_learning.trainers.top_k import BatchTopKSAE, BatchTopKTrainer
 from dictionary_learning.trainers.trainer import SAETrainer
 from dictionary_learning.training import trainSAE
 import torch as th
-import torch.distributed as dist
 
 from exp import OUTPUT_DIR
 from exp.activations import Activations
@@ -43,6 +43,7 @@ def run_sae_training(
     *_args,
     batch_size: int = 4096,
     steps: int = 1024 * 256,
+    num_epochs: int = 1,
     expansion_factor: int = 16,
     k: int = 160,
     layer: int = 7,
@@ -78,27 +79,29 @@ def run_sae_training(
         tokens_per_file=tokens_per_file,
     )
 
-    dist.init_process_group(backend="nccl")
-
     activations = Activations(
         experiment_name=activations_experiment_name,
-        device=device,
         seed=seed,
     )
+    one_epoch_generator = partial(activations, batch_size=batch_size)
 
     activation_dim = th.zeros(1, dtype=th.int32)
-    if dist.get_rank() == 0:
-        # load a batch of activations to get the dimension
-        iterator = iter(activations(batch_size=batch_size, ctx_len=context_length))
-        activation = next(iterator)
-        activation_dim[0] = activation[submodule_name].shape[1]
-        dist.broadcast(activation_dim, src=0)
-    else:
-        dist.broadcast(activation_dim, src=0)
+
+    # load a batch of activations to get the dimension
+    data_iterable = one_epoch_generator()
+    activation = next(data_iterable)
+    activation_dim[0] = activation[submodule_name].shape[1]
+
+    # clean up the background worker and queue
+    data_iterable.send("STOP!")
 
     activation_dim = activation_dim.item()
 
     assert activation_dim > 0, "Activation dimension must be greater than 0"
+    assert num_epochs > 0, "Number of epochs must be greater than 0"
+
+    # to train for multiple epochs, we just repeat the data iterator
+    data_iterator = chain(*[one_epoch_generator() for _ in range(num_epochs)])
 
     trainer_cfg = {
         "steps": steps,
@@ -131,9 +134,9 @@ def run_sae_training(
 
     # train the sparse autoencoder (SAE)
     trainSAE(
-        data=activations,
+        data=data_iterator,
         trainer_configs=[trainer_cfg],
-        steps=steps,
+        steps=steps * num_epochs,
         use_wandb=False,
         save_dir=os.path.join(OUTPUT_DIR, sae_experiment_name),
         normalize_activations=True,
