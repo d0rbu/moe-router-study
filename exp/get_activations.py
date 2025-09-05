@@ -160,7 +160,7 @@ def process_batch(
         desc=f"Batch {batch_idx}",
         total=num_minibatches,
         leave=False,
-        position=rank * 2 + 1
+        position=rank * 2
     ):
         th.cuda.empty_cache()
         gc.collect()
@@ -189,7 +189,7 @@ def process_batch(
                 desc=f"Batch {batch_idx} minibatch {minibatch_idx}",
                 total=len(model.layers),
                 leave=False,
-                position=rank * 2,
+                position=rank * 2 + 1,
             ):
                 if "attn_output" in activations_to_store:
                     attn_output = model.attentions_output[layer_idx]
