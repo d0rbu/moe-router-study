@@ -116,6 +116,7 @@ def process_batch(
     encoded_batch: dict,
     batch_idx: int,
     model: StandardizedTransformer,
+    rank: int,
     gpu_minibatch_size: int,
     router_layers: set[int],
     activations_to_store: set[str] = ACTIVATION_KEYS,
@@ -126,6 +127,7 @@ def process_batch(
         encoded_batch: Encoded batch from tokenizer with padding.
         batch_idx: Index of the batch.
         model: Model to process the batch.
+        rank: Rank of the GPU.
         gpu_minibatch_size: Size of the minibatch to process on each GPU.
         router_layers: Set of router layer indices to extract.
         stored_activations: Activations to score
@@ -158,6 +160,7 @@ def process_batch(
         desc=f"Batch {batch_idx}",
         total=num_minibatches,
         leave=False,
+        position=rank * 2 + 1
     ):
         th.cuda.empty_cache()
         gc.collect()
@@ -181,11 +184,12 @@ def process_batch(
             padding_mask = attention_mask.cpu().bool().flatten()
 
             # Extract activations for each layer
-            for layer_idx, layer in tqdm(
+            for layer_idx, _layer in tqdm(
                 enumerate(model.layers),
                 desc=f"Batch {batch_idx} minibatch {minibatch_idx}",
                 total=len(model.layers),
                 leave=False,
+                position=rank * 2,
             ):
                 if "attn_output" in activations_to_store:
                     attn_output = model.attentions_output[layer_idx]
@@ -557,6 +561,7 @@ def gpu_worker(
                 encoded_batch,
                 batch_idx,
                 model,
+                rank,
                 gpu_minibatch_size,
                 layers_with_routers,
                 activations_to_store=current_activations_to_store,
