@@ -2,7 +2,7 @@ from dataclasses import dataclass
 import os
 
 import arguably
-from dictionary_learning.trainers.dictionary import Dictionary
+from dictionary_learning.dictionary import Dictionary
 from dictionary_learning.trainers.matryoshka_batch_top_k import (
     MatryoshkaBatchTopKSAE,
     MatryoshkaBatchTopKTrainer,
@@ -46,7 +46,7 @@ def run_sae_training(
     expansion_factor: int = 16,
     k: int = 160,
     layer: int = 7,
-    group_fractions: list[float] = [1 / 32, 1 / 16, 1 / 8, 1 / 4, 1 / 2 + 1 / 32],
+    group_fractions: list[float] | None = None,
     group_weights: list[float] | None = None,
     architecture: str = "batchtopk",
     lr: float = 5e-5,
@@ -64,6 +64,8 @@ def run_sae_training(
     tokens_per_file: int = 10_000,
 ) -> None:
     """Train a sparse autoencoder on the given model and dataset."""
+    if group_fractions is None:
+        group_fractions = [1 / 32, 1 / 16, 1 / 8, 1 / 4, 1 / 2 + 1 / 32]
 
     architecture_config = ARCHITECTURES.get(architecture)
     if architecture_config is None:

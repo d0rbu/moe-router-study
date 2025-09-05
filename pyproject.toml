@@ -181,3 +181,4 @@ exclude_lines = [
 [tool.uv.sources]
 transformers = { git = "https://github.com/huggingface/transformers.git" }
 nnterp = { git = "https://github.com/d0rbu/nnterp.git" }
+dictionary-learning = { git = "https://github.com/d0rbu/dictionary_learning" }
