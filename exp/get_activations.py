@@ -1,5 +1,4 @@
 from collections import deque
-import datetime
 import gc
 import math
 import os
@@ -10,6 +9,7 @@ from typing import Any
 import warnings
 
 import arguably
+from datasets.iterable_dataset import asyncio
 from loguru import logger
 from nnterp import StandardizedTransformer
 import torch as th
@@ -28,6 +28,7 @@ CONFIG_FILENAME = "config.yaml"
 # within-node parallelism constants
 MAIN_QUEUE_MAXSIZE = 10
 GPU_QUEUE_MAXSIZE = 2
+OUTPUT_QUEUE_MAXSIZE = 2
 
 
 def get_experiment_name(model_name: str, dataset_name: str, **kwargs) -> str:
@@ -160,7 +161,7 @@ def process_batch(
         desc=f"Batch {batch_idx}",
         total=num_minibatches,
         leave=False,
-        position=rank * 2
+        position=rank * 2,
     ):
         th.cuda.empty_cache()
         gc.collect()
@@ -204,15 +205,16 @@ def process_batch(
                     router_output = model.routers_output[layer_idx]
 
                     # Handle different router output formats
-                    match router_output:
-                        case (router_scores, _router_indices):
-                            logits = router_scores.cpu()[padding_mask].save()
-                        case tuple():
+                    if isinstance(router_output, tuple):
+                        if len(router_output) == 2:
+                            router_scores, _router_indices = router_output
+                        else:
                             raise ValueError(
                                 f"Found tuple of length {len(router_output)} for router output at layer {layer_idx}"
                             )
-                        case router_scores:
-                            logits = router_scores.cpu()[padding_mask].save()
+                    else:
+                        router_scores = router_output
+                    logits = router_scores.cpu()[padding_mask].save()
 
                     activations["router_logits"][layer_idx].append(
                         logits.cpu().clone().detach()
@@ -230,19 +232,7 @@ def process_batch(
                         layer_output.cpu().clone().detach()
                     )
 
-    # Stack logits across minibatches and layers
-    activations = {
-        activation_key: [
-            th.cat(activation_minibatches, dim=0)
-            for activation_minibatches in activations_by_layer
-        ]
-        for activation_key, activations_by_layer in activations.items()
-    }
-    activations = {
-        activation_key: th.stack(activations_by_layer, dim=1)
-        for activation_key, activations_by_layer in activations.items()
-    }
-
+    # Return unstacked activations for disk worker to handle stacking
     return activations
 
 
@@ -378,6 +368,7 @@ def tokenizer_worker(
 def multiplexer_worker(
     main_queue: mp.Queue,
     gpu_queues: list[mp.Queue],
+    output_queue: mp.Queue,
     stop_event: Any,  # mp.Event is not properly typed
     gpu_busy: list[bool],
     log_queue: mp.Queue,
@@ -456,6 +447,9 @@ def multiplexer_worker(
         for q in gpu_queues:
             q.put(None)
 
+        # Signal disk worker that we're done
+        output_queue.put(None)
+
 
 def gpu_worker(
     rank: int,
@@ -468,6 +462,7 @@ def gpu_worker(
     stop_event: Any,  # mp.Event is not properly typed
     gpu_busy: list[bool],  # Reference to multiplexer's gpu_busy list
     log_queue: mp.Queue,
+    output_queue: mp.Queue,
     activations_to_store: set[str] = ACTIVATION_KEYS,
     log_level: str = "INFO",
 ) -> None:
@@ -569,15 +564,15 @@ def gpu_worker(
 
         logger.debug(f"Rank {rank} processed batch {batch_idx}")
 
-        # Save results
-        output_path = os.path.join(activations_dir, f"{batch_idx}.pt")
+        # Put results in output queue for disk worker
         output = {
+            "batch_idx": batch_idx,
             "topk": top_k,
             "tokens": batch_tokens,
             **activations,
         }
-        logger.debug(f"Rank {rank} saving results to {output_path}")
-        th.save(output, output_path)
+        logger.debug(f"Rank {rank} putting batch {batch_idx} in output queue")
+        output_queue.put(output, block=True)
 
         # Update statistics
         batch_time = time.time() - batch_start
@@ -602,6 +597,89 @@ def gpu_worker(
                 f"gpu_{rank}/avg_batch_time": sum(processing_times)
                 / len(processing_times),
                 f"gpu_{rank}/elapsed_time": elapsed,
+            }
+        )
+
+
+async def cat_async(*args: Any, **kwargs: Any) -> th.Tensor:
+    return asyncio.to_thread(th.cat, *args, **kwargs)
+
+
+async def stack_list_of_list_of_tensors(data: list[list[th.Tensor]]) -> th.Tensor:
+    awaitable_concatenated_tensors = [
+        cat_async(*layer_activations) for layer_activations in data
+    ]
+    concatenated_tensors = await asyncio.gather(*awaitable_concatenated_tensors)
+
+    return th.stack(concatenated_tensors, dim=1)
+
+
+async def disk_worker(
+    output_queue: mp.Queue,
+    experiment_name: str,
+    stop_event: Any,  # mp.Event is not properly typed
+    log_queue: mp.Queue,
+    log_level: str = "INFO",
+) -> None:
+    """Worker process for saving activations to disk."""
+    logger.remove()
+    logger.add(sys.stderr, level=log_level)
+
+    # Create output directory
+    experiment_dir = os.path.join(OUTPUT_DIR, experiment_name)
+    activations_dir = os.path.join(experiment_dir, ACTIVATION_DIRNAME)
+    os.makedirs(activations_dir, exist_ok=True)
+
+    # Initialize statistics
+    total_batches = 0
+    start_time = time.time()
+
+    logger.info("Starting disk worker")
+
+    while not stop_event.is_set():
+        try:
+            # Get output from queue with timeout
+            output = output_queue.get(timeout=1.0)
+        except queue.Empty:
+            continue
+
+        # Check if we're done
+        if output is None:
+            break
+
+        batch_idx = output.pop("batch_idx")
+        activations = output.pop("activations")
+        top_k = output["topk"]
+        batch_tokens = output["tokens"]
+
+        logger.debug(f"Disk worker processing batch {batch_idx}")
+
+        # Stack activations asynchronously
+        stacked_activation_keys = list(activations.keys())
+        stacked_activation_awaitables = [
+            stack_list_of_list_of_tensors(activations[activation_key])
+            for activation_key in stacked_activation_keys
+        ]
+        stacked_activation_tensors = await asyncio.gather(*stacked_activation_awaitables)
+        stacked_activations = dict(zip(stacked_activation_keys, stacked_activation_tensors, strict=True))
+
+        # Save results
+        output_path = os.path.join(activations_dir, f"{batch_idx}.pt")
+        output.update(stacked_activations)
+
+        logger.debug(f"Disk worker saving batch {batch_idx} to {output_path}")
+        th.save(output, output_path)
+
+        # Update statistics
+        total_batches += 1
+        elapsed = time.time() - start_time
+
+        # Log statistics
+        log_queue.put(
+            {
+                "disk/batch_idx": batch_idx,
+                "disk/total_batches": total_batches,
+                "disk/elapsed_time": elapsed,
             }
         )
 
@@ -676,7 +754,7 @@ def get_router_activations(
         raise ValueError(f"Unable to parse CUDA devices: {device_ids}")
 
     if not activations_to_store:
-        activations_to_store = ["router_logits", "mlp_output", "layer_output"]
+        activations_to_store = ["router_logits", "mlp_output"]
 
     if cpu_only:
         logger.info("Using CPU only")
@@ -757,6 +835,9 @@ def get_router_activations(
         maxsize=MAIN_QUEUE_MAXSIZE
     )  # Buffer between tokenizer and multiplexer
     gpu_queues = [mp.Queue(maxsize=GPU_QUEUE_MAXSIZE) for _ in range(num_workers)]
+    output_queue = mp.Queue(
+        maxsize=OUTPUT_QUEUE_MAXSIZE
+    )  # For sending processed batches to disk worker
     log_queue = mp.Queue()  # For sending logs back to main process
     stop_event = mp.Event()  # For signaling processes to stop
 
@@ -791,10 +872,27 @@ def get_router_activations(
     logger.info("Starting multiplexer worker")
     multiplexer_proc = mp.Process(
         target=multiplexer_worker,
-        args=(main_queue, gpu_queues, stop_event, gpu_busy, log_queue, log_level),
+        args=(
+            main_queue,
+            gpu_queues,
+            output_queue,
+            stop_event,
+            gpu_busy,
+            log_queue,
+            log_level,
+        ),
     )
     multiplexer_proc.start()
     processes.append(multiplexer_proc)
+
+    # Start disk worker
+    logger.info("Starting disk worker")
+    disk_proc = mp.Process(
+        target=disk_worker,
+        args=(output_queue, name, stop_event, log_queue, log_level),
+    )
+    disk_proc.start()
+    processes.append(disk_proc)
 
     # Start GPU workers
     for rank, device_ids in worker_gpu_map.items():
@@ -819,6 +917,7 @@ def get_router_activations(
                 stop_event,
                 gpu_busy,
                 log_queue,
+                output_queue,
                 set(activations_to_store),
                 log_level,
             ),
