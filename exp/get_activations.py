@@ -142,7 +142,7 @@ def process_batch(
         stored_activations: Activations to score
 
     Returns:
-        Dictionary of activations.
+        Dictionary of activations. These are lists of lists of tensors, so they need to be cleaned up by the caller.
     """
     logger.debug(
         f"Processing batch {batch_idx} with activations to store: {activations_to_store}"
@@ -593,7 +593,7 @@ def gpu_worker(
         logger.debug(f"Rank {rank} processing batch {batch_idx}")
         batch_start = time.time()
         with th.inference_mode():
-            activations = process_batch(
+            activations_raw = process_batch(
                 encoded_batch,
                 batch_idx,
                 model,
@@ -612,7 +612,7 @@ def gpu_worker(
             "topk": top_k,
             "tokens": batch_tokens,
             "layers": sorted(layers_to_store),
-            **activations,
+            "activations_raw": activations_raw,
         }
         logger.debug(f"Rank {rank} putting batch {batch_idx} in output queue")
         output_queue.put(output, block=True)
@@ -687,14 +687,14 @@ async def disk_worker_async(
             break
 
         batch_idx = output.pop("batch_idx")
-        activations = output.pop("activations")
+        activations_raw = output.pop("activations_raw")
 
         logger.debug(f"Disk worker processing batch {batch_idx}")
 
         # Stack activations asynchronously
-        stacked_activation_keys = list(activations.keys())
+        stacked_activation_keys = list(activations_raw.keys())
         stacked_activation_awaitables = [
-            stack_list_of_list_of_tensors(activations[activation_key])
+            stack_list_of_list_of_tensors(activations_raw[activation_key])
             for activation_key in stacked_activation_keys
         ]
         stacked_activation_tensors = await asyncio.gather(
