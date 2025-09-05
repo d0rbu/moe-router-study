@@ -85,9 +85,6 @@ def lmsys_chat_1m_text(
             "stop_idx must be less than or equal to the length of the dataset"
         )
 
-        if stop_idx == 0:
-            stop_idx = len(ds)
-
     def _format_conversation(conversation: list[dict[str, Any]]) -> str:
         chat = tokenizer.apply_chat_template(conversation, tokenize=False)
 
