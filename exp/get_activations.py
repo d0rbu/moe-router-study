@@ -680,11 +680,7 @@ async def disk_worker(
     logger.info("Starting disk worker")
 
     while not stop_event.is_set():
-        try:
-            # Get output from queue with timeout
-            output = output_queue.get(timeout=1.0)
-        except queue.Empty:
-            continue
+        output = output_queue.get(block=True)
 
         # Check if we're done
         if output is None:
@@ -937,7 +933,7 @@ def get_router_activations(
     # Start disk worker
     logger.info("Starting disk worker")
     disk_proc = mp.Process(
-        target=disk_worker,
+        target=asyncio.to_thread(disk_worker),
         args=(output_queue, name, stop_event, log_queue, log_level),
     )
     disk_proc.start()
