@@ -657,7 +657,7 @@ async def stack_list_of_list_of_tensors(data: list[list[th.Tensor]]) -> th.Tenso
     return th.stack(concatenated_tensors, dim=1)
 
 
-async def disk_worker(
+async def disk_worker_async(
     output_queue: mp.Queue,
     experiment_name: str,
     stop_event: Any,  # mp.Event is not properly typed
@@ -723,6 +723,21 @@ async def disk_worker(
                 "disk/elapsed_time": elapsed,
             }
         )
+
+
+def disk_worker(
+    output_queue: mp.Queue,
+    experiment_name: str,
+    stop_event: Any,  # mp.Event is not properly typed
+    log_queue: mp.Queue,
+    log_level: str = "INFO",
+) -> None:
+    """Wraps disk_worker_async which uses asyncio to parallelize activation stacking."""
+    asyncio.run(
+        disk_worker_async(
+            output_queue, experiment_name, stop_event, log_queue, log_level
+        )
+    )
 
 
 def find_completed_batches(experiment_dir: str) -> set[int]:
@@ -933,7 +948,7 @@ def get_router_activations(
     # Start disk worker
     logger.info("Starting disk worker")
     disk_proc = mp.Process(
-        target=asyncio.to_thread(disk_worker),
+        target=disk_worker,
         args=(output_queue, name, stop_event, log_queue, log_level),
     )
     disk_proc.start()
