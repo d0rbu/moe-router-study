@@ -394,7 +394,7 @@ def multiplexer_worker(
     try:
         while not stop_event.is_set():
             # Get batch from main queue
-            item = main_queue.get()
+            item = main_queue.get(block=True)
             if item is None:
                 break
 
@@ -531,7 +531,7 @@ def gpu_worker(
         gpu_busy[rank] = False
 
         # Get batch from queue
-        item = gpu_queue.get()
+        item = gpu_queue.get(block=True)
 
         logger.debug(f"Rank {rank} picked up batch from queue")
 

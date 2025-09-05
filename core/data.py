@@ -48,7 +48,7 @@ def lmsys_chat_1m_text(
     tokenizer: PreTrainedTokenizer,
     start_idx: int = 0,
     stop_idx: int = 0,
-    streaming: bool = False,
+    streaming: bool = True,
 ) -> IterableColumn:
     """Stream and format conversations from the LMSYS Chat-1M dataset.
 
@@ -70,6 +70,10 @@ def lmsys_chat_1m_text(
         )
     else:
         ds = cast("Dataset", ds)
+
+        if stop_idx == 0:
+            stop_idx = len(ds)
+
         assert start_idx >= 0 and stop_idx >= 0, (
             "Non-streaming mode requires start_idx and stop_idx to be non-negative"
         )
