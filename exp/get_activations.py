@@ -1,7 +1,6 @@
 from collections import deque
 import gc
 import hashlib
-from itertools import pairwise
 import math
 import os
 import queue
@@ -127,7 +126,7 @@ def process_batch(
     rank: int,
     gpu_minibatch_size: int,
     router_layers: set[int],
-    ordered_layers: list[int],
+    layers_to_store: set[int],
     activations_to_store: set[str] = ACTIVATION_KEYS,
 ) -> dict[str, th.Tensor]:
     """Process a batch of texts through the model and extract router logits.
@@ -139,7 +138,7 @@ def process_batch(
         rank: Rank of the GPU.
         gpu_minibatch_size: Size of the minibatch to process on each GPU.
         router_layers: Set of router layer indices to extract.
-        ordered_layers: Ordered list of layer indices to store.
+        layers_to_store: Set of layer indices to store.
         stored_activations: Activations to score
 
     Returns:
@@ -157,14 +156,11 @@ def process_batch(
         gpu_minibatch_size = min(gpu_minibatch_size, batch_size)
 
     num_minibatches = math.ceil(batch_size / gpu_minibatch_size)
-
-    assert len(ordered_layers) == len(set(ordered_layers)), "Ordered layers must be unique"
-    assert all(layer_idx < len(model.layers) for layer_idx in ordered_layers), "Ordered layers must be less than the number of layers in the model"
-    assert all(prev_layer_idx < next_layer_idx for prev_layer_idx, next_layer_idx in pairwise(ordered_layers)), "Ordered layers must be in ascending order"
+    num_layers = len(model.layers)
 
     # Extract activations
     activations = {
-        activation_key: [[] for _ in ordered_layers]
+        activation_key: [[] for _ in range(num_layers)]
         for activation_key in activations_to_store
     }
 
@@ -198,13 +194,16 @@ def process_batch(
 
             # Extract activations for each layer
             for layer_idx in tqdm(
-                ordered_layers,
+                range(num_layers),
                 desc=f"Batch {batch_idx} minibatch {minibatch_idx}",
-                total=len(ordered_layers),
+                total=num_layers,
                 leave=False,
                 position=rank * 2 + 1,
             ):
-                if "attn_output" in activations_to_store:
+                if (
+                    "attn_output" in activations_to_store
+                    and layer_idx in layers_to_store
+                ):
                     attn_output = model.attentions_output[layer_idx]
                     activations["attn_output"][layer_idx].append(
                         attn_output.output.cpu().clone().detach()
@@ -232,13 +231,19 @@ def process_batch(
                         logits.cpu().clone().detach()
                     )
 
-                if "mlp_output" in activations_to_store:
+                if (
+                    "mlp_output" in activations_to_store
+                    and layer_idx in layers_to_store
+                ):
                     mlp_output = model.mlps_output[layer_idx]
                     activations["mlp_output"][layer_idx].append(
                         mlp_output.cpu().clone().detach()
                     )
 
-                if "layer_output" in activations_to_store:
+                if (
+                    "layer_output" in activations_to_store
+                    and layer_idx in layers_to_store
+                ):
                     layer_output = model.layers_output[layer_idx]
                     activations["layer_output"][layer_idx].append(
                         layer_output.cpu().clone().detach()
@@ -529,6 +534,7 @@ def gpu_worker(
 
     if layers_to_store is None:
         # take the middle 20% of layers by default
+        # this does NOT apply to router logits; those are stored at all layers
         num_layers_to_store = math.ceil(len(model.layers) * 0.2)
         mid_layer = len(model.layers) // 2
         start_layer_to_store = mid_layer - (num_layers_to_store // 2)
@@ -539,8 +545,6 @@ def gpu_worker(
     assert all(layer_idx < len(model.layers) for layer_idx in layers_to_store), (
         f"Layers to store out of bounds for model with {len(model.layers)} layers: {layers_to_store}"
     )
-
-    ordered_layers = sorted(layers_to_store)
 
     # Create output directory
     experiment_dir = os.path.join(OUTPUT_DIR, experiment_name)
@@ -596,7 +600,7 @@ def gpu_worker(
                 rank,
                 gpu_minibatch_size,
                 layers_with_routers,
-                ordered_layers,
+                layers_to_store,
                 activations_to_store=current_activations_to_store,
             )
 
@@ -607,7 +611,7 @@ def gpu_worker(
             "batch_idx": batch_idx,
             "topk": top_k,
             "tokens": batch_tokens,
-            "layers": ordered_layers,
+            "layers": sorted(layers_to_store),
             **activations,
         }
         logger.debug(f"Rank {rank} putting batch {batch_idx} in output queue")
