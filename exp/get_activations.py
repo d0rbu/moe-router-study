@@ -1,5 +1,6 @@
 from collections import deque
 import gc
+from itertools import pairwise
 import math
 import os
 import queue
@@ -120,6 +121,7 @@ def process_batch(
     rank: int,
     gpu_minibatch_size: int,
     router_layers: set[int],
+    ordered_layers: list[int],
     activations_to_store: set[str] = ACTIVATION_KEYS,
 ) -> dict[str, th.Tensor]:
     """Process a batch of texts through the model and extract router logits.
@@ -131,6 +133,7 @@ def process_batch(
         rank: Rank of the GPU.
         gpu_minibatch_size: Size of the minibatch to process on each GPU.
         router_layers: Set of router layer indices to extract.
+        ordered_layers: Ordered list of layer indices to store.
         stored_activations: Activations to score
 
     Returns:
@@ -148,11 +151,14 @@ def process_batch(
         gpu_minibatch_size = min(gpu_minibatch_size, batch_size)
 
     num_minibatches = math.ceil(batch_size / gpu_minibatch_size)
-    num_layers = len(model.layers)
+
+    assert len(ordered_layers) == len(set(ordered_layers)), "Ordered layers must be unique"
+    assert all(layer_idx < len(model.layers) for layer_idx in ordered_layers), "Ordered layers must be less than the number of layers in the model"
+    assert all(prev_layer_idx < next_layer_idx for prev_layer_idx, next_layer_idx in pairwise(ordered_layers)), "Ordered layers must be in ascending order"
 
     # Extract activations
     activations = {
-        activation_key: [[] for _ in range(num_layers)]
+        activation_key: [[] for _ in ordered_layers]
         for activation_key in activations_to_store
     }
 
@@ -185,10 +191,10 @@ def process_batch(
             padding_mask = attention_mask.cpu().bool().flatten()
 
             # Extract activations for each layer
-            for layer_idx, _layer in tqdm(
-                enumerate(model.layers),
+            for layer_idx in tqdm(
+                ordered_layers,
                 desc=f"Batch {batch_idx} minibatch {minibatch_idx}",
-                total=len(model.layers),
+                total=len(ordered_layers),
                 leave=False,
                 position=rank * 2 + 1,
             ):
@@ -464,10 +470,13 @@ def gpu_worker(
     log_queue: mp.Queue,
     output_queue: mp.Queue,
     activations_to_store: set[str] = ACTIVATION_KEYS,
+    layers_to_store: set[int] | None = None,
     log_level: str = "INFO",
 ) -> None:
     """Worker process for processing batches on a specific GPU."""
-    logger.debug(f"Processing batch with activations to store: {activations_to_store}")
+    logger.debug(
+        f"Processing batch with activations to store: {activations_to_store} layers to store: {layers_to_store}"
+    )
 
     extra_activations_to_store = activations_to_store - ACTIVATION_KEYS
     if extra_activations_to_store:
@@ -504,6 +513,21 @@ def gpu_worker(
     logger.debug("Model initialized")
     layers_with_routers = model.layers_with_routers
     top_k = model.router_probabilities.get_top_k()
+
+    if layers_to_store is None:
+        # take the middle 20% of layers by default
+        num_layers_to_store = math.ceil(len(model.layers) * 0.2)
+        mid_layer = len(model.layers) // 2
+        start_layer_to_store = mid_layer - num_layers_to_store // 2
+        layers_to_store = set(
+            range(start_layer_to_store, start_layer_to_store + num_layers_to_store)
+        )
+
+    assert all(layer_idx < len(model.layers) for layer_idx in layers_to_store), (
+        f"Layers to store out of bounds for model with {len(model.layers)} layers: {layers_to_store}"
+    )
+
+    ordered_layers = sorted(layers_to_store)
 
     # Create output directory
     experiment_dir = os.path.join(OUTPUT_DIR, experiment_name)
@@ -559,6 +583,7 @@ def gpu_worker(
                 rank,
                 gpu_minibatch_size,
                 layers_with_routers,
+                ordered_layers,
                 activations_to_store=current_activations_to_store,
             )
 
@@ -569,6 +594,7 @@ def gpu_worker(
             "batch_idx": batch_idx,
             "topk": top_k,
             "tokens": batch_tokens,
+            "layers": ordered_layers,
             **activations,
         }
         logger.debug(f"Rank {rank} putting batch {batch_idx} in output queue")
@@ -649,8 +675,6 @@ async def disk_worker(
 
         batch_idx = output.pop("batch_idx")
         activations = output.pop("activations")
-        top_k = output["topk"]
-        batch_tokens = output["tokens"]
 
         logger.debug(f"Disk worker processing batch {batch_idx}")
 
@@ -725,6 +749,7 @@ def get_router_activations(
     resume: bool = True,
     name: str | None = None,
     activations_to_store: list[str] | None = None,
+    layers_to_store: list[int] | None = None,
     log_level: str = "INFO",
 ) -> None:
     """
@@ -759,6 +784,9 @@ def get_router_activations(
 
     if not activations_to_store:
         activations_to_store = ["router_logits", "mlp_output"]
+
+    if isinstance(layers_to_store, list):
+        layers_to_store = set(layers_to_store)
 
     if cpu_only:
         logger.info("Using CPU only")
@@ -908,6 +936,7 @@ def get_router_activations(
             )
 
         logger.debug(f"Storing activations: {activations_to_store}")
+        logger.debug(f"Storing layers: {layers_to_store}")
         gpu_proc = mp.Process(
             target=gpu_worker,
             args=(
@@ -923,6 +952,7 @@ def get_router_activations(
                 log_queue,
                 output_queue,
                 set(activations_to_store),
+                layers_to_store,
                 log_level,
             ),
         )
