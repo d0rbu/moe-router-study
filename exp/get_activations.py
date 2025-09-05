@@ -607,7 +607,7 @@ async def cat_async(*args: Any, **kwargs: Any) -> th.Tensor:
 
 async def stack_list_of_list_of_tensors(data: list[list[th.Tensor]]) -> th.Tensor:
     awaitable_concatenated_tensors = [
-        cat_async(*layer_activations) for layer_activations in data
+        cat_async(layer_activations) for layer_activations in data
     ]
     concatenated_tensors = await asyncio.gather(*awaitable_concatenated_tensors)
 
@@ -660,8 +660,12 @@ async def disk_worker(
             stack_list_of_list_of_tensors(activations[activation_key])
             for activation_key in stacked_activation_keys
         ]
-        stacked_activation_tensors = await asyncio.gather(*stacked_activation_awaitables)
-        stacked_activations = dict(zip(stacked_activation_keys, stacked_activation_tensors, strict=True))
+        stacked_activation_tensors = await asyncio.gather(
+            *stacked_activation_awaitables
+        )
+        stacked_activations = dict(
+            zip(stacked_activation_keys, stacked_activation_tensors, strict=True)
+        )
 
         # Save results
         output_path = os.path.join(activations_dir, f"{batch_idx}.pt")
