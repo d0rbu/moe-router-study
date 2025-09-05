@@ -13,7 +13,6 @@ import arguably
 from loguru import logger
 from nnterp import StandardizedTransformer
 import torch as th
-import torch.distributed as dist
 import torch.multiprocessing as mp
 from tqdm import tqdm
 import trackio as wandb
@@ -251,8 +250,6 @@ def tokenizer_worker(
     main_queue: mp.Queue,
     stop_event: Any,  # mp.Event is not properly typed
     log_queue: mp.Queue,
-    rank: int,
-    world_size: int,
     resume_from_batch: int = 0,
     num_tokens: int = 1_000_000_000,  # 1B tokens
     log_level: str = "INFO",
@@ -320,7 +317,7 @@ def tokenizer_worker(
                 buffer_token_count = 0
                 batch_idx += 1
 
-                if batch_idx < resume_from_batch or batch_idx % world_size != rank:
+                if batch_idx < resume_from_batch:
                     logger.debug(f"Skipping batch {batch_idx}")
                     log_queue.put({"tokenizer/skipping_batches": batch_idx})
 
@@ -664,19 +661,6 @@ def get_router_activations(
     logger.add(sys.stderr, level=log_level)
 
     logger.debug(f"Running with log level: {log_level}")
-    logger.debug("Getting SLURM environment")
-
-    # we don't communicate with other processes so we don't need nccl
-    dist.init_process_group(
-        backend="gloo", init_method="env://", timeout=datetime.timedelta(minutes=10)
-    )
-
-    if dist.is_initialized():
-        logger.info(
-            f"Running in SLURM environment: rank {dist.get_rank()}/{dist.get_world_size()}"
-        )
-    else:
-        logger.info("Running in local environment (not SLURM)")
 
     cuda_devices_raw = cuda_devices or os.environ.get("CUDA_VISIBLE_DEVICES", "")
     cpu_only = cuda_devices_raw == ""
@@ -748,8 +732,7 @@ def get_router_activations(
     logger.info(f"Experiment name: {name}")
 
     # Initialize WandB
-    if not dist.is_initialized() or dist.get_rank() == 0:
-        wandb.init(project="router_activations", resume="allow", config=config)
+    wandb.init(project="router_activations", resume="allow", config=config)
 
     # Find completed batches if resuming
     resume_batch_idx = 0
@@ -759,8 +742,7 @@ def get_router_activations(
             max_batch_idx = max(completed_batches) if completed_batches else 0
             resume_batch_idx = max_batch_idx + 1
             logger.info(f"Resuming from batch {resume_batch_idx}")
-            if not dist.is_initialized() or dist.get_rank() == 0:
-                wandb.log({"resume/batch_idx": resume_batch_idx})
+            wandb.log({"resume/batch_idx": resume_batch_idx})
 
     # Initialize multiprocessing resources
     mp.set_start_method("spawn", force=True)
@@ -792,8 +774,6 @@ def get_router_activations(
             main_queue,
             stop_event,
             log_queue,
-            dist.get_rank(),
-            dist.get_world_size(),
             resume_batch_idx,
             num_tokens,
             log_level,
@@ -846,8 +826,7 @@ def get_router_activations(
         while processes_are_running:
             try:
                 log = log_queue.get(block=True, timeout=10.0)
-                if not dist.is_initialized() or dist.get_rank() == 0:
-                    wandb.log(log)
+                wandb.log(log)
             except queue.Empty:
                 warnings.warn(
                     "No logs received from log queue after 10 seconds", stacklevel=2
