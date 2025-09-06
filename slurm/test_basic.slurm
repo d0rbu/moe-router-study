@@ -29,5 +29,5 @@ source .venv/bin/activate
 
 # Run the distributed job
 pwd
-srun --mpi=pmi2 python -c "print('Hello, world!')"
+# srun --mpi=pmi2 python -c "print('Hello, world!')"
 srun --mpi=pmi2 python scripts/test_slurm.py
