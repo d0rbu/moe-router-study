@@ -27,9 +27,9 @@ from exp import ACTIVATION_DIRNAME, MODEL_DIRNAME, OUTPUT_DIR
 CONFIG_FILENAME = "config.yaml"
 
 # within-node parallelism constants
-MAIN_QUEUE_MAXSIZE = 10
-GPU_QUEUE_MAXSIZE = 2
-OUTPUT_QUEUE_MAXSIZE = 2
+MAIN_QUEUE_MAXSIZE = 16
+GPU_QUEUE_MAXSIZE = 8
+OUTPUT_QUEUE_MAXSIZE = 3
 
 
 def get_experiment_name(model_name: str, dataset_name: str, **kwargs) -> str:
