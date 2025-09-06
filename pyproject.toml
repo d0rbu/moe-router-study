@@ -45,6 +45,7 @@ dependencies = [
     "nvitop>=1.5.3",
     "wandb>=0.21.3",
     "dictionary-learning",
+    "more-itertools>=10.8.0",
 ]
 
 [project.optional-dependencies]

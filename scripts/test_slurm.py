@@ -29,6 +29,6 @@ dist.init_process_group(
 print(f"[Rank {dist.get_rank()}] Hello from {os.uname().nodename}")
 dist.barrier()
 if dist.get_rank() == 0:
-    print("PMI rendezvous successful.")
+    print("Rendezvous successful.")
 
 dist.destroy_process_group()
