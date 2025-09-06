@@ -206,7 +206,7 @@ def process_batch(
                 ):
                     attn_output = model.attentions_output[layer_idx]
                     activations["attn_output"][layer_idx].append(
-                        attn_output.output.cpu().clone().detach()
+                        attn_output.cpu().clone().detach()
                     )
 
                 if (
@@ -228,7 +228,7 @@ def process_batch(
                     logits = router_scores.cpu()[padding_mask].save()
 
                     activations["router_logits"][layer_idx].append(
-                        logits.cpu().clone().detach()
+                        logits.clone().detach()
                     )
 
                 if (
@@ -236,8 +236,9 @@ def process_batch(
                     and layer_idx in layers_to_store
                 ):
                     mlp_output = model.mlps_output[layer_idx]
+                    flattened_mlp_output = mlp_output.cpu()[padding_mask].save()
                     activations["mlp_output"][layer_idx].append(
-                        mlp_output.cpu().clone().detach()
+                        flattened_mlp_output.clone().detach()
                     )
 
                 if (
@@ -245,8 +246,9 @@ def process_batch(
                     and layer_idx in layers_to_store
                 ):
                     layer_output = model.layers_output[layer_idx]
+                    flattened_layer_output = layer_output.cpu()[padding_mask].save()
                     activations["layer_output"][layer_idx].append(
-                        layer_output.cpu().clone().detach()
+                        flattened_layer_output.clone().detach()
                     )
 
     # Return unstacked activations for disk worker to handle stacking
