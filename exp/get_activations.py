@@ -612,6 +612,7 @@ def gpu_worker(
             "topk": top_k,
             "tokens": batch_tokens,
             "layers": sorted(layers_to_store),
+            "router_layers": sorted(layers_with_routers),
             "activations_raw": activations_raw,
         }
         logger.debug(f"Rank {rank} putting batch {batch_idx} in output queue")
@@ -646,7 +647,9 @@ def gpu_worker(
 
 async def stack_list_of_list_of_tensors(data: list[list[th.Tensor]]) -> th.Tensor:
     awaitable_concatenated_tensors = [
-        asyncio.to_thread(th.cat, layer_activations) for layer_activations in data
+        asyncio.to_thread(th.cat, layer_activations, dim=0)
+        for layer_activations in data
+        if len(layer_activations) > 0
     ]
     concatenated_tensors = await asyncio.gather(*awaitable_concatenated_tensors)
 
