@@ -145,7 +145,7 @@ def process_batch(
         Dictionary of activations. These are lists of lists of tensors, so they need to be cleaned up by the caller.
     """
     logger.debug(
-        f"Processing batch {batch_idx} with activations to store: {activations_to_store}"
+        f"Processing batch {batch_idx} with activations to store: {activations_to_store} layers to store: {layers_to_store}"
     )
 
     batch_size = encoded_batch["input_ids"].shape[0]
@@ -190,7 +190,8 @@ def process_batch(
         with model.trace(encoded_minibatch):
             # Get attention mask to filter out padding tokens
             attention_mask = encoded_minibatch["attention_mask"]
-            padding_mask = attention_mask.cpu().bool().flatten()
+            padding_mask = attention_mask.cpu().bool()
+            padding_mask_flat = padding_mask.flatten()
 
             # Extract activations for each layer
             for layer_idx in tqdm(
@@ -205,8 +206,9 @@ def process_batch(
                     and layer_idx in layers_to_store
                 ):
                     attn_output = model.attentions_output[layer_idx]
+                    flattened_attn_output = attn_output.cpu()[padding_mask].save()
                     activations["attn_output"][layer_idx].append(
-                        attn_output.cpu().clone().detach()
+                        flattened_attn_output.clone().detach()
                     )
 
                 if (
@@ -225,7 +227,7 @@ def process_batch(
                             )
                     else:
                         router_scores = router_output
-                    logits = router_scores.cpu()[padding_mask].save()
+                    logits = router_scores.cpu()[padding_mask_flat].save()
 
                     activations["router_logits"][layer_idx].append(
                         logits.clone().detach()
