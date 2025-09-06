@@ -814,6 +814,9 @@ def get_router_activations(
     if not activations_to_store:
         activations_to_store = ["router_logits", "mlp_output"]
 
+    if not layers_to_store:
+        layers_to_store = None
+
     if isinstance(layers_to_store, list):
         layers_to_store = set(layers_to_store)
 
