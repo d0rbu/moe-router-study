@@ -25,6 +25,8 @@ export WORLD_SIZE=$SLURM_NTASKS
 
 # Change to the project directory
 cd ~/moe-router-study
+source .venv/bin/activate
 
 # Run the distributed job
-srun --mpi=pmi2 python3 -c "print('Hello, world!')"
+srun --mpi=pmi2 python -c "print('Hello, world!')"
+srun --mpi=pmi2 python scripts/test_slurm.py
