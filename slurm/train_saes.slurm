@@ -1,15 +1,15 @@
 #!/bin/bash
 
 ##NECESSARY JOB SPECIFICATIONS
-#SBATCH --job-name=test                 # Set the job name to "test"
-#SBATCH --time=00:10:00                 # Set the wall clock limit to 1 minute
-#SBATCH --ntasks=2                      # Total number of tasks (processes) across all nodes
+#SBATCH --job-name=train_saes           # Set the job name to "train_saes"
+#SBATCH --time=24:00:00                 # Set the wall clock limit to 6 hours
+#SBATCH --ntasks=8                      # Total number of tasks (processes) across all nodes
 #SBATCH --ntasks-per-node=1             # Number of tasks per node
-#SBATCH --cpus-per-task=2               # Number of CPUs per task
-#SBATCH --mem=8G                        # Request 8GB per node
-#SBATCH --output=test_basic.%j          # Send stdout/err to "get_activations.[jobID]"
-#SBATCH --error=test_basic.%j.err       # Send stderr to separate file
-#SBATCH --gres=gpu:t4:1                 # Request 1 "t4" GPUs per node
+#SBATCH --cpus-per-task=4               # Number of CPUs per task
+#SBATCH --mem=64G                       # Request 64GB per node
+#SBATCH --output=train_saes.%j          # Send stdout/err to "train_saes.[jobID]"
+#SBATCH --error=train_saes.%j.err       # Send stderr to separate file
+#SBATCH --gres=gpu:a100:2               # Request 2 "a100" GPUs per node
 #SBATCH --partition=gpu                 # Request the GPU partition/queue
 
 ##OPTIONAL JOB SPECIFICATIONS
@@ -30,5 +30,4 @@ cd ~/moe-router-study
 source .venv/bin/activate
 
 # Run the distributed job
-# srun --mpi=pmi2 python -c "print('Hello, world!')"
-srun --mpi=pmi2 python scripts/test_slurm.py
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE python exp/get_activations.py --tokens-per-file 5000
