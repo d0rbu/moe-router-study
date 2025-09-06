@@ -809,8 +809,8 @@ def get_router_activations(
     cpu_only = cuda_devices_raw == ""
     device_ids = [int(i) for i in cuda_devices_raw.split(",")] if not cpu_only else [0]
 
-    world_size = len(device_ids)
-    if world_size == 0:
+    num_gpus = len(device_ids)
+    if num_gpus == 0:
         raise ValueError(f"Unable to parse CUDA devices: {device_ids}")
 
     if not activations_to_store:
@@ -825,9 +825,9 @@ def get_router_activations(
     if cpu_only:
         logger.info("Using CPU only")
     else:
-        logger.info(f"Using {world_size} GPUs: {device_ids}")
+        logger.info(f"Using {num_gpus} GPUs: {device_ids}")
 
-    num_workers = world_size // gpus_per_worker
+    num_workers = num_gpus // gpus_per_worker
     worker_gpu_map = (
         {
             i: device_ids[i * gpus_per_worker : (i + 1) * gpus_per_worker]
@@ -837,7 +837,7 @@ def get_router_activations(
         else {i: [0] for i in range(num_workers)}
     )
 
-    extra_gpus = world_size % gpus_per_worker
+    extra_gpus = num_gpus % gpus_per_worker
     if extra_gpus > 0:
         logger.warning(
             f"{extra_gpus} extra GPUs will be ignored due to gpus_per_worker={gpus_per_worker}"
@@ -850,7 +850,7 @@ def get_router_activations(
         "context_length": context_length,
         "num_tokens": num_tokens,
         "tokens_per_file": tokens_per_file,
-        "world_size": world_size,
+        "num_gpus": num_gpus,
         "cpu_only": cpu_only,
         "device_ids": device_ids,
         "gpus_per_worker": gpus_per_worker,
@@ -909,7 +909,7 @@ def get_router_activations(
 
     # Create shared state for GPU busy status
     manager = mp.Manager()
-    gpu_busy = manager.list([False] * world_size)
+    gpu_busy = manager.list([False] * num_workers)
 
     # Create and start processes
     processes = []
