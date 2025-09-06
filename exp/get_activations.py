@@ -644,13 +644,9 @@ def gpu_worker(
         )
 
 
-async def cat_async(*args: Any, **kwargs: Any) -> th.Tensor:
-    return asyncio.to_thread(th.cat, *args, **kwargs)
-
-
 async def stack_list_of_list_of_tensors(data: list[list[th.Tensor]]) -> th.Tensor:
     awaitable_concatenated_tensors = [
-        cat_async(layer_activations) for layer_activations in data
+        asyncio.to_thread(th.cat, layer_activations) for layer_activations in data
     ]
     concatenated_tensors = await asyncio.gather(*awaitable_concatenated_tensors)
 
