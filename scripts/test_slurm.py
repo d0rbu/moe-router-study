@@ -16,3 +16,19 @@ print("SLURM_NNODES:", os.environ.get("SLURM_NNODES"))
 print("SLURM_CPUS_PER_TASK:", os.environ.get("SLURM_CPUS_PER_TASK"))
 print("RANK:", os.environ.get("RANK"))
 print("WORLD_SIZE:", os.environ.get("WORLD_SIZE"))
+
+rank = int(os.environ.get("SLURM_PROCID"))
+world_size = int(os.environ.get("SLURM_NTASKS"))
+
+import torch.distributed as dist  # noqa: E402
+
+dist.init_process_group(
+    backend="nccl", rank=rank, world_size=world_size, timeout=timedelta(minutes=10)
+)
+
+print(f"[Rank {dist.get_rank()}] Hello from {os.uname().nodename}")
+dist.barrier()
+if dist.get_rank() == 0:
+    print("PMI rendezvous successful.")
+
+dist.destroy_process_group()
