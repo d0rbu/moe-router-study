@@ -56,6 +56,7 @@ MAX_GPU_QUEUE_SIZE = 2
 
 async def gpu_worker(
     device_idx: int,
+    num_gpus: int,
     gpu_queue: asyncio.Queue,
     data_iterator: Iterator[dict],
 ) -> None:
@@ -76,6 +77,7 @@ async def gpu_worker(
             use_wandb=False,
             save_dir=os.path.join(OUTPUT_DIR, batch.sae_experiment_name),
             normalize_activations=True,
+            tqdm_kwargs={"position": dist.get_rank() * (num_gpus + 1) + device_idx + 1},
         )
 
 
@@ -162,7 +164,7 @@ async def run_sae_training(
 
     workers = [
         asyncio.create_task(
-            gpu_worker(device_idx, gpu_queues[device_idx], data_iterator)
+            gpu_worker(device_idx, num_gpus, gpu_queues[device_idx], data_iterator)
         )
         for device_idx in range(num_gpus)
     ]
