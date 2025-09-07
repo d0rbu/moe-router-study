@@ -14,6 +14,7 @@ from datasets.iterable_dataset import asyncio
 from loguru import logger
 from nnterp import StandardizedTransformer
 import torch as th
+import torch.distributed as dist
 import torch.multiprocessing as mp
 from tqdm import tqdm
 import trackio as wandb
@@ -338,7 +339,11 @@ def tokenizer_worker(
                 buffer_token_count = 0
                 batch_idx += 1
 
-                if batch_idx < resume_from_batch:
+                # skip if we are resuming past this batch or if this batch is not for this rank
+                if (
+                    batch_idx < resume_from_batch
+                    or batch_idx % dist.get_world_size() != dist.get_rank()
+                ):
                     logger.debug(f"Skipping batch {batch_idx}")
                     batch_skip_progress_bar.update(1)
                     log_queue.put({"tokenizer/skipping_batches": batch_idx})
@@ -913,6 +918,11 @@ def get_router_activations(
 
     # Create and start processes
     processes = []
+
+    rank = int(os.environ.get("SLURM_PROCID", 0))
+    world_size = int(os.environ.get("SLURM_NTASKS", 1))
+
+    dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
 
     # Start tokenizer worker
     logger.info("Starting tokenizer worker")
