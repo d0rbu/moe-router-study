@@ -2,11 +2,11 @@
 
 ##NECESSARY JOB SPECIFICATIONS
 #SBATCH --job-name=get_activations      # Set the job name to "get_activations"
-#SBATCH --time=24:00:00                 # Set the wall clock limit to 6 hours
+#SBATCH --time=6:00:00                  # Set the wall clock limit to 6 hours
 #SBATCH --ntasks=1                      # Total number of tasks (processes) across all nodes
 #SBATCH --ntasks-per-node=1             # Number of tasks per node
-#SBATCH --cpus-per-task=32              # Number of CPUs per task
-#SBATCH --mem=128G                      # Request 64GB per node
+#SBATCH --cpus-per-task=16              # Number of CPUs per task
+#SBATCH --mem=64G                       # Request 64GB per node
 #SBATCH --output=get_activations.%j     # Send stdout/err to "get_activations.[jobID]"
 #SBATCH --error=get_activations.%j.err  # Send stderr to separate file
 #SBATCH --gres=gpu:a100:4               # Request 4 "a100" GPUs per node
