@@ -13,6 +13,7 @@ from dictionary_learning.trainers.matryoshka_batch_top_k import (
 from dictionary_learning.trainers.top_k import BatchTopKSAE, BatchTopKTrainer
 from dictionary_learning.trainers.trainer import SAETrainer
 from dictionary_learning.training import trainSAE
+from fsspec.utils import math
 from loguru import logger
 import torch as th
 import torch.distributed as dist
@@ -209,6 +210,15 @@ async def run_sae_training(
         distributed_iterator, trainers_per_gpu
     )
 
+    if dist.get_rank() == 0:
+        logger.info(f"Total size of sweep: {len(hparam_sweep_iterator)}")
+        logger.info(f"Number of nodes: {world_size}")
+        logger.info(f"Number of GPUs per node: {num_gpus}")
+        logger.info(f"Number of trainers per GPU: {trainers_per_gpu}")
+        logger.info(
+            f"Number of iterations: {math.ceil(len(hparam_sweep_iterator) / (trainers_per_gpu * num_gpus * world_size))}"
+        )
+
     for trainer_batch in concurrent_trainer_batched_iterator:
         # decide device_idx based on how full the gpu queues are
         device_idx = th.argmin(th.tensor([q.qsize() for q in gpu_queues])).item()
@@ -233,7 +243,7 @@ async def run_sae_training(
             current_seed,
             current_submodule_name,
         ) in trainer_batch:
-            trainer_names.append(f"{hparam_idx}_{len(hparam_sweep_iterator)}")
+            trainer_names.append(str(hparam_idx))
 
             architecture_config = ARCHITECTURES[current_architecture]
 
