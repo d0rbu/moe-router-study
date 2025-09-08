@@ -13,6 +13,7 @@ import torch.multiprocessing as mp
 from tqdm import tqdm
 
 from exp import ACTIVATION_DIRNAME, OUTPUT_DIR
+from exp.get_activations import get_experiment_name
 
 
 def broadcast_variable_length_list(
@@ -412,7 +413,8 @@ class Activations:
 
             new_activation_filepaths.extend(extra_activation_filepaths)
             reshuffled_indices = th.randperm(
-                len(new_activation_filepaths), generator=th.Generator().manual_seed(seed)
+                len(new_activation_filepaths),
+                generator=th.Generator().manual_seed(seed),
             )
 
             for new_idx, filepath in tqdm(
@@ -464,3 +466,46 @@ class Activations:
 
         local_idx = batch_idx - file_start_idx
         return file_idx, local_idx
+
+
+def load_activations_and_init_dist(
+    model_name: str,
+    dataset_name: str,
+    tokens_per_file: int,
+    submodule_names: list[str],
+    seed: int = 0,
+) -> tuple[Activations, dict[str, int]]:
+    """
+    Load activations and initialize the distributed process group.
+
+    Returns:
+        activations: Activations object
+        activation_dims: Dimensionality of the activations for each submodule as a dictionary
+    """
+    activations_experiment_name = get_experiment_name(
+        model_name=model_name,
+        dataset_name=dataset_name,
+        tokens_per_file=tokens_per_file,
+    )
+
+    rank = int(os.environ.get("SLURM_PROCID", 0))
+    world_size = int(os.environ.get("SLURM_NTASKS", 1))
+    dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
+
+    activations = Activations(
+        experiment_name=activations_experiment_name,
+        seed=seed,
+    )
+
+    # load a batch of activations to get the dimension
+    data_iterable = activations(batch_size=1)
+    activation = next(data_iterable)
+    activation_dims = {
+        submodule_name: th.prod(th.tensor(activation[submodule_name].shape[1:])).item()
+        for submodule_name in submodule_names
+    }
+
+    # clean up the background worker and queue
+    data_iterable.send("STOP!")
+
+    return activations, activation_dims

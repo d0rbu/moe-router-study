@@ -9,7 +9,7 @@
 #SBATCH --mem=64G                       # Request 64GB per node
 #SBATCH --output=get_activations.%j     # Send stdout/err to "get_activations.[jobID]"
 #SBATCH --error=get_activations.%j.err  # Send stderr to separate file
-#SBATCH --gres=gpu:a100:4               # Request 4 "a100" GPUs per node
+#SBATCH --gres=gpu:a100:4               # Request 4 a100 GPUs per node
 #SBATCH --partition=gpu                 # Request the GPU partition/queue
 
 ##OPTIONAL JOB SPECIFICATIONS

@@ -1,4 +1,5 @@
 from collections import deque
+from enum import StrEnum
 import gc
 import hashlib
 import math
@@ -110,12 +111,19 @@ def verify_config(config: dict, experiment_dir: str) -> None:
         )
 
 
+class ActivationKeys(StrEnum):
+    ATTN_OUTPUT = "attn_output"
+    ROUTER_LOGITS = "router_logits"
+    MLP_OUTPUT = "mlp_output"
+    LAYER_OUTPUT = "layer_output"
+
+
 ACTIVATION_KEYS = frozenset(
     {
-        "attn_output",
-        "router_logits",
-        "mlp_output",
-        "layer_output",
+        ActivationKeys.ATTN_OUTPUT,
+        ActivationKeys.ROUTER_LOGITS,
+        ActivationKeys.MLP_OUTPUT,
+        ActivationKeys.LAYER_OUTPUT,
     }
 )
 
@@ -203,17 +211,17 @@ def process_batch(
                 position=rank * 2 + 1,
             ):
                 if (
-                    "attn_output" in activations_to_store
+                    ActivationKeys.ATTN_OUTPUT in activations_to_store
                     and layer_idx in layers_to_store
                 ):
                     attn_output = model.attentions_output[layer_idx]
                     flattened_attn_output = attn_output.cpu()[padding_mask].save()
-                    activations["attn_output"][layer_idx].append(
+                    activations[ActivationKeys.ATTN_OUTPUT][layer_idx].append(
                         flattened_attn_output.clone().detach()
                     )
 
                 if (
-                    "router_logits" in activations_to_store
+                    ActivationKeys.ROUTER_LOGITS in activations_to_store
                     and layer_idx in router_layers
                 ):
                     router_output = model.routers_output[layer_idx]
@@ -230,27 +238,27 @@ def process_batch(
                         router_scores = router_output
                     logits = router_scores.cpu()[padding_mask_flat].save()
 
-                    activations["router_logits"][layer_idx].append(
+                    activations[ActivationKeys.ROUTER_LOGITS][layer_idx].append(
                         logits.clone().detach()
                     )
 
                 if (
-                    "mlp_output" in activations_to_store
+                    ActivationKeys.MLP_OUTPUT in activations_to_store
                     and layer_idx in layers_to_store
                 ):
                     mlp_output = model.mlps_output[layer_idx]
                     flattened_mlp_output = mlp_output.cpu()[padding_mask].save()
-                    activations["mlp_output"][layer_idx].append(
+                    activations[ActivationKeys.MLP_OUTPUT][layer_idx].append(
                         flattened_mlp_output.clone().detach()
                     )
 
                 if (
-                    "layer_output" in activations_to_store
+                    ActivationKeys.LAYER_OUTPUT in activations_to_store
                     and layer_idx in layers_to_store
                 ):
                     layer_output = model.layers_output[layer_idx]
                     flattened_layer_output = layer_output.cpu()[padding_mask].save()
-                    activations["layer_output"][layer_idx].append(
+                    activations[ActivationKeys.LAYER_OUTPUT][layer_idx].append(
                         flattened_layer_output.clone().detach()
                     )
 
@@ -819,7 +827,7 @@ def get_router_activations(
         raise ValueError(f"Unable to parse CUDA devices: {device_ids}")
 
     if not activations_to_store:
-        activations_to_store = ["router_logits", "mlp_output"]
+        activations_to_store = [ActivationKeys.ROUTER_LOGITS, ActivationKeys.MLP_OUTPUT]
 
     if not layers_to_store:
         layers_to_store = None

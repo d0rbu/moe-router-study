@@ -20,8 +20,8 @@ import torch.distributed as dist
 from tqdm import tqdm
 
 from exp import OUTPUT_DIR
-from exp.activations import Activations
-from exp.get_activations import get_experiment_name
+from exp.activations import load_activations_and_init_dist
+from exp.get_activations import ActivationKeys, get_experiment_name
 
 
 @dataclass
@@ -108,10 +108,11 @@ async def run_sae_training(
     tokens_per_file: int = 10_000,
 ) -> None:
     """Train autoencoders to sweep over the given hyperparameter sets."""
-    activations_experiment_name = get_experiment_name(
+    activations, activation_dims = load_activations_and_init_dist(
         model_name=model_name,
         dataset_name=dataset_name,
         tokens_per_file=tokens_per_file,
+        submodule_names=submodule_name,
     )
 
     sae_experiment_name = get_experiment_name(
@@ -122,26 +123,16 @@ async def run_sae_training(
         num_epochs=num_epochs,
     )
 
-    rank = int(os.environ.get("SLURM_PROCID", 0))
-    world_size = int(os.environ.get("SLURM_NTASKS", 1))
-    dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
-
-    activations = Activations(
-        experiment_name=activations_experiment_name,
-        seed=seed,
-    )
-
-    activation_dim = th.zeros(1, dtype=th.int32)
-
-    # load a batch of activations to get the dimension
-    data_iterable = activations(batch_size=1)
-    activation = next(data_iterable)
-    activation_dim[0] = activation[submodule_name[0]].shape[1]
-
-    # clean up the background worker and queue
-    data_iterable.send("STOP!")
-
-    activation_dim = activation_dim.item()
+    if len(submodule_name) == 1:
+        activation_dim = activation_dims[submodule_name[0]]
+    else:
+        # find submodule name that is not router_logits
+        non_router_logits_submodules = [
+            submodule_name
+            for submodule_name in submodule_name
+            if submodule_name != ActivationKeys.ROUTER_LOGITS
+        ]
+        activation_dim = activation_dims[non_router_logits_submodules[0]]
 
     assert activation_dim > 0, "Activation dimension must be greater than 0"
     assert num_epochs > 0, "Number of epochs must be greater than 0"
@@ -214,11 +205,11 @@ async def run_sae_training(
 
     if dist.get_rank() == 0:
         logger.info(f"Total size of sweep: {len(hparam_sweep_iterator)}")
-        logger.info(f"Number of nodes: {world_size}")
+        logger.info(f"Number of nodes: {dist.get_world_size()}")
         logger.info(f"Number of GPUs per node: {num_gpus}")
         logger.info(f"Number of trainers per GPU: {trainers_per_gpu}")
         logger.info(
-            f"Number of iterations: {math.ceil(len(hparam_sweep_iterator) / (trainers_per_gpu * num_gpus * world_size))}"
+            f"Number of iterations: {math.ceil(len(hparam_sweep_iterator) / (trainers_per_gpu * num_gpus * dist.get_world_size()))}"
         )
 
     for trainer_batch in concurrent_trainer_batched_iterator:
