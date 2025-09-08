@@ -30,4 +30,4 @@ cd ~/moe-router-study
 source .venv/bin/activate
 
 # Run the distributed job
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE python exp/get_activations.py --tokens-per-file 5000
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE python exp/sae.py --tokens-per-file 5000

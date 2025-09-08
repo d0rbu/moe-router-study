@@ -20,6 +20,15 @@ class GPUData:
     centroid_sets: list[th.tensor]
     weights: list[th.tensor]  # for online running updates
     losses: th.tensor
+    dirty_centroid_weights: list[
+        th.tensor
+    ]  # for keeping track of centroids that have not been synced yet
+    dirty_weights: list[
+        th.tensor
+    ]  # for keeping track of samples that have not been synced yet
+    dirty_losses: list[
+        th.tensor
+    ]  # for keeping track of losses that have not been synced yet
     queue: asyncio.Queue | None = None
 
 
@@ -109,14 +118,24 @@ async def gpu_worker(
                     data,
                     centroids,
                     weights,
-                    gpu_data.losses,
+                    gpu_data.dirty_losses,
                     centroid_set_idx,
                 )
                 for centroid_set_idx, (centroids, weights) in enumerate(
-                    zip(gpu_data.centroid_sets, gpu_data.weights, strict=True)
+                    zip(
+                        gpu_data.dirty_centroid_sets,
+                        gpu_data.dirty_weights,
+                        strict=True,
+                    )
                 )
             ]
         )
+
+
+async def sync_gpu_data(
+    all_gpu_data: list[GPUData],
+) -> None:
+    pass
 
 
 GPU_QUEUE_MAXSIZE = 4
@@ -126,6 +145,7 @@ async def kmeans_manhattan(
     activations: Activations,
     activation_dim: int,
     k_values: list[int],
+    effective_batch_size: int | None = None,
     max_iters: int = 128,
     gpu_minibatch_size: int | None = None,
     seed: int = 0,
@@ -136,6 +156,7 @@ async def kmeans_manhattan(
     Args:
         activations: Activations to cluster
         k_values: List of number of clusters
+        effective_batch_size: Batch size for k-means updates. If None, use the batch size of the activations.
         max_iters: Maximum number of iterations
         minibatch_size: Batch size for processing data. If None, process all data at once.
         seed: Random seed for initialization
@@ -150,11 +171,47 @@ async def kmeans_manhattan(
 
     num_gpus = th.cuda.device_count()
     num_nodes = dist.get_world_size()
+    total_gpus = num_gpus * num_nodes
 
     assert th.cuda.is_available() and num_gpus > 0, "CPU-only not supported yet :("
 
+    if effective_batch_size is None:
+        effective_batch_size = (len(activations) // total_gpus) * total_gpus
+
+    if (leftover_batch_size := (effective_batch_size % total_gpus)) > 0:
+        logger.warning(
+            f"Effective batch size {effective_batch_size} is not divisible by total number of gpus {total_gpus}; {leftover_batch_size} left over"
+        )
+        effective_batch_size -= leftover_batch_size
+
+    batch_size = effective_batch_size // total_gpus
+
     if gpu_minibatch_size is None:
-        gpu_minibatch_size = len(activations) // (num_gpus * num_nodes)
+        gpu_minibatch_size = batch_size
+
+    if (leftover_minibatch_size := (batch_size % gpu_minibatch_size)) > 0:
+        logger.warning(
+            f"Per-GPU batch size {batch_size} is not divisible by GPU minibatch size {gpu_minibatch_size}; {leftover_minibatch_size} left over"
+        )
+        batch_size -= leftover_minibatch_size
+
+    num_discarded_datapoints = leftover_minibatch_size * total_gpus + leftover_batch_size
+    if num_discarded_datapoints > 0:
+        logger.warning(
+            f"{leftover_minibatch_size * total_gpus + leftover_batch_size} data points discarded"
+        )
+
+    assert gpu_minibatch_size > 0, "gpu_minibatch_size must be positive"
+    assert batch_size > 0, "batch_size must be positive"
+    assert effective_batch_size % total_gpus == 0, (
+        f"effective_batch_size {effective_batch_size} must be a multiple of total_gpus {total_gpus}"
+    )
+    assert effective_batch_size / batch_size == total_gpus, (
+        f"effective_batch_size {effective_batch_size} must be batch_size {batch_size} times total_gpus {total_gpus}"
+    )
+    assert batch_size % gpu_minibatch_size == 0, (
+        f"batch_size {batch_size} must be a multiple of gpu_minibatch_size {gpu_minibatch_size}"
+    )
 
     num_gpu_minibatches = len(activations) // gpu_minibatch_size
 
@@ -269,7 +326,7 @@ async def kmeans_manhattan(
             ):
                 gpu_data.queue.put(gpu_minibatch[ActivationKeys.ROUTER_LOGITS])
 
-        # move them all to gpu0 and gather
+        # gather across nodes
         all_centroid_sets = [
             [
                 th.empty_like(centroids)
