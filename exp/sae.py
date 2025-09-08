@@ -21,8 +21,8 @@ from tqdm import tqdm
 
 from exp import OUTPUT_DIR
 from exp.activations import load_activations_and_init_dist
-from exp.get_activations import ActivationKeys, get_experiment_name
-from exp.training import exponential_to_linear_save_steps
+from exp.get_activations import ActivationKeys
+from exp.training import exponential_to_linear_save_steps, get_experiment_name
 
 
 @dataclass
@@ -110,7 +110,7 @@ async def run_sae_training(
     tokens_per_file: int = 10_000,
 ) -> None:
     """Train autoencoders to sweep over the given hyperparameter sets."""
-    logger.info("loading activations and initialiting distributed setup")
+    logger.info("loading activations and initializing distributed setup")
 
     activations, activation_dims = load_activations_and_init_dist(
         model_name=model_name,
@@ -313,6 +313,8 @@ def main(
     tokens_per_file: int = 10_000,
 ) -> None:
     """Train a sparse autoencoder on the given model and dataset."""
+    logger.info("starting sae training")
+
     if isinstance(expansion_factor, int):
         expansion_factor = [expansion_factor]
 

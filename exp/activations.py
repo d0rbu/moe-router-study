@@ -13,7 +13,7 @@ import torch.multiprocessing as mp
 from tqdm import tqdm
 
 from exp import ACTIVATION_DIRNAME, OUTPUT_DIR
-from exp.get_activations import get_experiment_name
+from exp.training import get_experiment_name
 
 
 def broadcast_variable_length_list(

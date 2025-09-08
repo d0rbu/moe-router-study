@@ -13,7 +13,8 @@ from tqdm import tqdm
 
 from exp import OUTPUT_DIR
 from exp.activations import Activations, load_activations_and_init_dist
-from exp.get_activations import ActivationKeys, get_experiment_name
+from exp.get_activations import ActivationKeys
+from exp.training import get_experiment_name
 
 
 @dataclass
