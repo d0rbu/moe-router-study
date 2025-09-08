@@ -196,7 +196,9 @@ async def sync(
         )
 
     # now do an all-gather along gpus (among entries in all_gpu_data)
-    gpu_data.synced_data += sum(current_gpu_data.dirty_data.to(gpu_idx) for current_gpu_data in all_gpu_data)
+    gpu_data.synced_data += sum(
+        current_gpu_data.dirty_data.to(gpu_idx) for current_gpu_data in all_gpu_data
+    )
 
     await barrier.wait()
 
@@ -455,7 +457,7 @@ async def kmeans_manhattan(
 
     losses = th.stack(losses_over_time, dim=1)
 
-    return all_gpu_data[0].centroid_sets, top_k, losses
+    return all_gpu_data[0].synced_data.centroid_sets, top_k, losses
 
 
 def get_top_circuits(
@@ -498,13 +500,18 @@ async def cluster_paths(
         seed=seed,
     )
 
-    # save centroids
-    out = {
-        "centroids": centroids,
-        "top_k": top_k,
-    }
-    out_path = os.path.join(OUTPUT_DIR, kmeans_experiment_name, "kmeans.pt")
-    th.save(out, out_path)
+    if dist.get_rank() == 0:
+        logger.info("saving...")
+
+        out = {
+            "centroids": centroids,
+            "top_k": top_k,
+            "losses": losses,
+        }
+        out_path = os.path.join(OUTPUT_DIR, kmeans_experiment_name, "kmeans.pt")
+        th.save(out, out_path)
+
+        logger.info("done :)")
 
 
 @arguably.command()

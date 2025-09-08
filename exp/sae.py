@@ -22,6 +22,7 @@ from tqdm import tqdm
 from exp import OUTPUT_DIR
 from exp.activations import load_activations_and_init_dist
 from exp.get_activations import ActivationKeys, get_experiment_name
+from exp.training import exponential_to_linear_save_steps
 
 
 @dataclass
@@ -89,6 +90,7 @@ async def run_sae_training(
     batch_size: int = 4096,
     trainers_per_gpu: int = 2,
     steps: int = 1024 * 256,
+    save_every: int = 1024,
     num_epochs: int = 1,
     expansion_factor: list[int],
     k: list[int],
@@ -143,8 +145,11 @@ async def run_sae_training(
             *[activations(batch_size=batch_size) for _ in range(num_epochs)]
         )
 
+    save_steps = exponential_to_linear_save_steps(total_steps=steps, save_every=save_every)
+
     base_trainer_cfg = {
         "steps": steps,
+        "save_steps": save_steps,
         "activation_dim": activation_dim,
         "lm_name": model_name,
         "wandb_name": model_name,
@@ -153,7 +158,7 @@ async def run_sae_training(
     num_gpus = th.cuda.device_count()
     gpu_queues = [asyncio.Queue(maxsize=MAX_GPU_QUEUE_SIZE) for _ in range(num_gpus)]
 
-    workers = [
+    _workers = [
         asyncio.create_task(
             gpu_worker(device_idx, num_gpus, gpu_queues[device_idx], data_iterator)
         )
@@ -273,6 +278,9 @@ async def run_sae_training(
     # put a sentinel value in the gpu queues to stop the workers
     for gpu_queue in gpu_queues:
         gpu_queue.put(None)
+        gpu_queue.join()
+
+    logger.info("done :)")
 
 
 @arguably.command()
@@ -283,6 +291,7 @@ def main(
     batch_size: int = 4096,
     trainers_per_gpu: int = 2,
     steps: int = 1024 * 256,
+    save_every: int = 1024,
     num_epochs: int = 1,
     expansion_factor: list[int] | int = 16,
     k: list[int] | int = 160,
@@ -367,6 +376,7 @@ def main(
             batch_size=batch_size,
             trainers_per_gpu=trainers_per_gpu,
             steps=steps,
+            save_every=save_every,
             num_epochs=num_epochs,
             expansion_factor=expansion_factor,
             k=k,
