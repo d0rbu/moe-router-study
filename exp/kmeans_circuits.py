@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import dataclass
+import gc
 from itertools import batched, islice, pairwise
 import os
 
@@ -15,20 +16,71 @@ from exp.get_activations import ActivationKeys, get_experiment_name
 
 
 @dataclass
-class GPUData:
-    k_values: th.tensor
+class RunningKMeansData:
+    # list of centroids of shape (K, D)
     centroid_sets: list[th.tensor]
-    weights: list[th.tensor]  # for online running updates
+    # list of weights of shape (K) for online running updates
+    weight_sets: list[th.tensor]
     losses: th.tensor
-    dirty_centroid_weights: list[
-        th.tensor
-    ]  # for keeping track of centroids that have not been synced yet
-    dirty_weights: list[
-        th.tensor
-    ]  # for keeping track of samples that have not been synced yet
-    dirty_losses: list[
-        th.tensor
-    ]  # for keeping track of losses that have not been synced yet
+
+    def to(self, device: th.Device) -> "RunningKMeansData":
+        return RunningKMeansData(
+            centroid_sets=[centroids.to(device) for centroids in self.centroid_sets],
+            weight_sets=[weights.to(device) for weights in self.weight_sets],
+            losses=self.losses.to(device),
+        )
+
+    def __add__(self, other: "RunningKMeansData") -> "RunningKMeansData":
+        new_data = RunningKMeansData(
+            centroid_sets=[
+                th.empty_like(centroids) for centroids in self.centroid_sets
+            ],
+            weight_sets=[th.empty_like(weights) for weights in self.weight_sets],
+            loss=th.empty_like(self.losses),
+        )
+
+        for losses_idx, (
+            base_centroids,
+            base_weights,
+            other_centroids,
+            other_weights,
+            new_centroids,
+            new_weights,
+        ) in enumerate(
+            zip(
+                self.centroid_sets,
+                self.weights,
+                other.centroid_sets,
+                other.weights,
+                new_data.centroid_sets,
+                new_data.weight_sets,
+                strict=False,
+            )
+        ):
+            new_weights.copy_(base_weights + other_weights)
+            base_weight_proportion = base_weights / new_weights
+            other_weight_proportion = 1 - base_weight_proportion
+
+            new_centroids.copy_(
+                base_weight_proportion * base_centroids
+                + other_weight_proportion * other_centroids
+            )
+
+            base_loss_proportion = base_weights.sum() / new_weights.sum()
+            other_loss_proportion = 1 - base_loss_proportion
+
+            new_data.losses[losses_idx] = (
+                base_loss_proportion * self.losses
+                + other_loss_proportion * other.losses
+            )
+
+        return new_data
+
+
+@dataclass
+class GPUData:
+    synced_data: RunningKMeansData
+    dirty_data: RunningKMeansData
     queue: asyncio.Queue | None = None
 
 
@@ -69,20 +121,19 @@ async def update_centroid_data(
     )
     new_loss = centroid_distances.mean()
 
-    new_centroids, weights_delta = [
-        th.stack(x, dim=0) for x in zip(*centroids_and_weights, strict=True)
-    ]
+    new_centroids, new_weights = list(zip(*centroids_and_weights, strict=True))
     ### end
 
     ### update the tensors
-    new_weights = weights + weights_delta
-    old_weights_proportion = weights / new_weights
+    old_weights = weights.clone()
+    weights += weights_delta
+    old_weights_proportion = old_weights / weights
     new_weights_proportion = 1 - old_weights_proportion
 
     centroids *= old_weights_proportion
     centroids += new_centroids * new_weights_proportion
 
-    old_loss_proportion = weights.sum() / new_weights.sum()
+    old_loss_proportion = old_weights.sum() / weights.sum()
     new_loss_proportion = 1 - old_loss_proportion
 
     losses[losses_idx] *= old_loss_proportion
@@ -90,10 +141,12 @@ async def update_centroid_data(
     ### end
 
 
+async def sync_gpu_data():
+    pass
+
+
 async def gpu_worker(
-    gpu_idx: int,
-    gpu_data: GPUData,
-    top_k: int,
+    gpu_idx: int, gpu_data: GPUData, top_k: int, losses_over_time: list[th.Tensor]
 ) -> None:
     logger.info(f"Starting GPU worker {gpu_idx}")
 
@@ -195,7 +248,9 @@ async def kmeans_manhattan(
         )
         batch_size -= leftover_minibatch_size
 
-    num_discarded_datapoints = leftover_minibatch_size * total_gpus + leftover_batch_size
+    num_discarded_datapoints = (
+        leftover_minibatch_size * total_gpus + leftover_batch_size
+    )
     if num_discarded_datapoints > 0:
         logger.warning(
             f"{leftover_minibatch_size * total_gpus + leftover_batch_size} data points discarded"
@@ -213,70 +268,63 @@ async def kmeans_manhattan(
         f"batch_size {batch_size} must be a multiple of gpu_minibatch_size {gpu_minibatch_size}"
     )
 
+    accumulation_size = batch_size // gpu_minibatch_size
+
     num_gpu_minibatches = len(activations) // gpu_minibatch_size
 
     all_gpu_data = [
         GPUData(
-            k_values=th.tensor(k_values, dtype=th.int32, device=gpu_idx),
-            centroid_sets=[
-                th.empty(k, activation_dim, device=gpu_idx) for k in k_values
-            ],
-            weights=[th.zeros(k) for k in k_values],
-            losses=th.zeros(len(k_values)),
+            synced_data=RunningKMeansData(
+                centroid_sets=[
+                    th.empty(k, activation_dim, device=gpu_idx) for k in k_values
+                ],
+                weights=[th.zeros(k) for k in k_values],
+                losses=th.zeros(len(k_values)),
+            ),
+            dirty_data=RunningKMeansData(
+                centroid_sets=[
+                    th.zeros(k, activation_dim, device=gpu_idx) for k in k_values
+                ],
+                weights=[th.zeros(k) for k in k_values],
+                losses=th.zeros(len(k_values)),
+            ),
             queue=asyncio.Queue(maxsize=GPU_QUEUE_MAXSIZE),
         )
         for gpu_idx in num_gpus
     ]
 
-    top_k = th.tensor([0], dtype=th.int32)
+    ### get top_k and initialize centroids from random data points
+    k_ranges = th.cat(
+        [
+            th.tensor([0], device=0),
+            th.cumsum(th.tensor(k_values, device=0), dim=0),
+        ],
+        dim=0,
+    )
 
-    if dist.get_rank() == 0:
-        k_ranges = th.cat(
-            [
-                th.tensor([0], device=0),
-                th.cumsum(th.tensor(k_values, device=0), dim=0),
-            ],
-            dim=0,
-        )
+    # load a batch of activations to initialize the centroids
+    data_iterable = activations(batch_size=k_ranges[-1].item())
+    activation_batch = next(data_iterable)
+    router_activations = activation_batch[ActivationKeys.ROUTER_LOGITS]
+    top_k = activation_batch["topk"]
 
-        # load a batch of activations to initialize the centroids
-        data_iterable = activations(batch_size=k_ranges[-1].item())
-        activation_batch = next(data_iterable)
-        router_activations = activation_batch[ActivationKeys.ROUTER_LOGITS].to(0)
-        top_k[0] = activation_batch["topk"]
+    for k_idx, (k_start, k_end) in enumerate(pairwise(k_ranges)):
+        k = k_values[k_idx]
+        assert k_end - k_start == k, "k_end - k_start must be equal to k"
 
-        for k_idx, (k_start, k_end) in enumerate(pairwise(k_ranges)):
-            k = k_values[k_idx]
-            assert k_end - k_start == k, "k_end - k_start must be equal to k"
+        for gpu_idx, gpu_data in enumerate(all_gpu_data):
+            gpu_data.dirty_data.centroid_sets[k_idx] = router_activations[
+                k_start:k_end
+            ].to(gpu_idx)
 
-            all_gpu_data[0].centroid_sets[k_idx] = router_activations[k_start:k_end]
-
-        # clean up the background worker and queue
-        data_iterable.send("STOP!")
-
-    dist.broadcast(top_k, src=0)
-
-    for gpu_idx, gpu_data in all_gpu_data:
-        if gpu_idx == 0:
-            for centroids in gpu_data.centroid_sets:
-                dist.broadcast(centroids, src=0)
-            continue
-
-        for source_centroids, target_centroids in zip(
-            all_gpu_data[0].centroid_sets, gpu_data.centroid_sets, strict=True
-        ):
-            target_centroids.copy_(source_centroids)
-
-    top_k = top_k[0].item()
-
-    # initialize cluster sizes for online weighted updates
-    cluster_size_sets = [
-        [th.zeros(k, dtype=th.int32, device=gpu_idx) for k in k_values]
-        for gpu_idx in range(num_gpus)
-    ]
+    # clean up the background workers and queue
+    data_iterable.send("STOP!")
+    th.cuda.empty_cache()
+    gc.collect()
+    ### end
 
     # track losses for each iteration
-    losses = []
+    losses_over_time = []
 
     iterator = range(max_iters)
     if dist.get_rank() == 0:
@@ -285,15 +333,12 @@ async def kmeans_manhattan(
         )
 
     _workers = [
-        asyncio.create_task(gpu_worker(gpu_idx, all_gpu_data, top_k))
+        asyncio.create_task(gpu_worker(gpu_idx, all_gpu_data, top_k, losses_over_time))
         for gpu_idx in range(num_gpus)
     ]
 
     # distributed kmeans
     for _iter_idx in iterator:
-        for cluster_sizes in cluster_size_sets:
-            cluster_sizes.zero_()
-
         # process data in batches, parallelized over devices and nodes
         minibatch_iterator = activations(batch_size=gpu_minibatch_size)
 
@@ -320,11 +365,15 @@ async def kmeans_manhattan(
 
         concurrent_minibatch_iterator = batched(distributed_iterator, num_gpus)
 
-        for gpu_minibatches in concurrent_minibatch_iterator:
+        for gpu_minibatch_idx, gpu_minibatches in enumerate(
+            concurrent_minibatch_iterator
+        ):
             for gpu_data, gpu_minibatch in zip(
                 all_gpu_data, gpu_minibatches, strict=False
             ):
-                gpu_data.queue.put(gpu_minibatch[ActivationKeys.ROUTER_LOGITS])
+                gpu_data.queue.put(
+                    (gpu_minibatch_idx, gpu_minibatch[ActivationKeys.ROUTER_LOGITS])
+                )
 
         # gather across nodes
         all_centroid_sets = [
@@ -394,7 +443,6 @@ async def kmeans_manhattan(
         # now do an all-gather among entries in gpu_data
         # we start by just gathering to cpu
         base_data = GPUData(
-            k_values=th.tensor(k_values, dtype=th.int32),
             centroid_sets=[
                 centroids.cpu() for centroids in all_gpu_data[0].centroid_sets
             ],
@@ -447,13 +495,11 @@ async def kmeans_manhattan(
 
             gpu_data.losses.copy_(base_data.losses)
 
-        # now, finally, all gpu workers are up to date and ready to start the next batch. phew!
-        losses.append(all_gpu_data[0].losses.detach().cpu().clone())
-
     for gpu_data in all_gpu_data:
+        gpu_data.put(None)
         gpu_data.queue.join()
 
-    losses = th.stack(losses, dim=1)
+    losses = th.stack(losses_over_time, dim=1)
 
     return all_gpu_data[0].centroid_sets, top_k, losses
 
