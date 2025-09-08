@@ -110,6 +110,8 @@ async def run_sae_training(
     tokens_per_file: int = 10_000,
 ) -> None:
     """Train autoencoders to sweep over the given hyperparameter sets."""
+    logger.info("loading activations and initialiting distributed setup")
+
     activations, activation_dims = load_activations_and_init_dist(
         model_name=model_name,
         dataset_name=dataset_name,
