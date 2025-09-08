@@ -487,11 +487,15 @@ def load_activations_and_init_dist(
         dataset_name=dataset_name,
         tokens_per_file=tokens_per_file,
     )
+    logger.debug(f"Loading from experiment {activations_experiment_name}")
 
     rank = int(os.environ.get("SLURM_PROCID", 0))
     world_size = int(os.environ.get("SLURM_NTASKS", 1))
+
+    logger.debug("Initializing distributed process group")
     dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
 
+    logger.debug(f"Initializing activations with seed {seed}")
     activations = Activations(
         experiment_name=activations_experiment_name,
         seed=seed,

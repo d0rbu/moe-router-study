@@ -3,6 +3,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from itertools import batched, chain, islice, product
 import os
+import sys
 
 import arguably
 from dictionary_learning.dictionary import Dictionary
@@ -110,7 +111,7 @@ async def run_sae_training(
     tokens_per_file: int = 10_000,
 ) -> None:
     """Train autoencoders to sweep over the given hyperparameter sets."""
-    logger.info("loading activations and initializing distributed setup")
+    logger.debug("loading activations and initializing distributed setup")
 
     activations, activation_dims = load_activations_and_init_dist(
         model_name=model_name,
@@ -311,9 +312,15 @@ def main(
     seed: list[int] | int = 0,
     submodule_name: list[str] | str = "mlp_output",
     tokens_per_file: int = 10_000,
+    log_level: str = "INFO"
 ) -> None:
     """Train a sparse autoencoder on the given model and dataset."""
-    logger.info("starting sae training")
+    print(f"Running with log level: {log_level}")
+
+    logger.remove()
+    logger.add(sys.stderr, level=log_level)
+
+    logger.debug(f"Running with log level: {log_level}")
 
     if isinstance(expansion_factor, int):
         expansion_factor = [expansion_factor]
