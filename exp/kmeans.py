@@ -521,7 +521,7 @@ def main(
     model_name: str = "olmoe-i",
     dataset_name: str = "lmsys",
     *_args,
-    k: list[int] | int | None = None,
+    k: [list[int] | int] | None = None,
     expansion_factor: list[int] | int | None = None,
     max_iters: int = 128,
     seed: int = 0,
