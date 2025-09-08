@@ -33,7 +33,7 @@ class RunningKMeansData:
             losses=self.losses.clone(),
         )
 
-    def to(self, device: th.Device) -> "RunningKMeansData":
+    def to(self, device: th.device) -> "RunningKMeansData":
         return RunningKMeansData(
             centroid_sets=[centroids.to(device) for centroids in self.centroid_sets],
             weight_sets=[weights.to(device) for weights in self.weight_sets],
