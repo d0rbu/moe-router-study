@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import gc
 from itertools import batched, islice, pairwise
 import os
+import sys
 
 import arguably
 from loguru import logger
@@ -526,7 +527,15 @@ def main(
     seed: int = 0,
     gpu_minibatch_size: int = 1024,
     tokens_per_file: int = 10_000,
+    log_level: str = "INFO",
 ) -> None:
+    print(f"Running with log level: {log_level}")
+
+    logger.remove()
+    logger.add(sys.stderr, level=log_level)
+
+    logger.debug(f"Running with log level: {log_level}")
+
     activations, activation_dims = load_activations_and_init_dist(
         model_name=model_name,
         dataset_name=dataset_name,
