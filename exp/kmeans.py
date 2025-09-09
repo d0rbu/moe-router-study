@@ -5,6 +5,7 @@ import gc
 from itertools import batched, islice, pairwise
 import os
 import sys
+from typing import Any
 
 import arguably
 from loguru import logger
@@ -475,7 +476,7 @@ def get_top_circuits(
     return circuits.indices, circuit_mask
 
 
-async def cluster_paths(
+async def cluster_paths_async(
     model_name: str,
     dataset_name: str,
     activations: Activations,
@@ -516,12 +517,11 @@ async def cluster_paths(
         logger.info("done :)")
 
 
-@arguably.command()
-def main(
+def cluster_paths(
     model_name: str = "olmoe-i",
     dataset_name: str = "lmsys",
     *_args,
-    k: [list[int] | int] | None = None,
+    k: list[int] | int | None = None,
     expansion_factor: list[int] | int | None = None,
     max_iters: int = 128,
     seed: int = 0,
@@ -565,7 +565,7 @@ def main(
             raise ValueError("Cannot specify both k and expansion_factor")
 
     asyncio.run(
-        cluster_paths(
+        cluster_paths_async(
             model_name=model_name,
             dataset_name=dataset_name,
             activations=activations,
@@ -576,6 +576,35 @@ def main(
             tokens_per_file=tokens_per_file,
             gpu_minibatch_size=gpu_minibatch_size,
         )
+    )
+
+
+@arguably.command()
+def main(
+    model_name: str = "olmoe-i",
+    dataset_name: str = "lmsys",
+    *args: Any,
+    k: list[int] | None = None,
+    expansion_factor: list[int] | None = None,
+    max_iters: int = 128,
+    seed: int = 0,
+    gpu_minibatch_size: int = 1024,
+    tokens_per_file: int = 10_000,
+    log_level: str = "INFO",
+    **kwargs: Any,
+) -> None:
+    cluster_paths(
+        model_name,
+        dataset_name,
+        *args,
+        k=k,
+        expansion_factor=expansion_factor,
+        max_iters=max_iters,
+        seed=seed,
+        gpu_minibatch_size=gpu_minibatch_size,
+        tokens_per_file=tokens_per_file,
+        log_level=log_level,
+        **kwargs,
     )
 
 
