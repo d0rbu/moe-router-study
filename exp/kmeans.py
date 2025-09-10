@@ -199,8 +199,19 @@ async def sync(
         )
 
     # now do an all-gather along gpus (among entries in all_gpu_data)
-    gpu_data.synced_data += sum(
-        current_gpu_data.dirty_data.to(gpu_idx) for current_gpu_data in all_gpu_data
+    # Create a zero RunningKMeansData as start value for sum
+    zero_data = RunningKMeansData(
+        centroid_sets=[
+            th.zeros_like(centroids) for centroids in gpu_data.synced_data.centroid_sets
+        ],
+        weight_sets=[
+            th.zeros_like(weights) for weights in gpu_data.synced_data.weight_sets
+        ],
+        losses=th.zeros_like(gpu_data.synced_data.losses),
+    )
+    gpu_data.synced_data = gpu_data.synced_data + sum(
+        (current_gpu_data.dirty_data.to(gpu_idx) for current_gpu_data in all_gpu_data),
+        zero_data,
     )
 
     await barrier.wait()
@@ -352,19 +363,19 @@ async def kmeans_manhattan(
                 centroid_sets=[
                     th.empty(k, activation_dim, device=gpu_idx) for k in k_values
                 ],
-                weights=[th.zeros(k) for k in k_values],
+                weight_sets=[th.zeros(k) for k in k_values],
                 losses=th.zeros(len(k_values)),
             ),
             dirty_data=RunningKMeansData(
                 centroid_sets=[
                     th.empty(k, activation_dim, device=gpu_idx) for k in k_values
                 ],
-                weights=[th.zeros(k) for k in k_values],
+                weight_sets=[th.zeros(k) for k in k_values],
                 losses=th.zeros(len(k_values)),
             ),
             queue=asyncio.Queue(maxsize=GPU_QUEUE_MAXSIZE),
         )
-        for gpu_idx in num_gpus
+        for gpu_idx in range(num_gpus)
     ]
 
     ### get top_k and initialize centroids from random data points
@@ -419,7 +430,7 @@ async def kmeans_manhattan(
             iterator, desc="Kmeans iterations", leave=False, total=max_iters, position=0
         )
 
-    synchronization_barrier = Barrier()
+    synchronization_barrier = Barrier(num_gpus)
     _workers = [
         asyncio.create_task(
             gpu_worker(
@@ -605,7 +616,7 @@ def cluster_paths(
             pass
         case _, _:
             raise ValueError("Cannot specify both k and expansion_factor")
-    
+
     # At this point, k is guaranteed to be a list[int]
     assert isinstance(k, list), "k must be a list after processing"
 
