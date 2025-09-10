@@ -278,7 +278,7 @@ async def gpu_worker(
                 "top_k": top_k,
                 "losses": th.stack(losses_over_time, dim=1)
                 if losses_over_time
-                else th.empty(0),
+                else all_gpu_data[0].synced_data.losses,
                 "iteration": save_idx,
             }
             checkpoint_path = os.path.join(
