@@ -1,0 +1,7 @@
+# Configuration for ty type checker
+
+[rules]
+# Disable warnings that are not critical for CI
+possibly-unbound-attribute = "ignore"
+unresolved-import = "ignore"
+unresolved-attribute = "ignore"

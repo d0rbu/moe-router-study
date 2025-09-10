@@ -196,9 +196,9 @@ async def run_sae_training(
     distributed_iterator = list(
         islice(
             hparam_sweep_iterator,
-            start=dist.get_rank(),
-            stop=None,
-            step=dist.get_world_size(),
+            dist.get_rank(),
+            None,
+            dist.get_world_size(),
         )
     )
     distributed_iterator = tqdm(

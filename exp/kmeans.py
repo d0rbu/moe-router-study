@@ -592,19 +592,22 @@ def cluster_paths(
         case None, None:
             # 1 to 131072
             k = [2**i for i in range(17)]
-        case None, int():
-            k = [expansion_factor * activation_dim]
-        case int(), None:
-            k = [k]
-        case None, list():
+        case None, int(ef):
+            k = [ef * activation_dim]
+        case int(k_val), None:
+            k = [k_val]
+        case None, list(ef_list):
             k = [
                 current_expansion_factor * activation_dim
-                for current_expansion_factor in expansion_factor
+                for current_expansion_factor in ef_list
             ]
         case list(), None:
             pass
         case _, _:
             raise ValueError("Cannot specify both k and expansion_factor")
+    
+    # At this point, k is guaranteed to be a list[int]
+    assert isinstance(k, list), "k must be a list after processing"
 
     asyncio.run(
         cluster_paths_async(
@@ -627,8 +630,8 @@ def main(
     model_name: str = "olmoe-i",
     dataset_name: str = "lmsys",
     *args: Any,
-    k: list[int] | None = None,
-    expansion_factor: list[int] | None = None,
+    k: list[int] | int | None = None,
+    expansion_factor: list[int] | int | None = None,
     max_iters: int = 128,
     save_every: int | None = None,
     seed: int = 0,
