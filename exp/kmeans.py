@@ -16,7 +16,7 @@ from tqdm import tqdm
 from exp import OUTPUT_DIR
 from exp.activations import Activations, load_activations_and_init_dist
 from exp.get_activations import ActivationKeys
-from exp.training import get_experiment_name
+from exp.training import exponential_to_linear_save_steps, get_experiment_name
 
 
 @dataclass
@@ -271,6 +271,8 @@ async def kmeans_manhattan(
     max_iters: int = 128,
     gpu_minibatch_size: int | None = None,
     seed: int = 0,
+    save_every: int | None = None,
+    save_dir: str | None = None,
 ) -> tuple[list[th.Tensor], int, th.Tensor]:
     """
     Perform k-means clustering with Manhattan distance.
@@ -282,6 +284,8 @@ async def kmeans_manhattan(
         max_iters: Maximum number of iterations
         minibatch_size: Batch size for processing data. If None, process all data at once.
         seed: Random seed for initialization
+        save_every: Save checkpoints every N iterations. If None, no checkpoints are saved.
+        save_dir: Directory to save checkpoints. Required if save_every is specified.
 
     Returns:
         centroid_sets: List of cluster centroids, each element of shape (K, D)
@@ -396,6 +400,19 @@ async def kmeans_manhattan(
     # track losses for each iteration
     losses_over_time = []
 
+    # calculate save steps for checkpointing
+    save_steps = set()
+    if save_every is not None:
+        assert save_dir is not None, (
+            "save_dir must be specified if save_every is provided"
+        )
+        save_steps = exponential_to_linear_save_steps(
+            total_steps=max_iters, save_every=save_every
+        )
+        # ensure the save directory exists
+        if dist.get_rank() == 0:
+            os.makedirs(save_dir, exist_ok=True)
+
     iterator = range(max_iters)
     if dist.get_rank() == 0:
         iterator = tqdm(
@@ -454,6 +471,22 @@ async def kmeans_manhattan(
                     (gpu_minibatch[ActivationKeys.ROUTER_LOGITS], should_sync)
                 )
 
+        # save checkpoint if this iteration is in save_steps
+        if _iter_idx in save_steps and dist.get_rank() == 0:
+            checkpoint_data = {
+                "centroids": all_gpu_data[0].synced_data.centroid_sets,
+                "top_k": top_k,
+                "losses": th.stack(losses_over_time, dim=1)
+                if losses_over_time
+                else th.empty(0),
+                "iteration": _iter_idx,
+            }
+            checkpoint_path = os.path.join(save_dir, f"checkpoint_iter_{_iter_idx}.pt")
+            th.save(checkpoint_data, checkpoint_path)
+            logger.info(
+                f"Saved checkpoint at iteration {_iter_idx} to {checkpoint_path}"
+            )
+
     for gpu_data in all_gpu_data:
         gpu_data.put(None)
         gpu_data.queue.join()
@@ -486,6 +519,7 @@ async def cluster_paths_async(
     seed: int,
     tokens_per_file: int,
     gpu_minibatch_size: int,
+    save_every: int | None = None,
 ) -> None:
     kmeans_experiment_name = get_experiment_name(
         model_name=model_name,
@@ -494,13 +528,21 @@ async def cluster_paths_async(
         tokens_per_file=tokens_per_file,
     )
 
-    centroids, top_k, losses = kmeans_manhattan(
+    save_dir = (
+        os.path.join(OUTPUT_DIR, kmeans_experiment_name)
+        if save_every is not None
+        else None
+    )
+
+    centroids, top_k, losses = await kmeans_manhattan(
         activations=activations,
         activation_dim=activation_dim,
         k_values=k,
         max_iters=max_iters,
         gpu_minibatch_size=gpu_minibatch_size,
         seed=seed,
+        save_every=save_every,
+        save_dir=save_dir,
     )
 
     if dist.get_rank() == 0:
@@ -524,6 +566,7 @@ def cluster_paths(
     k: list[int] | int | None = None,
     expansion_factor: list[int] | int | None = None,
     max_iters: int = 128,
+    save_every: int | None = None,
     seed: int = 0,
     gpu_minibatch_size: int = 1024,
     tokens_per_file: int = 10_000,
@@ -575,6 +618,7 @@ def cluster_paths(
             seed=seed,
             tokens_per_file=tokens_per_file,
             gpu_minibatch_size=gpu_minibatch_size,
+            save_every=save_every,
         )
     )
 
@@ -587,6 +631,7 @@ def main(
     k: list[int] | None = None,
     expansion_factor: list[int] | None = None,
     max_iters: int = 128,
+    save_every: int | None = None,
     seed: int = 0,
     gpu_minibatch_size: int = 1024,
     tokens_per_file: int = 10_000,
@@ -600,6 +645,7 @@ def main(
         k=k,
         expansion_factor=expansion_factor,
         max_iters=max_iters,
+        save_every=save_every,
         seed=seed,
         gpu_minibatch_size=gpu_minibatch_size,
         tokens_per_file=tokens_per_file,
