@@ -281,9 +281,7 @@ async def gpu_worker(
                 else all_gpu_data[0].synced_data.losses,
                 "iteration": save_idx,
             }
-            checkpoint_path = os.path.join(
-                save_dir, f"checkpoint_iter_{save_idx}.pt"
-            )
+            checkpoint_path = os.path.join(save_dir, f"checkpoint_iter_{save_idx}.pt")
             th.save(checkpoint_data, checkpoint_path)
             logger.info(
                 f"Saved checkpoint at iteration {save_idx} to {checkpoint_path}"
@@ -498,7 +496,7 @@ async def kmeans_manhattan(
             should_sync = distributed_batch_idx % accumulation_size == (
                 accumulation_size - 1
             )
-            
+
             # compute effective step index and determine if we should save
             effective_step_idx = distributed_batch_idx // accumulation_size
             save_idx = effective_step_idx if effective_step_idx in save_steps else None
