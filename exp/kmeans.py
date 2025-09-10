@@ -22,10 +22,10 @@ from exp.training import exponential_to_linear_save_steps, get_experiment_name
 @dataclass
 class RunningKMeansData:
     # list of centroids of shape (K, D)
-    centroid_sets: list[th.tensor]
+    centroid_sets: list[th.Tensor]
     # list of weights of shape (K) for online running updates
-    weight_sets: list[th.tensor]
-    losses: th.tensor
+    weight_sets: list[th.Tensor]
+    losses: th.Tensor
 
     def clone(self) -> "RunningKMeansData":
         return RunningKMeansData(
@@ -151,7 +151,7 @@ async def sync(
     )
 
     # N, num_K
-    dist.all_gather_into_tensor(all_losses, gpu_data.losses)
+    dist.all_gather_into_tensor(all_losses, gpu_data.dirty_data.losses)
 
     for losses_idx, (
         centroids,
@@ -159,7 +159,7 @@ async def sync(
     ) in enumerate(
         zip(
             gpu_data.dirty_data.centroid_sets,
-            gpu_data.dirty_data.weights,
+            gpu_data.dirty_data.weight_sets,
             strict=True,
         )
     ):
@@ -185,7 +185,7 @@ async def sync(
         new_loss = (all_losses[:, losses_idx] * loss_proportion).sum()
 
         gpu_data.dirty_data.centroid_sets[losses_idx] = new_centroids
-        gpu_data.dirty_data.weights[losses_idx] = weights_total
+        gpu_data.dirty_data.weight_sets[losses_idx] = weights_total
         gpu_data.dirty_data.losses[losses_idx] = new_loss
 
         del (
@@ -224,7 +224,7 @@ async def gpu_worker(
     gpu_data = all_gpu_data[gpu_idx]
 
     while True:
-        data, should_sync = await gpu_data.gpu_queue.get()
+        data, should_sync = await gpu_data.queue.get()
         if data is None:
             break
 
@@ -233,7 +233,7 @@ async def gpu_worker(
         # convert from logits to paths
         paths = th.topk(data, k=top_k, dim=2).indices
         data.zero_()
-        data.scatter_(2, paths.indices, 1)
+        data.scatter_(2, paths, 1)
 
         del paths
         th.cuda.empty_cache()
@@ -467,7 +467,7 @@ async def kmeans_manhattan(
             for gpu_data, gpu_minibatch in zip(
                 all_gpu_data, gpu_minibatches, strict=False
             ):
-                gpu_data.queue.put(
+                await gpu_data.queue.put(
                     (gpu_minibatch[ActivationKeys.ROUTER_LOGITS], should_sync)
                 )
 
@@ -488,8 +488,7 @@ async def kmeans_manhattan(
             )
 
     for gpu_data in all_gpu_data:
-        gpu_data.put(None)
-        gpu_data.queue.join()
+        await gpu_data.queue.put((None, False))
 
     losses = th.stack(losses_over_time, dim=1)
 
