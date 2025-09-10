@@ -199,19 +199,8 @@ async def sync(
         )
 
     # now do an all-gather along gpus (among entries in all_gpu_data)
-    # Create a zero RunningKMeansData as start value for sum
-    zero_data = RunningKMeansData(
-        centroid_sets=[
-            th.zeros_like(centroids) for centroids in gpu_data.synced_data.centroid_sets
-        ],
-        weight_sets=[
-            th.zeros_like(weights) for weights in gpu_data.synced_data.weight_sets
-        ],
-        losses=th.zeros_like(gpu_data.synced_data.losses),
-    )
-    gpu_data.synced_data = gpu_data.synced_data + sum(
-        (current_gpu_data.dirty_data.to(gpu_idx) for current_gpu_data in all_gpu_data),
-        zero_data,
+    gpu_data.synced_data += sum(
+        current_gpu_data.dirty_data.to(gpu_idx) for current_gpu_data in all_gpu_data
     )
 
     await barrier.wait()
@@ -231,7 +220,6 @@ async def gpu_worker(
     losses_over_time: list[th.Tensor],
     barrier: Barrier,
     save_dir: str | None = None,
-    current_iter: list[int] | None = None,
 ) -> None:
     logger.info(f"Starting GPU worker {gpu_idx}")
     gpu_data = all_gpu_data[gpu_idx]
@@ -241,12 +229,11 @@ async def gpu_worker(
         if queue_item is None:
             break
 
-        if len(queue_item) == 3:
-            data, should_sync, should_save = queue_item
-        else:
-            # backward compatibility
-            data, should_sync = queue_item
-            should_save = False
+        data, should_sync, save_idx = queue_item
+
+        # assert that if save_idx is not None, then should_sync is also true
+        if save_idx is not None:
+            assert should_sync, "save_idx can only be set when should_sync is true"
 
         data = data.to(gpu_idx)
 
@@ -279,13 +266,12 @@ async def gpu_worker(
 
         await sync(gpu_idx, all_gpu_data, losses_over_time, barrier)
 
-        # save checkpoint if should_save is true and we're on rank 0 gpu 0
+        # save checkpoint if save_idx is not None and we're on rank 0 gpu 0
         if (
-            should_save
+            save_idx is not None
             and dist.get_rank() == 0
             and gpu_idx == 0
             and save_dir is not None
-            and current_iter is not None
         ):
             checkpoint_data = {
                 "centroids": all_gpu_data[0].synced_data.centroid_sets,
@@ -293,14 +279,14 @@ async def gpu_worker(
                 "losses": th.stack(losses_over_time, dim=1)
                 if losses_over_time
                 else th.empty(0),
-                "iteration": current_iter[0],
+                "iteration": save_idx,
             }
             checkpoint_path = os.path.join(
-                save_dir, f"checkpoint_iter_{current_iter[0]}.pt"
+                save_dir, f"checkpoint_iter_{save_idx}.pt"
             )
             th.save(checkpoint_data, checkpoint_path)
             logger.info(
-                f"Saved checkpoint at iteration {current_iter[0]} to {checkpoint_path}"
+                f"Saved checkpoint at iteration {save_idx} to {checkpoint_path}"
             )
 
 
@@ -457,9 +443,6 @@ async def kmeans_manhattan(
         if dist.get_rank() == 0:
             os.makedirs(save_dir, exist_ok=True)
 
-    # shared current iteration counter for checkpointing
-    current_iter = [0]
-
     iterator = range(max_iters)
     if dist.get_rank() == 0:
         iterator = tqdm(
@@ -476,7 +459,6 @@ async def kmeans_manhattan(
                 losses_over_time,
                 synchronization_barrier,
                 save_dir,
-                current_iter,
             )
         )
         for gpu_idx in range(num_gpus)
@@ -484,7 +466,6 @@ async def kmeans_manhattan(
 
     # distributed kmeans
     for _iter_idx in iterator:
-        current_iter[0] = _iter_idx
         # process data in batches, parallelized over devices and nodes
         minibatch_iterator = activations(batch_size=gpu_minibatch_size)
 
@@ -517,13 +498,10 @@ async def kmeans_manhattan(
             should_sync = distributed_batch_idx % accumulation_size == (
                 accumulation_size - 1
             )
-            should_save = _iter_idx in save_steps and should_sync
-
-            # assert that if should_save is true, then should_sync is also true
-            if should_save:
-                assert should_sync, (
-                    "should_save can only be true when should_sync is true"
-                )
+            
+            # compute effective step index and determine if we should save
+            effective_step_idx = distributed_batch_idx // accumulation_size
+            save_idx = effective_step_idx if effective_step_idx in save_steps else None
 
             for gpu_data, gpu_minibatch in zip(
                 all_gpu_data, gpu_minibatches, strict=False
@@ -532,7 +510,7 @@ async def kmeans_manhattan(
                     (
                         gpu_minibatch[ActivationKeys.ROUTER_LOGITS],
                         should_sync,
-                        should_save,
+                        save_idx,
                     )
                 )
 
