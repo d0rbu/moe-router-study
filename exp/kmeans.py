@@ -230,14 +230,23 @@ async def gpu_worker(
     top_k: int,
     losses_over_time: list[th.Tensor],
     barrier: Barrier,
+    save_dir: str | None = None,
+    current_iter: list[int] | None = None,
 ) -> None:
     logger.info(f"Starting GPU worker {gpu_idx}")
     gpu_data = all_gpu_data[gpu_idx]
 
     while True:
-        data, should_sync = await gpu_data.queue.get()
-        if data is None:
+        queue_item = await gpu_data.queue.get()
+        if queue_item is None:
             break
+
+        if len(queue_item) == 3:
+            data, should_sync, should_save = queue_item
+        else:
+            # backward compatibility
+            data, should_sync = queue_item
+            should_save = False
 
         data = data.to(gpu_idx)
 
@@ -269,6 +278,30 @@ async def gpu_worker(
             continue
 
         await sync(gpu_idx, all_gpu_data, losses_over_time, barrier)
+
+        # save checkpoint if should_save is true and we're on rank 0 gpu 0
+        if (
+            should_save
+            and dist.get_rank() == 0
+            and gpu_idx == 0
+            and save_dir is not None
+            and current_iter is not None
+        ):
+            checkpoint_data = {
+                "centroids": all_gpu_data[0].synced_data.centroid_sets,
+                "top_k": top_k,
+                "losses": th.stack(losses_over_time, dim=1)
+                if losses_over_time
+                else th.empty(0),
+                "iteration": current_iter[0],
+            }
+            checkpoint_path = os.path.join(
+                save_dir, f"checkpoint_iter_{current_iter[0]}.pt"
+            )
+            th.save(checkpoint_data, checkpoint_path)
+            logger.info(
+                f"Saved checkpoint at iteration {current_iter[0]} to {checkpoint_path}"
+            )
 
 
 GPU_QUEUE_MAXSIZE = 4
@@ -424,6 +457,9 @@ async def kmeans_manhattan(
         if dist.get_rank() == 0:
             os.makedirs(save_dir, exist_ok=True)
 
+    # shared current iteration counter for checkpointing
+    current_iter = [0]
+
     iterator = range(max_iters)
     if dist.get_rank() == 0:
         iterator = tqdm(
@@ -434,7 +470,13 @@ async def kmeans_manhattan(
     _workers = [
         asyncio.create_task(
             gpu_worker(
-                gpu_idx, all_gpu_data, top_k, losses_over_time, synchronization_barrier
+                gpu_idx,
+                all_gpu_data,
+                top_k,
+                losses_over_time,
+                synchronization_barrier,
+                save_dir,
+                current_iter,
             )
         )
         for gpu_idx in range(num_gpus)
@@ -442,6 +484,7 @@ async def kmeans_manhattan(
 
     # distributed kmeans
     for _iter_idx in iterator:
+        current_iter[0] = _iter_idx
         # process data in batches, parallelized over devices and nodes
         minibatch_iterator = activations(batch_size=gpu_minibatch_size)
 
@@ -474,29 +517,24 @@ async def kmeans_manhattan(
             should_sync = distributed_batch_idx % accumulation_size == (
                 accumulation_size - 1
             )
+            should_save = _iter_idx in save_steps and should_sync
+
+            # assert that if should_save is true, then should_sync is also true
+            if should_save:
+                assert should_sync, (
+                    "should_save can only be true when should_sync is true"
+                )
 
             for gpu_data, gpu_minibatch in zip(
                 all_gpu_data, gpu_minibatches, strict=False
             ):
                 await gpu_data.queue.put(
-                    (gpu_minibatch[ActivationKeys.ROUTER_LOGITS], should_sync)
+                    (
+                        gpu_minibatch[ActivationKeys.ROUTER_LOGITS],
+                        should_sync,
+                        should_save,
+                    )
                 )
-
-        # save checkpoint if this iteration is in save_steps
-        if _iter_idx in save_steps and dist.get_rank() == 0:
-            checkpoint_data = {
-                "centroids": all_gpu_data[0].synced_data.centroid_sets,
-                "top_k": top_k,
-                "losses": th.stack(losses_over_time, dim=1)
-                if losses_over_time
-                else th.empty(0),
-                "iteration": _iter_idx,
-            }
-            checkpoint_path = os.path.join(save_dir, f"checkpoint_iter_{_iter_idx}.pt")
-            th.save(checkpoint_data, checkpoint_path)
-            logger.info(
-                f"Saved checkpoint at iteration {_iter_idx} to {checkpoint_path}"
-            )
 
     for gpu_data in all_gpu_data:
         await gpu_data.queue.put((None, False))
