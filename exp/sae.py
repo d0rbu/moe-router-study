@@ -148,7 +148,9 @@ async def run_sae_training(
             *[activations(batch_size=batch_size) for _ in range(num_epochs)]
         )
 
-    save_steps = exponential_to_linear_save_steps(total_steps=steps, save_every=save_every)
+    save_steps = exponential_to_linear_save_steps(
+        total_steps=steps, save_every=save_every
+    )
 
     base_trainer_cfg = {
         "steps": steps,
@@ -194,9 +196,9 @@ async def run_sae_training(
     distributed_iterator = list(
         islice(
             hparam_sweep_iterator,
-            start=dist.get_rank(),
-            stop=None,
-            step=dist.get_world_size(),
+            dist.get_rank(),
+            None,
+            dist.get_world_size(),
         )
     )
     distributed_iterator = tqdm(
@@ -312,7 +314,7 @@ def main(
     seed: list[int] | int = 0,
     submodule_name: list[str] | str = "mlp_output",
     tokens_per_file: int = 10_000,
-    log_level: str = "INFO"
+    log_level: str = "INFO",
 ) -> None:
     """Train a sparse autoencoder on the given model and dataset."""
     print(f"Running with log level: {log_level}")
