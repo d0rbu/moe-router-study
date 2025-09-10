@@ -17,7 +17,7 @@ from exp.training import get_experiment_name
 
 
 def broadcast_variable_length_list(
-    list_fn: Callable[[], list],
+    list_fn: Callable[..., list],
     src: int = 0,
     args: tuple = (),
     kwargs: dict | None = None,
