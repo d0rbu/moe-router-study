@@ -258,10 +258,8 @@ class Activations:
         new_activation_filepaths = []
         all_batch_sizes = th.zeros(len(activation_filepaths), dtype=th.int32)
 
-        activation_filepath_groups = list(
-            divide(enumerate(activation_filepaths), dist.get_world_size())
-        )
-        local_activation_filepaths = activation_filepath_groups[dist.get_rank()]
+        activation_filepath_groups = divide(dist.get_world_size(), enumerate(activation_filepaths))
+        local_activation_filepaths = list(activation_filepath_groups[dist.get_rank()])
 
         for i, filepath in tqdm(
             local_activation_filepaths,
