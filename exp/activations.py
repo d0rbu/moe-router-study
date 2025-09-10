@@ -71,6 +71,17 @@ class Activations:
             shuffle_batch_size=shuffle_batch_size,
         )
         self.max_cache_size = max_cache_size
+        self._total_tokens = None  # Cache for total tokens
+
+    def __len__(self) -> int:
+        """Return the total number of tokens across all activation files."""
+        if self._total_tokens is None:
+            total_tokens = 0
+            for filepath in self.activation_filepaths:
+                file_data = th.load(filepath, map_location="cpu")
+                total_tokens += len(file_data["tokens"])
+            self._total_tokens = total_tokens
+        return self._total_tokens
 
     # worker to fetch data from disk
     def _get_file_data(self, cached_file_data: mp.Queue):
@@ -103,11 +114,13 @@ class Activations:
                         case th.Tensor():
                             if key in current_batch:
                                 current_batch[key] = th.cat(
-                                    current_batch[key],
-                                    value[
-                                        current_local_idx : current_local_idx
-                                        + batch_size
-                                    ].to(self.device),
+                                    [
+                                        current_batch[key],
+                                        value[
+                                            current_local_idx : current_local_idx
+                                            + batch_size
+                                        ].to(self.device),
+                                    ],
                                     dim=0,
                                 )
                             else:
@@ -140,11 +153,13 @@ class Activations:
                         case th.Tensor():
                             if key in current_batch:
                                 current_batch[key] = th.cat(
-                                    current_batch[key],
-                                    value[
-                                        current_local_idx : current_local_idx
-                                        + batch_size
-                                    ].to(self.device),
+                                    [
+                                        current_batch[key],
+                                        value[
+                                            current_local_idx : current_local_idx
+                                            + batch_size
+                                        ].to(self.device),
+                                    ],
                                     dim=0,
                                 )
                             else:
@@ -210,7 +225,7 @@ class Activations:
         new_activation_filepaths = Activations.reshuffle(
             activation_dir=activation_dir,
             output_dir=activation_files_dir,
-            tokens_per_file=tokens_per_file_in_reshuffled,
+            tokens_per_file_in_reshuffled=tokens_per_file_in_reshuffled,
             seed=seed,
             shuffle_batch_size=shuffle_batch_size,
         )
@@ -249,20 +264,20 @@ class Activations:
         seed: int = 0,
     ) -> list[str]:
         activation_filepaths = broadcast_variable_length_list(
-            Activations.get_activation_filepaths,
-            args=(activation_dir,),
+            lambda: Activations.get_activation_filepaths(activation_dir),
             src=0,
         )
 
         new_activation_filepaths = []
+        device = f"cuda:{dist.get_rank()}" if th.cuda.is_available() else "cpu"
         all_batch_sizes = th.zeros(
-            len(activation_filepaths), dtype=th.int32, device=dist.get_device()
+            len(activation_filepaths), dtype=th.int32, device=device
         )
 
         activation_filepath_groups = list(
-            divide(enumerate(activation_filepaths), dist.get_world_size())
+            divide(dist.get_world_size(), enumerate(activation_filepaths))
         )
-        local_activation_filepaths = activation_filepath_groups[dist.get_rank()]
+        local_activation_filepaths = list(activation_filepath_groups[dist.get_rank()])
 
         for i, filepath in tqdm(
             local_activation_filepaths,
@@ -277,7 +292,7 @@ class Activations:
         dist.all_reduce(all_batch_sizes, op=dist.ReduceOp.SUM)
 
         # maybe not the bestest practice but this is good enough lol
-        th.random.seed(seed + dist.get_rank())
+        th.manual_seed(seed + dist.get_rank())
 
         current_batch = defaultdict(list)
         current_batch_idx = 0
@@ -290,11 +305,13 @@ class Activations:
         )
         activation_file_batch_groups = list(
             divide(
-                activation_file_batches,
                 dist.get_world_size(),
+                activation_file_batches,
             )
         )
-        local_activation_file_batches = activation_file_batch_groups[dist.get_rank()]
+        local_activation_file_batches = list(
+            activation_file_batch_groups[dist.get_rank()]
+        )
 
         for shuffle_batch_idx, (shuffle_batch, batch_sizes) in tqdm(
             enumerate(local_activation_file_batches),
@@ -303,19 +320,21 @@ class Activations:
             leave=False,
             position=dist.get_rank() * 2,
         ):
-            file_data = asyncio.run(
-                asyncio.gather(
+
+            async def load_files():
+                return await asyncio.gather(
                     *[
                         asyncio.to_thread(th.load, filepath)
                         for filepath in shuffle_batch
                     ]
                 )
-            )
+
+            file_data = asyncio.run(load_files())
 
             batch_size_ranges = th.cumsum(batch_sizes, dim=0)
             total_size = batch_size_ranges[-1]
 
-            batch_shuffled_indices = th.randperm(total_size)
+            batch_shuffled_indices = th.randperm(total_size.item())
 
             for batch_idx in tqdm(
                 batch_shuffled_indices,
@@ -460,9 +479,9 @@ class Activations:
     def _batch_idx_to_file_and_local_idx(
         batch_size_ranges: th.Tensor, batch_idx: int
     ) -> tuple[int, int]:
-        file_idx = th.searchsorted(batch_size_ranges, batch_idx, side="right")
+        file_idx = th.searchsorted(batch_size_ranges, batch_idx, side="right").item()
 
-        file_start_idx = batch_size_ranges[file_idx - 1] if file_idx > 0 else 0
+        file_start_idx = batch_size_ranges[file_idx - 1].item() if file_idx > 0 else 0
 
         local_idx = batch_idx - file_start_idx
         return file_idx, local_idx
@@ -510,6 +529,153 @@ def load_activations_and_init_dist(
     }
 
     # clean up the background worker and queue
-    data_iterable.send("STOP!")
+    try:
+        data_iterable.send(None)
+    except (StopIteration, TypeError):
+        # If send doesn't work as expected, try close
+        if hasattr(data_iterable, "close"):
+            data_iterable.close()
 
     return activations, activation_dims
+
+
+def load_activations(device: str = "cpu") -> th.Tensor:
+    """
+    Load activations from the most recent experiment.
+
+    Args:
+        device: Device to load the activations on
+
+    Returns:
+        Tensor with shape (B, L, E) containing activated experts
+    """
+    from exp.get_activations import ROUTER_LOGITS_DIRNAME
+
+    # Find the most recent experiment directory
+    experiment_dirs = [
+        d for d in os.listdir(OUTPUT_DIR) if os.path.isdir(os.path.join(OUTPUT_DIR, d))
+    ]
+
+    if not experiment_dirs:
+        raise FileNotFoundError("No experiment directories found")
+
+    # Use the first available experiment (could be made smarter)
+    experiment_name = experiment_dirs[0]
+
+    activated_experts_collection = []
+
+    # Load all available activation files
+    for file_idx in count():
+        file_path = os.path.join(
+            OUTPUT_DIR, experiment_name, ROUTER_LOGITS_DIRNAME, f"{file_idx}.pt"
+        )
+        if not os.path.exists(file_path):
+            break
+
+        output = th.load(file_path, map_location=device)
+
+        if "router_logits" in output and "topk" in output:
+            router_logits = output["router_logits"]
+            top_k = output["topk"]
+
+            # Create activated experts tensor
+            top_k_indices = th.topk(router_logits, k=top_k, dim=2).indices
+            activated_experts = th.zeros_like(router_logits)
+            activated_experts.scatter_(2, top_k_indices, 1)
+
+            activated_experts_collection.append(activated_experts)
+
+    if not activated_experts_collection:
+        raise FileNotFoundError("No activation data found")
+
+    # Concatenate all batches along the batch dimension
+    return th.cat(activated_experts_collection, dim=0)
+
+
+def load_activations_indices_tokens_and_topk(
+    device: str = "cpu",
+) -> tuple[th.Tensor, th.Tensor, list[list[str]], int]:
+    """
+    Load activations, indices, tokens, and top_k from the most recent experiment.
+
+    Args:
+        device: Device to load the data on
+
+    Returns:
+        Tuple of (token_topk_mask, activated_expert_indices, tokens, top_k)
+    """
+    from exp.get_activations import ROUTER_LOGITS_DIRNAME
+
+    # Find the most recent experiment directory
+    experiment_dirs = [
+        d for d in os.listdir(OUTPUT_DIR) if os.path.isdir(os.path.join(OUTPUT_DIR, d))
+    ]
+
+    if not experiment_dirs:
+        raise FileNotFoundError("No experiment directories found")
+
+    # Use the first available experiment (could be made smarter)
+    experiment_name = experiment_dirs[0]
+
+    activated_experts_collection = []
+    tokens_collection = []
+    top_k = None
+
+    # Load all available activation files
+    for file_idx in count():
+        file_path = os.path.join(
+            OUTPUT_DIR, experiment_name, ROUTER_LOGITS_DIRNAME, f"{file_idx}.pt"
+        )
+        if not os.path.exists(file_path):
+            break
+
+        output = th.load(file_path, map_location=device)
+
+        if "router_logits" in output and "topk" in output:
+            router_logits = output["router_logits"]
+            if top_k is None:
+                top_k = output["topk"]
+
+            # Create activated experts tensor
+            top_k_indices = th.topk(router_logits, k=top_k, dim=2).indices
+            activated_experts = th.zeros_like(router_logits)
+            activated_experts.scatter_(2, top_k_indices, 1)
+
+            activated_experts_collection.append(activated_experts)
+
+            # Get tokens if available
+            if "tokens" in output:
+                tokens_collection.append(output["tokens"])
+
+    if not activated_experts_collection:
+        raise FileNotFoundError("No activation data found")
+
+    if top_k is None:
+        top_k = 1  # Default fallback
+
+    # Concatenate all batches along the batch dimension
+    token_topk_mask = th.cat(activated_experts_collection, dim=0)
+
+    # Convert tokens to the expected format (list of list of strings)
+    if tokens_collection:
+        # Assuming tokens are stored as tensors that need to be converted to strings
+        # This is a simplified implementation - may need adjustment based on actual data format
+        tokens = []
+        for token_batch in tokens_collection:
+            if isinstance(token_batch, th.Tensor):
+                # Convert tensor to list of strings (assuming token IDs that need decoding)
+                batch_tokens = []
+                for seq in token_batch:
+                    seq_tokens = [str(token.item()) for token in seq]
+                    batch_tokens.append(seq_tokens)
+                tokens.extend(batch_tokens)
+            else:
+                # If already in the right format
+                tokens.extend(token_batch)
+    else:
+        tokens = []
+
+    # Create activated expert indices (simplified - could be more sophisticated)
+    activated_expert_indices = th.nonzero(token_topk_mask, as_tuple=False)
+
+    return token_topk_mask, activated_expert_indices, tokens, top_k

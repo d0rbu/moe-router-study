@@ -199,9 +199,17 @@ async def sync(
         )
 
     # now do an all-gather along gpus (among entries in all_gpu_data)
-    gpu_data.synced_data += sum(
-        current_gpu_data.dirty_data.to(gpu_idx) for current_gpu_data in all_gpu_data
-    )
+    # Sum the dirty data from all GPUs
+    dirty_data_sum = None
+    for current_gpu_data in all_gpu_data:
+        dirty_data = current_gpu_data.dirty_data.to(th.device(f"cuda:{gpu_idx}"))
+        if dirty_data_sum is None:
+            dirty_data_sum = dirty_data
+        else:
+            dirty_data_sum = dirty_data_sum + dirty_data
+
+    if dirty_data_sum is not None:
+        gpu_data.synced_data += dirty_data_sum
 
     await barrier.wait()
 
@@ -420,7 +428,7 @@ async def kmeans_manhattan(
             ].to(gpu_idx)
 
     # clean up the background workers and queue
-    data_iterable.send("STOP!")
+    data_iterable.send(None)
     th.cuda.empty_cache()
     gc.collect()
     ### end
@@ -469,15 +477,15 @@ async def kmeans_manhattan(
 
         distributed_iterator = islice(
             minibatch_iterator,
-            start=rank,
-            stop=None,
-            step=num_nodes,
+            rank,
+            None,
+            num_nodes,
         )
         num_local_minibatches = len(
             range(
-                start=rank,
-                stop=num_gpu_minibatches,
-                step=num_nodes,
+                rank,
+                num_gpu_minibatches,
+                num_nodes,
             )
         )
         distributed_iterator = tqdm(

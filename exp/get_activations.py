@@ -91,6 +91,9 @@ ACTIVATION_KEYS = frozenset(
     }
 )
 
+# Directory name for router logits storage
+ROUTER_LOGITS_DIRNAME = "activations"
+
 
 def process_batch(
     encoded_batch: dict,
@@ -100,7 +103,7 @@ def process_batch(
     gpu_minibatch_size: int,
     router_layers: set[int],
     layers_to_store: set[int],
-    activations_to_store: set[str] = ACTIVATION_KEYS,
+    activations_to_store: set[str] | None = None,
 ) -> dict[str, th.Tensor]:
     """Process a batch of texts through the model and extract router logits.
 
@@ -117,6 +120,8 @@ def process_batch(
     Returns:
         Dictionary of activations. These are lists of lists of tensors, so they need to be cleaned up by the caller.
     """
+    if activations_to_store is None:
+        activations_to_store = set(ACTIVATION_KEYS)
     logger.debug(
         f"Processing batch {batch_idx} with activations to store: {activations_to_store} layers to store: {layers_to_store}"
     )
@@ -129,7 +134,18 @@ def process_batch(
         gpu_minibatch_size = min(gpu_minibatch_size, batch_size)
 
     num_minibatches = math.ceil(batch_size / gpu_minibatch_size)
-    num_layers = len(model.layers)
+    # Try to get number of layers in a type-safe way
+    if hasattr(model, "num_layers"):
+        num_layers = model.num_layers
+    elif hasattr(model, "config") and hasattr(model.config, "num_layers"):
+        num_layers = model.config.num_layers
+    else:
+        # Fallback: try to iterate through layers
+        try:
+            num_layers = len(list(model.layers))
+        except (TypeError, AttributeError):
+            # Last resort: assume a reasonable default
+            num_layers = 32
 
     # Extract activations
     activations = {
@@ -468,11 +484,13 @@ def gpu_worker(
     gpu_busy: list[bool],  # Reference to multiplexer's gpu_busy list
     log_queue: mp.Queue,
     output_queue: mp.Queue,
-    activations_to_store: set[str] = ACTIVATION_KEYS,
+    activations_to_store: set[str] | None = None,
     layers_to_store: set[int] | None = None,
     log_level: str = "INFO",
 ) -> None:
     """Worker process for processing batches on a specific GPU."""
+    if activations_to_store is None:
+        activations_to_store = set(ACTIVATION_KEYS)
     logger.debug(
         f"Processing batch with activations to store: {activations_to_store} layers to store: {layers_to_store}"
     )
@@ -510,21 +528,45 @@ def gpu_worker(
         device_map="auto",
     )
     logger.debug("Model initialized")
-    layers_with_routers = model.layers_with_routers
+    layers_with_routers = set(model.layers_with_routers)
     top_k = model.router_probabilities.get_top_k()
 
     if layers_to_store is None:
         # take the middle 20% of layers by default
         # this does NOT apply to router logits; those are stored at all layers
-        num_layers_to_store = math.ceil(len(model.layers) * 0.2)
-        mid_layer = len(model.layers) // 2
+        # Try to get number of layers in a type-safe way
+        if hasattr(model, "num_layers"):
+            model_layers_len = model.num_layers
+        elif hasattr(model, "config") and hasattr(model.config, "num_layers"):
+            model_layers_len = model.config.num_layers
+        else:
+            # Fallback: try to iterate through layers
+            try:
+                model_layers_len = len(list(model.layers))
+            except (TypeError, AttributeError):
+                # Last resort: assume a reasonable default
+                model_layers_len = 32
+        num_layers_to_store = math.ceil(model_layers_len * 0.2)
+        mid_layer = model_layers_len // 2
         start_layer_to_store = mid_layer - (num_layers_to_store // 2)
         layers_to_store = set(
             range(start_layer_to_store, start_layer_to_store + num_layers_to_store)
         )
 
-    assert all(layer_idx < len(model.layers) for layer_idx in layers_to_store), (
-        f"Layers to store out of bounds for model with {len(model.layers)} layers: {layers_to_store}"
+    # Try to get number of layers in a type-safe way
+    if hasattr(model, "num_layers"):
+        model_layers_len = model.num_layers
+    elif hasattr(model, "config") and hasattr(model.config, "num_layers"):
+        model_layers_len = model.config.num_layers
+    else:
+        # Fallback: try to iterate through layers
+        try:
+            model_layers_len = len(list(model.layers))
+        except (TypeError, AttributeError):
+            # Last resort: assume a reasonable default
+            model_layers_len = 32
+    assert all(layer_idx < model_layers_len for layer_idx in layers_to_store), (
+        f"Layers to store out of bounds for model with {model_layers_len} layers: {layers_to_store}"
     )
 
     # Create output directory
@@ -757,7 +799,7 @@ def get_router_activations(
     resume: bool = True,
     name: str | None = None,
     activations_to_store: list[str] | None = None,
-    layers_to_store: list[int] | None = None,
+    layers_to_store: list[int] | set[int] | None = None,
     log_level: str = "INFO",
 ) -> None:
     """
