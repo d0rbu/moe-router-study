@@ -13,6 +13,7 @@ import torch.multiprocessing as mp
 from tqdm import tqdm
 
 from exp import ACTIVATION_DIRNAME, OUTPUT_DIR
+from exp.get_activations import ActivationKeys
 from exp.training import get_experiment_name
 
 
@@ -255,9 +256,7 @@ class Activations:
         )
 
         new_activation_filepaths = []
-        all_batch_sizes = th.zeros(
-            len(activation_filepaths), dtype=th.int32, device=dist.get_device()
-        )
+        all_batch_sizes = th.zeros(len(activation_filepaths), dtype=th.int32)
 
         activation_filepath_groups = list(
             divide(enumerate(activation_filepaths), dist.get_world_size())
@@ -272,7 +271,7 @@ class Activations:
             position=dist.get_rank(),
         ):
             with th.load(filepath) as data:
-                all_batch_sizes[i] = data["mlp_output"].shape[0]
+                all_batch_sizes[i] = data[ActivationKeys.MLP_OUTPUT].shape[0]
 
         dist.all_reduce(all_batch_sizes, op=dist.ReduceOp.SUM)
 
