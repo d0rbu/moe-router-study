@@ -148,7 +148,9 @@ async def run_sae_training(
             *[activations(batch_size=batch_size) for _ in range(num_epochs)]
         )
 
-    save_steps = exponential_to_linear_save_steps(total_steps=steps, save_every=save_every)
+    save_steps = exponential_to_linear_save_steps(
+        total_steps=steps, save_every=save_every
+    )
 
     base_trainer_cfg = {
         "steps": steps,
@@ -312,7 +314,7 @@ def main(
     seed: list[int] | int = 0,
     submodule_name: list[str] | str = "mlp_output",
     tokens_per_file: int = 10_000,
-    log_level: str = "INFO"
+    log_level: str = "INFO",
 ) -> None:
     """Train a sparse autoencoder on the given model and dataset."""
     print(f"Running with log level: {log_level}")
