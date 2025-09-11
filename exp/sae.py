@@ -7,11 +7,11 @@ import sys
 
 import arguably
 from dictionary_learning.dictionary import Dictionary
+from dictionary_learning.trainers.batch_top_k import BatchTopKSAE, BatchTopKTrainer
 from dictionary_learning.trainers.matryoshka_batch_top_k import (
     MatryoshkaBatchTopKSAE,
     MatryoshkaBatchTopKTrainer,
 )
-from dictionary_learning.trainers.top_k import BatchTopKSAE, BatchTopKTrainer
 from dictionary_learning.trainers.trainer import SAETrainer
 from dictionary_learning.training import trainSAE
 from fsspec.utils import math
