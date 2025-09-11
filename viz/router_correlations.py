@@ -7,8 +7,10 @@ import torch as th
 from tqdm import tqdm
 
 from exp import OUTPUT_DIR
-from exp.get_activations import ROUTER_LOGITS_DIRNAME
 from viz import FIGURE_DIR
+
+# Use hardcoded directory name since ROUTER_LOGITS_DIRNAME was removed
+ROUTER_LOGITS_DIRNAME = "activations"
 
 
 @arguably.command()

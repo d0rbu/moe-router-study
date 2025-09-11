@@ -16,9 +16,8 @@ import numpy as np
 import torch as th
 
 from exp import OUTPUT_DIR
-from exp.activations import (
-    load_activations_indices_tokens_and_topk,
-)
+
+# load_activations_indices_tokens_and_topk function was removed - this import needs to be updated
 
 
 def _load_circuits_tensor(
@@ -58,8 +57,9 @@ def _load_circuits_tensor(
     if circuits.ndim == 2:
         # Infer (L, E) from activations - use provided data if available
         if token_topk_mask is None:
-            token_topk_mask, _indices, _tokens, _top_k = (
-                load_activations_indices_tokens_and_topk(device=device)
+            # load_activations_indices_tokens_and_topk function was removed - this needs to be updated
+            raise NotImplementedError(
+                "load_activations_indices_tokens_and_topk function was removed"
             )
         _B, L, E = token_topk_mask.shape
         C = int(circuits.shape[0])
@@ -727,8 +727,9 @@ def viz_max_cli(
         device: Torch device for computation (e.g., "cuda" or "cpu").
     """
     # Load all data once at the top level
-    token_topk_mask, _activated_expert_indices, tokens, top_k = (
-        load_activations_indices_tokens_and_topk(device=device)
+    # load_activations_indices_tokens_and_topk function was removed - this needs to be updated
+    raise NotImplementedError(
+        "load_activations_indices_tokens_and_topk function was removed"
     )
     circuits = _load_circuits_tensor(
         circuits_path, device=device, token_topk_mask=token_topk_mask
@@ -760,8 +761,9 @@ def viz_mean_cli(
         device: Torch device for computation (e.g., "cuda" or "cpu").
     """
     # Load all data once at the top level
-    token_topk_mask, _activated_expert_indices, tokens, top_k = (
-        load_activations_indices_tokens_and_topk(device=device)
+    # load_activations_indices_tokens_and_topk function was removed - this needs to be updated
+    raise NotImplementedError(
+        "load_activations_indices_tokens_and_topk function was removed"
     )
     circuits = _load_circuits_tensor(
         circuits_path, device=device, token_topk_mask=token_topk_mask

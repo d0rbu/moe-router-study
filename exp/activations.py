@@ -42,6 +42,13 @@ def broadcast_variable_length_list(
     return items
 
 
+def broadcast_variable(value, src: int = 0):
+    """Broadcast a single variable from src rank to all ranks."""
+    value_list = [value]
+    dist.broadcast_object_list(value_list, src=src)
+    return value_list[0]
+
+
 class Activations:
     def __init__(
         self,
@@ -75,12 +82,30 @@ class Activations:
 
     def __len__(self) -> int:
         """Return the total number of tokens across all activation files."""
+        import torch.distributed as dist
+
         if self._total_tokens is None:
-            total_tokens = 0
-            for filepath in self.activation_filepaths:
-                file_data = th.load(filepath, map_location="cpu")
-                total_tokens += len(file_data["tokens"])
-            self._total_tokens = total_tokens
+            if dist.is_initialized():
+                # In distributed setting, only rank 0 computes, then broadcasts
+                if dist.get_rank() == 0:
+                    total_tokens = 0
+                    for filepath in self.activation_filepaths:
+                        file_data = th.load(filepath, map_location="cpu")
+                        total_tokens += len(file_data["tokens"])
+                    self._total_tokens = total_tokens
+                else:
+                    self._total_tokens = 0  # Will be overwritten by broadcast
+
+                # Broadcast the result to all processes
+                self._total_tokens = broadcast_variable(self._total_tokens, src=0)
+            else:
+                # Non-distributed case
+                total_tokens = 0
+                for filepath in self.activation_filepaths:
+                    file_data = th.load(filepath, map_location="cpu")
+                    total_tokens += len(file_data["tokens"])
+                self._total_tokens = total_tokens
+
         return self._total_tokens
 
     # worker to fetch data from disk
@@ -537,145 +562,3 @@ def load_activations_and_init_dist(
             data_iterable.close()
 
     return activations, activation_dims
-
-
-def load_activations(device: str = "cpu") -> th.Tensor:
-    """
-    Load activations from the most recent experiment.
-
-    Args:
-        device: Device to load the activations on
-
-    Returns:
-        Tensor with shape (B, L, E) containing activated experts
-    """
-    from exp.get_activations import ROUTER_LOGITS_DIRNAME
-
-    # Find the most recent experiment directory
-    experiment_dirs = [
-        d for d in os.listdir(OUTPUT_DIR) if os.path.isdir(os.path.join(OUTPUT_DIR, d))
-    ]
-
-    if not experiment_dirs:
-        raise FileNotFoundError("No experiment directories found")
-
-    # Use the first available experiment (could be made smarter)
-    experiment_name = experiment_dirs[0]
-
-    activated_experts_collection = []
-
-    # Load all available activation files
-    for file_idx in count():
-        file_path = os.path.join(
-            OUTPUT_DIR, experiment_name, ROUTER_LOGITS_DIRNAME, f"{file_idx}.pt"
-        )
-        if not os.path.exists(file_path):
-            break
-
-        output = th.load(file_path, map_location=device)
-
-        if "router_logits" in output and "topk" in output:
-            router_logits = output["router_logits"]
-            top_k = output["topk"]
-
-            # Create activated experts tensor
-            top_k_indices = th.topk(router_logits, k=top_k, dim=2).indices
-            activated_experts = th.zeros_like(router_logits)
-            activated_experts.scatter_(2, top_k_indices, 1)
-
-            activated_experts_collection.append(activated_experts)
-
-    if not activated_experts_collection:
-        raise FileNotFoundError("No activation data found")
-
-    # Concatenate all batches along the batch dimension
-    return th.cat(activated_experts_collection, dim=0)
-
-
-def load_activations_indices_tokens_and_topk(
-    device: str = "cpu",
-) -> tuple[th.Tensor, th.Tensor, list[list[str]], int]:
-    """
-    Load activations, indices, tokens, and top_k from the most recent experiment.
-
-    Args:
-        device: Device to load the data on
-
-    Returns:
-        Tuple of (token_topk_mask, activated_expert_indices, tokens, top_k)
-    """
-    from exp.get_activations import ROUTER_LOGITS_DIRNAME
-
-    # Find the most recent experiment directory
-    experiment_dirs = [
-        d for d in os.listdir(OUTPUT_DIR) if os.path.isdir(os.path.join(OUTPUT_DIR, d))
-    ]
-
-    if not experiment_dirs:
-        raise FileNotFoundError("No experiment directories found")
-
-    # Use the first available experiment (could be made smarter)
-    experiment_name = experiment_dirs[0]
-
-    activated_experts_collection = []
-    tokens_collection = []
-    top_k = None
-
-    # Load all available activation files
-    for file_idx in count():
-        file_path = os.path.join(
-            OUTPUT_DIR, experiment_name, ROUTER_LOGITS_DIRNAME, f"{file_idx}.pt"
-        )
-        if not os.path.exists(file_path):
-            break
-
-        output = th.load(file_path, map_location=device)
-
-        if "router_logits" in output and "topk" in output:
-            router_logits = output["router_logits"]
-            if top_k is None:
-                top_k = output["topk"]
-
-            # Create activated experts tensor
-            top_k_indices = th.topk(router_logits, k=top_k, dim=2).indices
-            activated_experts = th.zeros_like(router_logits)
-            activated_experts.scatter_(2, top_k_indices, 1)
-
-            activated_experts_collection.append(activated_experts)
-
-            # Get tokens if available
-            if "tokens" in output:
-                tokens_collection.append(output["tokens"])
-
-    if not activated_experts_collection:
-        raise FileNotFoundError("No activation data found")
-
-    if top_k is None:
-        top_k = 1  # Default fallback
-
-    # Concatenate all batches along the batch dimension
-    token_topk_mask = th.cat(activated_experts_collection, dim=0)
-
-    # Convert tokens to the expected format (list of list of strings)
-    if tokens_collection:
-        # Assuming tokens are stored as tensors that need to be converted to strings
-        # This is a simplified implementation - may need adjustment based on actual data format
-        tokens = []
-        for token_batch in tokens_collection:
-            if isinstance(token_batch, th.Tensor):
-                # Convert tensor to list of strings (assuming token IDs that need decoding)
-                batch_tokens = []
-                for seq in token_batch:
-                    seq_tokens = [str(token.item()) for token in seq]
-                    batch_tokens.append(seq_tokens)
-                tokens.extend(batch_tokens)
-            else:
-                # If already in the right format
-                tokens.extend(token_batch)
-    else:
-        tokens = []
-
-    # Create activated expert indices (simplified - could be more sophisticated)
-    activated_expert_indices = th.nonzero(token_topk_mask, as_tuple=False)
-
-    return token_topk_mask, activated_expert_indices, tokens, top_k

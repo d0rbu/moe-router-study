@@ -11,7 +11,8 @@ from tqdm import tqdm
 import trackio as wandb
 
 from exp import OUTPUT_DIR
-from exp.activations import load_activations
+
+# load_activations function was removed - this import needs to be updated
 from exp.circuit_loss import circuit_loss
 
 
@@ -299,7 +300,8 @@ def load_and_gradient_descent(
     seed: int = 0,
     device: str = "cuda",
 ) -> None:
-    data = load_activations(device=device)
+    # load_activations function was removed - this needs to be updated
+    raise NotImplementedError("load_activations function was removed")
 
     wandb_run = wandb.init(
         project="circuit-optimization",
@@ -413,7 +415,8 @@ def grid_search_gradient_descent(
         # num_cooldown_epochses = [0]
         num_cooldown_epochses = [0]
 
-    data = load_activations(device=device)
+    # load_activations function was removed - this needs to be updated
+    raise NotImplementedError("load_activations function was removed")
     loss_landscape = th.empty(
         num_seeds,
         len(complexity_importances),

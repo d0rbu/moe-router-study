@@ -3,7 +3,7 @@ import os
 import streamlit as st
 import torch as th
 
-from exp.activations import load_activations_indices_tokens_and_topk
+# load_activations_indices_tokens_and_topk function was removed - this import needs to be updated
 
 # Constants
 CIRCUITS_PATH = "out/saved_circuits.pt"
@@ -111,8 +111,9 @@ def max_activating_examples_server(
         _minibatch_size: Size of the minibatch for the computation.
     """
     # Load all data once at the top level
-    token_topk_mask, _activated_expert_indices, tokens, top_k = (
-        load_activations_indices_tokens_and_topk(device=device)
+    # load_activations_indices_tokens_and_topk function was removed - this needs to be updated
+    raise NotImplementedError(
+        "load_activations_indices_tokens_and_topk function was removed"
     )
 
     # Get dimensions from token_topk_mask

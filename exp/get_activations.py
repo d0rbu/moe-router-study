@@ -91,9 +91,6 @@ ACTIVATION_KEYS = frozenset(
     }
 )
 
-# Directory name for router logits storage
-ROUTER_LOGITS_DIRNAME = "activations"
-
 
 def process_batch(
     encoded_batch: dict,
@@ -134,18 +131,8 @@ def process_batch(
         gpu_minibatch_size = min(gpu_minibatch_size, batch_size)
 
     num_minibatches = math.ceil(batch_size / gpu_minibatch_size)
-    # Try to get number of layers in a type-safe way
-    if hasattr(model, "num_layers"):
-        num_layers = model.num_layers
-    elif hasattr(model, "config") and hasattr(model.config, "num_layers"):
-        num_layers = model.config.num_layers
-    else:
-        # Fallback: try to iterate through layers
-        try:
-            num_layers = len(list(model.layers))
-        except (TypeError, AttributeError):
-            # Last resort: assume a reasonable default
-            num_layers = 32
+    assert hasattr(model, "layers"), "Cannot find layers field on model!"
+    num_layers = len(model.layers)  # type: ignore[arg-type]
 
     # Extract activations
     activations = {
@@ -534,18 +521,8 @@ def gpu_worker(
     if layers_to_store is None:
         # take the middle 20% of layers by default
         # this does NOT apply to router logits; those are stored at all layers
-        # Try to get number of layers in a type-safe way
-        if hasattr(model, "num_layers"):
-            model_layers_len = model.num_layers
-        elif hasattr(model, "config") and hasattr(model.config, "num_layers"):
-            model_layers_len = model.config.num_layers
-        else:
-            # Fallback: try to iterate through layers
-            try:
-                model_layers_len = len(list(model.layers))
-            except (TypeError, AttributeError):
-                # Last resort: assume a reasonable default
-                model_layers_len = 32
+        assert hasattr(model, "layers"), "Cannot find layers field on model!"
+        model_layers_len = len(model.layers)  # type: ignore[arg-type]
         num_layers_to_store = math.ceil(model_layers_len * 0.2)
         mid_layer = model_layers_len // 2
         start_layer_to_store = mid_layer - (num_layers_to_store // 2)
@@ -553,18 +530,8 @@ def gpu_worker(
             range(start_layer_to_store, start_layer_to_store + num_layers_to_store)
         )
 
-    # Try to get number of layers in a type-safe way
-    if hasattr(model, "num_layers"):
-        model_layers_len = model.num_layers
-    elif hasattr(model, "config") and hasattr(model.config, "num_layers"):
-        model_layers_len = model.config.num_layers
-    else:
-        # Fallback: try to iterate through layers
-        try:
-            model_layers_len = len(list(model.layers))
-        except (TypeError, AttributeError):
-            # Last resort: assume a reasonable default
-            model_layers_len = 32
+    assert hasattr(model, "layers"), "Cannot find layers field on model!"
+    model_layers_len = len(model.layers)  # type: ignore[arg-type]
     assert all(layer_idx < model_layers_len for layer_idx in layers_to_store), (
         f"Layers to store out of bounds for model with {model_layers_len} layers: {layers_to_store}"
     )
@@ -799,7 +766,7 @@ def get_router_activations(
     resume: bool = True,
     name: str | None = None,
     activations_to_store: list[str] | None = None,
-    layers_to_store: list[int] | set[int] | None = None,
+    layers_to_store: list[int] | None = None,
     log_level: str = "INFO",
 ) -> None:
     """
@@ -838,8 +805,8 @@ def get_router_activations(
     if not layers_to_store:
         layers_to_store = None
 
-    if isinstance(layers_to_store, list):
-        layers_to_store = set(layers_to_store)
+    # Convert to set for internal processing
+    layers_to_store_set = set(layers_to_store) if layers_to_store else None
 
     if cpu_only:
         logger.info("Using CPU only")
@@ -994,7 +961,7 @@ def get_router_activations(
             )
 
         logger.debug(f"Storing activations: {activations_to_store}")
-        logger.debug(f"Storing layers: {layers_to_store}")
+        logger.debug(f"Storing layers: {layers_to_store_set}")
         gpu_proc = mp.Process(
             target=gpu_worker,
             args=(
@@ -1010,7 +977,7 @@ def get_router_activations(
                 log_queue,
                 output_queue,
                 set(activations_to_store),
-                layers_to_store,
+                layers_to_store_set,
                 log_level,
             ),
         )

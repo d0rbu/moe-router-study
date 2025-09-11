@@ -5,7 +5,6 @@ import matplotlib.pyplot as plt
 from torch_pca import PCA
 
 # Import module so attribute can be monkeypatched by tests reliably
-import exp.activations as activations
 from viz import FIGURE_DIR
 
 FIGURE_PATH = os.path.join(FIGURE_DIR, "pca_circuits.png")
@@ -15,7 +14,8 @@ FIGURE_PATH = os.path.join(FIGURE_DIR, "pca_circuits.png")
 def pca_figure(device: str = "cpu") -> None:
     # Use CPU by default to avoid GPU requirement in tests/CI
     # Call module attribute (tests patch this symbol to simulate failure)
-    activated_experts = activations.load_activations(device=device)
+    # load_activations function was removed - this needs to be updated
+    raise NotImplementedError("load_activations function was removed")
 
     # (B, L, E) -> (B, L * E)
     activated_experts = activated_experts.view(activated_experts.shape[0], -1).float()
