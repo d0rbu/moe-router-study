@@ -510,7 +510,7 @@ def gpu_worker(
         device_map="auto",
     )
     logger.debug("Model initialized")
-    layers_with_routers = model.layers_with_routers
+    layers_with_routers = set(model.layers_with_routers)
     top_k = model.router_probabilities.get_top_k()
 
     if layers_to_store is None:

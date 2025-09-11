@@ -2,11 +2,10 @@ import asyncio
 from collections import defaultdict
 from collections.abc import Callable, Generator
 import gc
-from itertools import batched, count, pairwise
+from itertools import batched, count, pairwise, islice
 import os
 
 from loguru import logger
-from more_itertools import divide
 import torch as th
 import torch.distributed as dist
 import torch.multiprocessing as mp
@@ -17,12 +16,12 @@ from exp.get_activations import ActivationKeys
 from exp.training import get_experiment_name
 
 
-def broadcast_variable_length_list(
-    list_fn: Callable[..., list],
+def broadcast_variable_length_list[T](
+    list_fn: Callable[..., list[T]],
     src: int = 0,
     args: tuple = (),
     kwargs: dict | None = None,
-) -> list:
+) -> list[T]:
     if kwargs is None:
         kwargs = {}
 
@@ -72,6 +71,28 @@ class Activations:
             shuffle_batch_size=shuffle_batch_size,
         )
         self.max_cache_size = max_cache_size
+        self._total_tokens = None
+
+    def __len__(self) -> int:
+        if self._total_tokens is not None:
+            return self._total_tokens
+
+        num_tokens = th.zeros(0, dtype=th.int32)
+        local_activation_filepath_iterator = islice(
+            self.activation_filepaths,
+            start=dist.get_rank(),
+            stop=len(self.activation_filepaths),
+            step=dist.get_world_size(),
+        )
+
+        for filepath in local_activation_filepath_iterator:
+            activations = th.load(filepath)
+            num_tokens += activations[ActivationKeys.MLP_OUTPUT].shape[0]
+
+        dist.all_reduce(num_tokens, op=dist.ReduceOp.SUM)
+        self._total_tokens = num_tokens.item()
+
+        return self._total_tokens
 
     # worker to fetch data from disk
     def _get_file_data(self, cached_file_data: mp.Queue):
@@ -104,11 +125,13 @@ class Activations:
                         case th.Tensor():
                             if key in current_batch:
                                 current_batch[key] = th.cat(
-                                    current_batch[key],
-                                    value[
-                                        current_local_idx : current_local_idx
-                                        + batch_size
-                                    ].to(self.device),
+                                    [
+                                        current_batch[key],
+                                        value[
+                                            current_local_idx : current_local_idx
+                                            + batch_size
+                                        ].to(self.device),
+                                    ],
                                     dim=0,
                                 )
                             else:
@@ -141,11 +164,13 @@ class Activations:
                         case th.Tensor():
                             if key in current_batch:
                                 current_batch[key] = th.cat(
-                                    current_batch[key],
-                                    value[
-                                        current_local_idx : current_local_idx
-                                        + batch_size
-                                    ].to(self.device),
+                                    [
+                                        current_batch[key],
+                                        value[
+                                            current_local_idx : current_local_idx
+                                            + batch_size
+                                        ].to(self.device),
+                                    ],
                                     dim=0,
                                 )
                             else:
@@ -211,7 +236,7 @@ class Activations:
         new_activation_filepaths = Activations.reshuffle(
             activation_dir=activation_dir,
             output_dir=activation_files_dir,
-            tokens_per_file=tokens_per_file_in_reshuffled,
+            tokens_per_file_in_reshuffled=tokens_per_file_in_reshuffled,
             seed=seed,
             shuffle_batch_size=shuffle_batch_size,
         )
@@ -242,15 +267,23 @@ class Activations:
         return contiguous_activation_filepaths
 
     @staticmethod
+    async def load_files_async(filepaths: list[str]) -> list[dict]:
+        return await asyncio.gather(
+            *[asyncio.to_thread(th.load, filepath) for filepath in filepaths]
+        )
+
     def reshuffle(
+        self,
         activation_dir: str,
         output_dir: str,
         tokens_per_file_in_reshuffled: int = 100_000,
         shuffle_batch_size: int = 100,
         seed: int = 0,
     ) -> list[str]:
+        self._total_tokens = None
+
         activation_filepaths = broadcast_variable_length_list(
-            Activations.get_activation_filepaths,
+            self.get_activation_filepaths,
             args=(activation_dir,),
             src=0,
         )
@@ -258,7 +291,12 @@ class Activations:
         new_activation_filepaths = []
         all_batch_sizes = th.zeros(len(activation_filepaths), dtype=th.int32)
 
-        activation_filepath_groups = divide(dist.get_world_size(), enumerate(activation_filepaths))
+        activation_filepath_groups = islice(
+            enumerate(activation_filepaths),
+            start=dist.get_rank(),
+            stop=len(activation_filepaths),
+            step=dist.get_world_size(),
+        )
         local_activation_filepaths = list(activation_filepath_groups[dist.get_rank()])
 
         for i, filepath in tqdm(
@@ -286,33 +324,33 @@ class Activations:
             shuffle_batch_size,
         )
         activation_file_batch_groups = list(
-            divide(
+            islice(
                 activation_file_batches,
-                dist.get_world_size(),
+                start=dist.get_rank(),
+                stop=len(activation_file_batches),
+                step=dist.get_world_size(),
             )
         )
-        local_activation_file_batches = activation_file_batch_groups[dist.get_rank()]
+        local_activation_file_batches = list(
+            activation_file_batch_groups[dist.get_rank()]
+        )
 
-        for shuffle_batch_idx, (shuffle_batch, batch_sizes) in tqdm(
+        for shuffle_batch_idx, shuffle_batch in tqdm(
             enumerate(local_activation_file_batches),
             desc=f"Rank {dist.get_rank()}",
             total=len(local_activation_file_batches),
             leave=False,
             position=dist.get_rank() * 2,
         ):
-            file_data = asyncio.run(
-                asyncio.gather(
-                    *[
-                        asyncio.to_thread(th.load, filepath)
-                        for filepath in shuffle_batch
-                    ]
-                )
-            )
+            filepaths, batch_sizes = zip(*shuffle_batch, strict=True)
 
+            file_data = asyncio.run(self.load_files_async(filepaths))
+
+            batch_sizes = th.stack(batch_sizes, dim=0)
             batch_size_ranges = th.cumsum(batch_sizes, dim=0)
             total_size = batch_size_ranges[-1]
 
-            batch_shuffled_indices = th.randperm(total_size)
+            batch_shuffled_indices = th.randperm(total_size.item())
 
             for batch_idx in tqdm(
                 batch_shuffled_indices,
@@ -345,7 +383,7 @@ class Activations:
                         output_dir, f"{dist.get_rank()}_{current_batch_idx}.pt-temp"
                     )
                     new_activation_filepaths.append(
-                        Activations._collate_and_save_batch(
+                        self._collate_and_save_batch(
                             current_batch, output_filepath
                         )
                     )
@@ -358,6 +396,8 @@ class Activations:
         total_tokens += num_batch_tokens
         total_tokens = th.tensor(total_tokens, dtype=th.int32)
         dist.reduce(total_tokens, dst=0, op=dist.ReduceOp.SUM)
+
+        self._total_tokens = total_tokens.item()
 
         remaining_batches = [None] * dist.get_world_size()
 
@@ -403,7 +443,7 @@ class Activations:
                         f"{dist.get_rank()}_{current_batch_idx + extra_batch_idx}.pt-temp",
                     )
                     extra_activation_filepaths.append(
-                        Activations._collate_and_save_batch(
+                        self._collate_and_save_batch(
                             extra_batch, output_filepath
                         )
                     )
@@ -457,9 +497,9 @@ class Activations:
     def _batch_idx_to_file_and_local_idx(
         batch_size_ranges: th.Tensor, batch_idx: int
     ) -> tuple[int, int]:
-        file_idx = th.searchsorted(batch_size_ranges, batch_idx, side="right")
+        file_idx = th.searchsorted(batch_size_ranges, batch_idx, side="right").item()
 
-        file_start_idx = batch_size_ranges[file_idx - 1] if file_idx > 0 else 0
+        file_start_idx = batch_size_ranges[file_idx - 1].item() if file_idx > 0 else 0
 
         local_idx = batch_idx - file_start_idx
         return file_idx, local_idx
