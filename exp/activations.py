@@ -2,7 +2,7 @@ import asyncio
 from collections import defaultdict
 from collections.abc import Callable, Generator
 import gc
-from itertools import batched, count, pairwise, islice
+from itertools import batched, count, islice, pairwise
 import os
 
 from loguru import logger
@@ -383,9 +383,7 @@ class Activations:
                         output_dir, f"{dist.get_rank()}_{current_batch_idx}.pt-temp"
                     )
                     new_activation_filepaths.append(
-                        self._collate_and_save_batch(
-                            current_batch, output_filepath
-                        )
+                        self._collate_and_save_batch(current_batch, output_filepath)
                     )
 
                     current_batch = defaultdict(list)
@@ -443,9 +441,7 @@ class Activations:
                         f"{dist.get_rank()}_{current_batch_idx + extra_batch_idx}.pt-temp",
                     )
                     extra_activation_filepaths.append(
-                        self._collate_and_save_batch(
-                            extra_batch, output_filepath
-                        )
+                        self._collate_and_save_batch(extra_batch, output_filepath)
                     )
 
             new_activation_filepaths.extend(extra_activation_filepaths)

@@ -46,6 +46,7 @@ dependencies = [
     "wandb>=0.21.3",
     "dictionary-learning",
     "more-itertools>=10.8.0",
+    "sae-bench>=0.4.2",
 ]
 
 [project.optional-dependencies]
