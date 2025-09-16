@@ -1,0 +1,58 @@
+import os
+
+import arguably
+from dotenv import load_dotenv
+from sae_bench.custom_saes import run_all_evals_dictionary_learning_saes
+from sae_bench.sae_bench_utils import general_utils
+
+from core.dtype import get_dtype
+from exp import OUTPUT_DIR
+
+load_dotenv()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+
+@arguably.command()
+def main(
+    *,
+    experiment_dir: str,
+    model_name: str = "olmoe-i",
+    eval_types: list[str] | None = None,
+    batchsize: int = 512,
+    dtype: str = "bfloat16",
+    seed: int = 0,
+) -> None:
+    """
+    Evaluate the SAEs on the given model.
+    """
+    if eval_types is None:
+        eval_types = [
+            "absorption",
+            "autointerp",
+            "core",
+            "scr",
+            "tpp",
+            "sparse_probing",
+            "unlearning",
+        ]
+
+    th_dtype = get_dtype(dtype)
+    str_dtype = th_dtype.__str__().split(".")[-1]
+
+    device = general_utils.setup_environment()
+
+    experiment_dir_path = os.path.join(OUTPUT_DIR, experiment_dir)
+    sae_locations = os.listdir(experiment_dir_path)
+
+    run_all_evals_dictionary_learning_saes.run_evals(
+        repo_id=experiment_dir,
+        model_name=model_name,
+        sae_locations=sae_locations,
+        llm_batch_size=batchsize,
+        llm_dtype=str_dtype,
+        device=device,
+        eval_types=eval_types,
+        random_seed=seed,
+        download_location=OUTPUT_DIR,
+        api_key=OPENAI_API_KEY,
+    )
