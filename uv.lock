@@ -1763,7 +1763,7 @@ requires-dist = [
     { name = "pytest-cov", specifier = ">=6.2.1" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
-    { name = "sae-bench", specifier = ">=0.4.2" },
+    { name = "sae-bench", git = "https://github.com/d0rbu/SAEBench" },
     { name = "scikit-learn", specifier = ">=1.7.1" },
     { name = "streamlit", specifier = ">=1.48.1" },
     { name = "torch", specifier = ">=2.0.0" },
@@ -3125,7 +3125,7 @@ wheels = [
 [[package]]
 name = "sae-bench"
 version = "0.4.2"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/d0rbu/SAEBench#53d26086e7ca4cdbc0499d40a18bb9cb1f015d4e" }
 dependencies = [
     { name = "beartype" },
     { name = "collectibles" },
@@ -3145,10 +3145,6 @@ dependencies = [
     { name = "torchvision" },
     { name = "tqdm" },
     { name = "transformer-lens" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/a4/a7/5be6da9f737638e8efbd46f26d70cc631926302fdeaa3ce5a3793f99f429/sae_bench-0.4.2.tar.gz", hash = "sha256:fce0540461b353f5bfe1b1e599aaa117b5bc5245858c4694fb3d566869e6c894", size = 220161, upload-time = "2025-07-15T23:24:00.018Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c8/61/35d0ffee08925576e23e771ed178edacbd955378b7d78b3b3d1b73659f86/sae_bench-0.4.2-py3-none-any.whl", hash = "sha256:2c73110e31e8e92575bcabc349a9aa7b9f6c137670bdb95bc2da89bb8ede5dbc", size = 291802, upload-time = "2025-07-15T23:23:58.491Z" },
 ]
 
 [[package]]

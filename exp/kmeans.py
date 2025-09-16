@@ -12,6 +12,7 @@ from loguru import logger
 import torch as th
 import torch.distributed as dist
 from tqdm import tqdm
+import yaml
 
 from exp import OUTPUT_DIR
 from exp.activations import Activations, load_activations_and_init_dist
@@ -281,7 +282,9 @@ async def gpu_worker(
                 else all_gpu_data[0].synced_data.losses,
                 "iteration": save_idx,
             }
-            checkpoint_path = os.path.join(save_dir, f"checkpoint_iter_{save_idx}.pt")
+            checkpoint_path = os.path.join(
+                save_dir, CHECKPOINT_FILENAME.format(iteration=save_idx)
+            )
             th.save(checkpoint_data, checkpoint_path)
             logger.info(
                 f"Saved checkpoint at iteration {save_idx} to {checkpoint_path}"
@@ -533,6 +536,12 @@ def get_top_circuits(
     return circuits.indices, circuit_mask
 
 
+KMEANS_TYPE = "kmeans"
+METADATA_FILENAME = "metadata.yaml"
+KMEANS_FILENAME = "kmeans.pt"
+CHECKPOINT_FILENAME = "checkpoint_iter_{iteration}.pt"
+
+
 async def cluster_paths_async(
     model_name: str,
     dataset_name: str,
@@ -577,8 +586,26 @@ async def cluster_paths_async(
             "top_k": top_k,
             "losses": losses,
         }
-        out_path = os.path.join(OUTPUT_DIR, kmeans_experiment_name, "kmeans.pt")
+        out_path = os.path.join(OUTPUT_DIR, kmeans_experiment_name, KMEANS_FILENAME)
         th.save(out, out_path)
+
+        out_metadata = {
+            "model_name": model_name,
+            "dataset_name": dataset_name,
+            "activation_dim": activation_dim,
+            "k": k,
+            "max_iters": max_iters,
+            "seed": seed,
+            "tokens_per_file": tokens_per_file,
+            "gpu_minibatch_size": gpu_minibatch_size,
+            "save_every": save_every,
+            "type": KMEANS_TYPE,
+        }
+        out_metadata_path = os.path.join(
+            OUTPUT_DIR, kmeans_experiment_name, METADATA_FILENAME
+        )
+        with open(out_metadata_path, "w") as f:
+            yaml.dump(out_metadata, f)
 
         logger.info("done :)")
 

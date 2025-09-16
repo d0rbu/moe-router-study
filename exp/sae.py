@@ -33,8 +33,8 @@ from exp.training import exponential_to_linear_save_steps, get_experiment_name
 
 @dataclass
 class Architecture:
-    trainer: type[SAETrainer]
-    sae: type[Dictionary]
+    trainer: type[SAETrainer] | None = None
+    sae: type[Dictionary] | None = None
     saebench_load_fn: Callable[
         [str, str, str, th.device, th.dtype, int | None, str], BaseSAE
     ]
@@ -50,6 +50,9 @@ ARCHITECTURES = {
         trainer=MatryoshkaBatchTopKTrainer,
         sae=MatryoshkaBatchTopKSAE,
         saebench_load_fn=load_dictionary_learning_matryoshka_batch_topk_sae,
+    ),
+    "moe": Architecture(
+        saebench_load_fn=lambda *args, **kwargs: None,
     ),
 }
 
@@ -121,6 +124,10 @@ async def run_sae_training(
     tokens_per_file: int = 10_000,
 ) -> None:
     """Train autoencoders to sweep over the given hyperparameter sets."""
+    assert "moe" not in architecture, (
+        "MoE is not supported for SAE training, use kmeans.py instead."
+    )
+
     logger.debug("loading activations and initializing distributed setup")
 
     activations, activation_dims = load_activations_and_init_dist(
