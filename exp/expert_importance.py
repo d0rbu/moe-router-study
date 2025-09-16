@@ -8,7 +8,7 @@ import torch as th
 from torch import Tensor
 from tqdm import tqdm
 
-from core.model import MODELS
+from core.model import get_model_config
 from exp import OUTPUT_DIR
 
 EXPERT_IMPORTANCE_DIR = os.path.join(OUTPUT_DIR, "expert_importance")
@@ -29,9 +29,7 @@ def expert_importance(
       - Computes L2 norms of these importance vectors
       - Saves one .pt per layer under out/expert_importance/
     """
-    model_config = MODELS.get(model_name, None)
-    if model_config is None:
-        raise ValueError(f"Model {model_name} not found")
+    model_config = get_model_config(model_name)
 
     if checkpoint_idx is None:
         revision = None

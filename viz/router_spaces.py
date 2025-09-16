@@ -8,7 +8,7 @@ import torch as th
 from torch import Tensor
 from tqdm import tqdm
 
-from core.model import MODELS
+from core.model import get_model_config
 from viz import FIGURE_DIR
 
 ROUTER_VIZ_DIR = os.path.join(FIGURE_DIR, "router_spaces")
@@ -28,9 +28,7 @@ def router_spaces(
     """
     os.makedirs(ROUTER_VIZ_DIR, exist_ok=True)
 
-    model_config = MODELS.get(model_name, None)
-    if model_config is None:
-        raise ValueError(f"Model {model_name} not found")
+    model_config = get_model_config(model_name)
 
     if checkpoint_idx is None:
         revision = None

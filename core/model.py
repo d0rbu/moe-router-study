@@ -92,3 +92,11 @@ MODELS: dict[str, ModelConfig] = {
         eager_fetch=False,  # avoid network during import
     ),
 }
+
+
+def get_model_config(model_name: str) -> ModelConfig:
+    model_config = MODELS.get(model_name)
+    if model_config is None:
+        raise ValueError(f"Model {model_name} not found")
+
+    return model_config

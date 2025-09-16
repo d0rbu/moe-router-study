@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from itertools import batched, chain, islice, product
 import os
@@ -16,6 +16,11 @@ from dictionary_learning.trainers.trainer import SAETrainer
 from dictionary_learning.training import trainSAE
 from fsspec.utils import math
 from loguru import logger
+from sae_bench.custom_saes.base_sae import BaseSAE
+from sae_bench.custom_saes.batch_topk_sae import (
+    load_dictionary_learning_batch_topk_sae,
+    load_dictionary_learning_matryoshka_batch_topk_sae,
+)
 import torch as th
 import torch.distributed as dist
 from tqdm import tqdm
@@ -30,16 +35,21 @@ from exp.training import exponential_to_linear_save_steps, get_experiment_name
 class Architecture:
     trainer: type[SAETrainer]
     sae: type[Dictionary]
+    saebench_load_fn: Callable[
+        [str, str, str, th.device, th.dtype, int | None, str], BaseSAE
+    ]
 
 
 ARCHITECTURES = {
     "batchtopk": Architecture(
         trainer=BatchTopKTrainer,
         sae=BatchTopKSAE,
+        saebench_load_fn=load_dictionary_learning_batch_topk_sae,
     ),
     "matryoshka": Architecture(
         trainer=MatryoshkaBatchTopKTrainer,
         sae=MatryoshkaBatchTopKSAE,
+        saebench_load_fn=load_dictionary_learning_matryoshka_batch_topk_sae,
     ),
 }
 

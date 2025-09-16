@@ -122,6 +122,16 @@ DATASETS: dict[str, Callable[[PreTrainedTokenizer], IterableColumn]] = {
 }
 
 
+def get_dataset_fn(
+    dataset_name: str,
+) -> Callable[[PreTrainedTokenizer], IterableColumn]:
+    dataset_fn = DATASETS.get(dataset_name)
+    if dataset_fn is None:
+        raise ValueError(f"Dataset {dataset_name} not found")
+
+    return dataset_fn
+
+
 if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained("allenai/OLMoE-1B-7B-0924")
 

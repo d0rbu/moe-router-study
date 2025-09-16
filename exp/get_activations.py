@@ -20,8 +20,8 @@ from tqdm import tqdm
 import trackio as wandb
 import yaml
 
-from core.data import DATASETS
-from core.model import MODELS
+from core.data import get_dataset_fn
+from core.model import get_model_config
 from exp import ACTIVATION_DIRNAME, MODEL_DIRNAME, OUTPUT_DIR
 from exp.training import get_experiment_name
 
@@ -248,9 +248,7 @@ def tokenizer_worker(
     logger.add(sys.stderr, level=log_level)
 
     # Get model config and tokenizer
-    model_config = MODELS.get(model_name)
-    if model_config is None:
-        raise ValueError(f"Model {model_name} not found")
+    model_config = get_model_config(model_name)
 
     # Import here to avoid circular imports
     from transformers import AutoTokenizer
@@ -264,9 +262,7 @@ def tokenizer_worker(
 
     logger.info(f"Using tokenizer from {path}")
     # Get dataset function
-    dataset_fn = DATASETS.get(dataset_name)
-    if dataset_fn is None:
-        raise ValueError(f"Dataset {dataset_name} not found")
+    dataset_fn = get_dataset_fn(dataset_name)
 
     # Create dataset iterator
     dataset_iter = dataset_fn(tokenizer)
@@ -494,9 +490,7 @@ def gpu_worker(
     logger.add(sys.stderr, level=log_level)
 
     # Get model config
-    model_config = MODELS.get(model_name)
-    if model_config is None:
-        raise ValueError(f"Model {model_name} not found")
+    model_config = get_model_config(model_name)
 
     hf_name = model_config.hf_name
     local_path = os.path.join(os.path.abspath(MODEL_DIRNAME), hf_name)
