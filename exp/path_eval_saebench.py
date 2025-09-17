@@ -2,6 +2,7 @@ import asyncio
 from dataclasses import asdict, dataclass
 from datetime import datetime
 import gc
+from itertools import batched
 import os
 import random
 import sys
@@ -64,7 +65,74 @@ def collect_path_activations(
     selected_paths: list[int] | None = None,
     activation_dtype: th.dtype | None = None,
 ) -> dict[int, th.Tensor]:
-    raise NotImplementedError("Not implemented. Implement knn inference here.")
+    """Collects path activations for a given set of tokens."""
+    path_acts = []
+
+    for batch_idx, tokens_BT in tqdm(
+        enumerate(batched(tokenized_dataset, llm_batch_size)),
+        total=tokenized_dataset.shape[0] // llm_batch_size,
+        desc="Collecting path activations",
+        leave=False,
+    ):
+        router_logits_set = []
+
+        # use trace context manager to capture router outputs
+        with model.trace(tokens_BT):
+            # extract activations for each layer
+            for layer_idx in tqdm(
+                model.layers_with_routers,
+                desc=f"Batch {batch_idx}",
+                total=len(model.layers_with_routers),
+                leave=False,
+            ):
+                router_output = model.routers_output[layer_idx]
+
+                # Handle different router output formats
+                if isinstance(router_output, tuple):
+                    if len(router_output) == 2:
+                        router_scores, _router_indices = router_output
+                    else:
+                        raise ValueError(
+                            f"Found tuple of length {len(router_output)} for router output at layer {layer_idx}"
+                        )
+                else:
+                    router_scores = router_output
+                logits = router_scores.save()
+
+                router_logits_set.append(logits)
+
+        # (B, T, L, E)
+        router_logits = th.cat(router_logits_set, dim=2)
+
+        # (B, T, L, E) -> (B, T, L * E)
+        router_logits_BTP = router_logits.view(
+            tokens_BT.shape[0], -1, model.cfg.d_model
+        )
+
+        raise NotImplementedError("Convert from path space to feature space")
+        router_logits_BTF = router_logits.view(
+            tokens_BT.shape[0], -1, model.cfg.d_model
+        )
+
+        if selected_paths is not None:
+            router_logits_BTF = router_logits_BTF[:, :, selected_paths]
+
+        if mask_bos_pad_eos_tokens:
+            attn_mask_BT = autointerp.get_bos_pad_eos_mask(tokens_BT, model.tokenizer)
+        else:
+            attn_mask_BT = th.ones_like(tokens_BT, dtype=th.bool)
+
+        attn_mask_BT = attn_mask_BT.to(device=router_logits_BTF.device)
+
+        router_logits_BTF = router_logits_BTF * attn_mask_BT[:, :, None]
+
+        if activation_dtype is not None:
+            router_logits_BTF = router_logits_BTF.to(dtype=activation_dtype)
+
+        path_acts.append(router_logits_BTF)
+
+    all_path_acts_BTF = th.cat(path_acts, dim=0)
+    return all_path_acts_BTF
 
 
 def get_feature_activation_sparsity(
@@ -129,6 +197,7 @@ class PathAutoInterp(autointerp.AutoInterp):
         """
         dataset_size, seq_len = self.tokenized_dataset.shape
 
+        # (B, L * E)
         acts = collect_path_activations(
             self.tokenized_dataset,
             self.model,
