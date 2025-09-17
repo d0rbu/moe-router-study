@@ -47,6 +47,7 @@ dependencies = [
     "dictionary-learning",
     "more-itertools>=10.8.0",
     "sae-bench>=0.4.2",
+    "poetry>=2.2.0",
 ]
 
 [project.optional-dependencies]
