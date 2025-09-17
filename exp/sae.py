@@ -365,10 +365,10 @@ def main(
     if isinstance(architecture, str):
         architecture = [architecture]
 
-    if isinstance(lr, (int, float)):
+    if isinstance(lr, int | float):
         lr = [lr]
 
-    if isinstance(auxk_alpha, (int, float)):
+    if isinstance(auxk_alpha, int | float):
         auxk_alpha = [auxk_alpha]
 
     if isinstance(warmup_steps, int):
