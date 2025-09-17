@@ -186,7 +186,7 @@ def get_paths_meaned_activations(
     for class_name, all_acts_BTP in all_llm_activations_BTP.items():
         all_acts_BF = []
 
-        for batch_idx, acts_BTP in enumerate(batched(all_acts_BTP, batch_size)):
+        for _batch_idx, acts_BTP in enumerate(batched(all_acts_BTP, batch_size)):
             acts_BTF = acts_BTP @ paths.T
 
             acts_BT = th.sum(acts_BTF, dim=-2)
@@ -245,7 +245,7 @@ def run_eval_single_dataset(
         all_test_acts_BP = create_meaned_model_activations(all_test_acts_BTP)
 
         # We use GPU here as sklearn.fit is slow on large input dimensions, all other probe training is done with sklearn.fit
-        llm_probes, llm_test_accuracies = train_probe_on_activations(
+        _llm_probes, llm_test_accuracies = train_probe_on_activations(
             all_train_acts_BP,
             all_test_acts_BP,
             select_top_k=None,
@@ -258,7 +258,7 @@ def run_eval_single_dataset(
         llm_results = {"llm_test_accuracy": llm_test_accuracies}
 
         for k in config.k_values:
-            llm_top_k_probes, llm_top_k_test_accuracies = train_probe_on_activations(
+            _llm_top_k_probes, llm_top_k_test_accuracies = train_probe_on_activations(
                 all_train_acts_BP,
                 all_test_acts_BP,
                 select_top_k=k,
@@ -319,7 +319,7 @@ def run_eval_single_dataset(
     per_class_results_dict.extend(llm_results)
 
     for k in config.k_values:
-        sae_top_k_probes, sae_top_k_test_accuracies = train_probe_on_activations(
+        _sae_top_k_probes, sae_top_k_test_accuracies = train_probe_on_activations(
             all_sae_train_acts_BF,
             all_sae_test_acts_BF,
             select_top_k=k,

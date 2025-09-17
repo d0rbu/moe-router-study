@@ -564,7 +564,7 @@ def viz_max_activating_tokens(
     _ensure_token_alignment(token_topk_mask, tokens)
     circuits = circuits.to(device=device, dtype=th.float32)
 
-    batch_size, num_layers, num_experts = token_topk_mask.shape
+    batch_size, _num_layers, _num_experts = token_topk_mask.shape
 
     if minibatch_size is None:
         minibatch_size = batch_size
@@ -647,7 +647,7 @@ def viz_mean_activating_tokens(
     _ensure_token_alignment(token_topk_mask, tokens)
     circuits = circuits.to(device=device, dtype=th.float32)
 
-    batch_size, num_layers, num_experts = token_topk_mask.shape
+    batch_size, _num_layers, _num_experts = token_topk_mask.shape
 
     if minibatch_size is None:
         minibatch_size = batch_size

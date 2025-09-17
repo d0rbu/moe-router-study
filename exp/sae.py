@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from itertools import batched, chain, islice, product
+import math
 import os
 import sys
 
@@ -14,7 +15,6 @@ from dictionary_learning.trainers.matryoshka_batch_top_k import (
 )
 from dictionary_learning.trainers.trainer import SAETrainer
 from dictionary_learning.training import trainSAE
-import math
 from loguru import logger
 from sae_bench.custom_saes.base_sae import BaseSAE
 from sae_bench.custom_saes.batch_topk_sae import (
@@ -150,9 +150,7 @@ async def run_sae_training(
     else:
         # find submodule name that is not router_logits
         non_router_logits_submodules = [
-            name
-            for name in submodule_name
-            if name != ActivationKeys.ROUTER_LOGITS
+            name for name in submodule_name if name != ActivationKeys.ROUTER_LOGITS
         ]
         activation_dim = activation_dims[non_router_logits_submodules[0]]
 
