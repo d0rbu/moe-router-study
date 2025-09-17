@@ -18,9 +18,21 @@ jobs:
     - name: Set up Python 3.12
       run: uv python install 3.12
     
+    - name: Set Python version
+      run: uv python pin 3.12
+    
+    - name: Create virtual environment
+      run: uv venv
+    
+    - name: Install zstandard from wheel
+      run: |
+        uv pip install --only-binary=zstandard zstandard==0.22.0
+    
     - name: Install dependencies
       run: |
-        uv sync --dev
+        uv sync --dev --no-build-isolation
+      env:
+        UV_PRERELEASE: allow
     
     - name: Run ruff linting
       run: |
@@ -48,9 +60,21 @@ jobs:
     - name: Set up Python 3.12
       run: uv python install 3.12
     
+    - name: Set Python version
+      run: uv python pin 3.12
+    
+    - name: Create virtual environment
+      run: uv venv
+    
+    - name: Install zstandard from wheel
+      run: |
+        uv pip install --only-binary=zstandard zstandard==0.22.0
+    
     - name: Install dependencies
       run: |
-        uv sync --dev
+        uv sync --dev --no-build-isolation
+      env:
+        UV_PRERELEASE: allow
     
     - name: Run tests
       run: |

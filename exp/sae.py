@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from itertools import batched, chain, islice, product
+import math
 import os
 import sys
 
@@ -14,7 +15,6 @@ from dictionary_learning.trainers.matryoshka_batch_top_k import (
 )
 from dictionary_learning.trainers.trainer import SAETrainer
 from dictionary_learning.training import trainSAE
-from fsspec.utils import math
 from loguru import logger
 from sae_bench.custom_saes.base_sae import BaseSAE
 from sae_bench.custom_saes.batch_topk_sae import (
@@ -150,9 +150,7 @@ async def run_sae_training(
     else:
         # find submodule name that is not router_logits
         non_router_logits_submodules = [
-            submodule_name
-            for submodule_name in submodule_name
-            if submodule_name != ActivationKeys.ROUTER_LOGITS
+            name for name in submodule_name if name != ActivationKeys.ROUTER_LOGITS
         ]
         activation_dim = activation_dims[non_router_logits_submodules[0]]
 
@@ -295,12 +293,12 @@ async def run_sae_training(
             steps=steps,
             num_epochs=num_epochs,
         )
-        gpu_queues[device_idx].put(batch)
+        await gpu_queues[device_idx].put(batch)
 
     # put a sentinel value in the gpu queues to stop the workers
     for gpu_queue in gpu_queues:
-        gpu_queue.put(None)
-        gpu_queue.join()
+        await gpu_queue.put(None)
+        await gpu_queue.join()
 
     logger.info("done :)")
 
@@ -355,7 +353,7 @@ def main(
         if isinstance(group_fractions[0], float):
             group_fractions = [group_fractions]
     elif group_fractions is None:
-        group_fractions = [1 / 32, 1 / 16, 1 / 8, 1 / 4, 1 / 2 + 1 / 32]
+        group_fractions = [1.0 / 32, 1.0 / 16, 1.0 / 8, 1.0 / 4, 1.0 / 2 + 1.0 / 32]
 
     if isinstance(group_weights, list):
         assert len(group_weights) > 0, "Group weights is an empty list!"
@@ -367,10 +365,10 @@ def main(
     if isinstance(architecture, str):
         architecture = [architecture]
 
-    if isinstance(lr, int):
+    if isinstance(lr, (int, float)):
         lr = [lr]
 
-    if isinstance(auxk_alpha, int):
+    if isinstance(auxk_alpha, (int, float)):
         auxk_alpha = [auxk_alpha]
 
     if isinstance(warmup_steps, int):
