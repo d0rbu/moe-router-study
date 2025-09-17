@@ -21,6 +21,9 @@ jobs:
     - name: Set Python version
       run: uv python pin 3.12
     
+    - name: Create virtual environment
+      run: uv venv
+    
     - name: Install zstandard from wheel
       run: |
         uv pip install --only-binary=zstandard zstandard==0.22.0
@@ -59,6 +62,9 @@ jobs:
     
     - name: Set Python version
       run: uv python pin 3.12
+    
+    - name: Create virtual environment
+      run: uv venv
     
     - name: Install zstandard from wheel
       run: |
