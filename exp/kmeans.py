@@ -241,9 +241,9 @@ async def gpu_worker(
         data = data.to(gpu_idx)
 
         # convert from logits to paths
-        paths = th.topk(data, k=top_k, dim=2).indices
+        paths = th.topk(data, k=top_k, dim=-1).indices
         data.zero_()
-        data.scatter_(2, paths, 1)
+        data.scatter_(-1, paths, 1)
 
         # (B, L, E) -> (B, L * E)
         flat_data = data.view(data.shape[0], -1)

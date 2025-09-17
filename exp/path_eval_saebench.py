@@ -47,6 +47,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 @dataclass
 class Paths:
     data: th.Tensor  # (num_centroids, num_layers * num_experts)
+    top_k: int
     name: str
     metadata: dict[str, Any]
 
@@ -60,6 +61,7 @@ def collect_path_activations(
     tokenized_dataset: th.Tensor,
     model: StandardizedTransformer,
     paths: Paths | PathsWithSparsity,
+    top_k: int,
     llm_batch_size: int,
     mask_bos_pad_eos_tokens: bool = False,
     selected_paths: list[int] | None = None,
@@ -102,34 +104,38 @@ def collect_path_activations(
                 router_logits_set.append(logits)
 
         # (B, T, L, E)
-        router_logits = th.cat(router_logits_set, dim=2)
+        router_paths = th.cat(router_logits_set, dim=-2)
+        sparse_paths = th.topk(router_paths, k=top_k, dim=-1).indices
+
+        router_paths.zero_()
+        router_paths.scatter_(-1, sparse_paths, 1)
+
+        del sparse_paths
 
         # (B, T, L, E) -> (B, T, L * E)
-        router_logits_BTP = router_logits.view(
-            tokens_BT.shape[0], -1, model.cfg.d_model
-        )
+        router_paths_BTP = router_paths.view(*tokens_BT.shape, -1)
 
-        raise NotImplementedError("Convert from path space to feature space")
-        router_logits_BTF = router_logits.view(
-            tokens_BT.shape[0], -1, model.cfg.d_model
-        )
+        # (B, T, L * E) @ (L * E, F) -> (B, T, F)
+        router_paths_BTF = router_paths_BTP @ paths.data.T
+
+        del router_paths, router_paths_BTP
 
         if selected_paths is not None:
-            router_logits_BTF = router_logits_BTF[:, :, selected_paths]
+            router_paths_BTF = router_paths_BTF[:, :, selected_paths]
 
         if mask_bos_pad_eos_tokens:
             attn_mask_BT = autointerp.get_bos_pad_eos_mask(tokens_BT, model.tokenizer)
         else:
             attn_mask_BT = th.ones_like(tokens_BT, dtype=th.bool)
 
-        attn_mask_BT = attn_mask_BT.to(device=router_logits_BTF.device)
+        attn_mask_BT = attn_mask_BT.to(device=router_paths_BTF.device)
 
-        router_logits_BTF = router_logits_BTF * attn_mask_BT[:, :, None]
+        router_paths_BTF = router_paths_BTF * attn_mask_BT[:, :, None]
 
         if activation_dtype is not None:
-            router_logits_BTF = router_logits_BTF.to(dtype=activation_dtype)
+            router_paths_BTF = router_paths_BTF.to(dtype=activation_dtype)
 
-        path_acts.append(router_logits_BTF)
+        path_acts.append(router_paths_BTF)
 
     all_path_acts_BTF = th.cat(path_acts, dim=0)
     return all_path_acts_BTF
@@ -138,13 +144,80 @@ def collect_path_activations(
 def get_feature_activation_sparsity(
     tokens: th.Tensor,  # dataset_size x seq_len
     model: StandardizedTransformer,
-    paths_data: th.Tensor,
+    paths: th.Tensor,
+    top_k: int,
     batch_size: int,
     mask_bos_pad_eos_tokens: bool = False,
-) -> th.Tensor:  # d_paths
-    raise NotImplementedError(
-        "Not implemented. Implement feature activation sparsity here. Should be used in collect_path_activations."
-    )
+) -> th.Tensor:  # num_paths
+    """Get the activation sparsity for each path."""
+    device = paths.device
+    running_sum_F = th.zeros(paths.shape[0], dtype=th.float32, device=device)
+    total_tokens = 0
+
+    for batch_idx, tokens_BT in tqdm(
+        enumerate(batched(tokens, batch_size)),
+        total=tokens.shape[0] // batch_size,
+        desc="Getting path activation sparsity",
+        leave=False,
+    ):
+        router_logits_set = []
+
+        with model.trace(tokens_BT):
+            for layer_idx in tqdm(
+                model.layers_with_routers,
+                desc=f"Batch {batch_idx}",
+                total=len(model.layers_with_routers),
+                leave=False,
+            ):
+                router_output = model.routers_output[layer_idx]
+
+                # Handle different router output formats
+                if isinstance(router_output, tuple):
+                    if len(router_output) == 2:
+                        router_scores, _router_indices = router_output
+                    else:
+                        raise ValueError(
+                            f"Found tuple of length {len(router_output)} for router output at layer {layer_idx}"
+                        )
+                else:
+                    router_scores = router_output
+                logits = router_scores.save()
+
+                router_logits_set.append(logits)
+
+        router_paths = th.cat(router_logits_set, dim=-2)
+        sparse_paths = th.topk(router_paths, k=top_k, dim=-1).indices
+
+        router_paths.zero_()
+        router_paths.scatter_(-1, sparse_paths, 1)
+
+        del sparse_paths
+
+        router_paths_BTP = router_paths.view(*tokens_BT.shape, -1)
+
+        # one-hot encode the closest path to each token
+        # (B, T, L * E) . (F, L * E) -> (B, T, F)
+        distances = th.cdist(router_paths_BTP, paths.data, p=1)
+        # (B, T, F) -> (B, T)
+        closest_paths = th.argmin(distances, dim=-1)
+        router_paths_BTF = th.zeros_like(distances)
+        router_paths_BTF.scatter_(-1, closest_paths, 1)
+
+        del distances, closest_paths
+
+        if mask_bos_pad_eos_tokens:
+            attn_mask_BT = autointerp.get_bos_pad_eos_mask(tokens_BT, model.tokenizer)
+        else:
+            attn_mask_BT = th.ones_like(tokens_BT, dtype=th.bool)
+
+        attn_mask_BT = attn_mask_BT.to(device=router_paths_BTF.device)
+
+        router_paths_BTF = router_paths_BTF * attn_mask_BT[:, :, None]
+        total_tokens += attn_mask_BT.sum().item()
+
+        running_sum_F += th.sum(router_paths_BTF, dim=(0, 1))
+
+    return running_sum_F / total_tokens
 
 
 class PathAutoInterp(autointerp.AutoInterp):
@@ -159,6 +232,7 @@ class PathAutoInterp(autointerp.AutoInterp):
         cfg: AutoInterpEvalConfig,
         model: StandardizedTransformer,
         paths: th.Tensor,
+        top_k: int,
         tokenized_dataset: th.Tensor,
         sparsity: th.Tensor,
         device: str,
@@ -167,6 +241,7 @@ class PathAutoInterp(autointerp.AutoInterp):
         self.cfg = cfg
         self.model = model
         self.paths = paths
+        self.top_k = top_k
         self.tokenized_dataset = tokenized_dataset
         self.device = device
         self.api_key = api_key
@@ -202,6 +277,7 @@ class PathAutoInterp(autointerp.AutoInterp):
             self.tokenized_dataset,
             self.model,
             self.paths,
+            self.top_k,
             self.cfg.llm_batch_size,
             mask_bos_pad_eos_tokens=True,
             selected_paths=self.latents,
@@ -212,7 +288,10 @@ class PathAutoInterp(autointerp.AutoInterp):
         scoring_examples = {}
 
         for i, latent in tqdm(
-            enumerate(self.latents), desc="Collecting examples for LLM judge"
+            enumerate(self.latents),
+            total=len(self.latents),
+            desc="Collecting examples for LLM judge",
+            leave=False,
         ):
             # (1/3) Get random examples (we don't need their values)
             rand_indices = th.stack(
@@ -363,11 +442,13 @@ def run_eval_paths(
             tokenized_dataset,
             model,
             paths.data,
+            paths.top_k,
             config.llm_batch_size,
             mask_bos_pad_eos_tokens=True,
         )
         paths = PathsWithSparsity(
             data=paths.data,
+            top_k=paths.top_k,
             name=paths.name,
             metadata=paths.metadata,
             sparsity=sparsity,
@@ -377,6 +458,7 @@ def run_eval_paths(
         cfg=config,
         model=model,
         paths=paths.data,
+        top_k=paths.top_k,
         tokenized_dataset=tokenized_dataset,
         sparsity=paths.sparsity,
         api_key=api_key,
@@ -423,7 +505,8 @@ def run_autointerp_eval(
     model: StandardizedTransformer = StandardizedTransformer(
         path,
         check_attn_probs_with_trace=False,
-        device_map="auto",
+        device_map=device,
+        dtype=llm_dtype,
     )
 
     for paths_with_metadata in tqdm(
@@ -547,17 +630,18 @@ def main(
         kmeans_data = th.load(f)
 
         # list of tensors of shape (num_centroids, num_layers * num_experts)
-        centroid_sets = kmeans_data["centroids"]
+        centroid_sets = kmeans_data["centroids"].to(dtype=th_dtype, device=device)
         top_k = kmeans_data["top_k"]
-        losses = kmeans_data["losses"]
+        losses = kmeans_data["losses"].tolist()
 
         paths = Paths(
             data=centroid_sets,
+            top_k=top_k,
             name=f"paths_{centroid_sets.shape[0]}",
             metadata={
                 "num_paths": centroid_sets.shape[0],
                 "top_k": top_k,
-                "losses": losses.tolist(),
+                "losses": losses,
             },
         )
         paths_set.append(paths)
