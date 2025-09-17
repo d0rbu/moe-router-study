@@ -108,13 +108,15 @@ async def compute_centroid_from_assignment(
 
 
 async def kmeans_step(
-    data: th.Tensor,
-    centroids: th.Tensor,
+    data: th.Tensor,  # (B, L * E)
+    centroids: th.Tensor,  # (K, L * E)
 ) -> tuple[th.Tensor, th.Tensor, th.Tensor]:
-    ### do a step of kmeans on this data batch and get loss
+    # (B, K)
     distances = th.cdist(data, centroids, p=1)
+    # (B)
     assignments = th.argmin(distances, dim=1)
 
+    # for calculating loss, we get the distances from each data point to the closest centroid
     centroid_distances_awaitable = asyncio.to_thread(
         th.gather, distances, 1, assignments.unsqueeze(1)
     )
@@ -131,7 +133,6 @@ async def kmeans_step(
     new_loss = centroid_distances.mean()
 
     new_centroids, new_weights = zip(*centroids_and_weights, strict=True)
-    ### end
 
     return new_centroids, new_weights, new_loss
 
@@ -236,6 +237,7 @@ async def gpu_worker(
         if save_idx is not None:
             assert should_sync, "save_idx can only be set when should_sync is true"
 
+        # (B, L, E)
         data = data.to(gpu_idx)
 
         # convert from logits to paths
@@ -243,13 +245,16 @@ async def gpu_worker(
         data.zero_()
         data.scatter_(2, paths, 1)
 
-        del paths
+        # (B, L, E) -> (B, L * E)
+        flat_data = data.view(data.shape[0], -1)
+
+        del paths, data
         th.cuda.empty_cache()
 
         updates = await asyncio.gather(
             *[
                 kmeans_step(
-                    data,
+                    flat_data,
                     centroids,
                 )
                 for centroids in gpu_data.synced_data.centroid_sets

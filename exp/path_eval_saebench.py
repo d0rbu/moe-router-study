@@ -1,12 +1,15 @@
-from dataclasses import asdict
+import asyncio
+from dataclasses import asdict, dataclass
 from datetime import datetime
 import gc
 import os
 import random
+import sys
 from typing import Any
 
 import arguably
 from dotenv import load_dotenv
+from loguru import logger
 from nnterp import StandardizedTransformer
 from sae_bench.custom_saes.run_all_evals_dictionary_learning_saes import (
     output_folders as EVAL_DIRS,
@@ -25,23 +28,37 @@ from sae_bench.sae_bench_utils import (
     get_sae_bench_version,
     get_sae_lens_version,
 )
+import sae_bench.sae_bench_utils.dataset_utils as dataset_utils
 from tabulate import tabulate
 import torch as th
 from tqdm import tqdm
 import yaml
 
 from core.dtype import get_dtype
-from exp import OUTPUT_DIR
-from exp.kmeans import KMEANS_TYPE
+from core.model import get_model_config
+from exp import MODEL_DIRNAME, OUTPUT_DIR
+from exp.kmeans import KMEANS_FILENAME, KMEANS_TYPE
 
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 
+@dataclass
+class Paths:
+    data: th.Tensor  # (num_centroids, num_layers * num_experts)
+    name: str
+    metadata: dict[str, Any]
+
+
+@dataclass
+class PathsWithSparsity(Paths):
+    sparsity: th.Tensor  # (num_centroids)
+
+
 def collect_path_activations(
     tokenized_dataset: th.Tensor,
     model: StandardizedTransformer,
-    paths: th.Tensor,
+    paths: Paths | PathsWithSparsity,
     llm_batch_size: int,
     mask_bos_pad_eos_tokens: bool = False,
     selected_paths: list[int] | None = None,
@@ -53,7 +70,7 @@ def collect_path_activations(
 def get_feature_activation_sparsity(
     tokens: th.Tensor,  # dataset_size x seq_len
     model: StandardizedTransformer,
-    paths: th.Tensor,
+    paths_data: th.Tensor,
     batch_size: int,
     mask_bos_pad_eos_tokens: bool = False,
 ) -> th.Tensor:  # d_paths
@@ -243,30 +260,75 @@ class PathAutoInterp(autointerp.AutoInterp):
 
 def run_eval_paths(
     config: AutoInterpEvalConfig,
-    paths: th.Tensor,
+    paths: Paths | PathsWithSparsity,
     model: StandardizedTransformer,
     device: str,
     artifacts_folder: str,
     api_key: str,
     sparsity: th.Tensor | None = None,
 ) -> dict[str, float]:
-    raise NotImplementedError("Not implemented.")
+    random.seed(config.random_seed)
+    th.manual_seed(config.random_seed)
+    th.set_grad_enabled(False)
+
+    os.makedirs(artifacts_folder, exist_ok=True)
+
+    tokens_filename = f"{autointerp.escape_slash(config.model_name)}_{config.total_tokens}_tokens_{config.llm_context_size}_ctx.pt"
+    tokens_path = os.path.join(artifacts_folder, tokens_filename)
+
+    if os.path.exists(tokens_path):
+        tokenized_dataset = th.load(tokens_path).to(device)
+    else:
+        tokenized_dataset = dataset_utils.load_and_tokenize_dataset(
+            config.dataset_name,
+            config.llm_context_size,
+            config.total_tokens,
+            model.tokenizer,  # type: ignore
+        ).to(device)
+        th.save(tokenized_dataset, tokens_path)
+
+    print(f"Loaded tokenized dataset of shape {tokenized_dataset.shape}")
+
+    if isinstance(paths, Paths):
+        sparsity = get_feature_activation_sparsity(
+            tokenized_dataset,
+            model,
+            paths.data,
+            config.llm_batch_size,
+            mask_bos_pad_eos_tokens=True,
+        )
+        paths = PathsWithSparsity(
+            data=paths.data,
+            name=paths.name,
+            metadata=paths.metadata,
+            sparsity=sparsity,
+        )
+
+    autointerp_runner = PathAutoInterp(
+        cfg=config,
+        model=model,
+        paths=paths.data,
+        tokenized_dataset=tokenized_dataset,
+        sparsity=paths.sparsity,
+        api_key=api_key,
+        device=device,
+    )
+    results = asyncio.run(autointerp_runner.run())
+
+    return results
 
 
 def run_autointerp_eval(
     config: AutoInterpEvalConfig,
-    selected_paths_set: list[tuple[str, th.Tensor]],
-    paths_cfg: dict[str, Any],
+    selected_paths_set: list[Paths | PathsWithSparsity],
     device: str,
     api_key: str,
     output_path: str,
     force_rerun: bool = False,
     save_logs_path: str | None = None,
     artifacts_path: str = "artifacts",
+    log_level: str = "INFO",
 ) -> dict[str, Any]:
-    """
-    selected_paths_set is a list of either tuples of (paths_name, path_set)
-    """
     eval_instance_id = get_eval_uuid()
     sae_lens_version = get_sae_lens_version()
     sae_bench_commit_hash = get_sae_bench_version()
@@ -277,26 +339,41 @@ def run_autointerp_eval(
 
     llm_dtype = general_utils.str_to_dtype(config.llm_dtype)
 
-    model: StandardizedTransformer = None
-    raise NotImplementedError("Not implemented. Implement model here.")
+    logger.remove()
+    logger.add(sys.stderr, level=log_level)
 
-    for paths_name, paths in tqdm(
+    # Get model config
+    model_config = get_model_config(config.model_name)
+
+    hf_name = model_config.hf_name
+    local_path = os.path.join(os.path.abspath(MODEL_DIRNAME), hf_name)
+    path = local_path if os.path.exists(local_path) else hf_name
+
+    logger.info(f"Using model from {path}")
+    # Initialize model
+    model: StandardizedTransformer = StandardizedTransformer(
+        path,
+        check_attn_probs_with_trace=False,
+        device_map="auto",
+    )
+
+    for paths_with_metadata in tqdm(
         selected_paths_set,
         total=len(selected_paths_set),
         desc="Autointerp",
     ):
-        paths = paths.to(device=device, dtype=llm_dtype)
-
-        sae_result_path = os.path.join(output_path, f"{paths_name}_eval_results.json")
+        sae_result_path = os.path.join(
+            output_path, f"{paths_with_metadata.name}_eval_results.json"
+        )
 
         if os.path.exists(sae_result_path) and not force_rerun:
-            print(f"Skipping {paths_name} as results already exist")
+            print(f"Skipping {paths_with_metadata.name} as results already exist")
             continue
 
         artifacts_folder = os.path.join(artifacts_path, EVAL_TYPE_ID_AUTOINTERP)
 
         paths_eval_result = run_eval_paths(
-            config, paths, model, device, artifacts_folder, api_key, None
+            config, paths_with_metadata, model, device, artifacts_folder, api_key, None
         )
 
         # Save nicely formatted logs to a text file, helpful for debugging.
@@ -311,22 +388,22 @@ def run_autointerp_eval(
             ]
             logs = "Summary table:\n" + tabulate(
                 [
-                    [paths_eval_result[latent][h] for h in headers]  # type: ignore
+                    [paths_eval_result[latent][h] for h in headers]
                     for latent in paths_eval_result
                 ],
                 headers=headers,
                 tablefmt="simple_outline",
             )
-            worst_result = min(paths_eval_result.values(), key=lambda x: x["score"])  # type: ignore
-            best_result = max(paths_eval_result.values(), key=lambda x: x["score"])  # type: ignore
-            logs += f"\n\nWorst scoring idx {worst_result['latent']}, score = {worst_result['score']}\n{worst_result['logs']}"  # type: ignore
-            logs += f"\n\nBest scoring idx {best_result['latent']}, score = {best_result['score']}\n{best_result['logs']}"  # type: ignore
+            worst_result = min(paths_eval_result.values(), key=lambda x: x["score"])
+            best_result = max(paths_eval_result.values(), key=lambda x: x["score"])
+            logs += f"\n\nWorst scoring idx {worst_result['latent']}, score = {worst_result['score']}\n{worst_result['logs']}"
+            logs += f"\n\nBest scoring idx {best_result['latent']}, score = {best_result['score']}\n{best_result['logs']}"
             # Save the results to a file
             with open(save_logs_path, "a") as f:
                 f.write(logs)
 
         # Put important results into the results dict
-        all_scores = [r["score"] for r in paths_eval_result.values()]  # type: ignore
+        all_scores = [r["score"] for r in paths_eval_result.values()]
 
         all_scores_tensor = th.tensor(all_scores)
         score = all_scores_tensor.mean().item()
@@ -345,12 +422,12 @@ def run_autointerp_eval(
             eval_result_unstructured=paths_eval_result,
             sae_bench_commit_hash=sae_bench_commit_hash,
             sae_lens_id="paths",
-            sae_lens_release_id=paths_name,
+            sae_lens_release_id=paths_with_metadata.name,
             sae_lens_version=sae_lens_version,
-            sae_cfg_dict=paths_cfg,
+            sae_cfg_dict=paths_with_metadata.metadata,
         )
 
-        results_dict[f"{paths_name}"] = asdict(eval_output)
+        results_dict[f"{paths_with_metadata.name}"] = asdict(eval_output)
 
         eval_output.to_json_file(sae_result_path, indent=2)
 
@@ -369,6 +446,7 @@ def main(
     dtype: str = "float32",
     seed: int = 0,
     logs_path: str | None = None,
+    log_level: str = "INFO",
 ) -> None:
     """
     Evaluate the paths on the given model.
@@ -395,11 +473,25 @@ def main(
         f"Model name mismatch: {model_name} != {config['model_name']}"
     )
 
-    selected_paths_set = []
-    paths_cfg = {}
-    raise NotImplementedError(
-        "Not implemented. Implement selected_paths_set and paths_cfg here."
-    )
+    paths_set = []
+    with open(os.path.join(experiment_path, KMEANS_FILENAME)) as f:
+        kmeans_data = th.load(f)
+
+        # list of tensors of shape (num_centroids, num_layers * num_experts)
+        centroid_sets = kmeans_data["centroids"]
+        top_k = kmeans_data["top_k"]
+        losses = kmeans_data["losses"]
+
+        paths = Paths(
+            data=centroid_sets,
+            name=f"paths_{centroid_sets.shape[0]}",
+            metadata={
+                "num_paths": centroid_sets.shape[0],
+                "top_k": top_k,
+                "losses": losses.tolist(),
+            },
+        )
+        paths_set.append(paths)
 
     # run autointerp
     autointerp_eval_dir = EVAL_DIRS["autointerp"]
@@ -411,14 +503,14 @@ def main(
             llm_batch_size=batchsize,
             llm_dtype=str_dtype,
         ),
-        selected_paths_set=selected_paths_set,
-        paths_cfg=paths_cfg,
+        selected_paths_set=paths_set,
         device=device,
         api_key=OPENAI_API_KEY,
         output_path=autointerp_eval_dir,
         force_rerun=False,
         save_logs_path=logs_path,
         artifacts_path=os.path.join(experiment_path, "artifacts"),
+        log_level=log_level,
     )
 
     raise NotImplementedError("Not implemented. Implement sparse probing here.")
