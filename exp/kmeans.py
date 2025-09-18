@@ -235,7 +235,7 @@ async def gpu_worker(
         if queue_item is None:
             break
 
-        data, should_sync, save_idx = queue_item
+        router_logits, should_sync, save_idx = queue_item
 
         # assert that if save_idx is not None, then should_sync is also true
         if save_idx is not None:
@@ -243,20 +243,19 @@ async def gpu_worker(
 
         # (B, L, E)
         device = th.device(f"cuda:{gpu_idx}")
-        router_logits = data.to(device)
+        router_logits = router_logits.to(device)
 
         # convert from logits to paths
         paths_sparse = th.topk(router_logits, k=top_k, dim=-1).indices
-        del router_logits
-        router_paths = th.zeros_like(data.to(device))
+        router_paths = th.zeros_like(router_logits)
         router_paths.scatter_(-1, paths_sparse, 1)
+        del router_logits
         del paths_sparse
-        data = router_paths
 
         # (B, L, E) -> (B, L * E)
-        flat_data = data.view(data.shape[0], -1)
+        flat_data = router_paths.view(router_paths.shape[0], -1)
 
-        del paths, data
+        del router_paths
         th.cuda.empty_cache()
 
         updates = await asyncio.gather(
