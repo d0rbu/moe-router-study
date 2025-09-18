@@ -26,7 +26,6 @@ class ModelConfig:
     revision_format: str | None = None
     tokenizer_has_padding_token: bool = True
     checkpoints: list[Checkpoint] = field(default_factory=list)
-    # New: avoid network fetch at import-time for globals like MODELS
     eager_fetch: bool = True
 
     def __post_init__(self):
@@ -66,6 +65,29 @@ class ModelConfig:
 
         self.checkpoints = sorted(checkpoints, key=lambda x: x.step)
 
+    def get_checkpoint(
+        self, step: int, num_tokens: int | None = None
+    ) -> Checkpoint | None:
+        checkpoints_matching_step = [
+            checkpoint for checkpoint in self.checkpoints if checkpoint.step == step
+        ]
+
+        if len(checkpoints_matching_step) == 0:
+            return None
+
+        if num_tokens is None:
+            return checkpoints_matching_step[0]
+
+        matching_checkpoints = [
+            checkpoint
+            for checkpoint in checkpoints_matching_step
+            if checkpoint.num_tokens == num_tokens
+        ]
+        if len(matching_checkpoints) == 0:
+            return None
+
+        return matching_checkpoints[0]
+
 
 MODELS: dict[str, ModelConfig] = {
     # base model
@@ -73,7 +95,7 @@ MODELS: dict[str, ModelConfig] = {
         hf_name="allenai/OLMoE-1B-7B-0924",
         branch_regex=re.compile(r"step(\d+)-tokens(\d+)B"),
         revision_format="step{}-tokens{}B",
-        eager_fetch=False,  # avoid network during import
+        eager_fetch=False,  # avoid network calls during import
     ),
     "phimoe": ModelConfig(
         hf_name="microsoft/Phi-3.5-MoE-instruct",
@@ -89,7 +111,7 @@ MODELS: dict[str, ModelConfig] = {
         hf_name="allenai/OLMoE-1B-7B-0125-Instruct",
         branch_regex=re.compile(r"step_(\d+)"),
         revision_format="step_{}",
-        eager_fetch=False,  # avoid network during import
+        eager_fetch=False,  # avoid network calls during import
     ),
 }
 

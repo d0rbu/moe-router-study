@@ -1,23 +1,28 @@
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 import os
-from typing import Any, cast
+from typing import Any
 
-from datasets import Dataset, IterableColumn, load_dataset
+from datasets import Dataset, load_dataset
 from tqdm import tqdm
 from transformers import AutoTokenizer, PreTrainedTokenizer
 
+from core.type import assert_type
 from exp import DATASET_DIRNAME
 
 
-def fineweb_10bt_text(_tokenizer: PreTrainedTokenizer) -> IterableColumn:
+def fineweb_10bt_text(
+    _tokenizer: PreTrainedTokenizer | None = None,
+) -> Generator[str, None, None]:
     fineweb = load_dataset(
         "HuggingFaceFW/fineweb", name="sample-10BT", split="train", streaming=True
     )
 
-    return cast("IterableColumn", fineweb["text"])
+    return fineweb["text"]
 
 
-def toy_text(_tokenizer: PreTrainedTokenizer) -> IterableColumn:
+def toy_text(
+    _tokenizer: PreTrainedTokenizer | None = None,
+) -> Generator[str, None, None]:
     """Tiny, in-repo dataset for tests and quick runs."""
     samples = [
         "Tiny sample 1",
@@ -25,23 +30,16 @@ def toy_text(_tokenizer: PreTrainedTokenizer) -> IterableColumn:
         "Tiny sample 3",
         "Tiny sample 4",
     ]
-    # Cast for typing; tests only iterate over the values
-    return cast("IterableColumn", samples)
+
+    return samples
 
 
-def test_dataset_text(_tokenizer: PreTrainedTokenizer) -> IterableColumn:
-    """Dataset specifically for testing purposes.
+def smollm2_small(
+    _tokenizer: PreTrainedTokenizer | None = None,
+) -> Generator[str, None, None]:
+    smollm2_135m_10b = load_dataset("EleutherAI/SmolLM2-135M-10B", split="train[:1%]")
 
-    This function is designed to be easily mocked in tests.
-    It tries to load a dataset from the Hub, but falls back to toy_text if that fails.
-    """
-    try:
-        # Use the load_dataset function directly so it can be mocked in tests
-        ds = load_dataset("toy", split="train", streaming=True)
-        return cast("IterableColumn", ds["text"])
-    except Exception:
-        # Fall back to toy_text for non-test environments
-        return toy_text(_tokenizer)
+    return smollm2_135m_10b["text"]
 
 
 def lmsys_chat_1m_text(
@@ -49,14 +47,14 @@ def lmsys_chat_1m_text(
     start_idx: int = 0,
     stop_idx: int = 0,
     streaming: bool = True,
-) -> IterableColumn:
+) -> Generator[str, None, None]:
     """Stream and format conversations from the LMSYS Chat-1M dataset.
 
     Each conversation is formatted as a plain text transcript with "role: content" format,
     with each message on a new line. Redacted conversations are skipped.
 
     Returns:
-        IterableColumn: Stream of formatted conversation texts
+        Generator[str, None, None]: Stream of formatted conversation texts
     """
     hf_name = "lmsys/lmsys-chat-1m"
     local_path = os.path.join(os.path.abspath(DATASET_DIRNAME), hf_name)
@@ -69,7 +67,7 @@ def lmsys_chat_1m_text(
             "Streaming mode does not support start_idx and stop_idx"
         )
     else:
-        ds = cast("Dataset", ds)
+        ds = assert_type(Dataset, ds)
 
         if stop_idx == 0:
             stop_idx = len(ds)
@@ -99,7 +97,6 @@ def lmsys_chat_1m_text(
         if streaming:
             iterator = tqdm(conversations, desc="Formatting conversations")
         else:
-            conversations = cast("Dataset", conversations)
             iterator = tqdm(
                 conversations[start_idx:stop_idx],
                 desc="Formatting conversations",
@@ -109,22 +106,20 @@ def lmsys_chat_1m_text(
         for conversation in iterator:
             yield _format_conversation(conversation)
 
-    # Cast the plain iterator of strings to IterableColumn for compatibility with callers
-    return cast("IterableColumn", _iter())
+    return _iter()
 
 
-DATASETS: dict[str, Callable[[PreTrainedTokenizer], IterableColumn]] = {
+DATASETS: dict[str, Callable[[PreTrainedTokenizer], Generator[str, None, None]]] = {
     "fw": fineweb_10bt_text,
-    # Use test_dataset_text instead of patched_toy_text to avoid monkeypatching
-    "toy": test_dataset_text,
-    # Register the new LMSYS dataset under a short key
+    "toy": toy_text,
     "lmsys": lmsys_chat_1m_text,
+    "smol": smollm2_small,
 }
 
 
 def get_dataset_fn(
     dataset_name: str,
-) -> Callable[[PreTrainedTokenizer], IterableColumn]:
+) -> Callable[[PreTrainedTokenizer], Generator[str, None, None]]:
     dataset_fn = DATASETS.get(dataset_name)
     if dataset_fn is None:
         raise ValueError(f"Dataset {dataset_name} not found")
