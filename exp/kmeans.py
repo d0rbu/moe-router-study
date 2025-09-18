@@ -82,19 +82,18 @@ class RunningKMeansData:
                 + other_weight_proportion.unsqueeze(-1) * other_centroids
             )
 
-            # Fix loss calculation - avoid division by zero and use correct indexing
             base_weights_sum = base_weights.sum()
             new_weights_sum = new_weights.sum()
-            if new_weights_sum > 0:
-                base_loss_proportion = base_weights_sum / new_weights_sum
-                other_loss_proportion = 1 - base_loss_proportion
-                new_data.losses[losses_idx] = (
-                    base_loss_proportion * self.losses[losses_idx]
-                    + other_loss_proportion * other.losses[losses_idx]
-                )
-            else:
-                # If no weights, keep the base loss
+            if new_weights_sum == 0:
                 new_data.losses[losses_idx] = self.losses[losses_idx]
+                continue
+            
+            base_loss_proportion = base_weights_sum / new_weights_sum
+            other_loss_proportion = 1 - base_loss_proportion
+            new_data.losses[losses_idx] = (
+                base_loss_proportion * self.losses[losses_idx]
+                + other_loss_proportion * other.losses[losses_idx]
+            )
 
         return new_data
 
@@ -121,14 +120,12 @@ async def kmeans_step(
     data: th.Tensor,  # (B, L * E)
     centroids: th.Tensor,  # (K, L * E)
 ) -> tuple[th.Tensor, th.Tensor, th.Tensor]:
-    # (B, K) - Use L2 distance (Euclidean) which is standard for K-means
-    # Note: Changed from p=1 (Manhattan/L1) to p=2 (Euclidean/L2) for proper K-means
-    distances = th.cdist(data, centroids, p=2)
+    # (B, K)
+    distances = th.cdist(data, centroids, p=1)
     # (B)
     assignments = th.argmin(distances, dim=1)
 
     # for calculating loss, we get the distances from each data point to the closest centroid
-    # Note: th.gather is a simple tensor operation, no need for asyncio.to_thread
     centroid_distances = th.gather(distances, 1, assignments.unsqueeze(1))
 
     centroid_awaitables = [
@@ -207,7 +204,6 @@ async def sync(
         )
 
     # now do an all-gather along gpus (among entries in all_gpu_data)
-    # Fix: Convert gpu_idx to proper device object
     device = th.device(f"cuda:{gpu_idx}")
     gpu_data.synced_data += sum(
         current_gpu_data.dirty_data.to(device) for current_gpu_data in all_gpu_data
@@ -247,14 +243,15 @@ async def gpu_worker(
 
         # (B, L, E)
         device = th.device(f"cuda:{gpu_idx}")
-        data = data.to(device)
+        router_logits = data.to(device)
 
         # convert from logits to paths
-        paths = th.topk(data, k=top_k, dim=-1).indices
-        # Fix: Create a copy to avoid modifying the original tensor in-place
-        data_binary = th.zeros_like(data)
-        data_binary.scatter_(-1, paths, 1)
-        data = data_binary
+        paths_sparse = th.topk(router_logits, k=top_k, dim=-1).indices
+        del router_logits
+        router_paths = th.zeros_like(data.to(device))
+        router_paths.scatter_(-1, paths_sparse, 1)
+        del paths_sparse
+        data = router_paths
 
         # (B, L, E) -> (B, L * E)
         flat_data = data.view(data.shape[0], -1)
@@ -272,7 +269,6 @@ async def gpu_worker(
             ]
         )
         new_centroid_sets, new_weight_sets, new_losses = zip(*updates, strict=True)
-        # Fix: Convert tuples to lists to match RunningKMeansData expected types
         gpu_data.dirty_data += RunningKMeansData(
             centroid_sets=list(new_centroid_sets),
             weight_sets=list(new_weight_sets),
@@ -523,7 +519,7 @@ async def kmeans_manhattan(
             save_idx = effective_step_idx if effective_step_idx in save_steps else None
 
             for gpu_data, gpu_minibatch in zip(
-                all_gpu_data, gpu_minibatches, strict=True
+                all_gpu_data, gpu_minibatches, strict=False
             ):
                 await gpu_data.queue.put(
                     (
@@ -536,11 +532,9 @@ async def kmeans_manhattan(
     for gpu_data in all_gpu_data:
         await gpu_data.queue.put((None, False, None))
 
-    # Fix: Handle empty losses_over_time to avoid IndexError
     if losses_over_time:
         losses = th.stack(losses_over_time, dim=1)
     else:
-        # Create empty tensor with appropriate shape if no losses recorded
         num_k_values = len(all_gpu_data[0].synced_data.centroid_sets)
         losses = th.empty((num_k_values, 0))
 
