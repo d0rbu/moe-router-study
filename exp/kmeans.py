@@ -249,8 +249,7 @@ async def gpu_worker(
         paths_sparse = th.topk(router_logits, k=top_k, dim=-1).indices
         router_paths = th.zeros_like(router_logits)
         router_paths.scatter_(-1, paths_sparse, 1)
-        del router_logits
-        del paths_sparse
+        del router_logits, paths_sparse
 
         # (B, L, E) -> (B, L * E)
         flat_data = router_paths.view(router_paths.shape[0], -1)
