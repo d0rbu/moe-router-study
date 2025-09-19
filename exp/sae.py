@@ -98,26 +98,26 @@ async def run_sae_training(
     model_name: str = "olmoe-i",
     dataset_name: str = "lmsys",
     *_args,
+    expansion_factor: tuple[int],
+    k: tuple[int],
+    layer: tuple[int],
+    group_fractions: tuple[tuple[float]],
+    group_weights: tuple[tuple[float] | None],
+    architecture: tuple[str],
+    lr: tuple[float],
+    auxk_alpha: tuple[float],
+    warmup_steps: tuple[int],
+    decay_start: tuple[int | None],
+    threshold_beta: tuple[float],
+    threshold_start_step: tuple[int],
+    k_anneal_steps: tuple[int | None],
+    seed: tuple[int],
+    submodule_name: tuple[str],
     batch_size: int = 4096,
     trainers_per_gpu: int = 2,
     steps: int = 1024 * 256,
     save_every: int = 1024,
     num_epochs: int = 1,
-    expansion_factor: list[int],
-    k: list[int],
-    layer: list[int],
-    group_fractions: list[list[float]],
-    group_weights: list[list[float] | None],
-    architecture: list[str],
-    lr: list[float],
-    auxk_alpha: list[float],
-    warmup_steps: list[int],
-    decay_start: list[int | None],
-    threshold_beta: list[float],
-    threshold_start_step: list[int],
-    k_anneal_steps: list[int | None],
-    seed: list[int],
-    submodule_name: list[str],
     tokens_per_file: int = 10_000,
 ) -> None:
     """Train autoencoders to sweep over the given hyperparameter sets."""
@@ -310,21 +310,23 @@ def main(
     steps: int = 1024 * 256,
     save_every: int = 1024,
     num_epochs: int = 1,
-    expansion_factor: list[int] | int = 16,
-    k: list[int] | int = 160,
-    layer: list[int] | int = 7,
-    group_fractions: list[list[float]] | list[float] | None = None,
-    group_weights: list[list[float] | None] | list[float] | None = None,
-    architecture: list[str] | str = "batchtopk",
-    lr: list[float] | float = 5e-5,
-    auxk_alpha: list[float] | float = 1 / 32,
-    warmup_steps: list[int] | int = 1024,
-    decay_start: list[int | None] | int | None = None,
-    threshold_beta: list[float] | float = 0.999,
-    threshold_start_step: list[int] | int = 1024,
-    k_anneal_steps: list[int | None] | int | None = None,
-    seed: list[int] | int = 0,
-    submodule_name: list[str] | str = "mlp_output",
+    expansion_factor: tuple[int] = (16,),
+    k: tuple[int] = (160,),
+    layer: tuple[int] = (7,),
+    group_fractions: tuple[tuple[float]] = (
+        (1.0 / 32, 1.0 / 16, 1.0 / 8, 1.0 / 4, 1.0 / 2 + 1.0 / 32),
+    ),
+    group_weights: tuple[tuple[float] | None] = (None,),
+    architecture: tuple[str] = ("batchtopk",),
+    lr: tuple[float] = (5e-5,),
+    auxk_alpha: tuple[float] = (1 / 32,),
+    warmup_steps: tuple[int] = (1024,),
+    decay_start: tuple[int | None] = (None,),
+    threshold_beta: tuple[float] = (0.999,),
+    threshold_start_step: tuple[int] = (1024,),
+    k_anneal_steps: tuple[int | None] = (None,),
+    seed: tuple[int] = (0,),
+    submodule_name: tuple[str] = ("mlp_output",),
     tokens_per_file: int = 10_000,
     log_level: str = "INFO",
 ) -> None:
@@ -336,63 +338,10 @@ def main(
 
     logger.debug(f"Running with log level: {log_level}")
 
-    if isinstance(expansion_factor, int):
-        expansion_factor = [expansion_factor]
-
-    if isinstance(k, int):
-        k = [k]
-
-    if isinstance(layer, int):
-        layer = [layer]
-
-    if isinstance(group_fractions, list):
-        assert len(group_fractions) > 0, "Group fractions is an empty list!"
-        if isinstance(group_fractions[0], float):
-            group_fractions = [group_fractions]
-    elif group_fractions is None:
-        group_fractions = [1.0 / 32, 1.0 / 16, 1.0 / 8, 1.0 / 4, 1.0 / 2 + 1.0 / 32]
-
-    if isinstance(group_weights, list):
-        assert len(group_weights) > 0, "Group weights is an empty list!"
-        if isinstance(group_weights[0], float):
-            group_weights = [group_weights]
-    elif group_weights is None:
-        group_weights = [None]
-
-    if isinstance(architecture, str):
-        architecture = [architecture]
-
-    if isinstance(lr, int | float):
-        lr = [lr]
-
-    if isinstance(auxk_alpha, int | float):
-        auxk_alpha = [auxk_alpha]
-
-    if isinstance(warmup_steps, int):
-        warmup_steps = [warmup_steps]
-
-    if isinstance(decay_start, int | None):
-        decay_start = [decay_start]
-
-    if isinstance(threshold_beta, float):
-        threshold_beta = [threshold_beta]
-
-    if isinstance(threshold_start_step, int):
-        threshold_start_step = [threshold_start_step]
-
-    if isinstance(k_anneal_steps, int | None):
-        k_anneal_steps = [k_anneal_steps]
-
-    if isinstance(seed, int):
-        seed = [seed]
-
-    if isinstance(submodule_name, str):
-        submodule_name = [submodule_name]
-
     assert all(
         current_architecture in ARCHITECTURES for current_architecture in architecture
     ), "Invalid architecture"
-    assert len(submodule_name) > 0, "Submodule name is an empty list!"
+    assert len(submodule_name) > 0, "Submodule name is an empty tuple!"
 
     asyncio.run(
         run_sae_training(
