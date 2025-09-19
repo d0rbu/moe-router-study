@@ -5,10 +5,13 @@ import sys
 
 import arguably
 from loguru import logger
+import torch as th
 from transformers import (
     AutoModel,
     BitsAndBytesConfig,
     PreTrainedModel,
+    PreTrainedTokenizer,
+    PreTrainedTokenizerFast,
 )
 
 from core.dtype import get_dtype
@@ -16,8 +19,20 @@ from core.model import get_model_config
 from core.type import assert_type
 from delphi.__main__ import populate_cache
 from delphi.config import CacheConfig, RunConfig
+from delphi.log.result_analysis import log_results
 from delphi.sparse_coders.sparse_model import non_redundant_hookpoints
 from exp import OUTPUT_DIR
+
+
+async def process_cache(
+    run_cfg: RunConfig,
+    latents_path: Path,
+    scores_path: Path,
+    hookpoints: list[str],
+    tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast,
+    latent_range: th.Tensor | None,
+) -> None:
+    raise NotImplementedError("Implement process_cache")
 
 
 def load_hookpoints_and_saes(
@@ -119,8 +134,12 @@ def main(
         torch_dtype=dtype,
         token=hf_token,
     )
+    tokenizer = model.tokenizer
 
     hookpoint_to_sparse_encode = load_hookpoints_and_saes(model, sae_base_path)
+    hookpoints = list(hookpoint_to_sparse_encode.keys())
+
+    latent_range = th.arange(n_latents) if n_latents else None
 
     run_cfg = RunConfig(
         max_latents=n_latents,
@@ -135,7 +154,7 @@ def main(
 
     nrh = assert_type(
         dict,
-        non_redundant_hookpoints(hookpoint_to_sparse_encode, latents_path, False),
+        non_redundant_hookpoints(hookpoints, latents_path, overwrite=False),
     )
     if nrh:
         populate_cache(
@@ -143,6 +162,25 @@ def main(
             model,
             nrh,
             latents_path,
-            model.tokenizer,
+            tokenizer,
             transcode=False,
         )
+
+    del model, hookpoint_to_sparse_encode
+
+    nrh = assert_type(
+        list,
+        non_redundant_hookpoints(hookpoints, scores_path, overwrite=False),
+    )
+    if nrh:
+        await process_cache(
+            run_cfg,
+            latents_path,
+            scores_path,
+            nrh,
+            tokenizer,
+            latent_range,
+        )
+
+    if run_cfg.verbose:
+        log_results(scores_path, visualize_path, run_cfg.hookpoints, run_cfg.scorers)
