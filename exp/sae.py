@@ -93,7 +93,6 @@ async def gpu_worker(
         )
 
 
-@arguably.command()
 async def run_sae_training(
     model_name: str = "olmoe-i",
     dataset_name: str = "lmsys",
