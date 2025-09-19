@@ -1,3 +1,4 @@
+import asyncio
 from collections import deque
 from enum import StrEnum
 import gc
@@ -10,7 +11,6 @@ from typing import Any
 import warnings
 
 import arguably
-from datasets.iterable_dataset import asyncio
 from loguru import logger
 from nnterp import StandardizedTransformer
 import torch as th
