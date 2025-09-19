@@ -1,15 +1,17 @@
-import os
+from pathlib import Path
 
 import arguably
-from sparsify.data import chunk_and_tokenize
-from transformers import AutoModel, BitsAndBytesConfig
+from transformers import (
+    AutoModel,
+    BitsAndBytesConfig,
+)
 
-from core.data import smollm2_small
 from core.dtype import get_dtype
 from core.model import get_model_config
-from delphi.config import RunConfig
-from delphi.latents import LatentCache
-from delphi.sparse_coders import load_hooks_sparse_coders
+from core.type import assert_type
+from delphi.__main__ import populate_cache
+from delphi.config import CacheConfig, RunConfig
+from delphi.sparse_coders.sparse_model import non_redundant_hookpoints
 from exp import OUTPUT_DIR
 
 
@@ -22,7 +24,7 @@ def main(
     model_dtype: str = "f32",
     ctxlen: int = 256,
     load_in_8bit: bool = False,
-    num_tokens_to_evaluate_on: int = 10_000_000,
+    n_tokens: int = 10_000_000,
     batchsize: int = 8,
     n_latents: int = 1000,
     seed: int = 0,
@@ -36,31 +38,43 @@ def main(
     if load_in_8bit:
         quantization_config = BitsAndBytesConfig(load_in_8bit=load_in_8bit)
 
+    root_dir = Path(OUTPUT_DIR, experiment_dir)
+    base_path = root_dir / "delphi"
+    latents_path = base_path / "latents"
+    explanations_path = base_path / "explanations"
+    scores_path = base_path / "scores"
+    neighbours_path = base_path / "neighbours"
+    visualize_path = base_path / "visualize"
+
     model = AutoModel.from_pretrained(
         model_config.hf_name,
-        revision=model_config.revision,
+        revision=str(model_ckpt),
         device_map={"": "cuda"},
         quantization_config=quantization_config,
         torch_dtype=dtype,
         token=hf_token,
     )
 
-    data = smollm2_small()
-    tokens = chunk_and_tokenize(
-        data, model.tokenizer, max_seq_len=ctxlen, text_key="raw_content"
-    )["input_ids"]
+    raise NotImplementedError("Implement hookpoint_to_sparse_encode and run_cfg")
 
-    cache = LatentCache(model, submodule_dict, batch_size=batchsize)
-
-    cache.run(n_tokens=num_tokens_to_evaluate_on, tokens=tokens)
-
-    experiment_dir_path = os.path.join(OUTPUT_DIR, experiment_dir)
-    sae_locations = os.listdir(experiment_dir_path)
-
-    run_cfg = RunConfig(max_latents=n_latents)
-
-    hookpoint_to_sparse_encode, transcode = load_hooks_sparse_coders(
-        model,
-        run_cfg,
-        compile=True,
+    run_cfg = RunConfig(
+        max_latents=n_latents,
+        cache_cfg=CacheConfig(
+            cache_ctx_len=ctxlen,
+            batch_size=batchsize,
+            n_tokens=n_tokens,
+        ),
     )
+
+    nrh = assert_type(
+        dict,
+        non_redundant_hookpoints(hookpoint_to_sparse_encode, latents_path, False),
+    )
+    if nrh:
+        populate_cache(
+            run_cfg,
+            model,
+            nrh,
+            latents_path,
+            model.tokenizer,
+        )
