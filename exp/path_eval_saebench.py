@@ -7,6 +7,7 @@ from sae_bench.custom_saes.run_all_evals_dictionary_learning_saes import (
     output_folders as EVAL_DIRS,
 )
 from sae_bench.evals.autointerp.eval_config import AutoInterpEvalConfig
+from sae_bench.evals.sparse_probing.eval_config import SparseProbingEvalConfig
 from sae_bench.sae_bench_utils import general_utils
 import torch as th
 import yaml
@@ -16,6 +17,7 @@ from exp import OUTPUT_DIR
 from exp.autointerp_saebench import Paths
 from exp.autointerp_saebench import run_eval as run_autointerp_eval
 from exp.kmeans import KMEANS_FILENAME, KMEANS_TYPE
+from exp.sparse_probing_saebench import run_eval as run_sparse_probing_eval
 
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -100,4 +102,19 @@ def main(
 
     logger.info("Autointerp evaluation complete, running sparse probing")
 
-    raise NotImplementedError("Not implemented. Implement sparse probing here.")
+    sparse_probing_eval_dir = EVAL_DIRS["sparse_probing"]
+    sparse_probing_eval_dir = os.path.join(OUTPUT_DIR, sparse_probing_eval_dir)
+    run_sparse_probing_eval(
+        config=SparseProbingEvalConfig(
+            model_name=model_name,
+            random_seed=seed,
+        ),
+        selected_paths_set=paths_set,
+        device=device,
+        output_path=sparse_probing_eval_dir,
+        force_rerun=False,
+        clean_up_activations=False,
+        save_activations=True,
+        artifacts_path=os.path.join(experiment_path, "artifacts"),
+        log_level=log_level,
+    )

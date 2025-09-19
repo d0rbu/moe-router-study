@@ -33,26 +33,23 @@ from exp.training import exponential_to_linear_save_steps, get_experiment_name
 
 @dataclass
 class Architecture:
-    trainer: type[SAETrainer] | None = None
-    sae: type[Dictionary] | None = None
     saebench_load_fn: Callable[
         [str, str, str, th.device, th.dtype, int | None, str], BaseSAE
     ]
+    trainer: type[SAETrainer]
+    sae: type[Dictionary]
 
 
 ARCHITECTURES = {
     "batchtopk": Architecture(
+        saebench_load_fn=load_dictionary_learning_batch_topk_sae,
         trainer=BatchTopKTrainer,
         sae=BatchTopKSAE,
-        saebench_load_fn=load_dictionary_learning_batch_topk_sae,
     ),
     "matryoshka": Architecture(
+        saebench_load_fn=load_dictionary_learning_matryoshka_batch_topk_sae,
         trainer=MatryoshkaBatchTopKTrainer,
         sae=MatryoshkaBatchTopKSAE,
-        saebench_load_fn=load_dictionary_learning_matryoshka_batch_topk_sae,
-    ),
-    "moe": Architecture(
-        saebench_load_fn=lambda *args, **kwargs: None,
     ),
 }
 
