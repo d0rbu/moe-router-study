@@ -145,21 +145,26 @@ def populate_cache(
     run_cfg: RunConfig,
     model: PreTrainedModel,
     hookpoint_to_sparse_encode: dict[str, Callable],
+    root_dir: Path,
     latents_path: Path,
     tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast,
-):
+) -> None:
     """
-    Populates an on-disk cache in `latents_path` with SAE latent activations.
+    Populates an on-disk cache in `latents_path` with latent activations.
     """
+    path_config_path = root_dir / "config.yaml"
+    if not path_config_path.is_file():
+        # this is a sae experiment, not paths
+        return sae_populate_cache(
+            run_cfg,
+            model,
+            hookpoint_to_sparse_encode,
+            latents_path,
+            tokenizer,
+            transcode=False,
+        )
+
     raise NotImplementedError("Implement populate_cache for paths")
-    sae_populate_cache(
-        run_cfg,
-        model,
-        hookpoint_to_sparse_encode,
-        latents_path,
-        tokenizer,
-        transcode=False,
-    )
 
 
 @arguably.command()
@@ -272,6 +277,7 @@ def main(
             run_cfg,
             model,
             nrh,
+            root_dir,
             latents_path,
             tokenizer,
         )
