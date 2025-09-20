@@ -13,6 +13,7 @@ import orjson
 import torch as th
 from transformers import (
     BitsAndBytesConfig,
+    PreTrainedModel,
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
 )
@@ -20,7 +21,7 @@ from transformers import (
 from core.dtype import get_dtype
 from core.model import get_model_config
 from core.type import assert_type
-from delphi.__main__ import populate_cache
+from delphi.__main__ import populate_cache as sae_populate_cache
 from delphi.clients import Offline
 from delphi.config import CacheConfig, ConstructorConfig, RunConfig, SamplerConfig
 from delphi.latents import LatentDataset, LatentRecord
@@ -140,6 +141,27 @@ def load_hookpoints_and_saes(
     return hookpoints_to_saes
 
 
+def populate_cache(
+    run_cfg: RunConfig,
+    model: PreTrainedModel,
+    hookpoint_to_sparse_encode: dict[str, Callable],
+    latents_path: Path,
+    tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast,
+):
+    """
+    Populates an on-disk cache in `latents_path` with SAE latent activations.
+    """
+    raise NotImplementedError("Implement populate_cache for paths")
+    sae_populate_cache(
+        run_cfg,
+        model,
+        hookpoint_to_sparse_encode,
+        latents_path,
+        tokenizer,
+        transcode=False,
+    )
+
+
 @arguably.command()
 def main(
     *,
@@ -241,7 +263,9 @@ def main(
 
     nrh = assert_type(
         dict,
-        non_redundant_hookpoints(hookpoints, latents_path, overwrite=False),
+        non_redundant_hookpoints(
+            hookpoint_to_sparse_encode, latents_path, overwrite=False
+        ),
     )
     if nrh:
         populate_cache(
@@ -250,7 +274,6 @@ def main(
             nrh,
             latents_path,
             tokenizer,
-            transcode=False,
         )
 
     del model, hookpoint_to_sparse_encode
