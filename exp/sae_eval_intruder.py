@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from functools import partial
 import json
 from pathlib import Path
 import sys
@@ -7,6 +8,7 @@ import arguably
 from dictionary_learning.utils import load_dictionary
 from loguru import logger
 from nnterp import StandardizedTransformer
+import orjson
 import torch as th
 from transformers import (
     BitsAndBytesConfig,
@@ -18,11 +20,28 @@ from core.dtype import get_dtype
 from core.model import get_model_config
 from core.type import assert_type
 from delphi.__main__ import populate_cache
+from delphi.clients import Offline
 from delphi.config import CacheConfig, RunConfig
+from delphi.latents import LatentDataset, LatentRecord
 from delphi.log.result_analysis import log_results
+from delphi.pipeline import Pipe, Pipeline
+from delphi.scorers.classifier.intruder import IntruderScorer
+from delphi.scorers.scorer import ScorerResult
 from delphi.sparse_coders.sparse_model import non_redundant_hookpoints
 from exp import OUTPUT_DIR
 from exp.get_activations import ActivationKeys
+
+
+def dataset_postprocess(record: LatentRecord) -> LatentRecord:
+    return record
+
+
+# Saves the score to a file
+def save_scorer_result_to_file(result: ScorerResult, score_dir: Path) -> None:
+    safe_latent_name = str(result.record.latent).replace("/", "--")
+
+    with open(score_dir / f"{safe_latent_name}.txt", "wb") as f:
+        f.write(orjson.dumps(result.score))
 
 
 async def process_cache(
@@ -33,7 +52,46 @@ async def process_cache(
     tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast,
     latent_range: th.Tensor | None,
 ) -> None:
-    raise NotImplementedError("Implement process_cache")
+    """
+    Converts SAE latent activations in on-disk cache in the `latents_path` directory
+    and scores in the `scores_path` directory.
+    """
+    latent_dict = dict.fromkeys(hookpoints, latent_range) if latent_range else None
+
+    dataset = LatentDataset(
+        raw_dir=latents_path,
+        sampler_cfg=run_cfg.sampler_cfg,
+        constructor_cfg=run_cfg.constructor_cfg,
+        modules=hookpoints,
+        latents=latent_dict,
+        tokenizer=tokenizer,
+    )
+    llm_client = Offline(
+        run_cfg.explainer_model,
+        max_memory=0.9,
+        max_model_len=run_cfg.explainer_model_max_len,
+        num_gpus=run_cfg.num_gpus,
+        statistics=run_cfg.verbose,
+    )
+
+    intruder_scorer = IntruderScorer(
+        llm_client,
+        verbose=run_cfg.verbose,
+        n_examples_shown=run_cfg.num_examples_per_scorer_prompt,
+        temperature=run_cfg.temperature,
+        cot=run_cfg.cot,
+        type=run_cfg.intruder_type,
+        seed=run_cfg.seed,
+    )
+
+    pipeline = Pipeline(
+        dataset,
+        Pipe(dataset_postprocess),
+        Pipe(intruder_scorer),
+        Pipe(partial(save_scorer_result_to_file, score_dir=scores_path)),
+    )
+
+    await pipeline.run(run_cfg.pipeline_num_proc)
 
 
 ACTIVATION_KEYS_TO_HOOKPOINT = {
