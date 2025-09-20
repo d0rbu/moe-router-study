@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from functools import partial
 import json
+from multiprocessing import cpu_count
 from pathlib import Path
 import sys
 
@@ -21,7 +22,7 @@ from core.model import get_model_config
 from core.type import assert_type
 from delphi.__main__ import populate_cache
 from delphi.clients import Offline
-from delphi.config import CacheConfig, RunConfig
+from delphi.config import CacheConfig, ConstructorConfig, RunConfig, SamplerConfig
 from delphi.latents import LatentDataset, LatentRecord
 from delphi.log.result_analysis import log_results
 from delphi.pipeline import Pipe, Pipeline
@@ -151,6 +152,19 @@ def main(
     n_tokens: int = 10_000_000,
     batchsize: int = 8,
     n_latents: int = 1000,
+    example_ctx_len: int = 32,
+    min_examples: int = 200,
+    num_non_activating: int = 50,
+    num_examples: int = 50,
+    n_quantiles: int = 10,
+    explainer_model: str = "hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4",
+    explainer_model_max_len: int = 5120,
+    explainer_provider: str = "offline",
+    explainer: str = "default",
+    filter_bos: bool = False,
+    pipeline_num_proc: int = cpu_count() // 2,
+    num_gpus: int = th.cuda.device_count(),
+    verbose: bool = True,
     seed: int = 0,
     hf_token: str = "",
     log_level: str = "INFO",
@@ -196,9 +210,34 @@ def main(
             batch_size=batchsize,
             n_tokens=n_tokens,
         ),
+        constructor_cfg=ConstructorConfig(
+            example_ctx_len=example_ctx_len,
+            min_examples=min_examples,
+            n_non_activating=num_non_activating,
+            non_activating_source="random",
+        ),
+        sampler_cfg=SamplerConfig(
+            n_examples_train=0,
+            n_examples_test=num_examples,
+            n_quantiles=n_quantiles,
+            train_type="quantiles",
+            test_type="quantiles",
+        ),
+        model=model_name,
+        sparse_model=root_dir,
+        hookpoints=hookpoints,
+        explainer_model=explainer_model,
+        explainer_model_max_len=explainer_model_max_len,
+        explainer_provider=explainer_provider,
+        explainer=explainer,
+        filter_bos=filter_bos,
+        load_in_8bit=load_in_8bit,
+        hf_token=hf_token,
+        pipeline_num_proc=pipeline_num_proc,
+        num_gpus=num_gpus,
+        seed=seed,
+        verbose=verbose,
     )
-
-    raise NotImplementedError("Implement run_cfg")
 
     nrh = assert_type(
         dict,
