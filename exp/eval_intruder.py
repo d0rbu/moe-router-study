@@ -11,6 +11,7 @@ from loguru import logger
 from nnterp import StandardizedTransformer
 import orjson
 import torch as th
+import torch.nn as nn
 from transformers import (
     BitsAndBytesConfig,
     PreTrainedTokenizer,
@@ -161,7 +162,18 @@ def load_hookpoints(
     with open(paths_path, "rb") as f:
         data = th.load(f)
 
-    return dict.fromkeys(data["hookpoints"], None)
+    centroid_sets: list[th.Tensor] = data["centroids"]
+    _top_k: int = data["top_k"]
+
+    hookpoints_to_sparse_encode = {}
+    for centroids_idx, centroids in enumerate(centroid_sets):
+        path_projection = nn.Linear(
+            centroids.shape[1], centroids.shape[0], bias=False, device="cuda"
+        )
+        path_projection.weight.data.copy_(centroids)
+        hookpoints_to_sparse_encode[f"paths_{centroids_idx}"] = path_projection
+
+    return hookpoints_to_sparse_encode
 
 
 def populate_cache(
