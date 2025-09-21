@@ -13,7 +13,6 @@ import orjson
 import torch as th
 from transformers import (
     BitsAndBytesConfig,
-    PreTrainedModel,
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
 )
@@ -25,12 +24,13 @@ from core.type import assert_type
 from delphi.__main__ import populate_cache as sae_populate_cache
 from delphi.clients import Offline
 from delphi.config import CacheConfig, ConstructorConfig, RunConfig, SamplerConfig
-from delphi.latents import LatentDataset, LatentRecord
+from delphi.latents import LatentCache, LatentDataset, LatentRecord
 from delphi.log.result_analysis import log_results
 from delphi.pipeline import Pipe, Pipeline
 from delphi.scorers.classifier.intruder import IntruderScorer
 from delphi.scorers.scorer import ScorerResult
 from delphi.sparse_coders.sparse_model import non_redundant_hookpoints
+from delphi.utils import load_tokenized_data
 from exp import OUTPUT_DIR
 from exp.get_activations import ActivationKeys
 from exp.kmeans import KMEANS_FILENAME
@@ -143,9 +143,30 @@ def load_hookpoints_and_saes(
     return hookpoints_to_saes
 
 
+def load_hookpoints(
+    root_dir: Path,
+) -> dict[str, Callable[[th.Tensor], th.Tensor]]:
+    """
+    Loads the hookpoints from the config file.
+    """
+    path_config_path = root_dir / "config.yaml"
+    if not path_config_path.is_file():
+        # this is a sae experiment, not paths
+        return load_hookpoints_and_saes(root_dir)
+
+    paths_path = root_dir / KMEANS_FILENAME
+    if not paths_path.is_file():
+        raise ValueError(f"Paths file not found at {paths_path}")
+
+    with open(paths_path, "rb") as f:
+        data = th.load(f)
+
+    return dict.fromkeys(data["hookpoints"], None)
+
+
 def populate_cache(
     run_cfg: RunConfig,
-    model: PreTrainedModel,
+    model: StandardizedTransformer,
     hookpoint_to_sparse_encode: dict[str, Callable],
     root_dir: Path,
     latents_path: Path,
@@ -182,6 +203,48 @@ def populate_cache(
     # Create a log path within the run directory
     log_path = latents_path.parent / "log"
     log_path.mkdir(parents=True, exist_ok=True)
+
+    cache_cfg = run_cfg.cache_cfg
+    tokens = load_tokenized_data(
+        cache_cfg.cache_ctx_len,
+        tokenizer,
+        cache_cfg.dataset_repo,
+        cache_cfg.dataset_split,
+        cache_cfg.dataset_name,
+        cache_cfg.dataset_column,
+        run_cfg.seed,
+    )
+
+    if run_cfg.filter_bos:
+        if tokenizer.bos_token_id is None:
+            print("Tokenizer does not have a BOS token, skipping BOS filtering")
+        else:
+            flattened_tokens = tokens.flatten()
+            mask = ~(flattened_tokens == tokenizer.bos_token_id)
+            masked_tokens = flattened_tokens[mask]
+
+            num_non_bos_tokens = masked_tokens.shape[0]
+            extra_tokens = num_non_bos_tokens % cache_cfg.cache_ctx_len
+
+            if extra_tokens > 0:
+                print(
+                    f"Warning: {extra_tokens} extra tokens after BOS filtering, truncating to {num_non_bos_tokens - extra_tokens}"
+                )
+                truncated_tokens = masked_tokens[:-extra_tokens]
+                tokens = truncated_tokens.reshape(-1, cache_cfg.cache_ctx_len)
+            else:
+                tokens = masked_tokens.reshape(-1, cache_cfg.cache_ctx_len)
+
+    cache = LatentCache(
+        model,
+        hookpoint_to_sparse_encode,
+        batch_size=cache_cfg.batch_size,
+        transcode=False,
+        log_path=log_path,
+    )
+
+    for centroid_set in centroid_sets:
+        cache.run(cache_cfg.n_tokens, centroid_set, tokens)
 
     raise NotImplementedError("Implement populate_cache for paths")
 
@@ -244,7 +307,7 @@ def main(
     )
     tokenizer = model.tokenizer
 
-    hookpoint_to_sparse_encode = load_hookpoints_and_saes(root_dir)
+    hookpoint_to_sparse_encode = load_hookpoints(root_dir)
     hookpoints = list(hookpoint_to_sparse_encode.keys())
 
     latent_range = th.arange(n_latents) if n_latents else None
