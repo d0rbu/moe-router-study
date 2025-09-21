@@ -17,6 +17,7 @@ from transformers import (
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
 )
+import yaml
 
 from core.dtype import get_dtype
 from core.model import get_model_config
@@ -32,6 +33,7 @@ from delphi.scorers.scorer import ScorerResult
 from delphi.sparse_coders.sparse_model import non_redundant_hookpoints
 from exp import OUTPUT_DIR
 from exp.get_activations import ActivationKeys
+from exp.kmeans import KMEANS_FILENAME
 
 
 def dataset_postprocess(record: LatentRecord) -> LatentRecord:
@@ -163,6 +165,23 @@ def populate_cache(
             tokenizer,
             transcode=False,
         )
+
+    with open(path_config_path) as f:
+        config = yaml.safe_load(f)
+
+    paths_path = root_dir / KMEANS_FILENAME
+    assert paths_path.is_file(), f"Paths file not found at {paths_path}"
+    with open(paths_path) as f:
+        paths = th.load(f)
+
+    centroid_sets: list[th.Tensor] = paths["centroids"]
+    top_k: int = paths["top_k"]
+
+    latents_path.mkdir(parents=True, exist_ok=True)
+
+    # Create a log path within the run directory
+    log_path = latents_path.parent / "log"
+    log_path.mkdir(parents=True, exist_ok=True)
 
     raise NotImplementedError("Implement populate_cache for paths")
 
