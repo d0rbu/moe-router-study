@@ -236,7 +236,7 @@ class Activations:
                 f"Reshuffling activations from {activation_dir} to {activation_files_dir}"
             )
 
-        new_activation_filepaths = Activations.reshuffle(
+        new_activation_filepaths = self.reshuffle(
             activation_dir=activation_dir,
             output_dir=activation_files_dir,
             tokens_per_file_in_reshuffled=tokens_per_file_in_reshuffled,
