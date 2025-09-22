@@ -231,7 +231,7 @@ class Activations:
         dist.barrier()
 
         activation_filepaths = self.get_activation_filepaths(activation_files_dir)
-        logger.trace(f"Found activation files {activation_filepaths}")
+        logger.trace(f"Found shuffled activation files {activation_filepaths}")
 
         if activation_filepaths:
             return activation_filepaths
@@ -519,7 +519,9 @@ def load_activations_and_init_dist(
     model_name: str,
     dataset_name: str,
     tokens_per_file: int,
+    reshuffled_tokens_per_file: int,
     submodule_names: list[str],
+    context_length: int,
     seed: int = 0,
 ) -> tuple[Activations, dict[str, int]]:
     """
@@ -533,6 +535,7 @@ def load_activations_and_init_dist(
         model_name=model_name,
         dataset_name=dataset_name,
         tokens_per_file=tokens_per_file,
+        context_length=context_length,
     )
     logger.debug(f"Loading from experiment {activations_experiment_name}")
 
@@ -546,6 +549,7 @@ def load_activations_and_init_dist(
     logger.debug(f"Initializing activations with seed {seed}")
     activations = Activations(
         experiment_name=activations_experiment_name,
+        tokens_per_file_in_reshuffled=reshuffled_tokens_per_file,
         seed=seed,
     )
 

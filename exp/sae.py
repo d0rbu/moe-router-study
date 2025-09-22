@@ -117,7 +117,9 @@ async def run_sae_training(
     steps: int = 1024 * 256,
     save_every: int = 1024,
     num_epochs: int = 1,
-    tokens_per_file: int = 10_000,
+    context_length: int = 2048,
+    tokens_per_file: int = 5_000,
+    reshuffled_tokens_per_file: int = 10_000,
 ) -> None:
     """Train autoencoders to sweep over the given hyperparameter sets."""
     assert "moe" not in architecture, (
@@ -130,7 +132,9 @@ async def run_sae_training(
         model_name=model_name,
         dataset_name=dataset_name,
         tokens_per_file=tokens_per_file,
+        reshuffled_tokens_per_file=reshuffled_tokens_per_file,
         submodule_names=submodule_name,
+        context_length=context_length,
     )
 
     sae_experiment_name = get_experiment_name(
@@ -326,7 +330,9 @@ def main(
     k_anneal_steps: tuple[int] = (),
     seed: tuple[int] = (0,),
     submodule_name: tuple[str] = ("mlp_output",),
-    tokens_per_file: int = 10_000,
+    tokens_per_file: int = 5_000,
+    reshuffled_tokens_per_file: int = 10_000,
+    context_length: int = 2048,
     log_level: str = "INFO",
 ) -> None:
     """Train a sparse autoencoder on the given model and dataset."""
@@ -376,6 +382,8 @@ def main(
             seed=seed,
             submodule_name=submodule_name,
             tokens_per_file=tokens_per_file,
+            reshuffled_tokens_per_file=reshuffled_tokens_per_file,
+            context_length=context_length,
         )
     )
 

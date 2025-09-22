@@ -87,7 +87,7 @@ class RunningKMeansData:
             if new_weights_sum == 0:
                 new_data.losses[losses_idx] = self.losses[losses_idx]
                 continue
-            
+
             base_loss_proportion = base_weights_sum / new_weights_sum
             other_loss_proportion = 1 - base_loss_proportion
             new_data.losses[losses_idx] = (
@@ -636,7 +636,9 @@ def cluster_paths(
     save_every: int | None = None,
     seed: int = 0,
     gpu_minibatch_size: int = 1024,
-    tokens_per_file: int = 10_000,
+    tokens_per_file: int = 5_000,
+    reshuffled_tokens_per_file: int = 10_000,
+    context_length: int = 2048,
     log_level: str = "INFO",
 ) -> None:
     print(f"Running with log level: {log_level}")
@@ -650,7 +652,9 @@ def cluster_paths(
         model_name=model_name,
         dataset_name=dataset_name,
         tokens_per_file=tokens_per_file,
+        reshuffled_tokens_per_file=reshuffled_tokens_per_file,
         submodule_names=[ActivationKeys.ROUTER_LOGITS],
+        context_length=context_length,
     )
     activation_dim = activation_dims[ActivationKeys.ROUTER_LOGITS]
 
@@ -686,7 +690,7 @@ def cluster_paths(
             k=k,
             max_iters=max_iters,
             seed=seed,
-            tokens_per_file=tokens_per_file,
+            tokens_per_file=reshuffled_tokens_per_file,
             gpu_minibatch_size=gpu_minibatch_size,
             save_every=save_every,
         )
@@ -704,7 +708,9 @@ def main(
     save_every: int | None = None,
     seed: int = 0,
     gpu_minibatch_size: int = 1024,
-    tokens_per_file: int = 10_000,
+    tokens_per_file: int = 5_000,
+    reshuffled_tokens_per_file: int = 10_000,
+    context_length: int = 2048,
     log_level: str = "INFO",
     **kwargs: Any,
 ) -> None:
@@ -719,6 +725,8 @@ def main(
         seed=seed,
         gpu_minibatch_size=gpu_minibatch_size,
         tokens_per_file=tokens_per_file,
+        reshuffled_tokens_per_file=reshuffled_tokens_per_file,
+        context_length=context_length,
         log_level=log_level,
         **kwargs,
     )
