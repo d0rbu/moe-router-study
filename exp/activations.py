@@ -209,8 +209,8 @@ class Activations:
     def __iter__(self) -> Generator[dict, None, None]:
         return self()
 
-    @staticmethod
     def load_files(
+        self,
         activation_dir: str,
         seed: int = 0,
         tokens_per_file_in_reshuffled: int = 100_000,
@@ -224,9 +224,7 @@ class Activations:
             os.makedirs(activation_files_dir, exist_ok=True)
         dist.barrier()
 
-        activation_filepaths = Activations.get_activation_filepaths(
-            activation_files_dir
-        )
+        activation_filepaths = self.get_activation_filepaths(activation_files_dir)
         logger.trace(f"Found activation files {activation_filepaths}")
 
         if activation_filepaths:
