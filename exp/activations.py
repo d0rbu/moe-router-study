@@ -11,6 +11,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from tqdm import tqdm
 
+from core.logging import init_distributed_logging
 from exp import ACTIVATION_DIRNAME, OUTPUT_DIR
 from exp.get_activations import ActivationKeys
 from exp.training import get_experiment_name
@@ -64,12 +65,15 @@ class Activations:
         activation_dir = os.path.join(OUTPUT_DIR, experiment_name, ACTIVATION_DIRNAME)
 
         self.device = device
+
+        logger.trace(f"Loading or reshuffling activations from {activation_dir}")
         self.activation_filepaths = self.load_files(
             activation_dir=activation_dir,
             seed=seed,
             tokens_per_file_in_reshuffled=tokens_per_file_in_reshuffled,
             shuffle_batch_size=shuffle_batch_size,
         )
+
         self.max_cache_size = max_cache_size
         self._total_tokens = None
 
@@ -223,6 +227,7 @@ class Activations:
         activation_filepaths = Activations.get_activation_filepaths(
             activation_files_dir
         )
+        logger.trace(f"Found activation files {activation_filepaths}")
 
         if activation_filepaths:
             return activation_filepaths
@@ -527,6 +532,7 @@ def load_activations_and_init_dist(
 
     logger.debug("Initializing distributed process group")
     dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
+    init_distributed_logging()
 
     logger.debug(f"Initializing activations with seed {seed}")
     activations = Activations(
