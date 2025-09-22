@@ -120,6 +120,7 @@ async def run_sae_training(
     context_length: int = 2048,
     tokens_per_file: int = 5_000,
     reshuffled_tokens_per_file: int = 10_000,
+    num_workers: int = 16,
 ) -> None:
     """Train autoencoders to sweep over the given hyperparameter sets."""
     assert "moe" not in architecture, (
@@ -135,6 +136,7 @@ async def run_sae_training(
         reshuffled_tokens_per_file=reshuffled_tokens_per_file,
         submodule_names=submodule_name,
         context_length=context_length,
+        num_workers=num_workers,
     )
 
     sae_experiment_name = get_experiment_name(
@@ -334,6 +336,7 @@ def main(
     reshuffled_tokens_per_file: int = 10_000,
     context_length: int = 2048,
     log_level: str = "INFO",
+    num_workers: int = 16,
 ) -> None:
     """Train a sparse autoencoder on the given model and dataset."""
     print(f"Running with log level: {log_level}")
@@ -384,6 +387,7 @@ def main(
             tokens_per_file=tokens_per_file,
             reshuffled_tokens_per_file=reshuffled_tokens_per_file,
             context_length=context_length,
+            num_workers=num_workers,
         )
     )
 

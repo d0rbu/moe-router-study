@@ -1,6 +1,7 @@
 import asyncio
 from collections import defaultdict
 from collections.abc import Callable, Generator
+from concurrent.futures import ThreadPoolExecutor
 import gc
 from itertools import batched, count, islice, pairwise
 import os
@@ -58,6 +59,7 @@ class Activations:
         shuffle_batch_size: int = 10,
         seed: int = 0,
         max_cache_size: int = 2,
+        num_workers: int = 8,
     ):
         """
         Args:
@@ -67,6 +69,7 @@ class Activations:
             shuffle_batch_size: How many batches to shuffle at a time
             seed: Seed for the random number generator
             max_cache_size: Maximum number of file data entries to cache when iterating
+            num_workers: Number of workers to use for loading the files
         """
         activation_dir = os.path.join(OUTPUT_DIR, experiment_name, ACTIVATION_DIRNAME)
 
@@ -81,6 +84,7 @@ class Activations:
         )
 
         self.max_cache_size = max_cache_size
+        self.num_workers = num_workers
         self._total_tokens = None
 
     def __len__(self) -> int:
@@ -318,15 +322,26 @@ class Activations:
             dist.get_rank() : len(all_activation_filepaths) : dist.get_world_size()
         ]
 
-        for i, filepath in tqdm(
-            local_activation_filepaths,
-            total=len(local_activation_filepaths),
+        filepath_pbar = tqdm(
+            total=len(all_activation_filepaths),
             desc="Loading batch sizes",
             leave=False,
             position=dist.get_rank(),
-        ):
-            data = th.load(filepath)
-            all_batch_sizes[i] = data[ActivationKeys.MLP_OUTPUT].shape[0]
+        )
+
+        # start threadpool to load the files
+        with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+            futures = [
+                executor.submit(th.load, filepath)
+                for filepath in local_activation_filepaths
+            ]
+            for i, future in enumerate(futures):
+                data = future.result()
+                all_batch_sizes[i] = data[ActivationKeys.MLP_OUTPUT].shape[0]
+                del data
+                filepath_pbar.update(1)
+
+        filepath_pbar.close()
 
         dist.all_reduce(all_batch_sizes, op=dist.ReduceOp.SUM)
 
@@ -523,6 +538,7 @@ def load_activations_and_init_dist(
     submodule_names: list[str],
     context_length: int,
     seed: int = 0,
+    num_workers: int = 8,
 ) -> tuple[Activations, dict[str, int]]:
     """
     Load activations and initialize the distributed process group.
@@ -551,6 +567,7 @@ def load_activations_and_init_dist(
         experiment_name=activations_experiment_name,
         tokens_per_file_in_reshuffled=reshuffled_tokens_per_file,
         seed=seed,
+        num_workers=num_workers,
     )
 
     # load a batch of activations to get the dimension
