@@ -313,13 +313,12 @@ class Activations:
         new_activation_filepaths = []
         all_batch_sizes = th.zeros(len(activation_filepaths), dtype=th.int32)
 
-        activation_filepath_groups = islice(
+        local_activation_filepaths = islice(
             enumerate(activation_filepaths),
             dist.get_rank(),  # start
             len(activation_filepaths),  # stop
             dist.get_world_size(),  # step
         )
-        local_activation_filepaths = list(activation_filepath_groups[dist.get_rank()])
 
         for i, filepath in tqdm(
             local_activation_filepaths,
@@ -345,16 +344,11 @@ class Activations:
             zip(activation_filepaths, all_batch_sizes, strict=False),
             shuffle_batch_size,
         )
-        activation_file_batch_groups = list(
-            islice(
-                activation_file_batches,
-                dist.get_rank(),  # start
-                len(activation_file_batches),  # stop
-                dist.get_world_size(),  # step
-            )
-        )
-        local_activation_file_batches = list(
-            activation_file_batch_groups[dist.get_rank()]
+        local_activation_file_batches = islice(
+            activation_file_batches,
+            dist.get_rank(),  # start
+            len(activation_file_batches),  # stop
+            dist.get_world_size(),  # step
         )
 
         for shuffle_batch_idx, shuffle_batch in tqdm(
