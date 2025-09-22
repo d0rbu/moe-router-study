@@ -317,17 +317,9 @@ class Activations:
         new_activation_filepaths = []
         all_batch_sizes = th.zeros(len(activation_filepaths), dtype=th.int32)
 
-        all_activation_filepaths = list(enumerate(activation_filepaths))
-        local_activation_filepaths = all_activation_filepaths[
-            dist.get_rank() : len(all_activation_filepaths) : dist.get_world_size()
+        local_activation_filepaths = activation_filepaths[
+            dist.get_rank() : len(activation_filepaths) : dist.get_world_size()
         ]
-
-        filepath_pbar = tqdm(
-            total=len(all_activation_filepaths),
-            desc="Loading batch sizes",
-            leave=False,
-            position=dist.get_rank(),
-        )
 
         # start threadpool to load the files
         with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
@@ -335,13 +327,16 @@ class Activations:
                 executor.submit(th.load, filepath)
                 for filepath in local_activation_filepaths
             ]
-            for i, future in enumerate(futures):
+            for i, future in tqdm(
+                enumerate(futures),
+                total=len(futures),
+                desc="Loading batch sizes",
+                leave=False,
+                position=dist.get_rank(),
+            ):
                 data = future.result()
                 all_batch_sizes[i] = data[ActivationKeys.MLP_OUTPUT].shape[0]
                 del data
-                filepath_pbar.update(1)
-
-        filepath_pbar.close()
 
         dist.all_reduce(all_batch_sizes, op=dist.ReduceOp.SUM)
 
