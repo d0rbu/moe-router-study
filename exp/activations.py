@@ -37,6 +37,9 @@ def broadcast_variable_length_list[T](
 
     logger.trace(f"Rank {src} broadcasted that there are {num_items} items")
 
+    if num_items == 0:
+        return []
+
     if dist.get_rank() != 0:
         items = [None] * num_items
 
@@ -234,10 +237,9 @@ class Activations:
             return activation_filepaths
 
         # if we are here then there are no activation files
-        if dist.get_rank() == 0:
-            logger.info(
-                f"Reshuffling activations from {activation_dir} to {activation_files_dir}"
-            )
+        logger.info(
+            f"Reshuffling activations from {activation_dir} to {activation_files_dir}"
+        )
 
         new_activation_filepaths = self.reshuffle(
             activation_dir=activation_dir,
@@ -297,6 +299,8 @@ class Activations:
             args=(activation_dir,),
             src=0,
         )
+
+        assert len(activation_filepaths) > 0, "No activation files found :("
 
         new_activation_filepaths = []
         all_batch_sizes = th.zeros(len(activation_filepaths), dtype=th.int32)
