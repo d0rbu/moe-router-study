@@ -325,8 +325,8 @@ class Activations:
             leave=False,
             position=dist.get_rank(),
         ):
-            with th.load(filepath) as data:
-                all_batch_sizes[i] = data[ActivationKeys.MLP_OUTPUT].shape[0]
+            data = th.load(filepath)
+            all_batch_sizes[i] = data[ActivationKeys.MLP_OUTPUT].shape[0]
 
         dist.all_reduce(all_batch_sizes, op=dist.ReduceOp.SUM)
 
