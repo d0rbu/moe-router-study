@@ -250,17 +250,21 @@ class Activations:
 
     @staticmethod
     def get_activation_filepaths(activation_dir: str) -> list[str]:
-        all_activation_filenames = [
+        all_activation_filenames = {
             filename
             for filename in os.listdir(activation_dir)
             if filename.endswith(".pt")
-        ]
+        }
 
-        activation_indices = [
+        activation_indices = {
             int(filename.split(".")[0]) for filename in all_activation_filenames
-        ]
+        }
+
+        if len(activation_indices) == 0:
+            return []
+
         max_contiguous_activation_index = max(activation_indices)
-        for prev_index, next_index in pairwise(activation_indices):
+        for prev_index, next_index in pairwise(sorted(activation_indices)):
             if next_index - prev_index > 1:
                 max_contiguous_activation_index = prev_index
                 break
