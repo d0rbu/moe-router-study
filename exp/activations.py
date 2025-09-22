@@ -67,7 +67,7 @@ class Activations:
         self.activation_filepaths = self.load_files(
             activation_dir=activation_dir,
             seed=seed,
-            tokens_per_file=tokens_per_file_in_reshuffled,
+            tokens_per_file_in_reshuffled=tokens_per_file_in_reshuffled,
             shuffle_batch_size=shuffle_batch_size,
         )
         self.max_cache_size = max_cache_size
