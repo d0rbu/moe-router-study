@@ -74,6 +74,7 @@ class Activations:
         activation_dir = os.path.join(OUTPUT_DIR, experiment_name, ACTIVATION_DIRNAME)
 
         self.device = device
+        self.num_workers = num_workers
 
         logger.trace(f"Loading or reshuffling activations from {activation_dir}")
         self.activation_filepaths = self.load_files(
@@ -84,7 +85,6 @@ class Activations:
         )
 
         self.max_cache_size = max_cache_size
-        self.num_workers = num_workers
         self._total_tokens = None
 
     def __len__(self) -> int:
