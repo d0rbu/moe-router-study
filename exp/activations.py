@@ -90,9 +90,9 @@ class Activations:
         num_tokens = th.zeros(0, dtype=th.int32)
         local_activation_filepath_iterator = islice(
             self.activation_filepaths,
-            start=dist.get_rank(),
-            stop=len(self.activation_filepaths),
-            step=dist.get_world_size(),
+            dist.get_rank(),  # start
+            len(self.activation_filepaths),  # stop
+            dist.get_world_size(),  # step
         )
 
         for filepath in local_activation_filepath_iterator:
@@ -259,9 +259,13 @@ class Activations:
             if filename.endswith(".pt")
         }
 
+        logger.trace(f"Found {len(all_activation_filenames)} activation files")
+
         activation_indices = {
             int(filename.split(".")[0]) for filename in all_activation_filenames
         }
+
+        logger.trace(f"Found {len(activation_indices)} activation indices")
 
         if len(activation_indices) == 0:
             return []
@@ -271,6 +275,10 @@ class Activations:
             if next_index - prev_index > 1:
                 max_contiguous_activation_index = prev_index
                 break
+
+        logger.trace(
+            f"Max contiguous activation index: {max_contiguous_activation_index}"
+        )
 
         contiguous_activation_filepaths = [
             os.path.join(activation_dir, f"{i}.pt")
@@ -307,9 +315,9 @@ class Activations:
 
         activation_filepath_groups = islice(
             enumerate(activation_filepaths),
-            start=dist.get_rank(),
-            stop=len(activation_filepaths),
-            step=dist.get_world_size(),
+            dist.get_rank(),  # start
+            len(activation_filepaths),  # stop
+            dist.get_world_size(),  # step
         )
         local_activation_filepaths = list(activation_filepath_groups[dist.get_rank()])
 
@@ -340,9 +348,9 @@ class Activations:
         activation_file_batch_groups = list(
             islice(
                 activation_file_batches,
-                start=dist.get_rank(),
-                stop=len(activation_file_batches),
-                step=dist.get_world_size(),
+                dist.get_rank(),  # start
+                len(activation_file_batches),  # stop
+                dist.get_world_size(),  # step
             )
         )
         local_activation_file_batches = list(
