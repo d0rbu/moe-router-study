@@ -12,12 +12,12 @@ from nnterp import StandardizedTransformer
 import orjson
 import torch as th
 import torch.nn as nn
+from tqdm import tqdm
 from transformers import (
     BitsAndBytesConfig,
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
 )
-import yaml
 
 from core.dtype import get_dtype
 from core.model import get_model_config
@@ -25,7 +25,8 @@ from core.type import assert_type
 from delphi.__main__ import populate_cache as sae_populate_cache
 from delphi.clients import Offline
 from delphi.config import CacheConfig, ConstructorConfig, RunConfig, SamplerConfig
-from delphi.latents import LatentCache, LatentDataset, LatentRecord
+from delphi.latents import LatentDataset, LatentRecord
+from delphi.latents.cache import InMemoryCache, LatentCache
 from delphi.log.result_analysis import log_results
 from delphi.pipeline import Pipe, Pipeline
 from delphi.scorers.classifier.intruder import IntruderScorer
@@ -176,6 +177,95 @@ def load_hookpoints(
     return hookpoints_to_sparse_encode
 
 
+class LatentPathsCache(LatentCache):
+    def __init__(
+        self,
+        model: StandardizedTransformer,
+        hookpoint_to_sparse_encode: dict[str, Callable],
+        batch_size: int,
+        log_path: Path | None = None,
+    ):
+        """
+        Initialize the LatentCache.
+
+        Args:
+            model: The model to cache latents for.
+            hookpoint_to_sparse_encode: Dictionary of sparse encoding functions.
+            batch_size: Size of batches for processing.
+            log_path: Path to save logging output.
+        """
+        self.model = model
+        self.hookpoint_to_sparse_encode = hookpoint_to_sparse_encode
+        self.batch_size = batch_size
+        self.widths = {}
+        self.cache = InMemoryCache(filters=None, batch_size=batch_size)
+
+        self.log_path = log_path
+
+    def run(self, n_tokens: int, tokens: th.Tensor):
+        """
+        Run the latent caching process.
+
+        Args:
+            n_tokens: Total number of tokens to process.
+            tokens: Input tokens.
+        """
+        token_batches = self.load_token_batches(n_tokens, tokens)
+
+        total_tokens = 0
+        total_batches = len(token_batches)
+        tokens_per_batch = token_batches[0].numel()
+        for batch_idx, batch in tqdm(
+            enumerate(token_batches),
+            total=total_batches,
+            desc="Caching latents",
+        ):
+            total_tokens += tokens_per_batch
+            router_paths = []
+
+            with self.model.trace(batch):
+                for layer_idx in tqdm(
+                    self.model.layers_with_routers,
+                    desc=f"Batch {batch_idx}",
+                    total=len(self.model.layers_with_routers),
+                    leave=False,
+                    position=1,
+                ):
+                    router_output = self.model.routers_output[layer_idx]
+
+                    # Handle different router output formats
+                    if isinstance(router_output, tuple):
+                        if len(router_output) == 2:
+                            router_scores, _router_indices = router_output
+                        else:
+                            raise ValueError(
+                                f"Found tuple of length {len(router_output)} for router output at layer {layer_idx}"
+                            )
+                    else:
+                        router_scores = router_output
+                    logits = router_scores.save()
+
+                    router_paths.append(logits)
+
+            router_paths = th.stack(router_paths, dim=-2)  # (B, T, L, E)
+            sparse_paths = th.topk(router_paths, k=self.top_k, dim=-1).indices
+
+            router_paths.zero_()
+            router_paths.scatter_(-1, sparse_paths, 1)
+            del sparse_paths
+
+            router_paths_BTP = router_paths.view(*batch.shape, -1)  # (B, T, L * E)
+
+            for hookpoint, sparse_encode in self.hookpoint_to_sparse_encode.items():
+                sae_latents = sparse_encode(router_paths_BTP)
+                self.cache.add(sae_latents, batch, batch_idx, hookpoint)
+
+                self.widths[hookpoint] = sae_latents.shape[2]
+
+        logger.info(f"Total tokens processed: {total_tokens:,}")
+        self.cache.save()
+
+
 def populate_cache(
     run_cfg: RunConfig,
     model: StandardizedTransformer,
@@ -198,17 +288,6 @@ def populate_cache(
             tokenizer,
             transcode=False,
         )
-
-    with open(path_config_path) as f:
-        config = yaml.safe_load(f)
-
-    paths_path = root_dir / KMEANS_FILENAME
-    assert paths_path.is_file(), f"Paths file not found at {paths_path}"
-    with open(paths_path) as f:
-        paths = th.load(f)
-
-    centroid_sets: list[th.Tensor] = paths["centroids"]
-    top_k: int = paths["top_k"]
 
     latents_path.mkdir(parents=True, exist_ok=True)
 
@@ -247,18 +326,25 @@ def populate_cache(
             else:
                 tokens = masked_tokens.reshape(-1, cache_cfg.cache_ctx_len)
 
-    cache = LatentCache(
+    cache = LatentPathsCache(
         model,
         hookpoint_to_sparse_encode,
         batch_size=cache_cfg.batch_size,
-        transcode=False,
         log_path=log_path,
     )
+    cache.run(cache_cfg.n_tokens, tokens)
 
-    for centroid_set in centroid_sets:
-        cache.run(cache_cfg.n_tokens, centroid_set, tokens)
+    if run_cfg.verbose:
+        cache.generate_statistics_cache()
 
-    raise NotImplementedError("Implement populate_cache for paths")
+    cache.save_splits(
+        # Split the activation and location indices into different files to make
+        # loading faster
+        n_splits=cache_cfg.n_splits,
+        save_dir=latents_path,
+    )
+
+    cache.save_config(save_dir=latents_path, cfg=cache_cfg, model_name=run_cfg.model)
 
 
 @arguably.command()
