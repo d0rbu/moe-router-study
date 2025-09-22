@@ -27,7 +27,6 @@ def broadcast_variable_length_list[T](
         kwargs = {}
 
     num_items = [None]
-    items = []
 
     if dist.get_rank() == 0:
         items = list_fn(*args, **kwargs)
@@ -36,10 +35,14 @@ def broadcast_variable_length_list[T](
     dist.broadcast_object_list(num_items, src=src)
     num_items = num_items[0]
 
+    logger.trace(f"Rank {src} broadcasted that there are {num_items} items")
+
     if dist.get_rank() != 0:
         items = [None] * num_items
 
     dist.broadcast_object_list(items, src=src)
+    logger.trace(f"Rank {src} broadcasted {num_items} items")
+
     return items
 
 
