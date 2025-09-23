@@ -434,16 +434,21 @@ class Activations:
                 file_idx, local_idx = Activations._batch_idx_to_file_and_local_idx(
                     batch_size_ranges, batch_idx
                 )
+                batch_size = batch_sizes[file_idx]
                 data = file_data[file_idx]
 
                 for key, value in data.items():
                     match value:
                         case th.Tensor() | list():
-                            logger.trace(
-                                f"Adding value for {key} at local index {local_idx}"
-                            )
-                            logger.trace(len(value))
-                            current_batch[key].append(value[local_idx])
+                            if len(value) < batch_size:
+                                if key in current_batch:
+                                    assert current_batch[key] == value, (
+                                        f"Inconsistent value for {key}: {current_batch[key]} != {value}"
+                                    )
+                                else:
+                                    current_batch[key] = value
+                            else:
+                                current_batch[key].append(value[local_idx])
                         case _:
                             if key in current_batch:
                                 assert current_batch[key] == value, (
