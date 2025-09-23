@@ -436,29 +436,24 @@ class Activations:
                 )
                 batch_size = batch_sizes[file_idx]
                 data = file_data[file_idx]
+                data_to_copy = data.copy()
+                # don't copy over the tokens since we are mixing them up anyway
+                del data_to_copy["tokens"]
 
                 logger.trace(f"Batch size: {batch_size}")
                 logger.trace(f"Data keys: {data.keys()}")
 
-                for key, value in data.items():
-                    match value:
-                        case th.Tensor() | list():
-                            if len(value) < batch_size:
-                                if key in current_batch:
-                                    assert current_batch[key] == value, (
-                                        f"Inconsistent value for {key}: {current_batch[key]} != {value}"
-                                    )
-                                else:
-                                    current_batch[key] = value
-                            else:
-                                current_batch[key].append(value[local_idx])
-                        case _:
-                            if key in current_batch:
-                                assert current_batch[key] == value, (
-                                    f"Inconsistent value for {key}: {current_batch[key]} != {value}"
-                                )
-                            else:
-                                current_batch[key] = value
+                for key, value in data_to_copy.items():
+                    if isinstance(value, th.Tensor | list) and len(value) == batch_size:
+                        current_batch[key].append(value[local_idx])
+                        continue
+
+                    if key in current_batch:
+                        assert current_batch[key] == value, (
+                            f"Inconsistent value for {key}: {current_batch[key]} != {value}"
+                        )
+                    else:
+                        current_batch[key] = value
 
                 num_batch_tokens += 1
 
