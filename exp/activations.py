@@ -328,17 +328,18 @@ class Activations:
         new_activation_filepaths = []
         all_batch_sizes = th.zeros(len(activation_filepaths), dtype=th.int32)
 
-        local_activation_filepaths = activation_filepaths[
-            dist.get_rank() : len(activation_filepaths) : dist.get_world_size()
-        ]
-
+        activation_filepath_limit = len(activation_filepaths)
         if debug:
             logger.info(
                 f"Debug mode, only loading first {self.NUM_DEBUG_FILES} files per rank"
             )
-            local_activation_filepaths = local_activation_filepaths[
-                : self.NUM_DEBUG_FILES
-            ]
+            activation_filepath_limit = min(
+                activation_filepath_limit, self.NUM_DEBUG_FILES
+            )
+
+        local_activation_filepaths = activation_filepaths[
+            dist.get_rank() : activation_filepath_limit : dist.get_world_size()
+        ]
 
         # start threadpool to load the files
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
@@ -348,7 +349,7 @@ class Activations:
             )
             for future_idx in tqdm(
                 range(
-                    dist.get_rank(), len(activation_filepaths), dist.get_world_size()
+                    dist.get_rank(), activation_filepath_limit, dist.get_world_size()
                 ),
                 total=len(futures),
                 desc="Loading batch sizes",
@@ -374,16 +375,15 @@ class Activations:
         total_tokens = 0
         num_batch_tokens = 0
 
-        activation_file_batches = batched(
-            zip(activation_filepaths, all_batch_sizes, strict=False),
-            shuffle_batch_size,
+        activation_file_batches = list(
+            batched(
+                zip(activation_filepaths, all_batch_sizes, strict=False),
+                shuffle_batch_size,
+            )
         )
-        local_activation_file_batches = islice(
-            activation_file_batches,
-            dist.get_rank(),  # start
-            len(activation_file_batches),  # stop
-            dist.get_world_size(),  # step
-        )
+        local_activation_file_batches = activation_file_batches[
+            dist.get_rank() : activation_filepath_limit : dist.get_world_size()
+        ]
 
         for shuffle_batch_idx, shuffle_batch in tqdm(
             enumerate(local_activation_file_batches),
