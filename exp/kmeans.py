@@ -640,6 +640,7 @@ def cluster_paths(
     reshuffled_tokens_per_file: int = 10_000,
     context_length: int = 2048,
     log_level: str = "INFO",
+    num_workers: int = 64,
 ) -> None:
     print(f"Running with log level: {log_level}")
 
@@ -648,13 +649,20 @@ def cluster_paths(
 
     logger.debug(f"Running with log level: {log_level}")
 
-    activations, activation_dims = load_activations_and_init_dist(
-        model_name=model_name,
-        dataset_name=dataset_name,
-        tokens_per_file=tokens_per_file,
-        reshuffled_tokens_per_file=reshuffled_tokens_per_file,
-        submodule_names=[ActivationKeys.ROUTER_LOGITS],
-        context_length=context_length,
+    log_level_numeric = logger._core.levels[log_level].no
+    debug_level_numeric = logger._core.levels["DEBUG"].no
+
+    activations, activation_dims = asyncio.run(
+        load_activations_and_init_dist(
+            model_name=model_name,
+            dataset_name=dataset_name,
+            tokens_per_file=tokens_per_file,
+            reshuffled_tokens_per_file=reshuffled_tokens_per_file,
+            submodule_names=[ActivationKeys.ROUTER_LOGITS],
+            context_length=context_length,
+            num_workers=num_workers,
+            debug=log_level_numeric <= debug_level_numeric,
+        )
     )
     activation_dim = activation_dims[ActivationKeys.ROUTER_LOGITS]
 
@@ -712,6 +720,7 @@ def main(
     reshuffled_tokens_per_file: int = 10_000,
     context_length: int = 2048,
     log_level: str = "INFO",
+    num_workers: int = 64,
     **kwargs: Any,
 ) -> None:
     cluster_paths(
@@ -728,6 +737,7 @@ def main(
         reshuffled_tokens_per_file=reshuffled_tokens_per_file,
         context_length=context_length,
         log_level=log_level,
+        num_workers=num_workers,
         **kwargs,
     )
 
