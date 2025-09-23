@@ -368,7 +368,8 @@ class Activations:
         all_batch_sizes = all_batch_sizes.to(self.device)
 
         # maybe not the bestest practice but this is good enough lol
-        th.random.seed(seed + dist.get_rank())
+        th.manual_seed(seed + dist.get_rank())
+        th.cuda.manual_seed_all(seed + dist.get_rank())
 
         current_batch = defaultdict(list)
         current_batch_idx = 0
