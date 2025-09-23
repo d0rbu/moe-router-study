@@ -565,11 +565,15 @@ class Activations:
     def _batch_idx_to_file_and_local_idx(
         batch_size_ranges: th.Tensor, batch_idx: int
     ) -> tuple[int, int]:
+        logger.trace(f"Batch index: {batch_idx}")
+        logger.trace(f"Batch size ranges: {batch_size_ranges}")
         file_idx = th.searchsorted(batch_size_ranges, batch_idx, side="right").item()
 
         file_start_idx = batch_size_ranges[file_idx - 1].item() if file_idx > 0 else 0
 
         local_idx = batch_idx - file_start_idx
+        logger.trace(f"File index: {file_idx}")
+        logger.trace(f"Local index: {local_idx}")
         return file_idx, local_idx
 
 
