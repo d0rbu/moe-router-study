@@ -60,6 +60,7 @@ class Activations:
         seed: int = 0,
         max_cache_size: int = 2,
         num_workers: int = 8,
+        debug: bool = False,
     ):
         """
         Args:
@@ -70,11 +71,11 @@ class Activations:
             seed: Seed for the random number generator
             max_cache_size: Maximum number of file data entries to cache when iterating
             num_workers: Number of workers to use for loading the files
+            debug: Whether to run in debug mode
         """
         activation_dir = os.path.join(OUTPUT_DIR, experiment_name, ACTIVATION_DIRNAME)
 
         self.device = device
-        self.num_workers = num_workers
 
         logger.trace(f"Loading or reshuffling activations from {activation_dir}")
         self.activation_filepaths = self.load_files(
@@ -82,6 +83,8 @@ class Activations:
             seed=seed,
             tokens_per_file_in_reshuffled=tokens_per_file_in_reshuffled,
             shuffle_batch_size=shuffle_batch_size,
+            debug=debug,
+            num_workers=num_workers,
         )
 
         self.max_cache_size = max_cache_size
@@ -225,6 +228,8 @@ class Activations:
         seed: int = 0,
         tokens_per_file_in_reshuffled: int = 100_000,
         shuffle_batch_size: int = 100,
+        debug: bool = False,
+        num_workers: int = 8,
     ) -> list[str]:
         shuffle_dirname = (
             f"reshuffled-seed={seed}-tokens_per_file={tokens_per_file_in_reshuffled}"
@@ -251,6 +256,8 @@ class Activations:
             tokens_per_file_in_reshuffled=tokens_per_file_in_reshuffled,
             seed=seed,
             shuffle_batch_size=shuffle_batch_size,
+            debug=debug,
+            num_workers=num_workers,
         )
 
         return new_activation_filepaths
@@ -296,6 +303,8 @@ class Activations:
             *[asyncio.to_thread(th.load, filepath) for filepath in filepaths]
         )
 
+    NUM_DEBUG_FILES = 2
+
     def reshuffle(
         self,
         activation_dir: str,
@@ -303,6 +312,8 @@ class Activations:
         tokens_per_file_in_reshuffled: int = 100_000,
         shuffle_batch_size: int = 100,
         seed: int = 0,
+        debug: bool = False,
+        num_workers: int = 8,
     ) -> list[str]:
         self._total_tokens = None
 
@@ -321,14 +332,24 @@ class Activations:
             dist.get_rank() : len(activation_filepaths) : dist.get_world_size()
         ]
 
+        if debug:
+            logger.info(
+                f"Debug mode, only loading first {self.NUM_DEBUG_FILES} files per rank"
+            )
+            local_activation_filepaths = local_activation_filepaths[
+                : self.NUM_DEBUG_FILES
+            ]
+
         # start threadpool to load the files
-        with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
             futures = deque(
                 executor.submit(th.load, filepath)
                 for filepath in local_activation_filepaths
             )
             for future_idx in tqdm(
-                range(len(futures)),
+                range(
+                    dist.get_rank(), len(activation_filepaths), dist.get_world_size()
+                ),
                 total=len(futures),
                 desc="Loading batch sizes",
                 leave=False,
@@ -340,7 +361,10 @@ class Activations:
                 del data
                 del future
 
+        # on nccl only gpu-gpu communication is supported
+        all_batch_sizes = all_batch_sizes.to("cuda")
         dist.all_reduce(all_batch_sizes, op=dist.ReduceOp.SUM)
+        all_batch_sizes = all_batch_sizes.to(self.device)
 
         # maybe not the bestest practice but this is good enough lol
         th.random.seed(seed + dist.get_rank())
@@ -536,6 +560,7 @@ def load_activations_and_init_dist(
     context_length: int,
     seed: int = 0,
     num_workers: int = 8,
+    debug: bool = False,
 ) -> tuple[Activations, dict[str, int]]:
     """
     Load activations and initialize the distributed process group.
@@ -565,6 +590,7 @@ def load_activations_and_init_dist(
         tokens_per_file_in_reshuffled=reshuffled_tokens_per_file,
         seed=seed,
         num_workers=num_workers,
+        debug=debug,
     )
 
     # load a batch of activations to get the dimension

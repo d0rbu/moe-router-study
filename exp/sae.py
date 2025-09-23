@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from itertools import batched, chain, islice, product
+import logging
 import math
 import os
 import sys
@@ -121,11 +122,13 @@ async def run_sae_training(
     tokens_per_file: int = 5_000,
     reshuffled_tokens_per_file: int = 10_000,
     num_workers: int = 64,
+    debug: bool = False,
 ) -> None:
     """Train autoencoders to sweep over the given hyperparameter sets."""
     assert "moe" not in architecture, (
         "MoE is not supported for SAE training, use kmeans.py instead."
     )
+    assert th.cuda.is_available(), "CUDA is not available"
 
     logger.debug("loading activations and initializing distributed setup")
 
@@ -137,6 +140,7 @@ async def run_sae_training(
         submodule_names=submodule_name,
         context_length=context_length,
         num_workers=num_workers,
+        debug=debug,
     )
 
     sae_experiment_name = get_experiment_name(
@@ -352,6 +356,7 @@ def main(
 
     logger.remove()
     logger.add(sys.stderr, level=log_level)
+    log_level_numeric = logging.getLevelName(log_level)
 
     logger.debug(f"Running with log level: {log_level}")
 
@@ -388,6 +393,7 @@ def main(
             reshuffled_tokens_per_file=reshuffled_tokens_per_file,
             context_length=context_length,
             num_workers=num_workers,
+            debug=log_level_numeric <= logging.DEBUG,
         )
     )
 
