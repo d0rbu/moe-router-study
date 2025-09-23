@@ -82,6 +82,7 @@ class Activations:
     ) -> list[str]:
         activation_dir = os.path.join(OUTPUT_DIR, experiment_name, ACTIVATION_DIRNAME)
 
+        cls.device = device
         logger.trace(f"Loading or reshuffling activations from {activation_dir}")
         cls.activation_filepaths = await cls.load_files(
             activation_dir=activation_dir,
