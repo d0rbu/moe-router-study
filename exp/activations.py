@@ -1,5 +1,5 @@
 import asyncio
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
 import gc
@@ -323,20 +323,22 @@ class Activations:
 
         # start threadpool to load the files
         with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
-            futures = [
+            futures = deque(
                 executor.submit(th.load, filepath)
                 for filepath in local_activation_filepaths
-            ]
-            for i, future in tqdm(
-                enumerate(futures),
+            )
+            for future_idx in tqdm(
+                range(len(futures)),
                 total=len(futures),
                 desc="Loading batch sizes",
                 leave=False,
                 position=dist.get_rank(),
             ):
+                future = futures.popleft()
                 data = future.result()
-                all_batch_sizes[i] = data[ActivationKeys.MLP_OUTPUT].shape[0]
+                all_batch_sizes[future_idx] = data[ActivationKeys.MLP_OUTPUT].shape[0]
                 del data
+                del future
 
         dist.all_reduce(all_batch_sizes, op=dist.ReduceOp.SUM)
 
