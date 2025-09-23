@@ -420,9 +420,9 @@ class Activations:
 
             batch_sizes = th.stack(batch_sizes, dim=0)
             batch_size_ranges = th.cumsum(batch_sizes, dim=0)
-            total_size = batch_size_ranges[-1]
+            total_size = batch_size_ranges[-1].item()
 
-            batch_shuffled_indices = th.randperm(total_size.item())
+            batch_shuffled_indices = th.randperm(total_size)
 
             for batch_idx in tqdm(
                 batch_shuffled_indices,
