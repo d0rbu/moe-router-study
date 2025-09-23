@@ -2,7 +2,6 @@ import asyncio
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from itertools import batched, chain, islice, product
-import logging
 import math
 import os
 import sys
@@ -354,9 +353,14 @@ def main(
     if len(k_anneal_steps) == 0:
         k_anneal_steps = (None,)
 
+    assert log_level in logger._core.levels, (
+        f"Invalid log level, must be one of {logger._core.levels.keys()}"
+    )
+
     logger.remove()
     logger.add(sys.stderr, level=log_level)
-    log_level_numeric = logging.getLevelName(log_level)
+    log_level_numeric = logger._core.levels[log_level].no
+    debug_level_numeric = logger._core.levels["DEBUG"].no
 
     logger.debug(f"Running with log level: {log_level}")
 
@@ -393,7 +397,7 @@ def main(
             reshuffled_tokens_per_file=reshuffled_tokens_per_file,
             context_length=context_length,
             num_workers=num_workers,
-            debug=log_level_numeric <= logging.DEBUG,
+            debug=log_level_numeric <= debug_level_numeric,
         )
     )
 
