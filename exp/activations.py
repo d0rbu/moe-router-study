@@ -51,7 +51,7 @@ def broadcast_variable_length_list[T](
 
 
 class Activations:
-    def __init__(
+    async def __init__(
         self,
         experiment_name: str,
         device: str = "cpu",
@@ -78,7 +78,7 @@ class Activations:
         self.device = device
 
         logger.trace(f"Loading or reshuffling activations from {activation_dir}")
-        self.activation_filepaths = self.load_files(
+        self.activation_filepaths = await self.load_files(
             activation_dir=activation_dir,
             seed=seed,
             tokens_per_file_in_reshuffled=tokens_per_file_in_reshuffled,
@@ -222,7 +222,7 @@ class Activations:
     def __iter__(self) -> Generator[dict, None, None]:
         return self()
 
-    def load_files(
+    async def load_files(
         self,
         activation_dir: str,
         seed: int = 0,
@@ -250,7 +250,7 @@ class Activations:
             f"Reshuffling activations from {activation_dir} to {activation_files_dir}"
         )
 
-        new_activation_filepaths = self.reshuffle(
+        new_activation_filepaths = await self.reshuffle(
             activation_dir=activation_dir,
             output_dir=activation_files_dir,
             tokens_per_file_in_reshuffled=tokens_per_file_in_reshuffled,
@@ -305,7 +305,7 @@ class Activations:
 
     NUM_DEBUG_FILES = 32
 
-    def reshuffle(
+    async def reshuffle(
         self,
         activation_dir: str,
         output_dir: str,
@@ -550,7 +550,7 @@ class Activations:
         return file_idx, local_idx
 
 
-def load_activations_and_init_dist(
+async def load_activations_and_init_dist(
     model_name: str,
     dataset_name: str,
     tokens_per_file: int,
@@ -584,7 +584,7 @@ def load_activations_and_init_dist(
     init_distributed_logging()
 
     logger.debug(f"Initializing activations with seed {seed}")
-    activations = Activations(
+    activations = await Activations(
         experiment_name=activations_experiment_name,
         tokens_per_file_in_reshuffled=reshuffled_tokens_per_file,
         seed=seed,
