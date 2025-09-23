@@ -437,6 +437,9 @@ class Activations:
                 batch_size = batch_sizes[file_idx]
                 data = file_data[file_idx]
 
+                logger.trace(f"Batch size: {batch_size}")
+                logger.trace(f"Data keys: {data.keys()}")
+
                 for key, value in data.items():
                     match value:
                         case th.Tensor() | list():
