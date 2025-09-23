@@ -442,7 +442,7 @@ class Activations:
                             logger.trace(
                                 f"Adding value for {key} at local index {local_idx}"
                             )
-                            logger.trace(value.shape)
+                            logger.trace(len(value))
                             current_batch[key].append(value[local_idx])
                         case _:
                             if key in current_batch:
