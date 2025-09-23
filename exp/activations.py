@@ -303,7 +303,7 @@ class Activations:
             *[asyncio.to_thread(th.load, filepath) for filepath in filepaths]
         )
 
-    NUM_DEBUG_FILES = 2
+    NUM_DEBUG_FILES = 32
 
     def reshuffle(
         self,
@@ -330,9 +330,7 @@ class Activations:
 
         activation_filepath_limit = len(activation_filepaths)
         if debug:
-            logger.info(
-                f"Debug mode, only loading first {self.NUM_DEBUG_FILES} files per rank"
-            )
+            logger.info(f"Debug mode, only loading first {self.NUM_DEBUG_FILES} files")
             activation_filepath_limit = min(
                 activation_filepath_limit, self.NUM_DEBUG_FILES
             )
@@ -395,7 +393,7 @@ class Activations:
         ):
             filepaths, batch_sizes = zip(*shuffle_batch, strict=True)
 
-            file_data = asyncio.run(self.load_files_async(filepaths))
+            file_data = await self.load_files_async(filepaths)
 
             batch_sizes = th.stack(batch_sizes, dim=0)
             batch_size_ranges = th.cumsum(batch_sizes, dim=0)
