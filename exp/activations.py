@@ -249,7 +249,9 @@ class Activations:
             os.makedirs(activation_files_dir, exist_ok=True)
         dist.barrier()
 
-        activation_filepaths = cls.get_activation_filepaths(activation_files_dir)
+        activation_filepaths = cls.get_activation_filepaths(
+            activation_files_dir, debug=debug
+        )
         logger.trace(f"Found shuffled activation files {activation_filepaths}")
 
         if activation_filepaths:
@@ -272,8 +274,10 @@ class Activations:
 
         return new_activation_filepaths
 
-    @staticmethod
-    def get_activation_filepaths(activation_dir: str) -> list[str]:
+    @classmethod
+    def get_activation_filepaths(
+        cls, activation_dir: str, debug: bool = False
+    ) -> list[str]:
         all_activation_filenames = {
             filename
             for filename in os.listdir(activation_dir)
@@ -305,7 +309,15 @@ class Activations:
             os.path.join(activation_dir, f"{i}.pt")
             for i in range(max_contiguous_activation_index + 1)
         ]
-        return contiguous_activation_filepaths
+
+        if not debug:
+            return contiguous_activation_filepaths
+
+        truncated_contiguous_activation_filepaths = contiguous_activation_filepaths[
+            : cls.NUM_DEBUG_FILES
+        ]
+
+        return truncated_contiguous_activation_filepaths
 
     @staticmethod
     async def load_files_async(filepaths: list[str]) -> list[dict]:
@@ -330,7 +342,7 @@ class Activations:
 
         activation_filepaths = broadcast_variable_length_list(
             cls.get_activation_filepaths,
-            args=(activation_dir,),
+            args=(activation_dir, debug),
             src=0,
         )
 
