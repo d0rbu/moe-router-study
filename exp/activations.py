@@ -439,6 +439,10 @@ class Activations:
                 for key, value in data.items():
                     match value:
                         case th.Tensor() | list():
+                            logger.trace(
+                                f"Adding value for {key} at local index {local_idx}"
+                            )
+                            logger.trace(value[local_idx].shape)
                             current_batch[key].append(value[local_idx])
                         case _:
                             if key in current_batch:
