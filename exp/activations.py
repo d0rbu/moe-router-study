@@ -440,9 +440,6 @@ class Activations:
                 # don't copy over the tokens since we are mixing them up anyway
                 del data_to_copy["tokens"]
 
-                logger.trace(f"Batch size: {batch_size}")
-                logger.trace(f"Data keys: {data.keys()}")
-
                 for key, value in data_to_copy.items():
                     if isinstance(value, th.Tensor | list) and len(value) == batch_size:
                         current_batch[key].append(value[local_idx])
@@ -472,7 +469,9 @@ class Activations:
 
         total_tokens += num_batch_tokens
         total_tokens = th.tensor(total_tokens, dtype=th.int32)
+        total_tokens = total_tokens.to("cuda")
         dist.reduce(total_tokens, dst=0, op=dist.ReduceOp.SUM)
+        total_tokens = total_tokens.to(cls.device)
 
         cls._total_tokens = total_tokens.item()
 
@@ -572,15 +571,11 @@ class Activations:
     def _batch_idx_to_file_and_local_idx(
         batch_size_ranges: th.Tensor, batch_idx: int
     ) -> tuple[int, int]:
-        logger.trace(f"Batch index: {batch_idx}")
-        logger.trace(f"Batch size ranges: {batch_size_ranges}")
         file_idx = th.searchsorted(batch_size_ranges, batch_idx, side="right").item()
 
         file_start_idx = batch_size_ranges[file_idx - 1].item() if file_idx > 0 else 0
 
         local_idx = batch_idx - file_start_idx
-        logger.trace(f"File index: {file_idx}")
-        logger.trace(f"Local index: {local_idx}")
         return file_idx, local_idx
 
 
