@@ -51,8 +51,26 @@ def broadcast_variable_length_list[T](
 
 
 class Activations:
-    async def __init__(
+    def __init__(
         self,
+        device: str = "cpu",
+        activation_filepaths: list[str] | None = None,
+        max_cache_size: int = 2,
+    ):
+        """
+        Args:
+            device: Device to return the activations on
+            activation_filepaths: List of activation filepaths
+            max_cache_size: Maximum number of file data entries to cache when iterating
+        """
+        self.device = device
+        self.activation_filepaths = activation_filepaths
+        self.max_cache_size = max_cache_size
+        self._total_tokens = None
+
+    @classmethod
+    async def load(
+        cls,
         experiment_name: str,
         device: str = "cpu",
         tokens_per_file_in_reshuffled: int = 10_000,
@@ -61,24 +79,11 @@ class Activations:
         max_cache_size: int = 2,
         num_workers: int = 8,
         debug: bool = False,
-    ):
-        """
-        Args:
-            experiment_name: Name of the experiment
-            device: Device to return the activations on
-            tokens_per_file_in_reshuffled: Number of tokens per file, only used if reshuffling
-            shuffle_batch_size: How many batches to shuffle at a time
-            seed: Seed for the random number generator
-            max_cache_size: Maximum number of file data entries to cache when iterating
-            num_workers: Number of workers to use for loading the files
-            debug: Whether to run in debug mode
-        """
+    ) -> list[str]:
         activation_dir = os.path.join(OUTPUT_DIR, experiment_name, ACTIVATION_DIRNAME)
 
-        self.device = device
-
         logger.trace(f"Loading or reshuffling activations from {activation_dir}")
-        self.activation_filepaths = await self.load_files(
+        cls.activation_filepaths = await cls.load_files(
             activation_dir=activation_dir,
             seed=seed,
             tokens_per_file_in_reshuffled=tokens_per_file_in_reshuffled,
@@ -87,8 +92,11 @@ class Activations:
             num_workers=num_workers,
         )
 
-        self.max_cache_size = max_cache_size
-        self._total_tokens = None
+        return cls(
+            device=device,
+            activation_filepaths=cls.activation_filepaths,
+            max_cache_size=max_cache_size,
+        )
 
     def __len__(self) -> int:
         if self._total_tokens is not None:
@@ -222,8 +230,9 @@ class Activations:
     def __iter__(self) -> Generator[dict, None, None]:
         return self()
 
+    @classmethod
     async def load_files(
-        self,
+        cls,
         activation_dir: str,
         seed: int = 0,
         tokens_per_file_in_reshuffled: int = 100_000,
@@ -239,7 +248,7 @@ class Activations:
             os.makedirs(activation_files_dir, exist_ok=True)
         dist.barrier()
 
-        activation_filepaths = self.get_activation_filepaths(activation_files_dir)
+        activation_filepaths = cls.get_activation_filepaths(activation_files_dir)
         logger.trace(f"Found shuffled activation files {activation_filepaths}")
 
         if activation_filepaths:
@@ -250,7 +259,7 @@ class Activations:
             f"Reshuffling activations from {activation_dir} to {activation_files_dir}"
         )
 
-        new_activation_filepaths = await self.reshuffle(
+        new_activation_filepaths = await cls.reshuffle(
             activation_dir=activation_dir,
             output_dir=activation_files_dir,
             tokens_per_file_in_reshuffled=tokens_per_file_in_reshuffled,
@@ -305,8 +314,9 @@ class Activations:
 
     NUM_DEBUG_FILES = 32
 
+    @classmethod
     async def reshuffle(
-        self,
+        cls,
         activation_dir: str,
         output_dir: str,
         tokens_per_file_in_reshuffled: int = 100_000,
@@ -315,10 +325,10 @@ class Activations:
         debug: bool = False,
         num_workers: int = 8,
     ) -> list[str]:
-        self._total_tokens = None
+        cls._total_tokens = None
 
         activation_filepaths = broadcast_variable_length_list(
-            self.get_activation_filepaths,
+            cls.get_activation_filepaths,
             args=(activation_dir,),
             src=0,
         )
@@ -330,9 +340,9 @@ class Activations:
 
         activation_filepath_limit = len(activation_filepaths)
         if debug:
-            logger.info(f"Debug mode, only loading first {self.NUM_DEBUG_FILES} files")
+            logger.info(f"Debug mode, only loading first {cls.NUM_DEBUG_FILES} files")
             activation_filepath_limit = min(
-                activation_filepath_limit, self.NUM_DEBUG_FILES
+                activation_filepath_limit, cls.NUM_DEBUG_FILES
             )
 
         local_activation_filepaths = activation_filepaths[
@@ -363,7 +373,7 @@ class Activations:
         # on nccl only gpu-gpu communication is supported
         all_batch_sizes = all_batch_sizes.to("cuda")
         dist.all_reduce(all_batch_sizes, op=dist.ReduceOp.SUM)
-        all_batch_sizes = all_batch_sizes.to(self.device)
+        all_batch_sizes = all_batch_sizes.to(cls.device)
 
         # maybe not the bestest practice but this is good enough lol
         th.manual_seed(seed + dist.get_rank())
@@ -393,7 +403,7 @@ class Activations:
         ):
             filepaths, batch_sizes = zip(*shuffle_batch, strict=True)
 
-            file_data = await self.load_files_async(filepaths)
+            file_data = await cls.load_files_async(filepaths)
 
             batch_sizes = th.stack(batch_sizes, dim=0)
             batch_size_ranges = th.cumsum(batch_sizes, dim=0)
@@ -432,7 +442,7 @@ class Activations:
                         output_dir, f"{dist.get_rank()}_{current_batch_idx}.pt-temp"
                     )
                     new_activation_filepaths.append(
-                        self._collate_and_save_batch(current_batch, output_filepath)
+                        cls._collate_and_save_batch(current_batch, output_filepath)
                     )
 
                     current_batch = defaultdict(list)
@@ -444,7 +454,7 @@ class Activations:
         total_tokens = th.tensor(total_tokens, dtype=th.int32)
         dist.reduce(total_tokens, dst=0, op=dist.ReduceOp.SUM)
 
-        self._total_tokens = total_tokens.item()
+        cls._total_tokens = total_tokens.item()
 
         remaining_batches = [None] * dist.get_world_size()
 
@@ -490,7 +500,7 @@ class Activations:
                         f"{dist.get_rank()}_{current_batch_idx + extra_batch_idx}.pt-temp",
                     )
                     extra_activation_filepaths.append(
-                        self._collate_and_save_batch(extra_batch, output_filepath)
+                        cls._collate_and_save_batch(extra_batch, output_filepath)
                     )
 
             new_activation_filepaths.extend(extra_activation_filepaths)
@@ -584,7 +594,7 @@ async def load_activations_and_init_dist(
     init_distributed_logging()
 
     logger.debug(f"Initializing activations with seed {seed}")
-    activations = await Activations(
+    activations = await Activations.load(
         experiment_name=activations_experiment_name,
         tokens_per_file_in_reshuffled=reshuffled_tokens_per_file,
         seed=seed,

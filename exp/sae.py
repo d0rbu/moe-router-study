@@ -131,7 +131,7 @@ async def run_sae_training(
 
     logger.debug("loading activations and initializing distributed setup")
 
-    activations, activation_dims = load_activations_and_init_dist(
+    activations, activation_dims = await load_activations_and_init_dist(
         model_name=model_name,
         dataset_name=dataset_name,
         tokens_per_file=tokens_per_file,
