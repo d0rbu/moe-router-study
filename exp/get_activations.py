@@ -2,9 +2,11 @@ import asyncio
 from collections import deque
 from enum import StrEnum
 import gc
+from itertools import pairwise
 import math
 import os
 import queue
+import re
 import sys
 import time
 from typing import Any
@@ -458,7 +460,7 @@ def gpu_worker(
     model_name: str,
     gpu_minibatch_size: int,
     experiment_name: str,
-    cpu_only: bool,
+    gpu_available: bool,
     stop_event: Any,  # mp.Event is not properly typed
     gpu_busy: list[bool],  # Reference to multiplexer's gpu_busy list
     log_queue: mp.Queue,
@@ -560,7 +562,7 @@ def gpu_worker(
         batch_idx, encoded_batch, batch_tokens, tokens_count = item
 
         # Move tensors to device
-        if not cpu_only:
+        if gpu_available:
             encoded_batch = {k: v.to(device_ids[0]) for k, v in encoded_batch.items()}
 
         # Process batch and get router logits
@@ -736,6 +738,9 @@ def find_completed_batches(experiment_dir: str) -> set[int]:
     return completed_batches
 
 
+CUDA_VISIBLE_DEVICES_REGEX = re.compile(r"^(([0-9]+,)+[0-9]+|[0-9]*)$")
+
+
 @arguably.command()
 def get_router_activations(
     model_name: str = "olmoe-i",
@@ -776,12 +781,46 @@ def get_router_activations(
     logger.debug(f"Running with log level: {log_level}")
 
     cuda_devices_raw = cuda_devices or os.environ.get("CUDA_VISIBLE_DEVICES", "")
-    cpu_only = cuda_devices_raw == ""
-    device_ids = [int(i) for i in cuda_devices_raw.split(",")] if not cpu_only else [0]
 
-    num_gpus = len(device_ids)
+    # make sure CUDA_VISIBLE_DEVICES is of the form "0,1,...,n"
+    if not CUDA_VISIBLE_DEVICES_REGEX.match(cuda_devices_raw):
+        raise ValueError(
+            f"CUDA_VISIBLE_DEVICES must be of the form '0,1,...,n': {cuda_devices_raw}"
+        )
+
+    cuda_device_ids = [int(i) for i in cuda_devices_raw.split(",")]
+
+    num_gpus = len(cuda_device_ids)
     if num_gpus == 0:
-        raise ValueError(f"Unable to parse CUDA devices: {device_ids}")
+        raise ValueError(f"Unable to parse CUDA devices: {cuda_device_ids}")
+
+    num_gpu_workers = num_gpus // gpus_per_worker
+
+    if num_gpu_workers > 0:
+        device_ids = cuda_device_ids
+        num_workers = num_gpu_workers
+        gpu_available = True
+    else:
+        device_ids = [0]
+        num_workers = 1
+        gpu_available = False
+
+    worker_device_map = (
+        {
+            worker_idx: device_ids[gpu_start_idx:gpu_end_idx]
+            for worker_idx, gpu_start_idx, gpu_end_idx in enumerate(
+                pairwise(range(0, num_gpus, gpus_per_worker))
+            )
+        }
+        if gpu_available
+        else {worker_idx: [0] for worker_idx in range(num_workers)}
+    )
+
+    extra_gpus = num_gpus % gpus_per_worker
+    if extra_gpus > 0:
+        logger.warning(
+            f"{extra_gpus} extra GPUs will be ignored due to gpus_per_worker={gpus_per_worker}"
+        )
 
     if not activations_to_store:
         activations_to_store = [ActivationKeys.ROUTER_LOGITS, ActivationKeys.MLP_OUTPUT]
@@ -792,26 +831,10 @@ def get_router_activations(
     if isinstance(layers_to_store, list):
         layers_to_store = set(layers_to_store)
 
-    if cpu_only:
+    if not gpu_available:
         logger.info("Using CPU only")
     else:
         logger.info(f"Using {num_gpus} GPUs: {device_ids}")
-
-    num_workers = num_gpus // gpus_per_worker
-    worker_gpu_map = (
-        {
-            i: device_ids[i * gpus_per_worker : (i + 1) * gpus_per_worker]
-            for i in range(num_workers)
-        }
-        if not cpu_only
-        else {i: [0] for i in range(num_workers)}
-    )
-
-    extra_gpus = num_gpus % gpus_per_worker
-    if extra_gpus > 0:
-        logger.warning(
-            f"{extra_gpus} extra GPUs will be ignored due to gpus_per_worker={gpus_per_worker}"
-        )
 
     # Create experiment configuration
     config = {
@@ -821,10 +844,10 @@ def get_router_activations(
         "num_tokens": num_tokens,
         "tokens_per_file": tokens_per_file,
         "num_gpus": num_gpus,
-        "cpu_only": cpu_only,
+        "gpu_available": gpu_available,
         "device_ids": device_ids,
         "gpus_per_worker": gpus_per_worker,
-        "worker_gpu_map": worker_gpu_map,
+        "worker_device_map": worker_device_map,
     }
 
     # Generate experiment name if not provided
@@ -938,8 +961,8 @@ def get_router_activations(
     processes.append(disk_proc)
 
     # Start GPU workers
-    for rank, device_ids in worker_gpu_map.items():
-        if cpu_only:
+    for rank, device_ids in worker_device_map.items():
+        if not gpu_available:
             logger.info(f"Starting CPU worker {rank}")
         else:
             logger.info(
@@ -957,7 +980,7 @@ def get_router_activations(
                 model_name,
                 gpu_minibatch_size,
                 name,
-                cpu_only,
+                gpu_available,
                 stop_event,
                 gpu_busy,
                 log_queue,
