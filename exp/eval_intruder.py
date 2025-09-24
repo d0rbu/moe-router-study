@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Callable
 from functools import partial
 import json
@@ -469,13 +470,15 @@ def main(
         non_redundant_hookpoints(hookpoints, scores_path, overwrite=False),
     )
     if nrh:
-        await process_cache(
-            run_cfg,
-            latents_path,
-            scores_path,
-            nrh,
-            tokenizer,
-            latent_range,
+        asyncio.run(
+            process_cache(
+                run_cfg,
+                latents_path,
+                scores_path,
+                nrh,
+                tokenizer,
+                latent_range,
+            )
         )
 
     if run_cfg.verbose:
