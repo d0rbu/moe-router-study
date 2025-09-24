@@ -141,7 +141,7 @@ class Activations:
 
         current_data = cached_file_data.get(block=True)
         current_local_idx = 0
-        current_data_size = len(current_data["tokens"])
+        current_data_size = current_data[ActivationKeys.MLP_OUTPUT].shape[0]
 
         current_batch = {}
         remaining_batch_size = batch_size
@@ -185,7 +185,7 @@ class Activations:
                     return
 
                 current_local_idx = 0
-                current_data_size = len(current_data["tokens"])
+                current_data_size = current_data[ActivationKeys.MLP_OUTPUT].shape[0]
             else:
                 for key, value in current_data.items():
                     match value:
@@ -357,7 +357,7 @@ class Activations:
 
         activation_filepath_limit = len(activation_filepaths)
         if debug:
-            logger.info(f"Debug mode, only loading first {cls.NUM_DEBUG_FILES} files")
+            logger.debug(f"Debug mode, only loading first {cls.NUM_DEBUG_FILES} files")
             activation_filepath_limit = min(
                 activation_filepath_limit, cls.NUM_DEBUG_FILES
             )
@@ -475,25 +475,34 @@ class Activations:
 
         cls._total_tokens = total_tokens.item()
 
-        remaining_batches = [None] * dist.get_world_size()
+        remaining_stacked_batches = [None] * dist.get_world_size()
+
+        # Stack lists of tensors before gathering to improve performance
+        stacked_current_batch = cls._stack_batch_for_gather(current_batch)
 
         if dist.get_rank() == 0:
-            logger.info(f"Total tokens: {total_tokens.item()}")
-            dist.gather_object(current_batch, remaining_batches, dst=0)
+            logger.debug(f"Total tokens: {total_tokens.item()}")
+            dist.gather_object(stacked_current_batch, remaining_stacked_batches, dst=0)
+            logger.debug(f"Gathered {len(remaining_stacked_batches)} batches")
 
-            non_empty_batches = [batch for batch in remaining_batches if batch]
+            # Unstack the gathered batches back to original format
+            remaining_batches = [
+                cls._unstack_batch_after_gather(batch)
+                for batch in remaining_stacked_batches
+                if batch
+            ]
 
             extra_activation_filepaths = []
-            if len(non_empty_batches) > 0:
-                concatenated_batch = non_empty_batches[0]
-                for batch in non_empty_batches[1:]:
+            if len(remaining_batches) > 0:
+                concatenated_batch = remaining_batches[0]
+                for batch in remaining_batches[1:]:
                     for key, value in batch.items():
                         if isinstance(value, list):
                             concatenated_batch[key].extend(value)
                         else:
                             concatenated_batch[key] = value
 
-                total_extra_tokens = len(concatenated_batch["tokens"])
+                total_extra_tokens = len(concatenated_batch[ActivationKeys.MLP_OUTPUT])
                 num_extra_batches = total_extra_tokens // tokens_per_file_in_reshuffled
                 tokens_skipped = total_extra_tokens % tokens_per_file_in_reshuffled
 
@@ -536,11 +545,15 @@ class Activations:
             ):
                 os.rename(filepath, os.path.join(output_dir, f"{new_idx}.pt"))
 
-            renamed_activation_filepaths = [
+            reshuffled_activation_filenames = [
                 f"{i}.pt" for i in range(len(new_activation_filepaths))
             ]
+            renamed_activation_filepaths = [
+                os.path.join(output_dir, filename)
+                for filename in reshuffled_activation_filenames
+            ]
         else:
-            dist.gather_object(current_batch, dst=0)
+            dist.gather_object(stacked_current_batch, dst=0)
             renamed_activation_filepaths = None
 
         renamed_activation_filepaths = broadcast_variable_length_list(
@@ -549,6 +562,36 @@ class Activations:
         )
 
         return renamed_activation_filepaths
+
+    @staticmethod
+    def _stack_batch_for_gather(batch: dict) -> dict:
+        """Stack lists of tensors into single tensors for efficient gathering."""
+        stacked_batch = {}
+        for key, value in batch.items():
+            if (
+                isinstance(value, list)
+                and len(value) > 0
+                and isinstance(value[0], th.Tensor)
+            ):
+                # Stack list of tensors into a single tensor
+                stacked_batch[key] = th.stack(value, dim=0)
+            else:
+                # Keep non-tensor lists and other values as-is
+                stacked_batch[key] = value
+        return stacked_batch
+
+    @staticmethod
+    def _unstack_batch_after_gather(batch: dict) -> dict:
+        """Unstack tensors back into lists of tensors after gathering."""
+        unstacked_batch = {}
+        for key, value in batch.items():
+            if isinstance(value, th.Tensor) and value.ndim > 0:
+                # Unstack tensor back into list of tensors
+                unstacked_batch[key] = list(value)
+            else:
+                # Keep other values as-is
+                unstacked_batch[key] = value
+        return unstacked_batch
 
     @staticmethod
     def _collate_and_save_batch(batch: dict, output_filepath: str) -> str:
