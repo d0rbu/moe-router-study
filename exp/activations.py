@@ -2,6 +2,7 @@ import asyncio
 from collections import defaultdict, deque
 from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from itertools import batched, count, islice, pairwise
 import os
 
@@ -113,7 +114,7 @@ class Activations:
         )
 
         for filepath in local_activation_filepath_iterator:
-            activations = th.load(filepath)
+            activations = th.load(filepath, weights_only=False)
             num_tokens += activations[ActivationKeys.MLP_OUTPUT].shape[0]
 
         dist.all_reduce(num_tokens, op=dist.ReduceOp.SUM)
@@ -124,7 +125,7 @@ class Activations:
     # worker to fetch data from disk
     def _get_file_data(self, cached_file_data: mp.Queue):
         for activation_filepath in self.activation_filepaths:
-            file_data = th.load(activation_filepath)
+            file_data = th.load(activation_filepath, weights_only=False)
             cached_file_data.put(file_data, block=True)
         cached_file_data.put(None)
 
@@ -322,7 +323,10 @@ class Activations:
     @staticmethod
     async def load_files_async(filepaths: list[str]) -> list[dict]:
         return await asyncio.gather(
-            *[asyncio.to_thread(th.load, filepath) for filepath in filepaths]
+            *[
+                asyncio.to_thread(th.load, filepath, weights_only=False)
+                for filepath in filepaths
+            ]
         )
 
     NUM_DEBUG_FILES = 32
@@ -364,8 +368,9 @@ class Activations:
 
         # start threadpool to load the files
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            load_unsafe = partial(th.load, weights_only=False)
             futures = deque(
-                executor.submit(th.load, filepath)
+                executor.submit(load_unsafe, filepath)
                 for filepath in local_activation_filepaths
             )
             for future_idx in tqdm(
@@ -606,24 +611,15 @@ async def load_activations_and_init_dist(
 
     logger.debug("Initializing distributed process group")
     dist.init_process_group(backend="gloo", rank=rank, world_size=world_size)
-    gloo_group = dist.new_group(rank=rank, world_size=world_size)
+
+    logger.info(f"Rank {rank} initialized gloo group")
 
     if th.cuda.is_available():
         nccl_port = gloo_port + 1
         os.environ["MASTER_PORT"] = str(nccl_port)
 
-        dist.init_process_group(
-            backend="nccl",
-            rank=rank,
-            world_size=world_size,
-        )
-        nccl_group = dist.new_group(rank=rank, world_size=world_size)
-    else:
-        nccl_group = None
-
-    logger.info(f"Rank {rank} initialized gloo group {gloo_group}")
-    if nccl_group is not None:
-        logger.info(f"Rank {rank} initialized nccl group {nccl_group}")
+        dist.new_group(ranks=list(range(world_size)), backend="nccl")
+        logger.info(f"Rank {rank} initialized nccl group")
 
     init_distributed_logging()
 
