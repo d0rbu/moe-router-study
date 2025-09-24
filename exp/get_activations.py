@@ -502,7 +502,7 @@ def gpu_worker(
     model = StandardizedTransformer(
         path,
         check_attn_probs_with_trace=False,
-        device_map="auto",
+        device_map="cpu" if not gpu_available else "auto",
     )
     logger.debug("Model initialized")
     layers_with_routers = set(model.layers_with_routers)
@@ -533,13 +533,15 @@ def gpu_worker(
     processing_times: list[float] = []
     start_time = time.time()
 
-    logger.info(
-        f"Starting GPU worker {rank} on {', '.join(f'cuda:{device_id}' for device_id in device_ids)}"
-    )
-
-    os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(
-        str(device_id) for device_id in device_ids
-    )
+    if gpu_available:
+        logger.info(
+            f"Starting GPU worker {rank} on {', '.join(f'cuda:{device_id}' for device_id in device_ids)}"
+        )
+        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(
+            str(device_id) for device_id in device_ids
+        )
+    else:
+        logger.info(f"Starting CPU worker {rank}")
 
     # Process batches
     while not stop_event.is_set():
