@@ -785,14 +785,17 @@ def get_router_activations(
     # make sure CUDA_VISIBLE_DEVICES is of the form "0,1,...,n"
     if not CUDA_VISIBLE_DEVICES_REGEX.match(cuda_devices_raw):
         raise ValueError(
-            f"CUDA_VISIBLE_DEVICES must be of the form '0,1,...,n': {cuda_devices_raw}"
+            f"CUDA_VISIBLE_DEVICES must be of the form '0,1,...,n' or empty: \"{cuda_devices_raw}\""
         )
 
-    cuda_device_ids = [int(i) for i in cuda_devices_raw.split(",")]
+    if cuda_devices_raw == "":
+        cuda_device_ids = list(range(th.cuda.device_count()))
+    else:
+        cuda_device_ids = [int(i) for i in cuda_devices_raw.split(",")]
 
     num_gpus = len(cuda_device_ids)
     if num_gpus == 0:
-        raise ValueError(f"Unable to parse CUDA devices: {cuda_device_ids}")
+        logger.warning("No GPUs found")
 
     num_gpu_workers = num_gpus // gpus_per_worker
 
