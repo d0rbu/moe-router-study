@@ -60,6 +60,7 @@ def lmsys_chat_1m_text(
     local_path = os.path.join(os.path.abspath(DATASET_DIRNAME), hf_name)
     path = local_path if os.path.exists(local_path) else hf_name
 
+    print(f"Loading dataset from {path}")
     ds = load_dataset(path, split="train", streaming=streaming)
 
     if streaming:

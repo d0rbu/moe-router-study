@@ -238,6 +238,8 @@ def tokenizer_worker(
     main_queue: mp.Queue,
     stop_event: Any,  # mp.Event is not properly typed
     log_queue: mp.Queue,
+    rank: int,
+    world_size: int,
     resume_from_batch: int = 0,
     num_tokens: int = 1_000_000_000,  # 1B tokens
     log_level: str = "INFO",
@@ -308,10 +310,7 @@ def tokenizer_worker(
                 batch_idx += 1
 
                 # skip if we are resuming past this batch or if this batch is not for this rank
-                if (
-                    batch_idx < resume_from_batch
-                    or batch_idx % dist.get_world_size() != dist.get_rank()
-                ):
+                if batch_idx < resume_from_batch or batch_idx % world_size != rank:
                     logger.debug(f"Skipping batch {batch_idx}")
                     batch_skip_progress_bar.update(1)
                     log_queue.put({"tokenizer/skipping_batches": batch_idx})
@@ -902,6 +901,8 @@ def get_router_activations(
             main_queue,
             stop_event,
             log_queue,
+            rank,
+            world_size,
             resume_batch_idx,
             num_tokens,
             log_level,
