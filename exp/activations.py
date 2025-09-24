@@ -2,7 +2,6 @@ import asyncio
 from collections import defaultdict, deque
 from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
-import gc
 from itertools import batched, count, islice, pairwise
 import os
 
@@ -13,6 +12,7 @@ import torch.multiprocessing as mp
 from tqdm import tqdm
 
 from core.logging import init_distributed_logging
+from core.memory import clear_memory
 from exp import ACTIVATION_DIRNAME, OUTPUT_DIR
 from exp.get_activations import ActivationKeys
 from exp.training import get_experiment_name
@@ -83,6 +83,7 @@ class Activations:
         activation_dir = os.path.join(OUTPUT_DIR, experiment_name, ACTIVATION_DIRNAME)
 
         cls.device = device
+
         logger.trace(f"Loading or reshuffling activations from {activation_dir}")
         cls.activation_filepaths = await cls.load_files(
             activation_dir=activation_dir,
@@ -225,8 +226,7 @@ class Activations:
                 current_local_idx += remaining_batch_size
                 remaining_batch_size = batch_size
 
-                th.cuda.empty_cache()
-                gc.collect()
+                clear_memory()
 
     def __iter__(self) -> Generator[dict, None, None]:
         return self()
@@ -383,10 +383,7 @@ class Activations:
                 del data
                 del future
 
-        # on nccl only gpu-gpu communication is supported
-        all_batch_sizes = all_batch_sizes.to("cuda")
         dist.all_reduce(all_batch_sizes, op=dist.ReduceOp.SUM)
-        all_batch_sizes = all_batch_sizes.to(cls.device)
 
         # maybe not the bestest practice but this is good enough lol
         th.manual_seed(seed + dist.get_rank())
@@ -469,9 +466,7 @@ class Activations:
 
         total_tokens += num_batch_tokens
         total_tokens = th.tensor(total_tokens, dtype=th.int32)
-        total_tokens = total_tokens.to("cuda")
         dist.reduce(total_tokens, dst=0, op=dist.ReduceOp.SUM)
-        total_tokens = total_tokens.to(cls.device)
 
         cls._total_tokens = total_tokens.item()
 
@@ -607,9 +602,29 @@ async def load_activations_and_init_dist(
 
     rank = int(os.environ.get("SLURM_PROCID", 0))
     world_size = int(os.environ.get("SLURM_NTASKS", 1))
+    gloo_port = int(os.environ.get("MASTER_PORT", 10000))
 
     logger.debug("Initializing distributed process group")
-    dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
+    dist.init_process_group(backend="gloo", rank=rank, world_size=world_size)
+    gloo_group = dist.new_group(rank=rank, world_size=world_size)
+
+    if th.cuda.is_available():
+        nccl_port = gloo_port + 1
+        os.environ["MASTER_PORT"] = str(nccl_port)
+
+        dist.init_process_group(
+            backend="nccl",
+            rank=rank,
+            world_size=world_size,
+        )
+        nccl_group = dist.new_group(rank=rank, world_size=world_size)
+    else:
+        nccl_group = None
+
+    logger.info(f"Rank {rank} initialized gloo group {gloo_group}")
+    if nccl_group is not None:
+        logger.info(f"Rank {rank} initialized nccl group {nccl_group}")
+
     init_distributed_logging()
 
     logger.debug(f"Initializing activations with seed {seed}")
