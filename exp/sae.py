@@ -224,7 +224,7 @@ async def run_sae_training(
     num_gpus = th.cuda.device_count()
     gpu_queues = [asyncio.Queue(maxsize=MAX_GPU_QUEUE_SIZE) for _ in range(num_gpus)]
 
-    _workers = [
+    workers = [
         asyncio.create_task(
             gpu_worker(device_idx, num_gpus, gpu_queues[device_idx], data_iterator)
         )
@@ -353,7 +353,13 @@ async def run_sae_training(
         await gpu_queue.put(None)
         await gpu_queue.join()
 
+    await asyncio.gather(*workers)
+
     logger.info("done :)")
+
+
+DEFAULT_BATCH_SIZE = 4096
+DEFAULT_DEBUG_BATCH_SIZE = 128
 
 
 @arguably.command()
@@ -361,7 +367,7 @@ def main(
     model_name: str = "olmoe-i",
     dataset_name: str = "lmsys",
     *_args,
-    batch_size: int = 4096,
+    batch_size: int | None = None,
     trainers_per_gpu: int = 2,
     steps: int = 1024 * 256,
     save_every: int = 1024,
@@ -390,7 +396,18 @@ def main(
     num_workers: int = 64,
 ) -> None:
     """Train a sparse autoencoder on the given model and dataset."""
-    print(f"Running with log level: {log_level}")
+    assert log_level in logger._core.levels, (
+        f"Invalid log level, must be one of {logger._core.levels.keys()}"
+    )
+
+    logger.remove()
+    logger.add(sys.stderr, level=log_level)
+    log_level_numeric = logger._core.levels[log_level].no
+    debug_level_numeric = logger._core.levels["DEBUG"].no
+
+    debug = log_level_numeric <= debug_level_numeric
+
+    logger.debug(f"Running with log level: {log_level}")
 
     if len(group_weights) == 0:
         group_weights = (None,)
@@ -401,16 +418,8 @@ def main(
     if len(k_anneal_steps) == 0:
         k_anneal_steps = (None,)
 
-    assert log_level in logger._core.levels, (
-        f"Invalid log level, must be one of {logger._core.levels.keys()}"
-    )
-
-    logger.remove()
-    logger.add(sys.stderr, level=log_level)
-    log_level_numeric = logger._core.levels[log_level].no
-    debug_level_numeric = logger._core.levels["DEBUG"].no
-
-    logger.debug(f"Running with log level: {log_level}")
+    if batch_size is None:
+        batch_size = DEFAULT_BATCH_SIZE if not debug else DEFAULT_DEBUG_BATCH_SIZE
 
     assert all(
         current_architecture in ARCHITECTURES for current_architecture in architecture
