@@ -1,10 +1,11 @@
 import asyncio
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import batched, chain, count, islice, product
 import math
 import os
 import sys
+from typing import Any
 
 import arguably
 from dictionary_learning.dictionary import Dictionary
@@ -38,6 +39,35 @@ class Architecture:
     ]
     trainer: type[SAETrainer]
     sae: type[Dictionary]
+    constructor_keys: set[str] = field(default_factory=set)
+
+    def filter_constructor_args(
+        self, constructor_args: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {k: v for k, v in constructor_args.items() if k in self.constructor_keys}
+
+
+BATCHTOPK_CONSTRUCTOR_KEYS = {
+    "trainer",
+    "steps",
+    "activation_dim",
+    "dict_size",
+    "k",
+    "layer",
+    "lm_name",
+    "dict_class",
+    "lr",
+    "auxk_alpha",
+    "warmup_steps",
+    "decay_start",
+    "threshold_beta",
+    "threshold_start_step",
+    "k_anneal_steps",
+    "seed",
+    "device",
+    "wandb_name",
+    "submodule_name",
+}
 
 
 ARCHITECTURES = {
@@ -45,11 +75,14 @@ ARCHITECTURES = {
         saebench_load_fn=load_dictionary_learning_batch_topk_sae,
         trainer=BatchTopKTrainer,
         sae=BatchTopKSAE,
+        constructor_keys=BATCHTOPK_CONSTRUCTOR_KEYS,
     ),
     "matryoshka": Architecture(
         saebench_load_fn=load_dictionary_learning_matryoshka_batch_topk_sae,
         trainer=MatryoshkaBatchTopKTrainer,
         sae=MatryoshkaBatchTopKSAE,
+        constructor_keys=BATCHTOPK_CONSTRUCTOR_KEYS
+        | {"group_fractions", "group_weights"},
     ),
 }
 
@@ -274,15 +307,15 @@ async def run_sae_training(
             architecture_config = ARCHITECTURES[current_architecture]
 
             trainer_cfg = {
+                "trainer": architecture_config.trainer,
                 **base_trainer_cfg,
                 "dict_size": current_expansion_factor * activation_dim,
                 "k": current_k,
                 "layer": current_layer,
                 "group_fractions": current_group_fractions,
                 "group_weights": current_group_weights,
-                "lr": current_lr,
                 "dict_class": architecture_config.sae,
-                "trainer": architecture_config.trainer,
+                "lr": current_lr,
                 "auxk_alpha": current_auxk_alpha,
                 "warmup_steps": current_warmup_steps,
                 "decay_start": current_decay_start,
@@ -290,10 +323,14 @@ async def run_sae_training(
                 "threshold_start_step": current_threshold_start_step,
                 "k_anneal_steps": current_k_anneal_steps,
                 "seed": current_seed,
-                "submodule_name": current_submodule_name,
                 "device": f"cuda:{device_idx}",
+                "submodule_name": current_submodule_name,
             }
-            trainer_cfgs.append(trainer_cfg)
+            filtered_trainer_cfg = architecture_config.filter_constructor_args(
+                trainer_cfg
+            )
+
+            trainer_cfgs.append(filtered_trainer_cfg)
 
         batch = GPUBatch(
             trainer_cfgs=trainer_cfgs,
