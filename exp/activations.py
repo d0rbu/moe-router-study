@@ -143,6 +143,7 @@ class Activations:
         worker_process.start()
 
         current_data = cached_file_data.get(block=True)
+        cached_file_data.task_done()
         current_local_idx = 0
         current_data_size = current_data[ActivationKeys.MLP_OUTPUT].shape[0]
 
@@ -181,13 +182,16 @@ class Activations:
 
                 remaining_batch_size -= current_data_size - current_local_idx
                 current_data = cached_file_data.get(block=True)
+                cached_file_data.task_done()
 
                 if current_data is None:
-                    worker_process.join()
-                    cached_file_data.close()
                     logger.debug(
-                        "No more data to load, stopped activations worker process"
+                        "No more data to load, stopping activations worker process"
                     )
+                    worker_process.join()
+                    logger.trace("Activations worker process joined")
+                    cached_file_data.close()
+                    logger.trace("Cached file data queue closed")
                     return
 
                 current_local_idx = 0
@@ -225,11 +229,13 @@ class Activations:
 
                 if stop is not None:
                     # this is the stop signal, so we stop the process and queue
-                    worker_process.terminate()
-                    cached_file_data.close()
                     logger.debug(
-                        "Stop signal received, stopped activations worker process"
+                        "Stop signal received, stopping activations worker process"
                     )
+                    worker_process.terminate()
+                    logger.trace("Activations worker process terminated")
+                    cached_file_data.close()
+                    logger.trace("Cached file data queue closed")
                     del worker_process, cached_file_data, current_data, current_batch
                     clear_memory()
                     yield  # dummy yield so that we don't raise a StopIteration

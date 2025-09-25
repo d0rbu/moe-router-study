@@ -26,6 +26,7 @@ import torch as th
 import torch.distributed as dist
 from tqdm import tqdm
 
+from core.type import assert_type
 from exp import OUTPUT_DIR
 from exp.activations import load_activations_and_init_dist
 from exp.get_activations import ActivationKeys
@@ -101,6 +102,26 @@ class GPUBatch:
 MAX_GPU_QUEUE_SIZE = 2
 
 
+def select_least_loaded_gpu(
+    gpu_queues: dict[int, asyncio.Queue],
+) -> tuple[int, asyncio.Queue]:
+    """Select the GPU with the least loaded queue.
+
+    Returns:
+        Tuple of (device_idx, gpu_queue) for the least loaded GPU.
+    """
+    # decide device_idx based on how full the gpu queues are
+    active_queue_indices = list(gpu_queues.keys())
+
+    queue_sizes = [gpu_queues[queue_idx].qsize() for queue_idx in active_queue_indices]
+    relative_queue_idx = th.argmin(th.tensor(queue_sizes)).item()
+
+    device_idx = active_queue_indices[relative_queue_idx]
+    gpu_queue = gpu_queues[device_idx]
+
+    return device_idx, gpu_queue
+
+
 async def gpu_worker(
     device_idx: int,
     num_gpus: int,
@@ -109,17 +130,19 @@ async def gpu_worker(
 ) -> None:
     """Worker process for training SAE models on a specific GPU."""
 
-    logger.info(f"Starting GPU worker {device_idx}")
+    logger.info(f"[worker {device_idx}]: Starting GPU worker")
 
     for worker_batch_idx in count():
-        logger.debug(f"GPU worker {device_idx} awaiting batch {worker_batch_idx}")
-        batch: GPUBatch | None = await gpu_queue.get()
+        logger.debug(f"[worker {device_idx}]: Awaiting batch {worker_batch_idx}")
+        _priority, batch = await gpu_queue.get()
 
         if batch is None:
-            logger.debug(f"GPU worker {device_idx} stopping")
+            logger.debug(f"[worker {device_idx}]: Stopping")
             break
 
-        logger.debug(f"GPU worker {device_idx} got batch {worker_batch_idx}")
+        batch = assert_type(batch, GPUBatch)
+
+        logger.debug(f"[worker {device_idx}]: Got batch {worker_batch_idx}")
         await trainSAE(
             data=data_iterator(batch.submodule_name),
             trainer_configs=batch.trainer_cfgs,
@@ -222,14 +245,42 @@ async def run_sae_training(
     }
 
     num_gpus = th.cuda.device_count()
-    gpu_queues = [asyncio.Queue(maxsize=MAX_GPU_QUEUE_SIZE) for _ in range(num_gpus)]
+    gpu_queues = {
+        i: asyncio.PriorityQueue(maxsize=MAX_GPU_QUEUE_SIZE) for i in range(num_gpus)
+    }
+
+    async def handle_exceptions(task: asyncio.Task) -> None:
+        if task.exception() is None:
+            logger.trace(f"[worker {task.get_name()}]: No exception")
+            return
+
+        logger.error(f"[worker {task.get_name()}]: {task.exception()}")
+
+        # give up and redistribute the tasks to the other workers
+        worker_idx = int(task.get_name())
+        queue = gpu_queues.pop(worker_idx)
+        queue_items = [await queue.get() for _ in range(queue.qsize())]
+        batches = [batch for _priority, batch in queue_items if batch is not None]
+
+        logger.debug(f"Redistributing {len(batches)} failed batches to other workers")
+
+        for extra_batch_idx, batch in enumerate(batches):
+            device_idx, gpu_queue = select_least_loaded_gpu(gpu_queues)
+            logger.debug(
+                f"Redistributing failed batch {extra_batch_idx} to queue {device_idx}"
+            )
+            await gpu_queue.put((0, batch))
 
     workers = [
         asyncio.create_task(
-            gpu_worker(device_idx, num_gpus, gpu_queues[device_idx], data_iterator)
+            gpu_worker(device_idx, num_gpus, gpu_queue, data_iterator),
+            name=f"{device_idx}",
         )
-        for device_idx in range(num_gpus)
+        for device_idx, gpu_queue in gpu_queues.items()
     ]
+
+    for worker in workers:
+        worker.add_done_callback(handle_exceptions)
 
     hparam_sweep_iterator = list(
         enumerate(
@@ -283,8 +334,7 @@ async def run_sae_training(
     )
 
     for trainer_batch in concurrent_trainer_batched_iterator:
-        # decide device_idx based on how full the gpu queues are
-        device_idx = th.argmin(th.tensor([q.qsize() for q in gpu_queues])).item()
+        device_idx, gpu_queue = select_least_loaded_gpu(gpu_queues)
 
         trainer_cfgs = []
         trainer_names = []
@@ -307,6 +357,8 @@ async def run_sae_training(
             current_submodule_name,
         ) in trainer_batch:
             trainer_names.append(str(hparam_idx))
+
+            # TODO: check if a results file already exists
 
             architecture_config = ARCHITECTURES[current_architecture]
 
@@ -346,14 +398,16 @@ async def run_sae_training(
             submodule_name=current_submodule_name,
         )
         logger.debug(f"Putting batch {hparam_idx} into queue {device_idx}")
-        await gpu_queues[device_idx].put(batch)
+        await gpu_queue.put((0, batch))
 
     # put a sentinel value in the gpu queues to stop the workers
-    for gpu_queue in gpu_queues:
-        await gpu_queue.put(None)
-        await gpu_queue.join()
+    for gpu_idx, gpu_queue in gpu_queues.items():
+        logger.debug(f"Putting sentinel value in queue {gpu_idx}")
+        await gpu_queue.put((1, None))
 
-    await asyncio.gather(*workers)
+    logger.debug("Waiting for queues to finish")
+    for gpu_queue in gpu_queues.values():
+        await gpu_queue.join()
 
     logger.info("done :)")
 

@@ -448,10 +448,10 @@ def main(
     )
 
     nrh = assert_type(
-        dict,
         non_redundant_hookpoints(
             hookpoint_to_sparse_encode, latents_path, overwrite=False
         ),
+        dict,
     )
     if nrh:
         populate_cache(
@@ -466,8 +466,8 @@ def main(
     del model, hookpoint_to_sparse_encode
 
     nrh = assert_type(
-        list,
         non_redundant_hookpoints(hookpoints, scores_path, overwrite=False),
+        list,
     )
     if nrh:
         asyncio.run(

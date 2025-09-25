@@ -68,7 +68,7 @@ def lmsys_chat_1m_text(
             "Streaming mode does not support start_idx and stop_idx"
         )
     else:
-        ds = assert_type(Dataset, ds)
+        ds = assert_type(ds, Dataset)
 
         if stop_idx == 0:
             stop_idx = len(ds)
