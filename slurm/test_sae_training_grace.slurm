@@ -27,7 +27,6 @@ export WORLD_SIZE=$SLURM_NTASKS
 
 # Change to the project directory
 cd ~/moe-router-study
-source .venv/bin/activate
 
 # Run the distributed job
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE python exp/sae.py main --log-level TRACE --num-workers 16
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/sae.py main --log-level TRACE --num-workers 16

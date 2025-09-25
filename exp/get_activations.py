@@ -23,6 +23,7 @@ import trackio as wandb
 import yaml
 
 from core.data import get_dataset_fn
+from core.dtype import get_dtype
 from core.model import get_model_config
 from exp import ACTIVATION_DIRNAME, MODEL_DIRNAME, OUTPUT_DIR
 from exp.training import get_experiment_name
@@ -460,6 +461,7 @@ def gpu_worker(
     output_queue: mp.Queue,
     activations_to_store: set[str] = ACTIVATION_KEYS,
     layers_to_store: set[int] | None = None,
+    dtype: th.dtype = th.bfloat16,
     log_level: str = "INFO",
 ) -> None:
     """Worker process for processing batches on a specific GPU."""
@@ -496,6 +498,7 @@ def gpu_worker(
         path,
         check_attn_probs_with_trace=False,
         device_map="cpu" if not gpu_available else "auto",
+        torch_dtype=dtype,
     )
     logger.debug("Model initialized")
     layers_with_routers = set(model.layers_with_routers)
@@ -751,6 +754,7 @@ def get_router_activations(
     name: str | None = None,
     activations_to_store: list[str] | None = None,
     layers_to_store: list[int] | None = None,
+    dtype: str = "bf16",
     log_level: str = "INFO",
 ) -> None:
     """
@@ -769,6 +773,8 @@ def get_router_activations(
         name: Custom name for the experiment
     """
     print(f"Running with log level: {log_level}")
+
+    torch_dtype = get_dtype(dtype)
 
     logger.remove()
     logger.add(sys.stderr, level=log_level)
@@ -849,6 +855,7 @@ def get_router_activations(
         "device_ids": device_ids,
         "gpus_per_worker": gpus_per_worker,
         "worker_device_map": worker_device_map,
+        "dtype": dtype,
     }
 
     # Generate experiment name if not provided
@@ -988,6 +995,7 @@ def get_router_activations(
                 output_queue,
                 set(activations_to_store),
                 layers_to_store,
+                torch_dtype,
                 log_level,
             ),
         )

@@ -47,7 +47,6 @@ export WORLD_SIZE=$SLURM_NTASKS
 
 # Change to the project directory
 cd ~/moe-router-study
-source .venv/bin/activate
 
 # Run the distributed job
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE python exp/get_activations.py --tokens-per-file 5000
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/get_activations.py --tokens-per-file 5000
