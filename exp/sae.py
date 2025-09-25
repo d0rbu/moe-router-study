@@ -5,6 +5,7 @@ from itertools import batched, count, islice, product
 import math
 import os
 import sys
+import traceback
 from typing import Any
 
 import arguably
@@ -99,9 +100,6 @@ class GPUBatch:
     submodule_name: str
 
 
-MAX_GPU_QUEUE_SIZE = 2
-
-
 def select_least_loaded_gpu(
     gpu_queues: dict[int, asyncio.Queue],
 ) -> tuple[int, asyncio.Queue]:
@@ -138,12 +136,13 @@ async def gpu_worker(
 
         if batch is None:
             logger.debug(f"[worker {device_idx}]: Stopping")
+            gpu_queue.task_done()
             break
 
         batch = assert_type(batch, GPUBatch)
 
         logger.debug(f"[worker {device_idx}]: Got batch {worker_batch_idx}")
-        await trainSAE(
+        trainSAE(
             data=data_iterator(batch.submodule_name),
             trainer_configs=batch.trainer_cfgs,
             steps=batch.steps * batch.num_epochs,
@@ -153,6 +152,7 @@ async def gpu_worker(
             normalize_activations=True,
             tqdm_kwargs={"position": dist.get_rank() * (num_gpus + 1) + device_idx + 1},
         )
+        gpu_queue.task_done()
 
 
 async def run_sae_training(
@@ -245,35 +245,19 @@ async def run_sae_training(
     }
 
     num_gpus = th.cuda.device_count()
-    gpu_queues = {
-        i: asyncio.PriorityQueue(maxsize=MAX_GPU_QUEUE_SIZE) for i in range(num_gpus)
-    }
+    gpu_queues = {i: asyncio.PriorityQueue() for i in range(num_gpus)}
 
-    async def handle_exceptions_async(task: asyncio.Task) -> None:
-        if task.exception() is None:
+    def handle_exceptions(task: asyncio.Task) -> None:
+        exception = task.exception()
+        if exception is None:
             logger.trace(f"[worker {task.get_name()}]: No exception")
             return
 
-        logger.error(f"[worker {task.get_name()}]: {task.exception()}")
-
-        # give up and redistribute the tasks to the other workers
-        worker_idx = int(task.get_name())
-        queue = gpu_queues.pop(worker_idx)
-        queue_items = [await queue.get() for _ in range(queue.qsize())]
-        batches = [batch for _priority, batch in queue_items if batch is not None]
-
-        logger.debug(f"Redistributing {len(batches)} failed batches to other workers")
-
-        for extra_batch_idx, batch in enumerate(batches):
-            device_idx, gpu_queue = select_least_loaded_gpu(gpu_queues)
-            logger.debug(
-                f"Redistributing failed batch {extra_batch_idx} to queue {device_idx}"
-            )
-            await gpu_queue.put((0, batch))
-
-    def handle_exceptions(task: asyncio.Task) -> None:
-        event_loop = asyncio.get_event_loop()
-       returnevent_loop.run_until_complete(handle_exceptions_async(task))
+        traceback_lines = traceback.format_tb(exception.__traceback__)
+        traceback_str = "".join(traceback_lines)
+        logger.exception(f"[worker {task.get_name()}]:\n{traceback_str}")
+        # throw a tantrum and fuck up everything
+        asyncio.get_running_loop().close()
 
     workers = [
         asyncio.create_task(
@@ -414,10 +398,15 @@ async def run_sae_training(
         await gpu_queue.join()
 
     logger.info("done :)")
+    dist.destroy_process_group()
 
 
 DEFAULT_BATCH_SIZE = 4096
 DEFAULT_DEBUG_BATCH_SIZE = 128
+DEFAULT_STEPS = 1024 * 256
+DEFAULT_DEBUG_STEPS = 1024 * 1
+DEFAULT_WARMUP_STEPS = (1024 * 256 // 256,)
+DEFAULT_DEBUG_WARMUP_STEPS = (1024 * 1 // 256,)
 
 
 @arguably.command()
@@ -427,7 +416,7 @@ def main(
     *_args,
     batch_size: int | None = None,
     trainers_per_gpu: int = 2,
-    steps: int = 1024 * 256,
+    steps: int | None = None,
     save_every: int = 1024,
     num_epochs: int = 1,
     expansion_factor: tuple[int] = (16,),
@@ -436,15 +425,15 @@ def main(
     group_fractions: tuple[tuple[float]] = (
         (1.0 / 32, 1.0 / 16, 1.0 / 8, 1.0 / 4, 1.0 / 2 + 1.0 / 32),
     ),
-    group_weights: tuple[tuple[float]] = (),
+    group_weights: tuple[tuple[float]] = (None,),
     architecture: tuple[str] = ("batchtopk",),
     lr: tuple[float] = (5e-5,),
     auxk_alpha: tuple[float] = (1 / 32,),
-    warmup_steps: tuple[int] = (1024,),
-    decay_start: tuple[int] = (),
+    warmup_steps: tuple[int] | None = None,
+    decay_start: tuple[int] = (None,),
     threshold_beta: tuple[float] = (0.999,),
     threshold_start_step: tuple[int] = (1024,),
-    k_anneal_steps: tuple[int] = (),
+    k_anneal_steps: tuple[int] = (None,),
     seed: tuple[int] = (0,),
     submodule_name: tuple[str] = ("mlp_output",),
     tokens_per_file: int = 5_000,
@@ -467,17 +456,14 @@ def main(
 
     logger.debug(f"Running with log level: {log_level}")
 
-    if len(group_weights) == 0:
-        group_weights = (None,)
-
-    if len(decay_start) == 0:
-        decay_start = (None,)
-
-    if len(k_anneal_steps) == 0:
-        k_anneal_steps = (None,)
-
     if batch_size is None:
         batch_size = DEFAULT_BATCH_SIZE if not debug else DEFAULT_DEBUG_BATCH_SIZE
+
+    if steps is None:
+        steps = DEFAULT_STEPS if not debug else DEFAULT_DEBUG_STEPS
+
+    if warmup_steps is None:
+        warmup_steps = DEFAULT_WARMUP_STEPS if not debug else DEFAULT_DEBUG_WARMUP_STEPS
 
     assert all(
         current_architecture in ARCHITECTURES for current_architecture in architecture
