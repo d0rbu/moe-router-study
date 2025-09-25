@@ -48,6 +48,7 @@ dependencies = [
     "more-itertools>=10.8.0",
     "poetry>=2.2.0",
     "sae-bench",
+    "asyncer>=0.0.8",
 ]
 
 [project.optional-dependencies]

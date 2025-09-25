@@ -8,6 +8,7 @@ import sys
 from typing import Any
 
 import arguably
+from asyncer import syncify
 from dictionary_learning.dictionary import Dictionary
 from dictionary_learning.trainers.batch_top_k import BatchTopKSAE, BatchTopKTrainer
 from dictionary_learning.trainers.matryoshka_batch_top_k import (
@@ -280,7 +281,7 @@ async def run_sae_training(
     ]
 
     for worker in workers:
-        worker.add_done_callback(handle_exceptions)
+        worker.add_done_callback(syncify(handle_exceptions))
 
     hparam_sweep_iterator = list(
         enumerate(
