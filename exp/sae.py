@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from itertools import batched, chain, islice, product
+from itertools import batched, chain, count, islice, product
 import math
 import os
 import sys
@@ -58,6 +58,7 @@ ARCHITECTURES = {
 class GPUBatch:
     trainer_cfgs: list[dict]
     trainer_names: list[str]
+    save_steps: list[int]
     steps: int
     num_epochs: int
     sae_experiment_name: str
@@ -76,11 +77,15 @@ async def gpu_worker(
 
     logger.info(f"Starting GPU worker {device_idx}")
 
-    while True:
+    for worker_batch_idx in count():
+        logger.debug(f"GPU worker {device_idx} awaiting batch {worker_batch_idx}")
         batch: GPUBatch | None = await gpu_queue.get()
+
         if batch is None:
+            logger.debug(f"GPU worker {device_idx} stopping")
             break
 
+        logger.debug(f"GPU worker {device_idx} got batch {worker_batch_idx}")
         await trainSAE(
             data=data_iterator,
             trainer_configs=batch.trainer_cfgs,
@@ -111,7 +116,7 @@ async def run_sae_training(
     threshold_start_step: tuple[int],
     k_anneal_steps: tuple[int | None],
     seed: tuple[int],
-    submodule_name: tuple[str],
+    submodule_name: tuple[str, ...],
     batch_size: int = 4096,
     trainers_per_gpu: int = 2,
     steps: int = 1024 * 256,
@@ -174,7 +179,6 @@ async def run_sae_training(
 
     base_trainer_cfg = {
         "steps": steps,
-        "save_steps": save_steps,
         "activation_dim": activation_dim,
         "lm_name": model_name,
         "wandb_name": model_name,
@@ -233,14 +237,13 @@ async def run_sae_training(
         distributed_iterator, trainers_per_gpu
     )
 
-    if dist.get_rank() == 0:
-        logger.info(f"Total size of sweep: {len(hparam_sweep_iterator)}")
-        logger.info(f"Number of nodes: {dist.get_world_size()}")
-        logger.info(f"Number of GPUs per node: {num_gpus}")
-        logger.info(f"Number of trainers per GPU: {trainers_per_gpu}")
-        logger.info(
-            f"Number of iterations: {math.ceil(len(hparam_sweep_iterator) / (trainers_per_gpu * num_gpus * dist.get_world_size()))}"
-        )
+    logger.info(f"Total size of sweep: {len(hparam_sweep_iterator)}")
+    logger.info(f"Number of nodes: {dist.get_world_size()}")
+    logger.info(f"Number of GPUs per node: {num_gpus}")
+    logger.info(f"Number of trainers per GPU: {trainers_per_gpu}")
+    logger.info(
+        f"Number of iterations: {math.ceil(len(hparam_sweep_iterator) / (trainers_per_gpu * num_gpus * dist.get_world_size()))}"
+    )
 
     for trainer_batch in concurrent_trainer_batched_iterator:
         # decide device_idx based on how full the gpu queues are
@@ -272,13 +275,14 @@ async def run_sae_training(
 
             trainer_cfg = {
                 **base_trainer_cfg,
-                "expansion_factor": current_expansion_factor,
+                "dict_size": current_expansion_factor * activation_dim,
                 "k": current_k,
                 "layer": current_layer,
                 "group_fractions": current_group_fractions,
                 "group_weights": current_group_weights,
                 "lr": current_lr,
                 "dict_class": architecture_config.sae,
+                "trainer": architecture_config.trainer,
                 "auxk_alpha": current_auxk_alpha,
                 "warmup_steps": current_warmup_steps,
                 "decay_start": current_decay_start,
@@ -294,10 +298,12 @@ async def run_sae_training(
         batch = GPUBatch(
             trainer_cfgs=trainer_cfgs,
             trainer_names=trainer_names,
+            save_steps=save_steps,
             sae_experiment_name=sae_experiment_name,
             steps=steps,
             num_epochs=num_epochs,
         )
+        logger.debug(f"Putting batch {hparam_idx} into queue {device_idx}")
         await gpu_queues[device_idx].put(batch)
 
     # put a sentinel value in the gpu queues to stop the workers
