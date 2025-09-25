@@ -185,6 +185,9 @@ class Activations:
                 if current_data is None:
                     worker_process.join()
                     cached_file_data.close()
+                    logger.debug(
+                        "No more data to load, stopped activations worker process"
+                    )
                     return
 
                 current_local_idx = 0
@@ -224,6 +227,12 @@ class Activations:
                     # this is the stop signal, so we stop the process and queue
                     worker_process.terminate()
                     cached_file_data.close()
+                    logger.debug(
+                        "Stop signal received, stopped activations worker process"
+                    )
+                    del worker_process, cached_file_data, current_data, current_batch
+                    clear_memory()
+                    yield  # dummy yield so that we don't raise a StopIteration
                     return
 
                 current_batch = {}
@@ -684,12 +693,16 @@ async def load_activations_and_init_dist(
     # load a batch of activations to get the dimension
     data_iterable = activations(batch_size=1)
     activation = next(data_iterable)
+    logger.trace(
+        f"Activation: {', '.join(f'{key}: {value.shape}' for key, value in activation.items() if isinstance(value, th.Tensor))}"
+    )
     activation_dims = {
         submodule_name: th.prod(th.tensor(activation[submodule_name].shape[1:])).item()
         for submodule_name in submodule_names
     }
+    logger.debug(f"Activation dims: {activation_dims}")
 
     # clean up the background worker and queue
-    data_iterable.send("STOP!")
+    data_iterable.send("STOP FIGHTING!!!!!!")
 
     return activations, activation_dims
