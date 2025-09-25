@@ -84,14 +84,7 @@ class ActivationKeys(StrEnum):
     LAYER_OUTPUT = "layer_output"
 
 
-ACTIVATION_KEYS = frozenset(
-    {
-        ActivationKeys.ATTN_OUTPUT,
-        ActivationKeys.ROUTER_LOGITS,
-        ActivationKeys.MLP_OUTPUT,
-        ActivationKeys.LAYER_OUTPUT,
-    }
-)
+ACTIVATION_KEYS = frozenset(str(activation_key) for activation_key in ActivationKeys)
 
 
 def process_batch(
@@ -182,7 +175,7 @@ def process_batch(
                 ):
                     attn_output = model.attentions_output[layer_idx]
                     flattened_attn_output = attn_output.cpu()[padding_mask].save()
-                    activations[ActivationKeys.ATTN_OUTPUT][layer_idx].append(
+                    activations[str(ActivationKeys.ATTN_OUTPUT)][layer_idx].append(
                         flattened_attn_output.clone().detach()
                     )
 
@@ -204,7 +197,7 @@ def process_batch(
                         router_scores = router_output
                     logits = router_scores.cpu()[padding_mask_flat].save()
 
-                    activations[ActivationKeys.ROUTER_LOGITS][layer_idx].append(
+                    activations[str(ActivationKeys.ROUTER_LOGITS)][layer_idx].append(
                         logits.clone().detach()
                     )
 
@@ -214,7 +207,7 @@ def process_batch(
                 ):
                     mlp_output = model.mlps_output[layer_idx]
                     flattened_mlp_output = mlp_output.cpu()[padding_mask].save()
-                    activations[ActivationKeys.MLP_OUTPUT][layer_idx].append(
+                    activations[str(ActivationKeys.MLP_OUTPUT)][layer_idx].append(
                         flattened_mlp_output.clone().detach()
                     )
 
@@ -224,7 +217,7 @@ def process_batch(
                 ):
                     layer_output = model.layers_output[layer_idx]
                     flattened_layer_output = layer_output.cpu()[padding_mask].save()
-                    activations[ActivationKeys.LAYER_OUTPUT][layer_idx].append(
+                    activations[str(ActivationKeys.LAYER_OUTPUT)][layer_idx].append(
                         flattened_layer_output.clone().detach()
                     )
 
@@ -828,7 +821,10 @@ def get_router_activations(
         )
 
     if not activations_to_store:
-        activations_to_store = [ActivationKeys.ROUTER_LOGITS, ActivationKeys.MLP_OUTPUT]
+        activations_to_store = [
+            str(ActivationKeys.ROUTER_LOGITS),
+            str(ActivationKeys.MLP_OUTPUT),
+        ]
 
     if not layers_to_store:
         layers_to_store = None

@@ -126,8 +126,11 @@ class Activations:
     def _get_file_data(self, cached_file_data: mp.Queue):
         for activation_filepath in self.activation_filepaths:
             file_data = th.load(activation_filepath, weights_only=False)
+            logger.debug(f"Loaded file {activation_filepath}")
+            logger.debug(f"File data keys: {file_data.keys()}")
             cached_file_data.put(file_data, block=True)
         cached_file_data.put(None)
+        cached_file_data.join()
 
     def __call__(self, batch_size: int = 4096) -> Generator[dict, None, None]:
         # cache of file data to come
@@ -442,7 +445,10 @@ class Activations:
                 # don't copy over the tokens since we are mixing them up anyway
                 del data_to_copy["tokens"]
 
-                for key, value in data_to_copy.items():
+                for raw_key, value in data_to_copy.items():
+                    # in case raw_key is an enum
+                    key = str(raw_key)
+
                     if isinstance(value, th.Tensor | list) and len(value) == batch_size:
                         current_batch[key].append(value[local_idx])
                         continue
