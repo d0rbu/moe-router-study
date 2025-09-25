@@ -181,7 +181,7 @@ async def run_sae_training(
     num_epochs: int = 1,
     context_length: int = 2048,
     tokens_per_file: int = 5_000,
-    reshuffled_tokens_per_file: int = 10_000,
+    reshuffled_tokens_per_file: int = 20_000,
     num_workers: int = 64,
     debug: bool = False,
 ) -> None:
@@ -437,7 +437,7 @@ def main(
     seed: tuple[int] = (0,),
     submodule_name: tuple[str] = ("mlp_output",),
     tokens_per_file: int = 5_000,
-    reshuffled_tokens_per_file: int = 10_000,
+    reshuffled_tokens_per_file: int = 20_000,
     context_length: int = 2048,
     log_level: str = "INFO",
     num_workers: int = 64,
