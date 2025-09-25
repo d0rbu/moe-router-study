@@ -8,7 +8,6 @@ import sys
 from typing import Any
 
 import arguably
-from asyncer import syncify
 from dictionary_learning.dictionary import Dictionary
 from dictionary_learning.trainers.batch_top_k import BatchTopKSAE, BatchTopKTrainer
 from dictionary_learning.trainers.matryoshka_batch_top_k import (
@@ -250,7 +249,7 @@ async def run_sae_training(
         i: asyncio.PriorityQueue(maxsize=MAX_GPU_QUEUE_SIZE) for i in range(num_gpus)
     }
 
-    async def handle_exceptions(task: asyncio.Task) -> None:
+    async def handle_exceptions_async(task: asyncio.Task) -> None:
         if task.exception() is None:
             logger.trace(f"[worker {task.get_name()}]: No exception")
             return
@@ -272,6 +271,10 @@ async def run_sae_training(
             )
             await gpu_queue.put((0, batch))
 
+    def handle_exceptions(task: asyncio.Task) -> None:
+        event_loop = asyncio.get_event_loop()
+       returnevent_loop.run_until_complete(handle_exceptions_async(task))
+
     workers = [
         asyncio.create_task(
             gpu_worker(device_idx, num_gpus, gpu_queue, data_iterator),
@@ -281,7 +284,7 @@ async def run_sae_training(
     ]
 
     for worker in workers:
-        worker.add_done_callback(syncify(handle_exceptions))
+        worker.add_done_callback(handle_exceptions)
 
     hparam_sweep_iterator = list(
         enumerate(
