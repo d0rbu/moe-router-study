@@ -123,18 +123,18 @@ class Activations:
         return self._total_tokens
 
     # worker to fetch data from disk
-    def _get_file_data(self, cached_file_data: mp.Queue):
+    def _get_file_data(self, cached_file_data: mp.JoinableQueue):
         for activation_filepath in self.activation_filepaths:
             file_data = th.load(activation_filepath, weights_only=False)
             logger.debug(f"Loaded file {activation_filepath}")
             logger.debug(f"File data keys: {file_data.keys()}")
             cached_file_data.put(file_data, block=True)
-        cached_file_data.put(None)
+        cached_file_data.put(None, block=True)
         cached_file_data.join()
 
     def __call__(self, batch_size: int = 4096) -> Generator[dict, None, None]:
         # cache of file data to come
-        cached_file_data = mp.Queue(maxsize=self.max_cache_size)
+        cached_file_data = mp.JoinableQueue(maxsize=self.max_cache_size)
 
         # create worker process to get file data
         worker_process = mp.Process(
