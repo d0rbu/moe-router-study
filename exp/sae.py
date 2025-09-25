@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from itertools import batched, chain, count, islice, product
+from itertools import batched, count, islice, product
 import math
 import os
 import sys
@@ -95,6 +95,7 @@ class GPUBatch:
     steps: int
     num_epochs: int
     sae_experiment_name: str
+    submodule_name: str
 
 
 MAX_GPU_QUEUE_SIZE = 2
@@ -104,7 +105,7 @@ async def gpu_worker(
     device_idx: int,
     num_gpus: int,
     gpu_queue: asyncio.Queue,
-    data_iterator: Iterator[dict],
+    data_iterator: Callable[[str], Iterator[th.Tensor]],
 ) -> None:
     """Worker process for training SAE models on a specific GPU."""
 
@@ -120,7 +121,7 @@ async def gpu_worker(
 
         logger.debug(f"GPU worker {device_idx} got batch {worker_batch_idx}")
         await trainSAE(
-            data=data_iterator,
+            data=data_iterator(batch.submodule_name),
             trainer_configs=batch.trainer_cfgs,
             steps=batch.steps * batch.num_epochs,
             trainer_names=batch.trainer_names,
@@ -200,11 +201,14 @@ async def run_sae_training(
     assert activation_dim > 0, "Activation dimension must be greater than 0"
     assert num_epochs > 0, "Number of epochs must be greater than 0"
 
-    # to train for multiple epochs, we just repeat the data iterator
-    def data_iterator():
-        yield from chain(
-            *[activations(batch_size=batch_size) for _ in range(num_epochs)]
-        )
+    def data_iterator(submodule_name: str) -> Iterator[th.Tensor]:
+        for epoch_idx in range(num_epochs):
+            logger.debug(f"Starting epoch {epoch_idx}")
+            for activation in activations(batch_size=batch_size):
+                assert submodule_name in activation, (
+                    f"Submodule name {submodule_name} not found in activation keys {activation.keys()}"
+                )
+                yield activation[submodule_name]
 
     save_steps = exponential_to_linear_save_steps(
         total_steps=steps, save_every=save_every
@@ -339,6 +343,7 @@ async def run_sae_training(
             sae_experiment_name=sae_experiment_name,
             steps=steps,
             num_epochs=num_epochs,
+            submodule_name=current_submodule_name,
         )
         logger.debug(f"Putting batch {hparam_idx} into queue {device_idx}")
         await gpu_queues[device_idx].put(batch)
