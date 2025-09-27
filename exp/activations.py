@@ -151,7 +151,7 @@ class Activations:
         remaining_batch_size = batch_size
 
         for _batch_idx in count():
-            while current_data_size - current_local_idx < remaining_batch_size:
+            while current_data_size - current_local_idx <= remaining_batch_size:
                 for key, value in current_data.items():
                     match value:
                         case th.Tensor():
@@ -225,6 +225,7 @@ class Activations:
                             else:
                                 current_batch[key] = value
 
+                assert len(current_batch) > 0, "Current batch is empty"
                 stop = yield current_batch
 
                 if stop is not None:

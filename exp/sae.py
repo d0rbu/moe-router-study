@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from itertools import batched, count, islice, product
+from itertools import batched, count, product
 import math
 import os
 import sys
@@ -27,6 +27,7 @@ import torch as th
 import torch.distributed as dist
 from tqdm import tqdm
 
+from core.dtype import get_dtype
 from core.type import assert_type
 from exp import OUTPUT_DIR
 from exp.activations import load_activations_and_init_dist
@@ -93,28 +94,21 @@ ARCHITECTURES = {
 class GPUBatch:
     trainer_cfgs: list[dict]
     trainer_names: list[str]
-    save_steps: list[int]
-    steps: int
-    num_epochs: int
     sae_experiment_name: str
     submodule_name: str
 
 
 def select_least_loaded_gpu(
-    gpu_queues: dict[int, asyncio.Queue],
+    gpu_queues: list[asyncio.Queue],
 ) -> tuple[int, asyncio.Queue]:
     """Select the GPU with the least loaded queue.
 
     Returns:
         Tuple of (device_idx, gpu_queue) for the least loaded GPU.
     """
-    # decide device_idx based on how full the gpu queues are
-    active_queue_indices = list(gpu_queues.keys())
+    queue_sizes = [gpu_queue.qsize() for gpu_queue in gpu_queues]
+    device_idx = th.argmin(th.tensor(queue_sizes)).item()
 
-    queue_sizes = [gpu_queues[queue_idx].qsize() for queue_idx in active_queue_indices]
-    relative_queue_idx = th.argmin(th.tensor(queue_sizes)).item()
-
-    device_idx = active_queue_indices[relative_queue_idx]
     gpu_queue = gpu_queues[device_idx]
 
     return device_idx, gpu_queue
@@ -122,13 +116,18 @@ def select_least_loaded_gpu(
 
 async def gpu_worker(
     device_idx: int,
+    dtype: th.dtype,
+    steps: int,
+    save_steps: list[int],
+    num_epochs: int,
     num_gpus: int,
     gpu_queue: asyncio.Queue,
-    data_iterator: Callable[[str], Iterator[th.Tensor]],
+    data_iterator: Callable[[str], Iterator[tuple[th.Tensor, list[int]]]],
 ) -> None:
     """Worker process for training SAE models on a specific GPU."""
 
     logger.info(f"[worker {device_idx}]: Starting GPU worker")
+    device = f"cuda:{device_idx}"
 
     for worker_batch_idx in count():
         logger.debug(f"[worker {device_idx}]: Awaiting batch {worker_batch_idx}")
@@ -145,11 +144,14 @@ async def gpu_worker(
         trainSAE(
             data=data_iterator(batch.submodule_name),
             trainer_configs=batch.trainer_cfgs,
-            steps=batch.steps * batch.num_epochs,
+            steps=steps * num_epochs,
+            save_steps=save_steps,
             trainer_names=batch.trainer_names,
             use_wandb=False,
             save_dir=os.path.join(OUTPUT_DIR, batch.sae_experiment_name),
             normalize_activations=True,
+            device=device,
+            autocast_dtype=dtype,
             tqdm_kwargs={"position": dist.get_rank() * (num_gpus + 1) + device_idx + 1},
         )
         gpu_queue.task_done()
@@ -184,6 +186,7 @@ async def run_sae_training(
     reshuffled_tokens_per_file: int = 20_000,
     num_workers: int = 64,
     debug: bool = False,
+    dtype: th.dtype = th.bfloat16,
 ) -> None:
     """Train autoencoders to sweep over the given hyperparameter sets."""
     assert "moe" not in architecture, (
@@ -227,11 +230,18 @@ async def run_sae_training(
     def data_iterator(submodule_name: str) -> Iterator[th.Tensor]:
         for epoch_idx in range(num_epochs):
             logger.debug(f"Starting epoch {epoch_idx}")
-            for activation in activations(batch_size=batch_size):
-                assert submodule_name in activation, (
-                    f"Submodule name {submodule_name} not found in activation keys {activation.keys()}"
+            for activation_data in activations(batch_size=batch_size):
+                assert submodule_name in activation_data, (
+                    f"Submodule name {submodule_name} not found in activation keys {activation_data.keys()}"
                 )
-                yield activation[submodule_name]
+                activation = activation_data[submodule_name]
+                layers = activation_data["layers"]
+
+                logger.trace(
+                    f"Yielding activation {submodule_name}: {activation.shape} {activation.dtype}"
+                )
+
+                yield activation, layers
 
     save_steps = exponential_to_linear_save_steps(
         total_steps=steps, save_every=save_every
@@ -245,7 +255,7 @@ async def run_sae_training(
     }
 
     num_gpus = th.cuda.device_count()
-    gpu_queues = {i: asyncio.PriorityQueue() for i in range(num_gpus)}
+    gpu_queues = [asyncio.PriorityQueue() for _ in range(num_gpus)]
 
     def handle_exceptions(task: asyncio.Task) -> None:
         exception = task.exception()
@@ -255,16 +265,26 @@ async def run_sae_training(
 
         traceback_lines = traceback.format_tb(exception.__traceback__)
         traceback_str = "".join(traceback_lines)
-        logger.exception(f"[worker {task.get_name()}]:\n{traceback_str}")
+        exception_str = str(exception)
+        logger.exception(f"[worker {task.get_name()}]:\n{traceback_str}{exception_str}")
         # throw a tantrum and fuck up everything
         asyncio.get_running_loop().close()
 
     workers = [
         asyncio.create_task(
-            gpu_worker(device_idx, num_gpus, gpu_queue, data_iterator),
-            name=f"{device_idx}",
+            gpu_worker(
+                device_idx,
+                dtype,
+                steps,
+                save_steps,
+                num_epochs,
+                num_gpus,
+                gpu_queue,
+                data_iterator,
+            ),
+            name=str(device_idx),
         )
-        for device_idx, gpu_queue in gpu_queues.items()
+        for device_idx, gpu_queue in enumerate(gpu_queues)
     ]
 
     for worker in workers:
@@ -291,17 +311,12 @@ async def run_sae_training(
             )
         )
     )
+    distributed_iterator = hparam_sweep_iterator[
+        dist.get_rank() :: dist.get_world_size()
+    ]
 
     # assign a subset of the hparam sweep to each rank
-    distributed_iterator = list(
-        islice(
-            hparam_sweep_iterator,
-            dist.get_rank(),
-            None,
-            dist.get_world_size(),
-        )
-    )
-    distributed_iterator = tqdm(
+    tqdm_distributed_iterator = tqdm(
         distributed_iterator,
         desc=f"Rank {dist.get_rank()}",
         total=len(distributed_iterator),
@@ -310,7 +325,7 @@ async def run_sae_training(
     )
     # batch it based on how many trainers will be on each gpu
     concurrent_trainer_batched_iterator = batched(
-        distributed_iterator, trainers_per_gpu
+        tqdm_distributed_iterator, trainers_per_gpu
     )
 
     logger.info(f"Total size of sweep: {len(hparam_sweep_iterator)}")
@@ -379,22 +394,19 @@ async def run_sae_training(
         batch = GPUBatch(
             trainer_cfgs=trainer_cfgs,
             trainer_names=trainer_names,
-            save_steps=save_steps,
             sae_experiment_name=sae_experiment_name,
-            steps=steps,
-            num_epochs=num_epochs,
             submodule_name=current_submodule_name,
         )
         logger.debug(f"Putting batch {hparam_idx} into queue {device_idx}")
         await gpu_queue.put((0, batch))
 
     # put a sentinel value in the gpu queues to stop the workers
-    for gpu_idx, gpu_queue in gpu_queues.items():
+    for gpu_idx, gpu_queue in enumerate(gpu_queues):
         logger.debug(f"Putting sentinel value in queue {gpu_idx}")
         await gpu_queue.put((1, None))
 
     logger.debug("Waiting for queues to finish")
-    for gpu_queue in gpu_queues.values():
+    for gpu_queue in gpu_queues:
         await gpu_queue.join()
 
     logger.info("done :)")
@@ -441,6 +453,7 @@ def main(
     context_length: int = 2048,
     log_level: str = "INFO",
     num_workers: int = 64,
+    dtype: str = "bf16",
 ) -> None:
     """Train a sparse autoencoder on the given model and dataset."""
     assert log_level in logger._core.levels, (
@@ -469,6 +482,8 @@ def main(
         current_architecture in ARCHITECTURES for current_architecture in architecture
     ), "Invalid architecture"
     assert len(submodule_name) > 0, "Submodule name is an empty tuple!"
+
+    dtype = get_dtype(dtype)
 
     asyncio.run(
         run_sae_training(
@@ -499,6 +514,7 @@ def main(
             context_length=context_length,
             num_workers=num_workers,
             debug=log_level_numeric <= debug_level_numeric,
+            dtype=dtype,
         )
     )
 
