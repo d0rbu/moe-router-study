@@ -354,7 +354,7 @@ def main(
     experiment_dir: str,
     model_name: str = "olmoe-i",
     model_step_ckpt: int | None = None,
-    model_dtype: str = "f32",
+    model_dtype: str = "bf16",
     ctxlen: int = 256,
     load_in_8bit: bool = False,
     n_tokens: int = 10_000_000,
