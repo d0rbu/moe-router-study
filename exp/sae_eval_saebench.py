@@ -56,3 +56,7 @@ def main(
         download_location=OUTPUT_DIR,
         api_key=OPENAI_API_KEY,
     )
+
+
+if __name__ == "__main__":
+    arguably.run()
