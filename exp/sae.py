@@ -227,13 +227,16 @@ async def run_sae_training(
     assert activation_dim > 0, "Activation dimension must be greater than 0"
     assert num_epochs > 0, "Number of epochs must be greater than 0"
 
-    def data_iterator(submodule_name: str) -> Iterator[th.Tensor]:
+    def data_iterator(submodule_name: str) -> Iterator[tuple[th.Tensor, list[int]]]:
         for epoch_idx in range(num_epochs):
             logger.debug(f"Starting epoch {epoch_idx}")
             for activation_data in activations(batch_size=batch_size):
                 assert submodule_name in activation_data, (
                     f"Submodule name {submodule_name} not found in activation keys {activation_data.keys()}"
                 )
+
+                logger.trace(f"Activation data: {activation_data.keys()}")
+
                 activation = activation_data[submodule_name]
                 layers = activation_data["layers"]
 
@@ -410,7 +413,6 @@ async def run_sae_training(
         await gpu_queue.join()
 
     logger.info("done :)")
-    dist.destroy_process_group()
 
 
 DEFAULT_BATCH_SIZE = 4096

@@ -171,7 +171,12 @@ class Activations:
                                     current_local_idx : current_local_idx + batch_size
                                 ].to(self.device)
                         case list():
-                            pass
+                            if key in current_batch:
+                                assert current_batch[key] == value, (
+                                    f"Inconsistent value for {key}: {current_batch[key]} != {value}"
+                                )
+                            else:
+                                current_batch[key] = value
                         case _:
                             if key in current_batch:
                                 assert current_batch[key] == value, (
@@ -216,7 +221,12 @@ class Activations:
                                     current_local_idx : current_local_idx + batch_size
                                 ].to(self.device)
                         case list():
-                            pass
+                            if key in current_batch:
+                                assert current_batch[key] == value, (
+                                    f"Inconsistent value for {key}: {current_batch[key]} != {value}"
+                                )
+                            else:
+                                current_batch[key] = value
                         case _:
                             if key in current_batch:
                                 assert current_batch[key] == value, (
@@ -704,9 +714,15 @@ async def load_activations_and_init_dist(
         f"Activation: {', '.join(f'{key}: {value.shape}' for key, value in activation.items() if isinstance(value, th.Tensor))}"
     )
     activation_dims = {
-        submodule_name: th.prod(th.tensor(activation[submodule_name].shape[1:])).item()
+        submodule_name: th.prod(th.tensor(activation[submodule_name].shape[2:])).item()
         for submodule_name in submodule_names
     }
+
+    # for router logits, we flatten out the layer dimension
+    if ActivationKeys.ROUTER_LOGITS in submodule_names:
+        activation_dims[ActivationKeys.ROUTER_LOGITS] *= activation[
+            ActivationKeys.ROUTER_LOGITS
+        ].shape[1]
     logger.debug(f"Activation dims: {activation_dims}")
 
     # clean up the background worker and queue
