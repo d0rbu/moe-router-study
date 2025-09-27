@@ -48,6 +48,8 @@ dependencies = [
     "more-itertools>=10.8.0",
     "poetry>=2.2.0",
     "sae-bench",
+    "sae-lens>=6.12.1",
+    "transformer-lens",
 ]
 
 [project.optional-dependencies]
@@ -186,6 +188,7 @@ transformers = { git = "https://github.com/huggingface/transformers.git" }
 nnterp = { git = "https://github.com/d0rbu/nnterp.git" }
 dictionary-learning = { git = "https://github.com/d0rbu/dictionary_learning" }
 sae-bench = { git = "https://github.com/d0rbu/SAEBench" }
+transformer-lens = { git = "https://github.com/d0rbu/TransformerLens", branch = "OLMo" }
 
 [tool.uv.workspace]
 members = [

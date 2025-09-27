@@ -2,6 +2,7 @@ import os
 
 import arguably
 from dotenv import load_dotenv
+from loguru import logger
 from sae_bench.custom_saes import run_all_evals_dictionary_learning_saes
 from sae_bench.sae_bench_utils import general_utils
 
@@ -25,7 +26,7 @@ def main(
     """
     Evaluate the SAEs on the given model.
     """
-    if eval_types is None:
+    if not eval_types:
         eval_types = [
             "absorption",
             "autointerp",
@@ -43,6 +44,11 @@ def main(
 
     experiment_dir_path = os.path.join(OUTPUT_DIR, experiment_dir)
     sae_locations = os.listdir(experiment_dir_path)
+
+    logger.info(f"Evaluating SAEs in {experiment_dir}")
+    logger.debug(f"SAE locations: {sae_locations}")
+    logger.debug(f"Experiment directory path: {experiment_dir_path}")
+    logger.debug(f"Eval types: {eval_types}")
 
     run_all_evals_dictionary_learning_saes.run_evals(
         repo_id=experiment_dir,

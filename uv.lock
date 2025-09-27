@@ -1890,6 +1890,7 @@ dependencies = [
     { name = "poetry" },
     { name = "pytest-cov" },
     { name = "sae-bench" },
+    { name = "sae-lens" },
     { name = "scikit-learn" },
     { name = "streamlit" },
     { name = "torch" },
@@ -1897,6 +1898,7 @@ dependencies = [
     { name = "tornado" },
     { name = "tqdm" },
     { name = "trackio" },
+    { name = "transformer-lens" },
     { name = "transformers" },
     { name = "wandb" },
 ]
@@ -1942,6 +1944,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "sae-bench", git = "https://github.com/d0rbu/SAEBench" },
+    { name = "sae-lens", specifier = ">=6.12.1" },
     { name = "scikit-learn", specifier = ">=1.7.1" },
     { name = "streamlit", specifier = ">=1.48.1" },
     { name = "torch", specifier = ">=2.0.0" },
@@ -1949,6 +1952,7 @@ requires-dist = [
     { name = "tornado", specifier = ">=6.5.1" },
     { name = "tqdm", specifier = ">=4.60.0" },
     { name = "trackio", specifier = ">=0.1.0" },
+    { name = "transformer-lens", git = "https://github.com/d0rbu/TransformerLens?branch=OLMo" },
     { name = "transformers", git = "https://github.com/huggingface/transformers.git" },
     { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.1a16" },
     { name = "wandb", specifier = ">=0.21.3" },
@@ -3447,7 +3451,7 @@ wheels = [
 [[package]]
 name = "sae-bench"
 version = "0.4.2"
-source = { git = "https://github.com/d0rbu/SAEBench#2fb7cdde0da65bc78963797004ac8d8dd8395230" }
+source = { git = "https://github.com/d0rbu/SAEBench#9d2843b0765275cc71b7495ebf97b8a4177e3992" }
 dependencies = [
     { name = "beartype" },
     { name = "collectibles" },
@@ -4089,7 +4093,7 @@ wheels = [
 [[package]]
 name = "transformer-lens"
 version = "2.16.1"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/d0rbu/TransformerLens?branch=OLMo#38d6bc87757ad0a13a54f865ffa89b0f4552058e" }
 dependencies = [
     { name = "accelerate" },
     { name = "beartype" },
@@ -4109,10 +4113,6 @@ dependencies = [
     { name = "typeguard" },
     { name = "typing-extensions" },
     { name = "wandb" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/dd/91/96026f9de52e39e4385c503e2c79e355529ddf48eecade8c433fb9efa930/transformer_lens-2.16.1.tar.gz", hash = "sha256:62c92bb6b986af67cb5a1605da0f9b1a76a91cdf0cc05492c9faab716675b08e", size = 153889, upload-time = "2025-06-19T13:32:18.926Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/30/bf/fcf5e93e56d614025a5f732059ce924adac606cadf42b87c50e002ab7e5a/transformer_lens-2.16.1-py3-none-any.whl", hash = "sha256:fd59ab8c08d864d93a48f4e40ad20f437fc903e037e320cfd28c8d3f7a1817ce", size = 192023, upload-time = "2025-06-19T13:32:17.821Z" },
 ]
 
 [[package]]
