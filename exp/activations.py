@@ -105,7 +105,7 @@ class Activations:
         if self._total_tokens is not None:
             return self._total_tokens
 
-        num_tokens = th.zeros(0, dtype=th.int32)
+        num_tokens = th.zeros(1, dtype=th.int32)
         local_activation_filepath_iterator = islice(
             self.activation_filepaths,
             dist.get_rank(),  # start

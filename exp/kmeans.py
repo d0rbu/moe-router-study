@@ -722,6 +722,9 @@ def main(
     log_level: str = "INFO",
     num_workers: int = 64,
 ) -> None:
+    if not k:
+        k = None
+
     cluster_paths(
         model_name,
         dataset_name,

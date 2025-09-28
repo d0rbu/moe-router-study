@@ -491,6 +491,8 @@ def eval_intruder(
             latents_path,
             tokenizer,
         )
+    else:
+        logger.debug("No non-redundant hookpoints found, skipping cache population")
 
     del model, hookpoint_to_sparse_encode
 
@@ -510,6 +512,8 @@ def eval_intruder(
                 latent_range,
             )
         )
+    else:
+        logger.debug("No non-redundant hookpoints found, skipping cache processing")
 
     if run_cfg.verbose:
         logger.debug("Logging results")
