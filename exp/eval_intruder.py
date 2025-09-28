@@ -102,10 +102,10 @@ async def process_cache(
 
 
 ACTIVATION_KEYS_TO_HOOKPOINT = {
-    ActivationKeys.MLP_OUTPUT: "mlp_outputs.{{layer}}",
-    ActivationKeys.ROUTER_LOGITS: "routers_output.{{layer}}",
-    ActivationKeys.ATTN_OUTPUT: "attentions_output.{{layer}}",
-    ActivationKeys.LAYER_OUTPUT: "layers_output.{{layer}}",
+    ActivationKeys.MLP_OUTPUT: "model.model.layers.{layer}.mlp",
+    ActivationKeys.ROUTER_LOGITS: "model.model.layers.{layer}.mlp.gate",
+    ActivationKeys.ATTN_OUTPUT: "model.model.layers.{layer}.self_attn",
+    ActivationKeys.LAYER_OUTPUT: "model.model.layers.{layer}",
 }
 
 
@@ -126,22 +126,38 @@ def load_hookpoints_and_saes(
             config = json.load(f)
 
         ae, _ = load_dictionary(sae_dirpath, device="cuda")
-        layer = config.get("layer")
+        trainer_config = config.get("trainer")
+        if trainer_config is None:
+            logger.trace(config)
+            raise ValueError(
+                f"Trainer config is not set in the config for SAE at {sae_dirpath}"
+            )
+
+        layer = trainer_config.get("layer")
         if layer is None:
+            logger.trace(config)
             raise ValueError(f"Layer is not set in the config for SAE at {sae_dirpath}")
 
         layer = int(layer)
 
         # i stored the activation key in the submodule_name field...
-        activation_key = config.get("submodule_name")
+        activation_key = trainer_config.get("submodule_name")
         if activation_key is None:
+            logger.trace(config)
             raise ValueError(
                 f"Submodule name is not set in the config for SAE at {sae_dirpath}"
             )
 
         hookpoint = ACTIVATION_KEYS_TO_HOOKPOINT[activation_key].format(layer=layer)
 
+        assert hookpoint not in hookpoints_to_saes, (
+            f"Hookpoint {hookpoint} already exists in {hookpoints_to_saes.keys()}"
+        )
         hookpoints_to_saes[hookpoint] = ae.encode
+
+    logger.debug(
+        f"Loaded {len(hookpoints_to_saes)} hookpoints and SAEs: {hookpoints_to_saes.keys()}"
+    )
 
     return hookpoints_to_saes
 
