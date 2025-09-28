@@ -359,10 +359,14 @@ async def kmeans_manhattan(
         gpu_minibatch_size = batch_size
 
     if (leftover_minibatch_size := (batch_size % gpu_minibatch_size)) > 0:
+        total_leftover_minibatch_size = leftover_minibatch_size * total_gpus
         logger.warning(
-            f"Per-GPU batch size {batch_size} is not divisible by GPU minibatch size {gpu_minibatch_size}; {leftover_minibatch_size} left over"
+            f"Per-GPU batch size {batch_size} is not divisible by GPU minibatch size "
+            f"{gpu_minibatch_size}; {leftover_minibatch_size} left over per GPU, "
+            f"{total_leftover_minibatch_size} left over total"
         )
         batch_size -= leftover_minibatch_size
+        effective_batch_size -= total_leftover_minibatch_size
 
     num_discarded_datapoints = (
         leftover_minibatch_size * total_gpus + leftover_batch_size
