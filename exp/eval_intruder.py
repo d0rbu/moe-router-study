@@ -23,6 +23,7 @@ from transformers import (
 from core.dtype import get_dtype
 from core.model import get_model_config
 from core.type import assert_type
+from delphi.__main__ import non_redundant_hookpoints
 from delphi.__main__ import populate_cache as sae_populate_cache
 from delphi.clients import Offline
 from delphi.config import CacheConfig, ConstructorConfig, RunConfig, SamplerConfig
@@ -32,7 +33,6 @@ from delphi.log.result_analysis import log_results
 from delphi.pipeline import Pipe, Pipeline
 from delphi.scorers.classifier.intruder import IntruderScorer
 from delphi.scorers.scorer import ScorerResult
-from delphi.sparse_coders.sparse_model import non_redundant_hookpoints
 from delphi.utils import load_tokenized_data
 from exp import OUTPUT_DIR
 from exp.get_activations import ActivationKeys

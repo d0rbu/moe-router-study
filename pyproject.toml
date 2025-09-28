@@ -50,6 +50,7 @@ dependencies = [
     "sae-bench",
     "sae-lens>=6.12.1",
     "transformer-lens",
+    "eai-delphi",
 ]
 
 [project.optional-dependencies]
@@ -189,10 +190,12 @@ nnterp = { git = "https://github.com/d0rbu/nnterp.git" }
 dictionary-learning = { git = "https://github.com/d0rbu/dictionary_learning" }
 sae-bench = { git = "https://github.com/d0rbu/SAEBench" }
 transformer-lens = { git = "https://github.com/d0rbu/TransformerLens", branch = "OLMo" }
+eai-delphi = { workspace = true }
 
 [tool.uv.workspace]
 members = [
     "saebench_env",
+    "delphi",
 ]
 
 
