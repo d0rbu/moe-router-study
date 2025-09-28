@@ -281,6 +281,8 @@ def populate_cache(
     path_config_path = root_dir / "config.yaml"
     if not path_config_path.is_file():
         # this is a sae experiment, not paths
+        logger.debug("Running SAE populate cache")
+
         return sae_populate_cache(
             run_cfg,
             model,
@@ -289,6 +291,8 @@ def populate_cache(
             tokenizer,
             transcode=False,
         )
+
+    logger.debug("Running paths populate cache")
 
     latents_path.mkdir(parents=True, exist_ok=True)
 
@@ -309,7 +313,7 @@ def populate_cache(
 
     if run_cfg.filter_bos:
         if tokenizer.bos_token_id is None:
-            print("Tokenizer does not have a BOS token, skipping BOS filtering")
+            logger.debug("Tokenizer does not have a BOS token, skipping BOS filtering")
         else:
             flattened_tokens = tokens.flatten()
             mask = ~(flattened_tokens == tokenizer.bos_token_id)
@@ -319,7 +323,7 @@ def populate_cache(
             extra_tokens = num_non_bos_tokens % cache_cfg.cache_ctx_len
 
             if extra_tokens > 0:
-                print(
+                logger.debug(
                     f"Warning: {extra_tokens} extra tokens after BOS filtering, truncating to {num_non_bos_tokens - extra_tokens}"
                 )
                 truncated_tokens = masked_tokens[:-extra_tokens]
@@ -349,7 +353,7 @@ def populate_cache(
 
 
 @arguably.command()
-def main(
+def eval_intruder(
     *,
     experiment_dir: str,
     model_name: str = "olmoe-i",
@@ -380,6 +384,8 @@ def main(
     logger.remove()
     logger.add(sys.stderr, level=log_level)
 
+    logger.info(f"Running with log level: {log_level}")
+
     model_config = get_model_config(model_name)
     model_ckpt = model_config.get_checkpoint_strict(step=model_step_ckpt)
     dtype = get_dtype(model_dtype)
@@ -396,6 +402,10 @@ def main(
 
     th.manual_seed(seed)
 
+    logger.debug(
+        f"Loading model from {model_config.hf_name} with revision {model_ckpt}"
+    )
+
     model = StandardizedTransformer(
         model_config.hf_name,
         revision=str(model_ckpt),
@@ -405,6 +415,8 @@ def main(
         token=hf_token,
     )
     tokenizer = model.tokenizer
+
+    logger.trace("Model and tokenizer initialized")
 
     hookpoint_to_sparse_encode = load_hookpoints(root_dir)
     hookpoints = list(hookpoint_to_sparse_encode.keys())
@@ -454,6 +466,7 @@ def main(
         dict,
     )
     if nrh:
+        logger.info(f"Populating cache with {len(nrh)} hookpoints")
         populate_cache(
             run_cfg,
             model,
@@ -470,6 +483,7 @@ def main(
         list,
     )
     if nrh:
+        logger.info(f"Processing cache with {len(nrh)} hookpoints")
         asyncio.run(
             process_cache(
                 run_cfg,
@@ -482,4 +496,9 @@ def main(
         )
 
     if run_cfg.verbose:
+        logger.debug("Logging results")
         log_results(scores_path, visualize_path, run_cfg.hookpoints, run_cfg.scorers)
+
+
+if __name__ == "__main__":
+    arguably.run()

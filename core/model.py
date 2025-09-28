@@ -1,7 +1,10 @@
 from dataclasses import dataclass, field
 import re
 
-import huggingface_hub  # import module so tests can patch huggingface_hub.list_repo_refs
+import huggingface_hub
+from loguru import (
+    logger,  # import module so tests can patch huggingface_hub.list_repo_refs
+)
 
 
 @dataclass
@@ -37,19 +40,21 @@ class ModelConfig:
     checkpoints: list[Checkpoint] = field(default_factory=list)
     eager_fetch: bool = True
 
-    def __post_init__(self):
+    @property
+    def latest_checkpoint(self) -> Checkpoint:
+        """Get the checkpoint representing the latest version."""
+        return Checkpoint(
+            self.total_steps, self.total_tokens, self, revision=LATEST_REVISION
+        )
+
+    def fetch_checkpoints(self) -> list[Checkpoint]:
+        """Fetch and populate checkpoints from the Hugging Face repository."""
         if self.branch_regex is None or self.revision_format is None:
-            self.checkpoints = []
-            return
+            return [self.latest_checkpoint]
 
         # Accept both str and compiled patterns
         if isinstance(self.branch_regex, str):
             self.branch_regex = re.compile(self.branch_regex)
-
-        # Skip fetching branches if eager_fetch is disabled
-        if not self.eager_fetch:
-            self.checkpoints = []
-            return
 
         refs = huggingface_hub.list_repo_refs(self.hf_name)
         self.all_branches = [branch.name for branch in refs.branches]
@@ -75,39 +80,48 @@ class ModelConfig:
         self.checkpoints = sorted(checkpoints, key=lambda x: (x.step, x.num_tokens))
 
         if not self.checkpoints:
-            self.checkpoints = [
-                Checkpoint(
-                    self.total_steps, self.total_tokens, self, revision=LATEST_REVISION
-                )
-            ]
-            return
+            return [self.latest_checkpoint]
 
-        max_steps = max(checkpoint.step for checkpoint in self.checkpoints)
-        max_num_tokens = max(checkpoint.num_tokens for checkpoint in self.checkpoints)
-        if self.total_steps is None:
+        checkpoint_steps = {checkpoint.step for checkpoint in self.checkpoints}
+        checkpoint_num_tokens = {
+            checkpoint.num_tokens for checkpoint in self.checkpoints
+        }
+
+        max_steps = max(checkpoint_steps) if checkpoint_steps else None
+        max_num_tokens = max(checkpoint_num_tokens) if checkpoint_num_tokens else None
+        if self.total_steps is not None and max_steps is not None:
             assert self.total_steps >= max_steps, (
                 f"total_steps {self.total_steps} is less than the highest checkpoint {max_steps}"
             )
 
-        if self.total_tokens is None:
+        if self.total_tokens is not None and max_num_tokens is not None:
             assert self.total_tokens >= max_num_tokens, (
                 f"total_tokens {self.total_tokens} is less than the highest checkpoint {max_num_tokens}"
             )
 
         # don't add the main revision if it's already in the checkpoints
         if self.total_steps == max_steps and self.total_tokens == max_num_tokens:
-            return
+            return checkpoints
 
-        self.checkpoints.append(
-            Checkpoint(
-                self.total_steps, self.total_tokens, self, revision=LATEST_REVISION
-            )
-        )
+        checkpoints.append(self.latest_checkpoint)
+
+        return checkpoints
+
+    def __post_init__(self):
+        if self.eager_fetch:
+            self.checkpoints = self.fetch_checkpoints()
 
     def get_checkpoint(
         self, step: int | None = None, num_tokens: int | None = None
     ) -> Checkpoint | None:
+        # if we haven't fetched the checkpoints, do so now
+        if not self.checkpoints and not self.eager_fetch:
+            self.checkpoints = self.fetch_checkpoints()
+
         if step is None and num_tokens is None:
+            logger.warning(
+                "No step or num_tokens provided, returning latest checkpoint or None"
+            )
             return self.checkpoints[-1] if self.checkpoints else None
 
         if step is not None:
@@ -137,7 +151,9 @@ class ModelConfig:
         )
         return sorted_matching_checkpoints[-1]
 
-    def get_checkpoint_strict(self, step: int, num_tokens: int) -> Checkpoint:
+    def get_checkpoint_strict(
+        self, step: int | None = None, num_tokens: int | None = None
+    ) -> Checkpoint:
         checkpoint = self.get_checkpoint(step=step, num_tokens=num_tokens)
         if checkpoint is None:
             raise ValueError(
