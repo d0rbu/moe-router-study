@@ -284,19 +284,21 @@ async def sync(
 
     if rank == 0 and gpu_idx == 0:
         losses_over_time.append(gpu_data.synced_data.losses.detach().cpu().clone())
-        
+
         # Run validation if enabled
         if validator is not None:
             try:
                 validation_results = await validator.validate_iteration(
                     losses=gpu_data.synced_data.losses,
-                    centroids_list=gpu_data.synced_data.centroid_sets
+                    centroids_list=gpu_data.synced_data.centroid_sets,
                 )
-                
+
                 # Log validation results if there are warnings
                 if validation_results.get("warnings"):
-                    logger.warning(f"Validation warnings: {validation_results['warnings']}")
-                    
+                    logger.warning(
+                        f"Validation warnings: {validation_results['warnings']}"
+                    )
+
             except Exception as e:
                 logger.error(f"Validation failed: {e}")
                 # Don't let validation errors stop the training
@@ -616,16 +618,20 @@ async def kmeans_manhattan(
     validator = None
     if validation_config is not None and validation_config.enabled:
         validator = KMeansValidator(validation_config)
-        
+
         # Set up validation data using a sample from the activations
         if rank == 0:  # Only set up validation data on the main process
             logger.info("Setting up validation data...")
-            validation_data_iterable = activations(batch_size=min(10000, len(activations)))
+            validation_data_iterable = activations(
+                batch_size=min(10000, len(activations))
+            )
             validation_batch = next(validation_data_iterable)
             validation_activations = validation_batch[ActivationKeys.ROUTER_LOGITS]
             validator.set_validation_data(validation_activations)
             validation_data_iterable.send("STOP!")
-            logger.info(f"Validation initialized with config: {validator.get_summary()}")
+            logger.info(
+                f"Validation initialized with config: {validator.get_summary()}"
+            )
 
     # calculate save steps for checkpointing
     save_steps = set()
