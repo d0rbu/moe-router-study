@@ -13,7 +13,7 @@ import torch as th
 
 # Constants for validation
 WARNING_WINDOW_SIZE = 10
-VALIDATION_SIZE_MULTIPLIER = 10
+VALIDATION_SIZE_K_PROPORTION = 10
 
 
 @dataclass
@@ -41,26 +41,6 @@ class CentroidValidationStats:
             f"Std ratio: {self.std_assignment_ratio:.4f}, "
             f"Entropy: {self.entropy:.4f}"
         )
-
-
-def convert_router_logits_to_paths(router_logits: th.Tensor, top_k: int) -> th.Tensor:
-    """
-    Convert router logits to flat paths format.
-
-    Args:
-        router_logits: Tensor of shape (B, L, E) containing router logits
-        top_k: Number of top experts to select
-
-    Returns:
-        Tensor of shape (B, L * E) containing flattened paths
-    """
-    # Convert from logits to paths
-    paths_sparse = th.topk(router_logits, k=top_k, dim=-1).indices
-    router_paths = th.zeros_like(router_logits)
-    router_paths.scatter_(-1, paths_sparse, 1)
-
-    # Flatten to (B, L * E)
-    return router_paths.view(router_paths.shape[0], -1)
 
 
 def check_monotonic_increasing_window(

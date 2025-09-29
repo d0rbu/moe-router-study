@@ -15,14 +15,14 @@ from tqdm import tqdm
 import yaml
 
 from core.async_utils import handle_exceptions
+from core.moe import convert_router_logits_to_paths
 from exp import OUTPUT_DIR
 from exp.activations import Activations, load_activations_and_init_dist
 from exp.get_activations import ActivationKeys
 from exp.kmeans_validation import (
-    VALIDATION_SIZE_MULTIPLIER,
+    VALIDATION_SIZE_K_PROPORTION,
     WARNING_WINDOW_SIZE,
     check_monotonic_increasing_window,
-    convert_router_logits_to_paths,
     validate_centroid_distribution,
 )
 from exp.training import exponential_to_linear_save_steps, get_experiment_name
@@ -584,8 +584,8 @@ async def kmeans_manhattan(
     )
 
     # load a batch of activations to initialize the centroids and reserve validation data
-    # Reserve extra data for validation (we'll use VALIDATION_SIZE_MULTIPLIER x the largest k value)
-    validation_size = max(k_values) * VALIDATION_SIZE_MULTIPLIER
+    # Reserve extra data for validation (we'll use VALIDATION_SIZE_K_PROPORTION x the largest k value)
+    validation_size = max(k_values) * VALIDATION_SIZE_K_PROPORTION
     num_total_centroids = k_ranges[-1].item()
     total_init_size = num_total_centroids + validation_size
 
@@ -749,7 +749,6 @@ async def kmeans_manhattan(
             validate_every is not None
             and (iter_idx + 1) % validate_every == 0
             and rank == 0
-            and iter_idx < max_iters - 1  # Don't duplicate final validation
         ):
             logger.info(
                 f"Running intermittent validation at iteration {iter_idx + 1}..."
@@ -760,11 +759,12 @@ async def kmeans_manhattan(
                 is_valid, stats = validate_centroid_distribution(
                     validation_data,
                     centroid_set.cpu(),
-                    # Use dynamic ratios based on k (will default to 0.05/k and 20/k)
                 )
                 k_value = centroid_set.shape[0]
                 if is_valid:
-                    logger.info(f"✓ K={k_value} (iter {iter_idx + 1}): Valid. {stats}")
+                    logger.success(
+                        f"✓ K={k_value} (iter {iter_idx + 1}): Valid. {stats}"
+                    )
                 else:
                     logger.warning(
                         f"✗ K={k_value} (iter {iter_idx + 1}): Issues. {stats}"
@@ -786,25 +786,6 @@ async def kmeans_manhattan(
 
         num_k_values = len(all_gpu_data[0].synced_data.centroid_sets)
         losses = th.empty((num_k_values, 0))
-
-    # Final validation check on centroids using validation data
-    if rank == 0:
-        logger.info("Running final centroid validation checks...")
-        for _k_idx, centroid_set in enumerate(
-            all_gpu_data[0].synced_data.centroid_sets
-        ):
-            is_valid, stats = validate_centroid_distribution(
-                validation_data,
-                centroid_set.cpu(),
-                # Use dynamic ratios based on k (will default to 0.05/k and 20/k)
-            )
-            k_value = centroid_set.shape[0]
-            if is_valid:
-                logger.info(f"✓ K={k_value}: Centroid distribution is valid. {stats}")
-            else:
-                logger.warning(
-                    f"✗ K={k_value}: Centroid distribution has issues. {stats}"
-                )
 
     logger.trace("Returning results")
 
