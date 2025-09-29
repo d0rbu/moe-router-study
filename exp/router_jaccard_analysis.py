@@ -357,9 +357,7 @@ def analyze_router_jaccard(
     )
 
     # Analyze coactivation patterns
-    results = analyze_expert_coactivation(
-        all_expert_activation_sets, min_activations
-    )
+    results = analyze_expert_coactivation(all_expert_activation_sets, min_activations)
 
     # Print results
     print("\n" + "=" * 60)
