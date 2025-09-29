@@ -30,7 +30,7 @@ jobs:
     
     - name: Install build dependencies
       run: |
-        uv pip install poetry hatchling setuptools
+        uv pip install poetry hatchling setuptools editables
     
     - name: Install dependencies
       run: |
@@ -76,7 +76,7 @@ jobs:
     
     - name: Install build dependencies
       run: |
-        uv pip install poetry hatchling setuptools
+        uv pip install poetry hatchling setuptools editables
     
     - name: Install dependencies
       run: |
