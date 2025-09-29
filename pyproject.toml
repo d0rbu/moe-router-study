@@ -194,3 +194,6 @@ transformer-lens = { git = "https://github.com/d0rbu/TransformerLens", branch = 
 [tool.uv.extra-build-dependencies]
 dictionary-learning = ["poetry"]
 nnterp = ["setuptools"]
+sae-bench = ["setuptools"]
+transformer-lens = ["setuptools"]
+transformers = ["setuptools"]
