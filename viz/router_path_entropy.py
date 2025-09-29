@@ -1,16 +1,15 @@
 """Analyze the entropy and distribution of routing paths in MoE models."""
 
+import asyncio
 from collections import Counter
-from itertools import count
 import os
-import warnings
 
 import arguably
+from loguru import logger
 import matplotlib.pyplot as plt
 import torch as th
-from tqdm import tqdm
 
-from exp import ACTIVATION_DIRNAME, OUTPUT_DIR
+from exp.activations import Activations
 from exp.get_activations import ActivationKeys
 from viz import FIGURE_DIR
 
@@ -31,9 +30,8 @@ def compute_entropy(frequencies: th.Tensor) -> float:
 
     # Emit warning if we filtered out zero probabilities
     if len(nonzero_probabilities) < len(probabilities):
-        warnings.warn(
-            f"Filtered out {len(probabilities) - len(nonzero_probabilities)} zero probabilities",
-            stacklevel=2,
+        logger.warning(
+            f"Filtered out {len(probabilities) - len(nonzero_probabilities)} zero probabilities"
         )
 
     # Compute Shannon entropy
@@ -53,11 +51,11 @@ def compute_gini_coefficient(frequencies: th.Tensor) -> float:
     n = len(sorted_freqs)
     cumsum = th.cumsum(sorted_freqs, dim=0)
 
-    # Break up the complex calculation for readability
     indices = th.arange(1, n + 1, dtype=sorted_freqs.dtype, device=sorted_freqs.device)
     weighted_sum = th.sum(indices * sorted_freqs)
-    numerator = 2 * weighted_sum - (n + 1) * cumsum[-1]
-    denominator = n * cumsum[-1]
+    total_occurrences = cumsum[-1]
+    numerator = 2 * weighted_sum - (n + 1) * total_occurrences
+    denominator = n * total_occurrences
 
     # Add assertions for safety
     assert denominator > 0, "Denominator should be positive for valid frequencies"
@@ -66,46 +64,32 @@ def compute_gini_coefficient(frequencies: th.Tensor) -> float:
     return (numerator / denominator).item()
 
 
-@arguably.command
-def router_path_entropy(experiment_name: str) -> None:
-    """Analyze routing path entropy and distribution for an experiment.
+async def _router_path_entropy_async(experiment_name: str) -> None:
+    """Async implementation of router path entropy analysis."""
+    logger.info(f"Loading activations for experiment: {experiment_name}")
 
-    This script:
-    1. Loads router activations from stored .pt files
-    2. Converts router logits to binary activations via top-k
-    3. Hashes the complete routing path for each token across all layers
-    4. Measures the entropy and non-uniformity of the path distribution
+    # Load activations using the Activations class
+    activations = await Activations.load(experiment_name=experiment_name)
 
-    Args:
-        experiment_name: Name of the experiment to analyze.
-    """
     path_counter: Counter[tuple[int, ...]] = Counter()
     top_k: int | None = None
     num_layers: int | None = None
     num_experts: int | None = None
     total_tokens = 0
 
-    activations_dir = os.path.join(OUTPUT_DIR, experiment_name, ACTIVATION_DIRNAME)
+    # Iterate through activation batches
+    for batch in activations(batch_size=4096):
+        router_logits = batch[ActivationKeys.ROUTER_LOGITS]
 
-    print(f"Loading router activations from {activations_dir}...")
-
-    for file_idx in tqdm(count(), desc="Loading router activations"):
-        file_path = os.path.join(activations_dir, f"{file_idx}.pt")
-        if not os.path.exists(file_path):
-            break
-
-        output = th.load(file_path)
-        top_k = output["topk"]
-        router_logits = output[str(ActivationKeys.ROUTER_LOGITS)]
+        if top_k is None:
+            top_k = batch["topk"]
+            num_layers, num_experts = router_logits.shape[1], router_logits.shape[2]
+            logger.info(
+                f"Router configuration: {num_layers} layers, {num_experts} experts per layer, top-k={top_k}"
+            )
 
         # Get dimensions
-        batch_size, num_layers_local, num_experts_local = router_logits.shape
-        if num_layers is None:
-            num_layers = num_layers_local
-            num_experts = num_experts_local
-        else:
-            assert num_layers == num_layers_local
-            assert num_experts == num_experts_local
+        batch_size = router_logits.shape[0]
 
         # Convert to binary activations (top-k selection)
         top_k_indices = th.topk(router_logits, k=top_k, dim=2).indices
@@ -127,12 +111,12 @@ def router_path_entropy(experiment_name: str) -> None:
             total_tokens += 1
 
     if top_k is None:
-        raise ValueError("No data files found")
+        raise ValueError("No activation data found")
 
-    print("\nAnalysis complete!")
-    print(f"Total tokens processed: {total_tokens:,}")
-    print(f"Unique paths: {len(path_counter):,}")
-    print(f"Path length (experts per path): {num_layers * top_k}")
+    logger.info("Analysis complete!")
+    logger.info(f"Total tokens processed: {total_tokens:,}")
+    logger.info(f"Unique paths: {len(path_counter):,}")
+    logger.info(f"Path length (experts per path): {num_layers * top_k}")
 
     # Convert to frequency tensor
     path_frequencies = th.tensor(list(path_counter.values()), dtype=th.float32)
@@ -145,11 +129,11 @@ def router_path_entropy(experiment_name: str) -> None:
     normalized_entropy = entropy / max_entropy if max_entropy > 0 else 0
     gini = compute_gini_coefficient(path_frequencies)
 
-    print("\nEntropy metrics:")
-    print(f"  Shannon entropy: {entropy:.2f} bits")
-    print(f"  Maximum entropy: {max_entropy:.2f} bits")
-    print(f"  Normalized entropy: {normalized_entropy:.4f}")
-    print(f"  Gini coefficient: {gini:.4f}")
+    logger.info("Entropy metrics:")
+    logger.info(f"  Shannon entropy: {entropy:.2f} bits")
+    logger.info(f"  Maximum entropy: {max_entropy:.2f} bits")
+    logger.info(f"  Normalized entropy: {normalized_entropy:.4f}")
+    logger.info(f"  Gini coefficient: {gini:.4f}")
 
     # Compute top-k path coverage
     sorted_frequencies = th.sort(path_frequencies, descending=True).values
@@ -157,13 +141,15 @@ def router_path_entropy(experiment_name: str) -> None:
     for k in [10, 100, 1000, 10000]:
         if k <= len(sorted_frequencies):
             coverage = cumulative[k - 1] / total_tokens
-            print(f"  Top {k} paths cover: {coverage.item() * 100:.2f}% of tokens")
+            logger.info(
+                f"  Top {k} paths cover: {coverage.item() * 100:.2f}% of tokens"
+            )
 
     # Set default figure size
     plt.rcParams["figure.figsize"] = (16, 12)
 
     # Plot 1: Path frequency distribution (sorted)
-    print("\nGenerating visualizations...")
+    logger.info("Generating visualizations...")
     plt.figure()
     plt.plot(sorted_frequencies.cpu().numpy())
     plt.xlabel("Path rank")
@@ -205,10 +191,26 @@ def router_path_entropy(experiment_name: str) -> None:
     plt.savefig(os.path.join(FIGURE_DIR, "router_path_histogram.png"))
     plt.close()
 
-    print(f"Figures saved to {FIGURE_DIR}/")
-    print("  - router_path_frequency.png")
-    print("  - router_path_coverage.png")
-    print("  - router_path_histogram.png")
+    logger.info(f"Figures saved to {FIGURE_DIR}/")
+    logger.info("  - router_path_frequency.png")
+    logger.info("  - router_path_coverage.png")
+    logger.info("  - router_path_histogram.png")
+
+
+@arguably.command
+def router_path_entropy(experiment_name: str) -> None:
+    """Analyze routing path entropy and distribution for an experiment.
+
+    This script:
+    1. Loads router activations using the Activations class
+    2. Converts router logits to binary activations via top-k
+    3. Hashes the complete routing path for each token across all layers
+    4. Measures the entropy and non-uniformity of the path distribution
+
+    Args:
+        experiment_name: Name of the experiment to analyze.
+    """
+    asyncio.run(_router_path_entropy_async(experiment_name))
 
 
 if __name__ == "__main__":

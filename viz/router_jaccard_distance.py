@@ -1,29 +1,29 @@
-"""Analyze expert coactivation using Jaccard distance in MoE models."""
+"""Analyze expert coactivation using Jaccard similarity in MoE models."""
 
-from itertools import count
+import asyncio
 import os
 
 import arguably
+from loguru import logger
 import matplotlib.pyplot as plt
 import torch as th
-from tqdm import tqdm
 
-from exp import ACTIVATION_DIRNAME, OUTPUT_DIR
+from exp.activations import Activations
 from exp.get_activations import ActivationKeys
 from viz import FIGURE_DIR
 
 
-def compute_jaccard_distance_matrix(activated_experts: th.Tensor) -> th.Tensor:
-    """Compute pairwise Jaccard distance between expert activations.
+def compute_jaccard_similarity_matrix(activated_experts: th.Tensor) -> th.Tensor:
+    """Compute pairwise Jaccard similarity between expert activations.
 
-    Jaccard distance = |A & B| / |A | B|
+    Jaccard similarity = |A & B| / |A | B|
     where A and B are the sets of samples activating each expert.
 
     Args:
         activated_experts: Binary activation matrix of shape (num_experts, num_samples).
 
     Returns:
-        Jaccard distance matrix of shape (num_experts, num_experts).
+        Jaccard similarity matrix of shape (num_experts, num_experts).
     """
     # Convert to float for matrix operations
     activated = activated_experts.float()
@@ -41,7 +41,7 @@ def compute_jaccard_distance_matrix(activated_experts: th.Tensor) -> th.Tensor:
         - intersection
     )
 
-    # Compute Jaccard distance
+    # Compute Jaccard similarity
     # Avoid division by zero
     jaccard = th.where(union > 0, intersection / union, th.zeros_like(intersection))
 
@@ -49,7 +49,7 @@ def compute_jaccard_distance_matrix(activated_experts: th.Tensor) -> th.Tensor:
 
 
 def compute_independent_jaccard_matrix(activated_experts: th.Tensor) -> th.Tensor:
-    """Compute expected Jaccard distances if experts were independent.
+    """Compute expected Jaccard similarities if experts were independent.
 
     For independent experts, Jaccard = (xy) / (x + y - xy)
     where x and y are the activation rates of each expert.
@@ -58,7 +58,7 @@ def compute_independent_jaccard_matrix(activated_experts: th.Tensor) -> th.Tenso
         activated_experts: Binary activation matrix of shape (num_experts, num_samples).
 
     Returns:
-        Expected Jaccard distance matrix for independent activations.
+        Expected Jaccard similarity matrix for independent activations.
     """
     # Compute activation rates for each expert
     activation_rates = activated_experts.float().mean(dim=1)  # Shape: (num_experts,)
@@ -83,37 +83,33 @@ def compute_independent_jaccard_matrix(activated_experts: th.Tensor) -> th.Tenso
     return independent_jaccard
 
 
-@arguably.command
-def router_jaccard_distance(experiment_name: str) -> None:
-    """Compute Jaccard distance between expert activations.
+async def _router_jaccard_distance_async(experiment_name: str) -> None:
+    """Async implementation of Jaccard similarity analysis."""
+    logger.info(f"Loading activations for experiment: {experiment_name}")
 
-    This script:
-    1. Loads router activations from stored .pt files
-    2. Converts router logits to binary activations via top-k
-    3. Computes Jaccard distance for each pair of experts
-    4. Generates matrix visualizations and bar plots
+    # Load activations using the Activations class
+    activations = await Activations.load(experiment_name=experiment_name)
 
-    Args:
-        experiment_name: Name of the experiment to analyze.
-    """
     activated_experts_collection = []
     top_k: int | None = None
+    num_layers: int | None = None
+    num_experts: int | None = None
+    total_samples = 0
 
-    activations_dir = os.path.join(OUTPUT_DIR, experiment_name, ACTIVATION_DIRNAME)
+    # Iterate through activation batches
+    for batch in activations(batch_size=4096):
+        router_logits = batch[ActivationKeys.ROUTER_LOGITS]
 
-    print(f"Loading router activations from {activations_dir}...")
+        if top_k is None:
+            top_k = batch["topk"]
+            num_layers, num_experts = router_logits.shape[1], router_logits.shape[2]
+            logger.info(
+                f"Router configuration: {num_layers} layers, {num_experts} experts per layer, top-k={top_k}"
+            )
 
-    for file_idx in tqdm(count(), desc="Loading router activations"):
-        file_path = os.path.join(activations_dir, f"{file_idx}.pt")
-        if not os.path.exists(file_path):
-            break
-
-        output = th.load(file_path)
-        top_k = output["topk"]
-        router_logits = output[str(ActivationKeys.ROUTER_LOGITS)]
-
-        num_layers, num_experts = router_logits.shape[1], router_logits.shape[2]
         total_experts = num_layers * num_experts
+        batch_size = router_logits.shape[0]
+        total_samples += batch_size
 
         # Convert to binary activations (top-k selection)
         top_k_indices = th.topk(router_logits, k=top_k, dim=2).indices
@@ -126,18 +122,17 @@ def router_jaccard_distance(experiment_name: str) -> None:
         )
 
     if top_k is None:
-        raise ValueError("No data files found")
+        raise ValueError("No activation data found")
 
     # Concatenate all batches: (L * E, total_samples)
     activated_experts = th.cat(activated_experts_collection, dim=-1)
-    batch_size = activated_experts.shape[-1]
 
-    print("\nComputing Jaccard distances...")
-    print(f"Total samples: {batch_size:,}")
-    print(f"Total experts (across all layers): {total_experts}")
+    logger.info("Computing Jaccard similarities...")
+    logger.info(f"Total samples: {total_samples:,}")
+    logger.info(f"Total experts (across all layers): {total_experts}")
 
-    # Compute actual and independent Jaccard distance matrices
-    jaccard = compute_jaccard_distance_matrix(activated_experts)
+    # Compute actual and independent Jaccard similarity matrices
+    jaccard = compute_jaccard_similarity_matrix(activated_experts)
     independent_jaccard = compute_independent_jaccard_matrix(activated_experts)
 
     # Extract upper triangle (excluding diagonal) for bar plots
@@ -160,47 +155,47 @@ def router_jaccard_distance(experiment_name: str) -> None:
     sorted_cross_layer, _ = th.sort(cross_layer_jaccard, descending=True)
 
     # Print statistics
-    print("\nJaccard distance statistics:")
-    print("  All pairs:")
-    print(f"    Mean: {jaccard_upper.mean().item():.4f}")
-    print(f"    Median: {jaccard_upper.median().item():.4f}")
-    print(f"    Max: {jaccard_upper.max().item():.4f}")
-    print("  Cross-layer pairs:")
-    print(f"    Mean: {cross_layer_jaccard.mean().item():.4f}")
-    print(f"    Median: {cross_layer_jaccard.median().item():.4f}")
-    print(f"    Max: {cross_layer_jaccard.max().item():.4f}")
-    print("  Independent baseline:")
-    print(f"    Mean: {independent_upper.mean().item():.4f}")
-    print(f"    Median: {independent_upper.median().item():.4f}")
+    logger.info("Jaccard similarity statistics:")
+    logger.info("  All pairs:")
+    logger.info(f"    Mean: {jaccard_upper.mean().item():.4f}")
+    logger.info(f"    Median: {jaccard_upper.median().item():.4f}")
+    logger.info(f"    Max: {jaccard_upper.max().item():.4f}")
+    logger.info("  Cross-layer pairs:")
+    logger.info(f"    Mean: {cross_layer_jaccard.mean().item():.4f}")
+    logger.info(f"    Median: {cross_layer_jaccard.median().item():.4f}")
+    logger.info(f"    Max: {cross_layer_jaccard.max().item():.4f}")
+    logger.info("  Independent baseline:")
+    logger.info(f"    Mean: {independent_upper.mean().item():.4f}")
+    logger.info(f"    Median: {independent_upper.median().item():.4f}")
 
     # Set default figure size
     plt.rcParams["figure.figsize"] = (12, 10)
 
-    print("\nGenerating visualizations...")
+    logger.info("Generating visualizations...")
 
-    # Plot 1: Absolute Jaccard distance matrix
+    # Plot 1: Absolute Jaccard similarity matrix
     plt.figure()
     plt.imshow(jaccard.cpu().numpy(), cmap="viridis", aspect="auto")
-    plt.colorbar(label="Jaccard Distance")
-    plt.title("Jaccard Distance Matrix (Absolute)")
+    plt.colorbar(label="Jaccard Similarity")
+    plt.title("Jaccard Similarity Matrix (Absolute)")
     plt.xlabel("Expert Index")
     plt.ylabel("Expert Index")
     plt.tight_layout()
     plt.savefig(os.path.join(FIGURE_DIR, "router_jaccard_matrix_absolute.png"))
     plt.close()
 
-    # Plot 2: Independent Jaccard distance matrix
+    # Plot 2: Independent Jaccard similarity matrix
     plt.figure()
     plt.imshow(independent_jaccard.cpu().numpy(), cmap="viridis", aspect="auto")
-    plt.colorbar(label="Independent Jaccard Distance")
-    plt.title("Independent Jaccard Distance Matrix")
+    plt.colorbar(label="Independent Jaccard Similarity")
+    plt.title("Independent Jaccard Similarity Matrix")
     plt.xlabel("Expert Index")
     plt.ylabel("Expert Index")
     plt.tight_layout()
     plt.savefig(os.path.join(FIGURE_DIR, "router_jaccard_matrix_independent.png"))
     plt.close()
 
-    # Plot 3: Relative Jaccard distance matrix (red-black-blue colormap)
+    # Plot 3: Relative Jaccard similarity matrix (red-black-blue colormap)
     # Red = 0, Black = independent value, Blue = 2x independent value
     relative_jaccard = jaccard / (independent_jaccard + 1e-8)  # Avoid division by zero
 
@@ -215,7 +210,7 @@ def router_jaccard_distance(experiment_name: str) -> None:
     plt.imshow(relative_jaccard.cpu().numpy(), cmap=cmap, aspect="auto", vmin=0, vmax=2)
     plt.colorbar(label="Jaccard / Independent Jaccard")
     plt.title(
-        "Relative Jaccard Distance Matrix\n(Red=0, Black=Independent, Blue=2x Independent)"
+        "Relative Jaccard Similarity Matrix\n(Red=0, Black=Independent, Blue=2x Independent)"
     )
     plt.xlabel("Expert Index")
     plt.ylabel("Expert Index")
@@ -223,32 +218,48 @@ def router_jaccard_distance(experiment_name: str) -> None:
     plt.savefig(os.path.join(FIGURE_DIR, "router_jaccard_matrix_relative.png"))
     plt.close()
 
-    # Plot 4: Bar plot of sorted Jaccard distances (upper triangular)
+    # Plot 4: Bar plot of sorted Jaccard similarities (upper triangular)
     plt.figure()
     plt.bar(range(len(sorted_jaccard)), sorted_jaccard.cpu().numpy())
     plt.xlabel("Expert Pair Rank")
-    plt.ylabel("Jaccard Distance")
-    plt.title("Sorted Jaccard Distances (Upper Triangular)")
+    plt.ylabel("Jaccard Similarity")
+    plt.title("Sorted Jaccard Similarities (Upper Triangular)")
     plt.tight_layout()
     plt.savefig(os.path.join(FIGURE_DIR, "router_jaccard_bar_sorted.png"))
     plt.close()
 
-    # Plot 5: Bar plot of sorted cross-layer Jaccard distances
+    # Plot 5: Bar plot of sorted cross-layer Jaccard similarities
     plt.figure()
     plt.bar(range(len(sorted_cross_layer)), sorted_cross_layer.cpu().numpy())
     plt.xlabel("Cross-Layer Pair Rank")
-    plt.ylabel("Jaccard Distance")
-    plt.title("Sorted Cross-Layer Jaccard Distances")
+    plt.ylabel("Jaccard Similarity")
+    plt.title("Sorted Cross-Layer Jaccard Similarities")
     plt.tight_layout()
     plt.savefig(os.path.join(FIGURE_DIR, "router_jaccard_bar_cross_layer.png"))
     plt.close()
 
-    print(f"\nFigures saved to {FIGURE_DIR}/")
-    print("  - router_jaccard_matrix_absolute.png")
-    print("  - router_jaccard_matrix_independent.png")
-    print("  - router_jaccard_matrix_relative.png")
-    print("  - router_jaccard_bar_sorted.png")
-    print("  - router_jaccard_bar_cross_layer.png")
+    logger.info(f"Figures saved to {FIGURE_DIR}/")
+    logger.info("  - router_jaccard_matrix_absolute.png")
+    logger.info("  - router_jaccard_matrix_independent.png")
+    logger.info("  - router_jaccard_matrix_relative.png")
+    logger.info("  - router_jaccard_bar_sorted.png")
+    logger.info("  - router_jaccard_bar_cross_layer.png")
+
+
+@arguably.command
+def router_jaccard_distance(experiment_name: str) -> None:
+    """Compute Jaccard similarity between expert activations.
+
+    This script:
+    1. Loads router activations using the Activations class
+    2. Converts router logits to binary activations via top-k
+    3. Computes Jaccard similarity for each pair of experts
+    4. Generates matrix visualizations and bar plots
+
+    Args:
+        experiment_name: Name of the experiment to analyze.
+    """
+    asyncio.run(_router_jaccard_distance_async(experiment_name))
 
 
 if __name__ == "__main__":
