@@ -118,21 +118,25 @@ def validate_centroid_distribution(
     assignment_counts = th.bincount(assignments, minlength=k)
     assignment_ratios = assignment_counts.float() / len(validation_data)
 
-    # Set dynamic thresholds if not provided
+    # Set default ratios if not provided, then always divide by k to get thresholds
     if min_assignment_ratio is None:
-        min_assignment_ratio = 0.05 / k
+        min_assignment_ratio = 0.05
     if max_assignment_ratio is None:
-        max_assignment_ratio = 20.0 / k
+        max_assignment_ratio = 20.0
+
+    # Always divide by k to get the actual thresholds
+    min_assignment_threshold = min_assignment_ratio / k
+    max_assignment_threshold = max_assignment_ratio / k
 
     # Check for empty centroids
     num_empty = (assignment_counts == 0).sum().item()
 
     # Check for over-concentrated centroids
-    num_over_concentrated = (assignment_ratios > max_assignment_ratio).sum().item()
+    num_over_concentrated = (assignment_ratios > max_assignment_threshold).sum().item()
 
     # Check for under-utilized centroids (but not completely empty)
     num_under_utilized = (
-        ((assignment_ratios > 0) & (assignment_ratios < min_assignment_ratio))
+        ((assignment_ratios > 0) & (assignment_ratios < min_assignment_threshold))
         .sum()
         .item()
     )
