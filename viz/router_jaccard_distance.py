@@ -48,7 +48,42 @@ def compute_jaccard_distance_matrix(activated_experts: th.Tensor) -> th.Tensor:
     return jaccard
 
 
-@arguably.command()
+def compute_independent_jaccard_matrix(activated_experts: th.Tensor) -> th.Tensor:
+    """Compute expected Jaccard distances if experts were independent.
+
+    For independent experts, Jaccard = (xy) / (x + y - xy)
+    where x and y are the activation rates of each expert.
+
+    Args:
+        activated_experts: Binary activation matrix of shape (num_experts, num_samples).
+
+    Returns:
+        Expected Jaccard distance matrix for independent activations.
+    """
+    # Compute activation rates for each expert
+    activation_rates = activated_experts.float().mean(dim=1)  # Shape: (num_experts,)
+
+    # Compute pairwise independent Jaccard distances
+    x = activation_rates.unsqueeze(1)  # Shape: (num_experts, 1)
+    y = activation_rates.unsqueeze(0)  # Shape: (1, num_experts)
+
+    # Independent coactivation rate: xy
+    independent_coactivation = x * y
+
+    # Independent union rate: x + y - xy
+    independent_union = x + y - independent_coactivation
+
+    # Independent Jaccard: xy / (x + y - xy)
+    independent_jaccard = th.where(
+        independent_union > 0,
+        independent_coactivation / independent_union,
+        th.zeros_like(independent_union),
+    )
+
+    return independent_jaccard
+
+
+@arguably.command
 def router_jaccard_distance(experiment_name: str) -> None:
     """Compute Jaccard distance between expert activations.
 
@@ -56,7 +91,7 @@ def router_jaccard_distance(experiment_name: str) -> None:
     1. Loads router activations from stored .pt files
     2. Converts router logits to binary activations via top-k
     3. Computes Jaccard distance for each pair of experts
-    4. Generates visualizations similar to correlation analysis
+    4. Generates matrix visualizations and bar plots
 
     Args:
         experiment_name: Name of the experiment to analyze.
@@ -101,169 +136,119 @@ def router_jaccard_distance(experiment_name: str) -> None:
     print(f"Total samples: {batch_size:,}")
     print(f"Total experts (across all layers): {total_experts}")
 
-    # Compute Jaccard distance matrix
+    # Compute actual and independent Jaccard distance matrices
     jaccard = compute_jaccard_distance_matrix(activated_experts)
+    independent_jaccard = compute_independent_jaccard_matrix(activated_experts)
 
-    # Build control by shuffling along the batch dimension per-layer
-    # Reconstruct to (B, L, E)
-    activated_experts_ble = activated_experts.T.view(
-        batch_size, num_layers, num_experts
-    )
+    # Extract upper triangle (excluding diagonal) for bar plots
+    upper_triangular_mask = th.triu(th.ones_like(jaccard).bool(), diagonal=1)
+    jaccard_upper = jaccard[upper_triangular_mask]
+    independent_upper = independent_jaccard[upper_triangular_mask]
 
-    # Initialize with a copy and shuffle batch indices independently for each layer
-    random_activated_experts_ble = activated_experts_ble.clone()
-    for layer_idx in range(num_layers):
-        perm = th.randperm(batch_size, device=activated_experts.device)
-        random_activated_experts_ble[:, layer_idx, :] = activated_experts_ble[
-            perm, layer_idx, :
-        ]
+    # Sort distances for bar plots
+    sorted_jaccard, _ = th.sort(jaccard_upper, descending=True)
+    sorted_independent, _ = th.sort(independent_upper, descending=True)
 
-    # Reshape back: (B, L, E) -> (L * E, B)
-    random_activated_experts = random_activated_experts_ble.reshape(batch_size, -1).T
+    # Separate cross-layer distances
+    # Create layer indices for each expert
+    layer_indices = th.arange(total_experts) // num_experts
+    layer_i = layer_indices.unsqueeze(1)  # Shape: (total_experts, 1)
+    layer_j = layer_indices.unsqueeze(0)  # Shape: (1, total_experts)
+    cross_layer_mask = (layer_i != layer_j) & upper_triangular_mask
 
-    # Compute random Jaccard distance matrix
-    random_jaccard = compute_jaccard_distance_matrix(random_activated_experts)
-
-    # Extract upper triangle (excluding diagonal) for analysis
-    upper_triangular_mask = th.triu(th.ones_like(jaccard).bool(), diagonal=1).view(-1)
-
-    # Flatten and sort
-    jaccard_raw, indices_raw = th.sort(jaccard.view(-1))
-    random_jaccard_raw, random_indices_raw = th.sort(random_jaccard.view(-1))
-
-    # Filter for upper triangle
-    sorted_upper_triangular_mask = upper_triangular_mask[indices_raw]
-    jaccard_distances = jaccard_raw[sorted_upper_triangular_mask]
-    random_jaccard_distances = random_jaccard_raw[sorted_upper_triangular_mask]
-
-    # Compute indices for layer/expert identification
-    indices = indices_raw[sorted_upper_triangular_mask]
-    first_layer_indices = (indices // total_experts) // num_experts
-    second_layer_indices = (indices % total_experts) // num_experts
-    first_expert_indices = (indices % (num_experts * total_experts)) // total_experts
-    second_expert_indices = indices % num_experts
-    rolled_indices = th.stack(
-        [
-            first_layer_indices,
-            second_layer_indices,
-            first_expert_indices,
-            second_expert_indices,
-        ],
-        dim=1,
-    )
-
-    # Separate within-layer and cross-layer distances
-    within_layer_mask = first_layer_indices == second_layer_indices
-    cross_layer_jaccard = jaccard_distances[~within_layer_mask]
-    cross_layer_indices = rolled_indices[~within_layer_mask]
-
-    # Random baseline for cross-layer
-    random_indices = random_indices_raw[sorted_upper_triangular_mask]
-    first_layer_random_indices = (random_indices // total_experts) // num_experts
-    second_layer_random_indices = (random_indices % total_experts) // num_experts
-    within_layer_random_mask = first_layer_random_indices == second_layer_random_indices
-    cross_layer_random_jaccard = random_jaccard_distances[~within_layer_random_mask]
+    cross_layer_jaccard = jaccard[cross_layer_mask]
+    sorted_cross_layer, _ = th.sort(cross_layer_jaccard, descending=True)
 
     # Print statistics
     print("\nJaccard distance statistics:")
     print("  All pairs:")
-    print(f"    Mean: {jaccard_distances.mean().item():.4f}")
-    print(f"    Median: {jaccard_distances.median().item():.4f}")
-    print(f"    Max: {jaccard_distances.max().item():.4f}")
+    print(f"    Mean: {jaccard_upper.mean().item():.4f}")
+    print(f"    Median: {jaccard_upper.median().item():.4f}")
+    print(f"    Max: {jaccard_upper.max().item():.4f}")
     print("  Cross-layer pairs:")
     print(f"    Mean: {cross_layer_jaccard.mean().item():.4f}")
     print(f"    Median: {cross_layer_jaccard.median().item():.4f}")
     print(f"    Max: {cross_layer_jaccard.max().item():.4f}")
-    print("  Random baseline (cross-layer):")
-    print(f"    Mean: {cross_layer_random_jaccard.mean().item():.4f}")
-    print(f"    Median: {cross_layer_random_jaccard.median().item():.4f}")
+    print("  Independent baseline:")
+    print(f"    Mean: {independent_upper.mean().item():.4f}")
+    print(f"    Median: {independent_upper.median().item():.4f}")
 
     # Set default figure size
-    plt.rcParams["figure.figsize"] = (16, 12)
+    plt.rcParams["figure.figsize"] = (12, 10)
 
     print("\nGenerating visualizations...")
 
-    # Plot 1: All Jaccard distances (sorted)
+    # Plot 1: Absolute Jaccard distance matrix
     plt.figure()
-    plt.bar(range(len(jaccard_distances)), jaccard_distances.cpu())
-    plt.xlabel("Expert pair rank")
-    plt.ylabel("Jaccard distance")
-    plt.title("All Pairwise Jaccard Distances")
+    plt.imshow(jaccard.cpu().numpy(), cmap="viridis", aspect="auto")
+    plt.colorbar(label="Jaccard Distance")
+    plt.title("Jaccard Distance Matrix (Absolute)")
+    plt.xlabel("Expert Index")
+    plt.ylabel("Expert Index")
     plt.tight_layout()
-    plt.savefig(os.path.join(FIGURE_DIR, "router_jaccard_distances.png"))
+    plt.savefig(os.path.join(FIGURE_DIR, "router_jaccard_matrix_absolute.png"))
     plt.close()
 
-    # Plot 2: Random baseline Jaccard distances
+    # Plot 2: Independent Jaccard distance matrix
     plt.figure()
-    plt.bar(range(len(random_jaccard_distances)), random_jaccard_distances.cpu())
-    plt.xlabel("Expert pair rank")
-    plt.ylabel("Jaccard distance")
-    plt.title("Random Baseline Jaccard Distances")
+    plt.imshow(independent_jaccard.cpu().numpy(), cmap="viridis", aspect="auto")
+    plt.colorbar(label="Independent Jaccard Distance")
+    plt.title("Independent Jaccard Distance Matrix")
+    plt.xlabel("Expert Index")
+    plt.ylabel("Expert Index")
     plt.tight_layout()
-    plt.savefig(os.path.join(FIGURE_DIR, "router_jaccard_distances_random.png"))
+    plt.savefig(os.path.join(FIGURE_DIR, "router_jaccard_matrix_independent.png"))
     plt.close()
 
-    # Plot 3: Cross-layer Jaccard distances
-    plt.figure()
-    plt.bar(range(len(cross_layer_jaccard)), cross_layer_jaccard.cpu())
-    plt.xlabel("Expert pair rank")
-    plt.ylabel("Jaccard distance")
-    plt.title("Cross-Layer Jaccard Distances")
-    plt.tight_layout()
-    plt.savefig(os.path.join(FIGURE_DIR, "router_jaccard_distances_cross_layer.png"))
-    plt.close()
+    # Plot 3: Relative Jaccard distance matrix (red-black-blue colormap)
+    # Red = 0, Black = independent value, Blue = 2x independent value
+    relative_jaccard = jaccard / (independent_jaccard + 1e-8)  # Avoid division by zero
 
-    # Plot 4: Random baseline cross-layer Jaccard distances
+    # Create custom colormap: red (0) -> black (1) -> blue (2)
+    from matplotlib.colors import LinearSegmentedColormap
+
+    colors = ["red", "black", "blue"]
+    n_bins = 256
+    cmap = LinearSegmentedColormap.from_list("custom", colors, N=n_bins)
+
     plt.figure()
-    plt.bar(range(len(cross_layer_random_jaccard)), cross_layer_random_jaccard.cpu())
-    plt.xlabel("Expert pair rank")
-    plt.ylabel("Jaccard distance")
-    plt.title("Random Baseline Cross-Layer Jaccard Distances")
-    plt.tight_layout()
-    plt.savefig(
-        os.path.join(FIGURE_DIR, "router_jaccard_distances_cross_layer_random.png")
+    plt.imshow(relative_jaccard.cpu().numpy(), cmap=cmap, aspect="auto", vmin=0, vmax=2)
+    plt.colorbar(label="Jaccard / Independent Jaccard")
+    plt.title(
+        "Relative Jaccard Distance Matrix\n(Red=0, Black=Independent, Blue=2x Independent)"
     )
-    plt.close()
-
-    # Plot 5: Distribution comparison
-    plt.figure()
-    plt.hist(
-        [
-            jaccard_distances.cpu().numpy(),
-            cross_layer_jaccard.cpu().numpy(),
-            cross_layer_random_jaccard.cpu().numpy(),
-        ],
-        bins=50,
-        alpha=0.6,
-        label=["All pairs", "Cross-layer", "Random baseline"],
-    )
-    plt.xlabel("Jaccard distance")
-    plt.ylabel("Count")
-    plt.title("Distribution of Jaccard Distances")
-    plt.legend()
+    plt.xlabel("Expert Index")
+    plt.ylabel("Expert Index")
     plt.tight_layout()
-    plt.savefig(os.path.join(FIGURE_DIR, "router_jaccard_distribution.png"))
+    plt.savefig(os.path.join(FIGURE_DIR, "router_jaccard_matrix_relative.png"))
     plt.close()
 
-    # Print top cross-layer coactivations
-    print("\nTop 10 cross-layer Jaccard distances:")
-    for i in range(min(10, len(cross_layer_jaccard))):
-        idx = -i - 1
-        first_layer_idx, second_layer_idx, first_expert_idx, second_expert_idx = (
-            cross_layer_indices[idx]
-        )
-        distance = cross_layer_jaccard[idx]
-        print(
-            f"  layer {first_layer_idx} expert {first_expert_idx} <-> "
-            f"layer {second_layer_idx} expert {second_expert_idx}: {distance:.4f}"
-        )
+    # Plot 4: Bar plot of sorted Jaccard distances (upper triangular)
+    plt.figure()
+    plt.bar(range(len(sorted_jaccard)), sorted_jaccard.cpu().numpy())
+    plt.xlabel("Expert Pair Rank")
+    plt.ylabel("Jaccard Distance")
+    plt.title("Sorted Jaccard Distances (Upper Triangular)")
+    plt.tight_layout()
+    plt.savefig(os.path.join(FIGURE_DIR, "router_jaccard_bar_sorted.png"))
+    plt.close()
+
+    # Plot 5: Bar plot of sorted cross-layer Jaccard distances
+    plt.figure()
+    plt.bar(range(len(sorted_cross_layer)), sorted_cross_layer.cpu().numpy())
+    plt.xlabel("Cross-Layer Pair Rank")
+    plt.ylabel("Jaccard Distance")
+    plt.title("Sorted Cross-Layer Jaccard Distances")
+    plt.tight_layout()
+    plt.savefig(os.path.join(FIGURE_DIR, "router_jaccard_bar_cross_layer.png"))
+    plt.close()
 
     print(f"\nFigures saved to {FIGURE_DIR}/")
-    print("  - router_jaccard_distances.png")
-    print("  - router_jaccard_distances_random.png")
-    print("  - router_jaccard_distances_cross_layer.png")
-    print("  - router_jaccard_distances_cross_layer_random.png")
-    print("  - router_jaccard_distribution.png")
+    print("  - router_jaccard_matrix_absolute.png")
+    print("  - router_jaccard_matrix_independent.png")
+    print("  - router_jaccard_matrix_relative.png")
+    print("  - router_jaccard_bar_sorted.png")
+    print("  - router_jaccard_bar_cross_layer.png")
 
 
 if __name__ == "__main__":

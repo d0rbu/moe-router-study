@@ -9,9 +9,6 @@ from tqdm import tqdm
 from exp import ACTIVATION_DIRNAME, OUTPUT_DIR
 from viz import FIGURE_DIR
 
-# Directory containing router activation data
-ROUTER_LOGITS_DIRNAME = ACTIVATION_DIRNAME
-
 
 @arguably.command()
 def router_correlations(experiment_name: str) -> None:
@@ -21,7 +18,7 @@ def router_correlations(experiment_name: str) -> None:
 
     for file_idx in tqdm(count(), desc="Loading router logits"):
         file_path = os.path.join(
-            OUTPUT_DIR, experiment_name, ROUTER_LOGITS_DIRNAME, f"{file_idx}.pt"
+            OUTPUT_DIR, experiment_name, ACTIVATION_DIRNAME, f"{file_idx}.pt"
         )
         if not os.path.exists(file_path):
             break

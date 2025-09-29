@@ -3,10 +3,10 @@
 from collections import Counter
 from itertools import count
 import os
+import warnings
 
 import arguably
 import matplotlib.pyplot as plt
-import numpy as np
 import torch as th
 from tqdm import tqdm
 
@@ -15,11 +15,11 @@ from exp.get_activations import ActivationKeys
 from viz import FIGURE_DIR
 
 
-def compute_entropy(frequencies: np.ndarray) -> float:
+def compute_entropy(frequencies: th.Tensor) -> float:
     """Compute Shannon entropy of a probability distribution.
 
     Args:
-        frequencies: Array of frequencies (will be normalized to probabilities).
+        frequencies: Tensor of frequencies (will be normalized to probabilities).
 
     Returns:
         Shannon entropy in bits.
@@ -27,29 +27,46 @@ def compute_entropy(frequencies: np.ndarray) -> float:
     # Normalize to probabilities
     probabilities = frequencies / frequencies.sum()
     # Filter out zero probabilities to avoid log(0)
-    probabilities = probabilities[probabilities > 0]
+    nonzero_probabilities = probabilities[probabilities > 0]
+
+    # Emit warning if we filtered out zero probabilities
+    if len(nonzero_probabilities) < len(probabilities):
+        warnings.warn(
+            f"Filtered out {len(probabilities) - len(nonzero_probabilities)} zero probabilities",
+            stacklevel=2,
+        )
+
     # Compute Shannon entropy
-    return -np.sum(probabilities * np.log2(probabilities))
+    return -th.sum(nonzero_probabilities * th.log2(nonzero_probabilities)).item()
 
 
-def compute_gini_coefficient(frequencies: np.ndarray) -> float:
+def compute_gini_coefficient(frequencies: th.Tensor) -> float:
     """Compute Gini coefficient of a distribution.
 
     Args:
-        frequencies: Array of frequencies.
+        frequencies: Tensor of frequencies.
 
     Returns:
         Gini coefficient between 0 (perfect equality) and 1 (perfect inequality).
     """
-    sorted_freqs = np.sort(frequencies)
+    sorted_freqs = th.sort(frequencies).values
     n = len(sorted_freqs)
-    cumsum = np.cumsum(sorted_freqs)
-    return (2 * np.sum((np.arange(1, n + 1)) * sorted_freqs) - (n + 1) * cumsum[-1]) / (
-        n * cumsum[-1]
-    )
+    cumsum = th.cumsum(sorted_freqs, dim=0)
+
+    # Break up the complex calculation for readability
+    indices = th.arange(1, n + 1, dtype=sorted_freqs.dtype, device=sorted_freqs.device)
+    weighted_sum = th.sum(indices * sorted_freqs)
+    numerator = 2 * weighted_sum - (n + 1) * cumsum[-1]
+    denominator = n * cumsum[-1]
+
+    # Add assertions for safety
+    assert denominator > 0, "Denominator should be positive for valid frequencies"
+    assert numerator >= 0, "Numerator should be non-negative for valid Gini calculation"
+
+    return (numerator / denominator).item()
 
 
-@arguably.command()
+@arguably.command
 def router_path_entropy(experiment_name: str) -> None:
     """Analyze routing path entropy and distribution for an experiment.
 
@@ -117,12 +134,14 @@ def router_path_entropy(experiment_name: str) -> None:
     print(f"Unique paths: {len(path_counter):,}")
     print(f"Path length (experts per path): {num_layers * top_k}")
 
-    # Convert to frequency array
-    path_frequencies = np.array(list(path_counter.values()))
+    # Convert to frequency tensor
+    path_frequencies = th.tensor(list(path_counter.values()), dtype=th.float32)
 
     # Compute metrics
     entropy = compute_entropy(path_frequencies)
-    max_entropy = np.log2(total_tokens)  # Maximum possible entropy
+    max_entropy = th.log2(
+        th.tensor(float(total_tokens))
+    ).item()  # Maximum possible entropy
     normalized_entropy = entropy / max_entropy if max_entropy > 0 else 0
     gini = compute_gini_coefficient(path_frequencies)
 
@@ -133,12 +152,12 @@ def router_path_entropy(experiment_name: str) -> None:
     print(f"  Gini coefficient: {gini:.4f}")
 
     # Compute top-k path coverage
-    sorted_frequencies = sorted(path_frequencies, reverse=True)
-    cumulative = np.cumsum(sorted_frequencies)
+    sorted_frequencies = th.sort(path_frequencies, descending=True).values
+    cumulative = th.cumsum(sorted_frequencies, dim=0)
     for k in [10, 100, 1000, 10000]:
         if k <= len(sorted_frequencies):
             coverage = cumulative[k - 1] / total_tokens
-            print(f"  Top {k} paths cover: {coverage * 100:.2f}% of tokens")
+            print(f"  Top {k} paths cover: {coverage.item() * 100:.2f}% of tokens")
 
     # Set default figure size
     plt.rcParams["figure.figsize"] = (16, 12)
@@ -146,8 +165,7 @@ def router_path_entropy(experiment_name: str) -> None:
     # Plot 1: Path frequency distribution (sorted)
     print("\nGenerating visualizations...")
     plt.figure()
-    sorted_frequencies_arr = np.array(sorted_frequencies)
-    plt.plot(sorted_frequencies_arr)
+    plt.plot(sorted_frequencies.cpu().numpy())
     plt.xlabel("Path rank")
     plt.ylabel("Frequency")
     plt.title(
@@ -163,7 +181,7 @@ def router_path_entropy(experiment_name: str) -> None:
     # Plot 2: Cumulative path coverage
     plt.figure()
     cumulative_normalized = cumulative / total_tokens
-    plt.plot(cumulative_normalized)
+    plt.plot(cumulative_normalized.cpu().numpy())
     plt.xlabel("Number of paths")
     plt.ylabel("Cumulative coverage")
     plt.title("Cumulative Path Coverage")
@@ -175,8 +193,9 @@ def router_path_entropy(experiment_name: str) -> None:
 
     # Plot 3: Histogram of path frequencies
     plt.figure()
-    bins = np.logspace(0, np.log10(max(path_frequencies)), 50)
-    plt.hist(path_frequencies, bins=bins, edgecolor="black", alpha=0.7)
+    path_freq_numpy = path_frequencies.cpu().numpy()
+    bins = th.logspace(0, th.log10(path_frequencies.max()), 50).cpu().numpy()
+    plt.hist(path_freq_numpy, bins=bins, edgecolor="black", alpha=0.7)
     plt.xlabel("Path frequency")
     plt.ylabel("Number of paths")
     plt.title("Distribution of Path Frequencies")
