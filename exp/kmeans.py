@@ -18,6 +18,10 @@ from core.async_utils import handle_exceptions
 from exp import OUTPUT_DIR
 from exp.activations import Activations, load_activations_and_init_dist
 from exp.get_activations import ActivationKeys
+from exp.kmeans_validation import (
+    check_monotonic_increasing_window,
+    validate_centroid_distribution,
+)
 from exp.training import exponential_to_linear_save_steps, get_experiment_name
 
 
@@ -282,6 +286,18 @@ async def sync(
 
     if rank == 0 and gpu_idx == 0:
         losses_over_time.append(gpu_data.synced_data.losses.detach().cpu().clone())
+
+        # Check for monotonically increasing loss windows
+        if len(losses_over_time) >= 10:  # Need at least window_size iterations
+            losses_tensor = th.stack(losses_over_time, dim=1)
+            has_problem, start_idx = check_monotonic_increasing_window(
+                losses_tensor, window_size=10
+            )
+            if has_problem:
+                logger.warning(
+                    f"Detected monotonically increasing loss window starting at "
+                    f"iteration {start_idx}. This may indicate a training problem."
+                )
 
 
 async def gpu_worker(
@@ -560,11 +576,31 @@ async def kmeans_manhattan(
         dim=0,
     )
 
-    # load a batch of activations to initialize the centroids
-    data_iterable = activations(batch_size=k_ranges[-1].item())
+    # load a batch of activations to initialize the centroids and reserve validation data
+    # Reserve extra data for validation (we'll use 10x the largest k value)
+    validation_size = max(k_values) * 10
+    total_init_size = k_ranges[-1].item() + validation_size
+
+    data_iterable = activations(batch_size=total_init_size)
     activation_batch = next(data_iterable)
     router_activations = activation_batch[ActivationKeys.ROUTER_LOGITS]
     top_k = activation_batch["topk"]
+
+    # Split into initialization and validation data
+    init_activations = router_activations[: k_ranges[-1].item()]
+    validation_router_logits = router_activations[k_ranges[-1].item() :]
+
+    # Convert validation data to flat paths format (same as training data)
+    paths_sparse_val = th.topk(validation_router_logits, k=top_k, dim=-1).indices
+    router_paths_val = th.zeros_like(validation_router_logits)
+    router_paths_val.scatter_(-1, paths_sparse_val, 1)
+    validation_data = router_paths_val.view(router_paths_val.shape[0], -1).to(
+        dtype=th.float32, device="cpu"
+    )
+
+    logger.info(
+        f"Reserved {validation_size} data points for validation (shape: {validation_data.shape})"
+    )
 
     for k_idx, (k_start, k_end) in enumerate(pairwise(k_ranges)):
         k = k_values[k_idx]
@@ -576,7 +612,7 @@ async def kmeans_manhattan(
             current_shape = gpu_data.dirty_data.centroid_sets[k_idx].shape
 
             gpu_data.dirty_data.centroid_sets[k_idx] = (
-                router_activations[k_start:k_end]
+                init_activations[k_start:k_end]
                 .view(current_shape)
                 .to(device=current_device, dtype=current_dtype)
             )
@@ -719,6 +755,33 @@ async def kmeans_manhattan(
 
         num_k_values = len(all_gpu_data[0].synced_data.centroid_sets)
         losses = th.empty((num_k_values, 0))
+
+    # Final validation check on centroids using validation data
+    if rank == 0:
+        logger.info("Running final centroid validation checks...")
+        for _k_idx, centroid_set in enumerate(
+            all_gpu_data[0].synced_data.centroid_sets
+        ):
+            is_valid, stats = validate_centroid_distribution(
+                validation_data,
+                centroid_set.cpu(),
+                min_assignment_ratio=0.001,  # More lenient for large k
+                max_assignment_ratio=0.5,
+            )
+            k_value = centroid_set.shape[0]
+            if is_valid:
+                logger.info(
+                    f"✓ K={k_value}: Centroid distribution is valid. "
+                    f"Empty: {stats['num_empty_centroids']}, "
+                    f"Mean ratio: {stats['mean_assignment_ratio']:.4f}"
+                )
+            else:
+                logger.warning(
+                    f"✗ K={k_value}: Centroid distribution has issues. "
+                    f"Empty: {stats['num_empty_centroids']}, "
+                    f"Over-concentrated: {stats['num_over_concentrated_centroids']}, "
+                    f"Under-utilized: {stats['num_under_utilized_centroids']}"
+                )
 
     logger.trace("Returning results")
 
