@@ -107,6 +107,7 @@ exclude = [
     "venv",
     "output",
     "data",
+    "delphi",
 ]
 
 [tool.ruff.lint]
