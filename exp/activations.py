@@ -664,7 +664,7 @@ async def load_activations_and_init_dist(
     seed: int = 0,
     num_workers: int = 8,
     debug: bool = False,
-) -> tuple[Activations, dict[str, int]]:
+) -> tuple[Activations, dict[str, int], dist.ProcessGroup | None]:
     """
     Load activations and initialize the distributed process group.
 
@@ -693,8 +693,12 @@ async def load_activations_and_init_dist(
         nccl_port = gloo_port + 1
         os.environ["MASTER_PORT"] = str(nccl_port)
 
-        dist.new_group(ranks=list(range(world_size)), backend="nccl")
+        gpu_process_group = dist.new_group(
+            ranks=list(range(world_size)), backend="nccl"
+        )
         logger.info(f"Rank {rank} initialized nccl group")
+    else:
+        gpu_process_group = None
 
     init_distributed_logging()
 
@@ -728,4 +732,4 @@ async def load_activations_and_init_dist(
     # clean up the background worker and queue
     data_iterable.send("STOP FIGHTING!!!!!!")
 
-    return activations, activation_dims
+    return activations, activation_dims, gpu_process_group

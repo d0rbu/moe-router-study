@@ -197,16 +197,19 @@ async def sync(
     all_gpu_data: list[GPUData],
     losses_over_time: list[th.Tensor],
     barrier: Barrier,
+    group: dist.ProcessGroup | None = None,
 ) -> None:
     rank = dist.get_rank()
     world_size = dist.get_world_size()
     gpu_data = all_gpu_data[gpu_idx]
 
     # gather across nodes
-    all_losses = th.empty_like(gpu_data.dirty_data.losses).repeat(world_size)
+    all_losses = (
+        th.empty_like(gpu_data.dirty_data.losses).unsqueeze(0).repeat(world_size, 1)
+    )
 
     # N, num_K
-    dist.all_gather_into_tensor(all_losses, gpu_data.dirty_data.losses)
+    dist.all_gather_into_tensor(all_losses, gpu_data.dirty_data.losses, group=group)
 
     for losses_idx, (
         centroids,
@@ -223,8 +226,8 @@ async def sync(
         # (N, K)
         all_weights = th.empty_like(weights).unsqueeze(0).repeat(world_size, 1)
 
-        dist.all_gather_into_tensor(all_centroids, centroids)
-        dist.all_gather_into_tensor(all_weights, weights)
+        dist.all_gather_into_tensor(all_centroids, centroids, group=group)
+        dist.all_gather_into_tensor(all_weights, weights, group=group)
 
         # (K)
         weights_total = all_weights.sum(dim=0)
@@ -255,9 +258,21 @@ async def sync(
 
     # now do an all-gather along gpus (among entries in all_gpu_data)
     device = th.device(f"cuda:{gpu_idx}")
-    gpu_data.synced_data += sum(
-        current_gpu_data.dirty_data.to(device) for current_gpu_data in all_gpu_data
+    empty_data = RunningKMeansData(
+        centroid_sets=[
+            th.empty_like(centroids) for centroids in gpu_data.synced_data.centroid_sets
+        ],
+        weight_sets=[
+            th.zeros_like(weights) for weights in gpu_data.synced_data.weight_sets
+        ],
+        losses=th.empty_like(gpu_data.synced_data.losses),
     )
+    gpu_data.synced_data += sum(
+        (current_gpu_data.dirty_data.to(device) for current_gpu_data in all_gpu_data),
+        start=empty_data,
+    )
+
+    th.cuda.empty_cache()
 
     await barrier.wait()
 
@@ -275,6 +290,7 @@ async def gpu_worker(
     top_k: int,
     losses_over_time: list[th.Tensor],
     barrier: Barrier,
+    group: dist.ProcessGroup | None = None,
     save_dir: str | None = None,
 ) -> None:
     logger.info(f"Starting GPU worker {gpu_idx}")
@@ -358,7 +374,7 @@ async def gpu_worker(
 
         logger.trace(f"GPU {gpu_idx} syncing data")
 
-        await sync(gpu_idx, all_gpu_data, losses_over_time, barrier)
+        await sync(gpu_idx, all_gpu_data, losses_over_time, barrier, group)
 
         # save checkpoint if save_idx is not None and we're on rank 0 gpu 0
         if (
@@ -401,6 +417,7 @@ async def kmeans_manhattan(
     seed: int = 0,
     save_every: int | None = None,
     save_dir: str | None = None,
+    group: dist.ProcessGroup | None = None,
 ) -> tuple[list[th.Tensor], int, th.Tensor]:
     """
     Perform k-means clustering with Manhattan distance.
@@ -607,6 +624,7 @@ async def kmeans_manhattan(
                 top_k,
                 losses_over_time,
                 synchronization_barrier,
+                group,
                 save_dir,
             ),
             name=str(gpu_idx),
@@ -737,6 +755,7 @@ async def cluster_paths_async(
     tokens_per_file: int,
     gpu_minibatch_size: int,
     save_every: int | None = None,
+    group: dist.ProcessGroup | None = None,
 ) -> None:
     kmeans_experiment_name = get_experiment_name(
         model_name=model_name,
@@ -764,6 +783,7 @@ async def cluster_paths_async(
         seed=seed,
         save_every=save_every,
         save_dir=save_dir,
+        group=group,
     )
 
     if dist.get_rank() == 0:
@@ -807,7 +827,7 @@ def cluster_paths(
     max_iters: int = 128,
     save_every: int | None = None,
     seed: int = 0,
-    gpu_minibatch_size: int = 65536,
+    gpu_minibatch_size: int = 262144,
     tokens_per_file: int = 5_000,
     reshuffled_tokens_per_file: int = 10_000,
     context_length: int = 2048,
@@ -824,7 +844,7 @@ def cluster_paths(
     log_level_numeric = logger._core.levels[log_level].no
     debug_level_numeric = logger._core.levels["DEBUG"].no
 
-    activations, activation_dims = asyncio.run(
+    activations, activation_dims, gpu_process_group = asyncio.run(
         load_activations_and_init_dist(
             model_name=model_name,
             dataset_name=dataset_name,
@@ -873,6 +893,7 @@ def cluster_paths(
             tokens_per_file=reshuffled_tokens_per_file,
             gpu_minibatch_size=gpu_minibatch_size,
             save_every=save_every,
+            group=gpu_process_group,
         )
     )
 
@@ -887,7 +908,7 @@ def main(
     max_iters: int = 128,
     save_every: int | None = None,
     seed: int = 0,
-    gpu_minibatch_size: int = 65536,
+    gpu_minibatch_size: int = 262144,
     tokens_per_file: int = 5_000,
     reshuffled_tokens_per_file: int = 10_000,
     context_length: int = 2048,

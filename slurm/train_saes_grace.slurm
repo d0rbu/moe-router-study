@@ -2,7 +2,7 @@
 
 ##NECESSARY JOB SPECIFICATIONS
 #SBATCH --job-name=train_saes           # Set the job name to "train_saes"
-#SBATCH --time=24:00:00                 # Set the wall clock limit to 6 hours
+#SBATCH --time=24:00:00                 # Set the wall clock limit to 24 hours
 #SBATCH --ntasks=8                      # Total number of tasks (processes) across all nodes
 #SBATCH --ntasks-per-node=1             # Number of tasks per node
 #SBATCH --cpus-per-task=16              # Number of CPUs per task
