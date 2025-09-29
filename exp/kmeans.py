@@ -18,6 +18,7 @@ from core.async_utils import handle_exceptions
 from exp import OUTPUT_DIR
 from exp.activations import Activations, load_activations_and_init_dist
 from exp.get_activations import ActivationKeys
+from exp.kmeans_validation import KMeansValidator, ValidationConfig
 from exp.training import exponential_to_linear_save_steps, get_experiment_name
 
 
@@ -198,6 +199,7 @@ async def sync(
     losses_over_time: list[th.Tensor],
     barrier: Barrier,
     group: dist.ProcessGroup | None = None,
+    validator: KMeansValidator | None = None,
 ) -> None:
     rank = dist.get_rank()
     world_size = dist.get_world_size()
@@ -282,6 +284,22 @@ async def sync(
 
     if rank == 0 and gpu_idx == 0:
         losses_over_time.append(gpu_data.synced_data.losses.detach().cpu().clone())
+        
+        # Run validation if enabled
+        if validator is not None:
+            try:
+                validation_results = await validator.validate_iteration(
+                    losses=gpu_data.synced_data.losses,
+                    centroids_list=gpu_data.synced_data.centroid_sets
+                )
+                
+                # Log validation results if there are warnings
+                if validation_results.get("warnings"):
+                    logger.warning(f"Validation warnings: {validation_results['warnings']}")
+                    
+            except Exception as e:
+                logger.error(f"Validation failed: {e}")
+                # Don't let validation errors stop the training
 
 
 async def gpu_worker(
@@ -292,6 +310,7 @@ async def gpu_worker(
     barrier: Barrier,
     group: dist.ProcessGroup | None = None,
     save_dir: str | None = None,
+    validator: KMeansValidator | None = None,
 ) -> None:
     logger.info(f"Starting GPU worker {gpu_idx}")
     gpu_data = all_gpu_data[gpu_idx]
@@ -374,7 +393,7 @@ async def gpu_worker(
 
         logger.trace(f"GPU {gpu_idx} syncing data")
 
-        await sync(gpu_idx, all_gpu_data, losses_over_time, barrier, group)
+        await sync(gpu_idx, all_gpu_data, losses_over_time, barrier, group, validator)
 
         # save checkpoint if save_idx is not None and we're on rank 0 gpu 0
         if (
@@ -418,6 +437,7 @@ async def kmeans_manhattan(
     save_every: int | None = None,
     save_dir: str | None = None,
     group: dist.ProcessGroup | None = None,
+    validation_config: ValidationConfig | None = None,
 ) -> tuple[list[th.Tensor], int, th.Tensor]:
     """
     Perform k-means clustering with Manhattan distance.
@@ -592,6 +612,21 @@ async def kmeans_manhattan(
     # track losses for each iteration
     losses_over_time = []
 
+    # initialize validation if enabled
+    validator = None
+    if validation_config is not None and validation_config.enabled:
+        validator = KMeansValidator(validation_config)
+        
+        # Set up validation data using a sample from the activations
+        if rank == 0:  # Only set up validation data on the main process
+            logger.info("Setting up validation data...")
+            validation_data_iterable = activations(batch_size=min(10000, len(activations)))
+            validation_batch = next(validation_data_iterable)
+            validation_activations = validation_batch[ActivationKeys.ROUTER_LOGITS]
+            validator.set_validation_data(validation_activations)
+            validation_data_iterable.send("STOP!")
+            logger.info(f"Validation initialized with config: {validator.get_summary()}")
+
     # calculate save steps for checkpointing
     save_steps = set()
     if save_every is not None:
@@ -626,6 +661,7 @@ async def kmeans_manhattan(
                 synchronization_barrier,
                 group,
                 save_dir,
+                validator,
             ),
             name=str(gpu_idx),
         )
@@ -756,6 +792,7 @@ async def cluster_paths_async(
     gpu_minibatch_size: int,
     save_every: int | None = None,
     group: dist.ProcessGroup | None = None,
+    validation_config: ValidationConfig | None = None,
 ) -> None:
     kmeans_experiment_name = get_experiment_name(
         model_name=model_name,
@@ -784,6 +821,7 @@ async def cluster_paths_async(
         save_every=save_every,
         save_dir=save_dir,
         group=group,
+        validation_config=validation_config,
     )
 
     if dist.get_rank() == 0:
@@ -833,6 +871,15 @@ def cluster_paths(
     context_length: int = 2048,
     log_level: str = "INFO",
     num_workers: int = 64,
+    # Validation parameters
+    enable_validation: bool = True,
+    validation_frequency: int = 1,
+    monotonicity_window_size: int = 10,
+    monotonicity_threshold: float = 0.01,
+    validation_set_ratio: float = 0.1,
+    min_points_per_centroid: int = 5,
+    max_empty_centroids_ratio: float = 0.1,
+    distribution_balance_threshold: float = 0.05,
 ) -> None:
     print(f"Running with log level: {log_level}")
 
@@ -881,6 +928,18 @@ def cluster_paths(
     # At this point, k is guaranteed to be a list[int]
     assert isinstance(k, list), "k must be a list after processing"
 
+    # Create validation configuration
+    validation_config = ValidationConfig(
+        enabled=enable_validation,
+        validation_frequency=validation_frequency,
+        monotonicity_window_size=monotonicity_window_size,
+        monotonicity_threshold=monotonicity_threshold,
+        validation_set_ratio=validation_set_ratio,
+        min_points_per_centroid=min_points_per_centroid,
+        max_empty_centroids_ratio=max_empty_centroids_ratio,
+        distribution_balance_threshold=distribution_balance_threshold,
+    )
+
     asyncio.run(
         cluster_paths_async(
             model_name=model_name,
@@ -894,6 +953,7 @@ def cluster_paths(
             gpu_minibatch_size=gpu_minibatch_size,
             save_every=save_every,
             group=gpu_process_group,
+            validation_config=validation_config,
         )
     )
 
@@ -914,6 +974,15 @@ def main(
     context_length: int = 2048,
     log_level: str = "INFO",
     num_workers: int = 64,
+    # Validation parameters
+    enable_validation: bool = True,
+    validation_frequency: int = 1,
+    monotonicity_window_size: int = 10,
+    monotonicity_threshold: float = 0.01,
+    validation_set_ratio: float = 0.1,
+    min_points_per_centroid: int = 5,
+    max_empty_centroids_ratio: float = 0.1,
+    distribution_balance_threshold: float = 0.05,
 ) -> None:
     if not k:
         k = None
@@ -933,6 +1002,14 @@ def main(
         context_length=context_length,
         log_level=log_level,
         num_workers=num_workers,
+        enable_validation=enable_validation,
+        validation_frequency=validation_frequency,
+        monotonicity_window_size=monotonicity_window_size,
+        monotonicity_threshold=monotonicity_threshold,
+        validation_set_ratio=validation_set_ratio,
+        min_points_per_centroid=min_points_per_centroid,
+        max_empty_centroids_ratio=max_empty_centroids_ratio,
+        distribution_balance_threshold=distribution_balance_threshold,
     )
 
 
