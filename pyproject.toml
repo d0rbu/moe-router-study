@@ -50,6 +50,7 @@ dependencies = [
     "sae-bench",
     "sae-lens>=6.12.1",
     "transformer-lens",
+    "eai-delphi",
 ]
 
 [project.optional-dependencies]
@@ -76,6 +77,7 @@ allow-direct-references = true
 [dependency-groups]
 dev = [
     "pytest>=8.4.1",
+    "pytest-asyncio>=1.2.0",
     "pytest-cov>=6.2.1",
     "pytest-asyncio>=0.21.0",
     "ty>=0.0.1a16",
@@ -157,6 +159,7 @@ addopts = [
     "--cov=viz",
     "--cov-report=term-missing"
 ]
+asyncio_default_fixture_loop_scope = "function"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests",
@@ -192,6 +195,7 @@ nnterp = { git = "https://github.com/d0rbu/nnterp.git" }
 dictionary-learning = { git = "https://github.com/d0rbu/dictionary_learning" }
 sae-bench = { git = "https://github.com/d0rbu/SAEBench" }
 transformer-lens = { git = "https://github.com/d0rbu/TransformerLens", branch = "OLMo" }
+eai-delphi = { git = "https://github.com/d0rbu/delphi" }
 
 [tool.uv.extra-build-dependencies]
 dictionary-learning = ["poetry"]
