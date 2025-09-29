@@ -196,6 +196,7 @@ eai-delphi = { workspace = true }
 dictionary-learning = ["poetry"]
 nnterp = ["setuptools"]
 moe-router-study = ["hatchling"]
+eai-delphi = ["setuptools"]
 
 [tool.uv.workspace]
 members = [
