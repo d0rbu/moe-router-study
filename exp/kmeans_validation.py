@@ -6,13 +6,66 @@ These functions are used during k-means training to validate:
 2. Centroid quality - ensuring final centroids produce reasonable distributions
 """
 
+from dataclasses import dataclass
+
 from loguru import logger
 import torch as th
+
+# Constants for validation
+WARNING_WINDOW_SIZE = 10
+VALIDATION_SIZE_MULTIPLIER = 10
+
+
+@dataclass
+class CentroidValidationStats:
+    """Statistics from centroid distribution validation."""
+
+    num_empty_centroids: int
+    num_over_concentrated_centroids: int
+    num_under_utilized_centroids: int
+    min_assignment_ratio: float
+    max_assignment_ratio: float
+    mean_assignment_ratio: float
+    std_assignment_ratio: float
+    entropy: float
+
+    def __str__(self) -> str:
+        """Format stats for logging."""
+        return (
+            f"Empty: {self.num_empty_centroids}, "
+            f"Over-concentrated: {self.num_over_concentrated_centroids}, "
+            f"Under-utilized: {self.num_under_utilized_centroids}, "
+            f"Min ratio: {self.min_assignment_ratio:.4f}, "
+            f"Max ratio: {self.max_assignment_ratio:.4f}, "
+            f"Mean ratio: {self.mean_assignment_ratio:.4f}, "
+            f"Std ratio: {self.std_assignment_ratio:.4f}, "
+            f"Entropy: {self.entropy:.4f}"
+        )
+
+
+def convert_router_logits_to_paths(router_logits: th.Tensor, top_k: int) -> th.Tensor:
+    """
+    Convert router logits to flat paths format.
+
+    Args:
+        router_logits: Tensor of shape (B, L, E) containing router logits
+        top_k: Number of top experts to select
+
+    Returns:
+        Tensor of shape (B, L * E) containing flattened paths
+    """
+    # Convert from logits to paths
+    paths_sparse = th.topk(router_logits, k=top_k, dim=-1).indices
+    router_paths = th.zeros_like(router_logits)
+    router_paths.scatter_(-1, paths_sparse, 1)
+
+    # Flatten to (B, L * E)
+    return router_paths.view(router_paths.shape[0], -1)
 
 
 def check_monotonic_increasing_window(
     losses: th.Tensor,
-    window_size: int = 10,
+    window_size: int = WARNING_WINDOW_SIZE,
 ) -> tuple[bool, int | None]:
     """
     Check if there is a window of consecutive iterations where loss is monotonically increasing.
@@ -59,22 +112,22 @@ def check_monotonic_increasing_window(
 def validate_centroid_distribution(
     validation_data: th.Tensor,
     centroids: th.Tensor,
-    min_assignment_ratio: float = 0.01,
-    max_assignment_ratio: float = 0.5,
-) -> tuple[bool, dict[str, float]]:
+    min_assignment_ratio: float | None = None,
+    max_assignment_ratio: float | None = None,
+) -> tuple[bool, CentroidValidationStats]:
     """
     Validate that centroids produce a reasonable distribution of assignments on validation data.
 
     Args:
         validation_data: Tensor of shape (N, D) containing validation datapoints
         centroids: Tensor of shape (K, D) containing cluster centroids
-        min_assignment_ratio: Minimum acceptable ratio of points assigned to any centroid
-        max_assignment_ratio: Maximum acceptable ratio of points assigned to any centroid
+        min_assignment_ratio: Minimum acceptable ratio (defaults to 0.05/k)
+        max_assignment_ratio: Maximum acceptable ratio (defaults to 20/k)
 
     Returns:
         Tuple of (is_valid, stats) where:
             - is_valid: True if distribution is reasonable
-            - stats: Dictionary containing distribution statistics
+            - stats: CentroidValidationStats containing distribution statistics
     """
     # Compute distances and assignments
     distances = th.cdist(validation_data.to(th.float32), centroids.to(th.float32), p=1)
@@ -84,6 +137,12 @@ def validate_centroid_distribution(
     k = centroids.shape[0]
     assignment_counts = th.bincount(assignments, minlength=k)
     assignment_ratios = assignment_counts.float() / len(validation_data)
+
+    # Set dynamic thresholds if not provided
+    if min_assignment_ratio is None:
+        min_assignment_ratio = 0.05 / k
+    if max_assignment_ratio is None:
+        max_assignment_ratio = 20.0 / k
 
     # Check for empty centroids
     num_empty = (assignment_counts == 0).sum().item()
@@ -98,18 +157,25 @@ def validate_centroid_distribution(
         .item()
     )
 
-    # Compute statistics
-    stats = {
-        "num_empty_centroids": num_empty,
-        "num_over_concentrated_centroids": num_over_concentrated,
-        "num_under_utilized_centroids": num_under_utilized,
-        "min_assignment_ratio": assignment_ratios[assignment_ratios > 0].min().item()
+    # Calculate entropy of assignment distribution
+    # Add small epsilon to avoid log(0)
+    epsilon = 1e-10
+    probs = assignment_ratios + epsilon
+    entropy = -(probs * th.log(probs)).sum().item()
+
+    # Create statistics dataclass
+    stats = CentroidValidationStats(
+        num_empty_centroids=num_empty,
+        num_over_concentrated_centroids=num_over_concentrated,
+        num_under_utilized_centroids=num_under_utilized,
+        min_assignment_ratio=assignment_ratios[assignment_ratios > 0].min().item()
         if (assignment_ratios > 0).any()
         else 0.0,
-        "max_assignment_ratio": assignment_ratios.max().item(),
-        "mean_assignment_ratio": assignment_ratios.mean().item(),
-        "std_assignment_ratio": assignment_ratios.std().item(),
-    }
+        max_assignment_ratio=assignment_ratios.max().item(),
+        mean_assignment_ratio=assignment_ratios.mean().item(),
+        std_assignment_ratio=assignment_ratios.std().item(),
+        entropy=entropy,
+    )
 
     is_valid = (
         num_empty == 0
@@ -119,78 +185,9 @@ def validate_centroid_distribution(
 
     if not is_valid:
         logger.warning(
-            f"K-means validation: Centroid distribution is problematic. Stats: {stats}"
+            f"K-means validation: Centroid distribution is problematic. {stats}"
         )
     else:
-        logger.info(
-            f"K-means validation: Centroid distribution is reasonable. Stats: {stats}"
-        )
+        logger.info(f"K-means validation: Centroid distribution is reasonable. {stats}")
 
     return is_valid, stats
-
-
-def validate_kmeans_run(
-    losses: th.Tensor,
-    centroids: list[th.Tensor],
-    validation_data: th.Tensor,
-    window_size: int = 10,
-    min_assignment_ratio: float = 0.01,
-    max_assignment_ratio: float = 0.5,
-) -> tuple[bool, dict]:
-    """
-    Run all validation checks on a k-means run.
-
-    Args:
-        losses: Tensor of shape (num_k_values, num_iterations) containing loss history
-        centroids: List of tensors, each of shape (K, D) for different k values
-        validation_data: Tensor of shape (N, D) containing validation datapoints
-        window_size: Size of window to check for monotonic increase
-        min_assignment_ratio: Minimum acceptable assignment ratio per centroid
-        max_assignment_ratio: Maximum acceptable assignment ratio per centroid
-
-    Returns:
-        Tuple of (all_valid, validation_results) where:
-            - all_valid: True if all validations pass
-            - validation_results: Dictionary with detailed validation results
-    """
-    validation_results = {
-        "loss_check": {},
-        "distribution_checks": [],
-    }
-
-    # Check for monotonically increasing loss windows
-    has_loss_problem, problem_start_idx = check_monotonic_increasing_window(
-        losses, window_size
-    )
-    validation_results["loss_check"] = {
-        "has_problem": has_loss_problem,
-        "problem_start_idx": problem_start_idx,
-    }
-
-    # Check centroid distributions for each k value
-    all_distributions_valid = True
-    for k_idx, centroid_set in enumerate(centroids):
-        is_valid, stats = validate_centroid_distribution(
-            validation_data,
-            centroid_set,
-            min_assignment_ratio,
-            max_assignment_ratio,
-        )
-        validation_results["distribution_checks"].append(
-            {
-                "k_idx": k_idx,
-                "k_value": centroid_set.shape[0],
-                "is_valid": is_valid,
-                "stats": stats,
-            }
-        )
-        all_distributions_valid = all_distributions_valid and is_valid
-
-    all_valid = (not has_loss_problem) and all_distributions_valid
-
-    if all_valid:
-        logger.info("K-means validation: All checks passed ✓")
-    else:
-        logger.warning("K-means validation: Some checks failed ✗")
-
-    return all_valid, validation_results
