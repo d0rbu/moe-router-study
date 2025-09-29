@@ -30,9 +30,9 @@ jobs:
       run: |
         uv pip install --only-binary=zstandard zstandard==0.22.0
     
-    - name: Install poetry for build dependencies
+    - name: Install build dependencies
       run: |
-        uv pip install poetry
+        uv pip install poetry setuptools hatchling editables
     
     - name: Install dependencies
       run: |
@@ -78,9 +78,9 @@ jobs:
       run: |
         uv pip install --only-binary=zstandard zstandard==0.22.0
     
-    - name: Install poetry for build dependencies
+    - name: Install build dependencies
       run: |
-        uv pip install poetry
+        uv pip install poetry setuptools hatchling editables
     
     - name: Install dependencies
       run: |
