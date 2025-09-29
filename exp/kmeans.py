@@ -14,6 +14,7 @@ import torch.distributed as dist
 from tqdm import tqdm
 import yaml
 
+from core.async_utils import handle_exceptions
 from exp import OUTPUT_DIR
 from exp.activations import Activations, load_activations_and_init_dist
 from exp.get_activations import ActivationKeys
@@ -69,13 +70,36 @@ class RunningKMeansData:
                 strict=True,
             )
         ):
+            logger.trace(
+                f"Base weights {type(base_weights)} {base_weights.shape} {base_weights.dtype} {base_weights.device}"
+            )
+            logger.trace(
+                f"Other weights {type(other_weights)} {other_weights.shape} {other_weights.dtype} {other_weights.device}"
+            )
+            logger.trace(
+                f"New weights {type(new_weights)} {new_weights.shape} {new_weights.dtype} {new_weights.device}"
+            )
+
             new_weights.copy_(base_weights + other_weights)
 
             # Avoid division by zero when weights are zero
             mask = new_weights > 0
-            base_weight_proportion = th.zeros_like(base_weights)
+            base_weight_proportion = th.zeros_like(base_weights, dtype=th.float32)
             base_weight_proportion[mask] = base_weights[mask] / new_weights[mask]
             other_weight_proportion = 1 - base_weight_proportion
+
+            logger.trace(
+                f"Base centroids {type(base_centroids)} {base_centroids.shape} {base_centroids.dtype} {base_centroids.device}"
+            )
+            logger.trace(
+                f"Other centroids {type(other_centroids)} {other_centroids.shape} {other_centroids.dtype} {other_centroids.device}"
+            )
+            logger.trace(
+                f"Base weight proportion {type(base_weight_proportion)} {base_weight_proportion.shape} {base_weight_proportion.dtype} {base_weight_proportion.device}"
+            )
+            logger.trace(
+                f"Other weight proportion {type(other_weight_proportion)} {other_weight_proportion.shape} {other_weight_proportion.dtype} {other_weight_proportion.device}"
+            )
 
             new_centroids.copy_(
                 base_weight_proportion.unsqueeze(-1) * base_centroids
@@ -113,6 +137,9 @@ async def compute_centroid_from_assignment(
     centroid_mask = assignments == centroid_idx
     num_assigned = centroid_mask.sum()
 
+    if num_assigned == 0:
+        return th.zeros_like(data[0]), 0
+
     return data[centroid_mask].mean(dim=0), num_assigned
 
 
@@ -120,22 +147,47 @@ async def kmeans_step(
     data: th.Tensor,  # (B, L * E)
     centroids: th.Tensor,  # (K, L * E)
 ) -> tuple[th.Tensor, th.Tensor, th.Tensor]:
+    logger.trace(
+        f"Running kmeans step with {data.shape[0]} data points and {centroids.shape[0]} centroids"
+    )
+    logger.trace(f"Data: {data.dtype} {data.device} {data.shape}")
+    logger.trace(f"Centroids: {centroids.dtype} {centroids.device} {centroids.shape}")
+
     # (B, K)
-    distances = th.cdist(data, centroids, p=1)
+    distances = th.cdist(data.to(th.float32), centroids.to(th.float32), p=1)
+    logger.trace(f"Computed distances with shape {distances.shape}")
+
     # (B)
     assignments = th.argmin(distances, dim=1)
+    logger.trace(f"Computed assignments with shape {assignments.shape}")
 
     # for calculating loss, we get the distances from each data point to the closest centroid
     centroid_distances = th.gather(distances, 1, assignments.unsqueeze(1))
+    logger.trace(f"Computed centroid distances with shape {centroid_distances.shape}")
 
     centroid_awaitables = [
-        asyncio.to_thread(compute_centroid_from_assignment, data, assignments, i)
+        compute_centroid_from_assignment(data, assignments, i)
         for i in range(centroids.shape[0])
     ]
     centroids_and_weights = await asyncio.gather(*centroid_awaitables)
-    new_loss = centroid_distances.mean()
+    logger.trace(
+        f"Computed centroids and weights with shape {len(centroids_and_weights)}"
+    )
 
-    new_centroids, new_weights = zip(*centroids_and_weights, strict=True)
+    new_loss = centroid_distances.mean()
+    logger.trace(f"Computed new loss with shape {new_loss.shape}")
+
+    new_centroids_raw, new_weights_raw = zip(*centroids_and_weights, strict=True)
+    new_centroids = th.stack(new_centroids_raw, dim=0)
+    new_weights = th.tensor(new_weights_raw, dtype=th.int64, device=data.device)
+
+    logger.trace(
+        f"New centroids: {new_centroids.dtype} {new_centroids.device} {new_centroids.shape}"
+    )
+    logger.trace(
+        f"New weights: {new_weights.dtype} {new_weights.device} {new_weights.shape}"
+    )
+    logger.trace(f"New loss: {new_loss.dtype} {new_loss.device} {new_loss.shape}")
 
     return new_centroids, new_weights, new_loss
 
@@ -151,9 +203,7 @@ async def sync(
     gpu_data = all_gpu_data[gpu_idx]
 
     # gather across nodes
-    all_losses = (
-        th.empty_like(gpu_data.dirty_data.losses).unsqueeze(0).repeat(world_size, 1)
-    )
+    all_losses = th.empty_like(gpu_data.dirty_data.losses).repeat(world_size)
 
     # N, num_K
     dist.all_gather_into_tensor(all_losses, gpu_data.dirty_data.losses)
@@ -232,14 +282,21 @@ async def gpu_worker(
 
     while True:
         queue_item = await gpu_data.queue.get()
+        logger.trace(f"GPU {gpu_idx} picked up item from queue")
+
         if queue_item is None:
+            logger.trace(f"GPU {gpu_idx} received stop signal")
             break
 
         router_logits, should_sync, save_idx = queue_item
 
+        logger.trace(f"GPU {gpu_idx} received queue item")
+
         # assert that if save_idx is not None, then should_sync is also true
         if save_idx is not None:
             assert should_sync, "save_idx can only be set when should_sync is true"
+
+        logger.trace(f"GPU {gpu_idx} converting router logits to paths")
 
         # (B, L, E)
         device = th.device(f"cuda:{gpu_idx}")
@@ -251,11 +308,20 @@ async def gpu_worker(
         router_paths.scatter_(-1, paths_sparse, 1)
         del router_logits, paths_sparse
 
+        logger.trace(f"GPU {gpu_idx} flattened router paths")
+
         # (B, L, E) -> (B, L * E)
         flat_data = router_paths.view(router_paths.shape[0], -1)
 
         del router_paths
+
+        logger.trace(f"GPU {gpu_idx} emptied cache")
+
         th.cuda.empty_cache()
+
+        logger.trace(
+            f"GPU {gpu_idx} running kmeans step with {len(gpu_data.synced_data.centroid_sets)} centroids"
+        )
 
         updates = await asyncio.gather(
             *[
@@ -267,14 +333,30 @@ async def gpu_worker(
             ]
         )
         new_centroid_sets, new_weight_sets, new_losses = zip(*updates, strict=True)
+
+        logger.trace(f"GPU {gpu_idx} updated dirty data")
+        logger.trace(
+            f"New centroid sets: {len(new_centroid_sets)} {type(new_centroid_sets)} {new_centroid_sets[0].shape} {new_centroid_sets[0].dtype} {new_centroid_sets[0].device}"
+        )
+        logger.trace(
+            f"New weight sets: {len(new_weight_sets)} {type(new_weight_sets)} {new_weight_sets[0].shape} {new_weight_sets[0].dtype} {new_weight_sets[0].device}"
+        )
+        logger.trace(
+            f"New losses: {len(new_losses)} {type(new_losses)} {new_losses[0].shape} {new_losses[0].dtype} {new_losses[0].device}"
+        )
+
         gpu_data.dirty_data += RunningKMeansData(
             centroid_sets=list(new_centroid_sets),
             weight_sets=list(new_weight_sets),
             losses=th.stack(new_losses),
         )
 
+        logger.trace(f"GPU {gpu_idx} updated synced data")
+
         if not should_sync:
             continue
+
+        logger.trace(f"GPU {gpu_idx} syncing data")
 
         await sync(gpu_idx, all_gpu_data, losses_over_time, barrier)
 
@@ -285,6 +367,8 @@ async def gpu_worker(
             and gpu_idx == 0
             and save_dir is not None
         ):
+            logger.trace(f"GPU {gpu_idx} saving checkpoint")
+
             checkpoint_data = {
                 "centroids": all_gpu_data[0].synced_data.centroid_sets,
                 "top_k": top_k,
@@ -296,6 +380,8 @@ async def gpu_worker(
             checkpoint_path = os.path.join(
                 save_dir, CHECKPOINT_FILENAME.format(iteration=save_idx)
             )
+            logger.trace(f"GPU {gpu_idx} saved checkpoint to {checkpoint_path}")
+
             th.save(checkpoint_data, checkpoint_path)
             logger.info(
                 f"Saved checkpoint at iteration {save_idx} to {checkpoint_path}"
@@ -341,6 +427,10 @@ async def kmeans_manhattan(
     rank = dist.get_rank()
     num_nodes = dist.get_world_size()
     total_gpus = num_gpus * num_nodes
+
+    logger.trace(f"Number of GPUs: {num_gpus}")
+    logger.trace(f"Number of nodes: {num_nodes}")
+    logger.trace(f"Total number of GPUs: {total_gpus}")
 
     assert th.cuda.is_available() and num_gpus > 0, "CPU-only not supported yet :("
 
@@ -392,26 +482,57 @@ async def kmeans_manhattan(
 
     num_gpu_minibatches = len(activations) // gpu_minibatch_size
 
+    logger.trace(f"Accumulation size: {accumulation_size}")
+    logger.trace(f"Number of GPU minibatches: {num_gpu_minibatches}")
+
     all_gpu_data = [
         GPUData(
             synced_data=RunningKMeansData(
                 centroid_sets=[
-                    th.empty(k, activation_dim, device=gpu_idx) for k in k_values
+                    th.empty(k, activation_dim, dtype=th.float32, device=gpu_idx)
+                    for k in k_values
                 ],
-                weight_sets=[th.zeros(k) for k in k_values],
-                losses=th.zeros(len(k_values)),
+                weight_sets=[
+                    th.zeros(k, dtype=th.int64, device=gpu_idx) for k in k_values
+                ],
+                losses=th.zeros(len(k_values), dtype=th.float32, device=gpu_idx),
             ),
             dirty_data=RunningKMeansData(
                 centroid_sets=[
-                    th.empty(k, activation_dim, device=gpu_idx) for k in k_values
+                    th.empty(k, activation_dim, dtype=th.float32, device=gpu_idx)
+                    for k in k_values
                 ],
-                weight_sets=[th.zeros(k) for k in k_values],
-                losses=th.zeros(len(k_values)),
+                weight_sets=[
+                    th.zeros(k, dtype=th.int64, device=gpu_idx) for k in k_values
+                ],
+                losses=th.zeros(len(k_values), dtype=th.float32, device=gpu_idx),
             ),
             queue=asyncio.Queue(maxsize=GPU_QUEUE_MAXSIZE),
         )
         for gpu_idx in range(num_gpus)
     ]
+
+    for gpu_idx, gpu_data in enumerate(all_gpu_data):
+        logger.trace(
+            f"GPU {gpu_idx} synced centroid sets {type(gpu_data.synced_data.centroid_sets)} {gpu_data.synced_data.centroid_sets[0].shape} {gpu_data.synced_data.centroid_sets[0].dtype} {gpu_data.synced_data.centroid_sets[0].device}"
+        )
+        logger.trace(
+            f"GPU {gpu_idx} dirty centroid sets {type(gpu_data.dirty_data.centroid_sets)} {gpu_data.dirty_data.centroid_sets[0].shape} {gpu_data.dirty_data.centroid_sets[0].dtype} {gpu_data.dirty_data.centroid_sets[0].device}"
+        )
+        logger.trace(
+            f"GPU {gpu_idx} synced weight sets {type(gpu_data.synced_data.weight_sets)} {gpu_data.synced_data.weight_sets[0].shape} {gpu_data.synced_data.weight_sets[0].dtype} {gpu_data.synced_data.weight_sets[0].device}"
+        )
+        logger.trace(
+            f"GPU {gpu_idx} dirty weight sets {type(gpu_data.dirty_data.weight_sets)} {gpu_data.dirty_data.weight_sets[0].shape} {gpu_data.dirty_data.weight_sets[0].dtype} {gpu_data.dirty_data.weight_sets[0].device}"
+        )
+        logger.trace(
+            f"GPU {gpu_idx} synced losses {type(gpu_data.synced_data.losses)} {gpu_data.synced_data.losses.shape} {gpu_data.synced_data.losses.dtype} {gpu_data.synced_data.losses.device}"
+        )
+        logger.trace(
+            f"GPU {gpu_idx} dirty losses {type(gpu_data.dirty_data.losses)} {gpu_data.dirty_data.losses.shape} {gpu_data.dirty_data.losses.dtype} {gpu_data.dirty_data.losses.device}"
+        )
+
+    logger.trace(f"Initialized GPU data for {len(all_gpu_data)} GPUs")
 
     ### get top_k and initialize centroids from random data points
     k_ranges = th.cat(
@@ -432,11 +553,18 @@ async def kmeans_manhattan(
         k = k_values[k_idx]
         assert k_end - k_start == k, "k_end - k_start must be equal to k"
 
-        for gpu_idx, gpu_data in enumerate(all_gpu_data):
-            device = th.device(f"cuda:{gpu_idx}")
-            gpu_data.dirty_data.centroid_sets[k_idx] = router_activations[
-                k_start:k_end
-            ].to(device)
+        for _gpu_idx, gpu_data in enumerate(all_gpu_data):
+            current_device = gpu_data.dirty_data.centroid_sets[k_idx].device
+            current_dtype = gpu_data.dirty_data.centroid_sets[k_idx].dtype
+            current_shape = gpu_data.dirty_data.centroid_sets[k_idx].shape
+
+            gpu_data.dirty_data.centroid_sets[k_idx] = (
+                router_activations[k_start:k_end]
+                .view(current_shape)
+                .to(device=current_device, dtype=current_dtype)
+            )
+
+    logger.trace(f"Initialized centroids for {len(k_values)} clusters")
 
     # clean up the background workers and queue
     data_iterable.send("STOP!")
@@ -460,14 +588,18 @@ async def kmeans_manhattan(
         if dist.get_rank() == 0:
             os.makedirs(save_dir, exist_ok=True)
 
+    logger.trace(f"Save steps: {save_steps}")
+
     iterator = range(max_iters)
     if dist.get_rank() == 0:
         iterator = tqdm(
             iterator, desc="Kmeans iterations", leave=False, total=max_iters, position=0
         )
 
+    logger.trace("Created iterator")
+
     synchronization_barrier = Barrier(num_gpus)
-    _workers = [
+    workers = [
         asyncio.create_task(
             gpu_worker(
                 gpu_idx,
@@ -476,27 +608,37 @@ async def kmeans_manhattan(
                 losses_over_time,
                 synchronization_barrier,
                 save_dir,
-            )
+            ),
+            name=str(gpu_idx),
         )
         for gpu_idx in range(num_gpus)
     ]
 
+    # Add exception handling to all worker tasks
+    for worker in workers:
+        worker.add_done_callback(handle_exceptions)
+
+    logger.trace(f"Created {len(workers)} workers")
+
     # distributed kmeans
-    for _iter_idx in iterator:
+    for iter_idx in iterator:
         # process data in batches, parallelized over devices and nodes
+        logger.trace(f"Running iteration {iter_idx}")
         minibatch_iterator = activations(batch_size=gpu_minibatch_size)
 
         distributed_iterator = islice(
             minibatch_iterator,
-            start=rank,
-            stop=None,
-            step=num_nodes,
+            rank,
+            None,
+            num_nodes,
         )
+        logger.trace("Created distributed iterator")
+
         num_local_minibatches = len(
             range(
-                start=rank,
-                stop=num_gpu_minibatches,
-                step=num_nodes,
+                rank,
+                num_gpu_minibatches,
+                num_nodes,
             )
         )
         distributed_iterator = tqdm(
@@ -509,9 +651,13 @@ async def kmeans_manhattan(
 
         concurrent_minibatch_iterator = batched(distributed_iterator, num_gpus)
 
+        logger.trace("Created concurrent minibatch iterator")
+
         for distributed_batch_idx, gpu_minibatches in enumerate(
             concurrent_minibatch_iterator
         ):
+            logger.trace(f"Running distributed batch {distributed_batch_idx}")
+
             should_sync = distributed_batch_idx % accumulation_size == (
                 accumulation_size - 1
             )
@@ -520,9 +666,17 @@ async def kmeans_manhattan(
             effective_step_idx = distributed_batch_idx // accumulation_size
             save_idx = effective_step_idx if effective_step_idx in save_steps else None
 
+            logger.trace(f"Should sync: {should_sync}")
+            logger.trace(f"Effective step index: {effective_step_idx}")
+            logger.trace(f"Save index: {save_idx}")
+
             for gpu_data, gpu_minibatch in zip(
                 all_gpu_data, gpu_minibatches, strict=False
             ):
+                logger.trace(
+                    f"Putting data on GPU with queue size {gpu_data.queue.qsize()}"
+                )
+
                 await gpu_data.queue.put(
                     (
                         gpu_minibatch[ActivationKeys.ROUTER_LOGITS],
@@ -532,13 +686,23 @@ async def kmeans_manhattan(
                 )
 
     for gpu_data in all_gpu_data:
+        logger.trace(
+            f"Putting stop signal on GPU with queue size {gpu_data.queue.qsize()}"
+        )
+
         await gpu_data.queue.put((None, False, None))
 
     if losses_over_time:
+        logger.trace("Stacking losses over time")
+
         losses = th.stack(losses_over_time, dim=1)
     else:
+        logger.trace("No losses over time, creating empty tensor")
+
         num_k_values = len(all_gpu_data[0].synced_data.centroid_sets)
         losses = th.empty((num_k_values, 0))
+
+    logger.trace("Returning results")
 
     return all_gpu_data[0].synced_data.centroid_sets, top_k, losses
 
@@ -581,11 +745,15 @@ async def cluster_paths_async(
         tokens_per_file=tokens_per_file,
     )
 
+    logger.debug(f"Running kmeans with experiment name: {kmeans_experiment_name}")
+
     save_dir = (
         os.path.join(OUTPUT_DIR, kmeans_experiment_name)
         if save_every is not None
         else None
     )
+
+    logger.trace(f"Save directory: {save_dir}")
 
     centroids, top_k, losses = await kmeans_manhattan(
         activations=activations,
@@ -599,7 +767,7 @@ async def cluster_paths_async(
     )
 
     if dist.get_rank() == 0:
-        logger.info("saving...")
+        logger.info("Saving...")
 
         out = {
             "centroids": centroids,
@@ -639,7 +807,7 @@ def cluster_paths(
     max_iters: int = 128,
     save_every: int | None = None,
     seed: int = 0,
-    gpu_minibatch_size: int = 1024,
+    gpu_minibatch_size: int = 65536,
     tokens_per_file: int = 5_000,
     reshuffled_tokens_per_file: int = 10_000,
     context_length: int = 2048,
@@ -719,7 +887,7 @@ def main(
     max_iters: int = 128,
     save_every: int | None = None,
     seed: int = 0,
-    gpu_minibatch_size: int = 1024,
+    gpu_minibatch_size: int = 65536,
     tokens_per_file: int = 5_000,
     reshuffled_tokens_per_file: int = 10_000,
     context_length: int = 2048,

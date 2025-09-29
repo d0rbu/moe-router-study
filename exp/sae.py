@@ -5,7 +5,6 @@ from itertools import batched, count, product
 import math
 import os
 import sys
-import traceback
 from typing import Any
 
 import arguably
@@ -27,6 +26,7 @@ import torch as th
 import torch.distributed as dist
 from tqdm import tqdm
 
+from core.async_utils import handle_exceptions
 from core.dtype import get_dtype
 from core.type import assert_type
 from exp import OUTPUT_DIR
@@ -259,19 +259,6 @@ async def run_sae_training(
 
     num_gpus = th.cuda.device_count()
     gpu_queues = [asyncio.PriorityQueue() for _ in range(num_gpus)]
-
-    def handle_exceptions(task: asyncio.Task) -> None:
-        exception = task.exception()
-        if exception is None:
-            logger.trace(f"[worker {task.get_name()}]: No exception")
-            return
-
-        traceback_lines = traceback.format_tb(exception.__traceback__)
-        traceback_str = "".join(traceback_lines)
-        exception_str = str(exception)
-        logger.exception(f"[worker {task.get_name()}]:\n{traceback_str}{exception_str}")
-        # throw a tantrum and fuck up everything
-        asyncio.get_running_loop().close()
 
     workers = [
         asyncio.create_task(
