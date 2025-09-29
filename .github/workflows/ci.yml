@@ -9,6 +9,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        submodules: 'recursive'
     
     - name: Install uv
       uses: astral-sh/setup-uv@v3
@@ -27,6 +29,10 @@ jobs:
     - name: Install zstandard from wheel
       run: |
         uv pip install --only-binary=zstandard zstandard==0.22.0
+    
+    - name: Install build dependencies
+      run: |
+        uv pip install poetry setuptools hatchling editables
     
     - name: Install dependencies
       run: |
@@ -51,6 +57,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        submodules: 'recursive'
     
     - name: Install uv
       uses: astral-sh/setup-uv@v3
@@ -69,6 +77,10 @@ jobs:
     - name: Install zstandard from wheel
       run: |
         uv pip install --only-binary=zstandard zstandard==0.22.0
+    
+    - name: Install build dependencies
+      run: |
+        uv pip install poetry setuptools hatchling editables
     
     - name: Install dependencies
       run: |
