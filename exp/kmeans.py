@@ -15,9 +15,16 @@ from tqdm import tqdm
 import yaml
 
 from core.async_utils import handle_exceptions
+from core.moe import convert_router_logits_to_paths
 from exp import OUTPUT_DIR
 from exp.activations import Activations, load_activations_and_init_dist
 from exp.get_activations import ActivationKeys
+from exp.kmeans_validation import (
+    VALIDATION_SIZE_K_PROPORTION,
+    WARNING_WINDOW_SIZE,
+    check_monotonic_increasing_window,
+    validate_centroid_distribution,
+)
 from exp.training import exponential_to_linear_save_steps, get_experiment_name
 
 
@@ -283,6 +290,20 @@ async def sync(
     if rank == 0 and gpu_idx == 0:
         losses_over_time.append(gpu_data.synced_data.losses.detach().cpu().clone())
 
+        # Check for monotonically increasing loss windows
+        if (
+            len(losses_over_time) >= WARNING_WINDOW_SIZE
+        ):  # Need at least window_size iterations
+            losses_tensor = th.stack(losses_over_time, dim=1)
+            has_problem, start_idx = check_monotonic_increasing_window(
+                losses_tensor, window_size=WARNING_WINDOW_SIZE
+            )
+            if has_problem:
+                logger.warning(
+                    f"Detected monotonically increasing loss window starting at "
+                    f"iteration {start_idx}. This may indicate a training problem."
+                )
+
 
 async def gpu_worker(
     gpu_idx: int,
@@ -417,6 +438,7 @@ async def kmeans_manhattan(
     seed: int = 0,
     save_every: int | None = None,
     save_dir: str | None = None,
+    validate_every: int | None = None,
     group: dist.ProcessGroup | None = None,
 ) -> tuple[list[th.Tensor], int, th.Tensor]:
     """
@@ -431,6 +453,7 @@ async def kmeans_manhattan(
         seed: Random seed for initialization
         save_every: Save checkpoints every N iterations. If None, no checkpoints are saved.
         save_dir: Directory to save checkpoints. Required if save_every is specified.
+        validate_every: Run centroid validation every N iterations. If None, only validate at the end.
 
     Returns:
         centroid_sets: List of cluster centroids, each element of shape (K, D)
@@ -560,11 +583,29 @@ async def kmeans_manhattan(
         dim=0,
     )
 
-    # load a batch of activations to initialize the centroids
-    data_iterable = activations(batch_size=k_ranges[-1].item())
+    # load a batch of activations to initialize the centroids and reserve validation data
+    # Reserve extra data for validation (we'll use VALIDATION_SIZE_K_PROPORTION x the largest k value)
+    validation_size = max(k_values) * VALIDATION_SIZE_K_PROPORTION
+    num_total_centroids = k_ranges[-1].item()
+    total_init_size = num_total_centroids + validation_size
+
+    data_iterable = activations(batch_size=total_init_size)
     activation_batch = next(data_iterable)
     router_activations = activation_batch[ActivationKeys.ROUTER_LOGITS]
     top_k = activation_batch["topk"]
+
+    # Split into initialization and validation data
+    init_activations = router_activations[:num_total_centroids]
+    validation_router_logits = router_activations[num_total_centroids:]
+
+    # Convert validation data to flat paths format (same as training data)
+    validation_data = convert_router_logits_to_paths(
+        validation_router_logits, top_k
+    ).to(dtype=th.float32, device="cpu")
+
+    logger.info(
+        f"Reserved {validation_size} data points for validation (shape: {validation_data.shape})"
+    )
 
     for k_idx, (k_start, k_end) in enumerate(pairwise(k_ranges)):
         k = k_values[k_idx]
@@ -576,7 +617,7 @@ async def kmeans_manhattan(
             current_shape = gpu_data.dirty_data.centroid_sets[k_idx].shape
 
             gpu_data.dirty_data.centroid_sets[k_idx] = (
-                router_activations[k_start:k_end]
+                init_activations[k_start:k_end]
                 .view(current_shape)
                 .to(device=current_device, dtype=current_dtype)
             )
@@ -702,6 +743,32 @@ async def kmeans_manhattan(
                         save_idx,
                     )
                 )
+
+        # Intermittent validation during training
+        if (
+            validate_every is not None
+            and (iter_idx + 1) % validate_every == 0
+            and rank == 0
+        ):
+            logger.info(
+                f"Running intermittent validation at iteration {iter_idx + 1}..."
+            )
+            for _k_idx, centroid_set in enumerate(
+                all_gpu_data[0].synced_data.centroid_sets
+            ):
+                is_valid, stats = validate_centroid_distribution(
+                    validation_data,
+                    centroid_set.cpu(),
+                )
+                k_value = centroid_set.shape[0]
+                if is_valid:
+                    logger.success(
+                        f"✓ K={k_value} (iter {iter_idx + 1}): Valid. {stats}"
+                    )
+                else:
+                    logger.warning(
+                        f"✗ K={k_value} (iter {iter_idx + 1}): Issues. {stats}"
+                    )
 
     for gpu_data in all_gpu_data:
         logger.trace(
