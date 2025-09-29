@@ -194,8 +194,5 @@ eai-delphi = { workspace = true }
 
 [tool.uv.workspace]
 members = [
-    "saebench_env",
     "delphi",
 ]
-
-
