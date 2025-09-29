@@ -194,6 +194,7 @@ eai-delphi = { workspace = true }
 
 [tool.uv.extra-build-dependencies]
 dictionary-learning = ["poetry"]
+nnterp = ["setuptools"]
 
 [tool.uv.workspace]
 members = [
