@@ -190,7 +190,7 @@ nnterp = { git = "https://github.com/d0rbu/nnterp.git" }
 dictionary-learning = { git = "https://github.com/d0rbu/dictionary_learning" }
 sae-bench = { git = "https://github.com/d0rbu/SAEBench" }
 transformer-lens = { git = "https://github.com/d0rbu/TransformerLens", branch = "OLMo" }
-eai-delphi = { workspace = true }
+
 
 [tool.uv.extra-build-dependencies]
 dictionary-learning = ["poetry"]
@@ -202,5 +202,4 @@ transformers = ["setuptools"]
 [tool.uv.workspace]
 members = [
     "saebench_env",
-    "delphi",
 ]
