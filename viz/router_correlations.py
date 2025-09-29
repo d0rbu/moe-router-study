@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import torch as th
 from tqdm import tqdm
 
-from exp import OUTPUT_DIR, ACTIVATION_DIRNAME
+from exp import ACTIVATION_DIRNAME, OUTPUT_DIR
 from viz import FIGURE_DIR
 
 
