@@ -30,6 +30,10 @@ jobs:
       run: |
         uv pip install --only-binary=zstandard zstandard==0.22.0
     
+    - name: Install poetry for build dependencies
+      run: |
+        uv pip install poetry
+    
     - name: Install dependencies
       run: |
         uv sync --dev --no-build-isolation
@@ -73,6 +77,10 @@ jobs:
     - name: Install zstandard from wheel
       run: |
         uv pip install --only-binary=zstandard zstandard==0.22.0
+    
+    - name: Install poetry for build dependencies
+      run: |
+        uv pip install poetry
     
     - name: Install dependencies
       run: |
