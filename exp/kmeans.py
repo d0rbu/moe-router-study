@@ -642,9 +642,6 @@ async def kmeans_manhattan(
         save_steps = exponential_to_linear_save_steps(
             total_steps=max_iters, save_every=save_every
         )
-        # ensure the save directory exists
-        if dist.get_rank() == 0:
-            os.makedirs(save_dir, exist_ok=True)
 
     logger.trace(f"Save steps: {save_steps}")
 
@@ -833,11 +830,10 @@ async def cluster_paths_async(
 
     logger.debug(f"Running kmeans with experiment name: {kmeans_experiment_name}")
 
-    save_dir = (
-        os.path.join(OUTPUT_DIR, kmeans_experiment_name)
-        if save_every is not None
-        else None
-    )
+    save_dir = None
+    if save_every is not None:
+        save_dir = os.path.join(OUTPUT_DIR, kmeans_experiment_name)
+        os.makedirs(save_dir, exist_ok=True)
 
     logger.trace(f"Save directory: {save_dir}")
 
