@@ -431,7 +431,6 @@ class TestKMeansValidator:
         # Second call should validate (iteration 2 % 2 == 0)
         result = await validator.validate_iteration(losses, centroids_list)
         assert result["status"] == "completed"
-
     @pytest.mark.asyncio
     async def test_validate_iteration_complete(self):
         """Test complete validation iteration."""
