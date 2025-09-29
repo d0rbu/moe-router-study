@@ -92,8 +92,8 @@ def check_monotonic_increasing_window(
 def validate_centroid_distribution(
     validation_data: th.Tensor,
     centroids: th.Tensor,
-    min_assignment_ratio: float | None = None,
-    max_assignment_ratio: float | None = None,
+    min_assignment_ratio: float = 0.05,
+    max_assignment_ratio: float = 20.0,
 ) -> tuple[bool, CentroidValidationStats]:
     """
     Validate that centroids produce a reasonable distribution of assignments on validation data.
@@ -101,8 +101,8 @@ def validate_centroid_distribution(
     Args:
         validation_data: Tensor of shape (N, D) containing validation datapoints
         centroids: Tensor of shape (K, D) containing cluster centroids
-        min_assignment_ratio: Minimum acceptable ratio (defaults to 0.05/k)
-        max_assignment_ratio: Maximum acceptable ratio (defaults to 20/k)
+        min_assignment_ratio: Minimum acceptable ratio (defaults to 0.05)
+        max_assignment_ratio: Maximum acceptable ratio (defaults to 20.0)
 
     Returns:
         Tuple of (is_valid, stats) where:
@@ -117,12 +117,6 @@ def validate_centroid_distribution(
     k = centroids.shape[0]
     assignment_counts = th.bincount(assignments, minlength=k)
     assignment_ratios = assignment_counts.float() / len(validation_data)
-
-    # Set default ratios if not provided, then always divide by k to get thresholds
-    if min_assignment_ratio is None:
-        min_assignment_ratio = 0.05
-    if max_assignment_ratio is None:
-        max_assignment_ratio = 20.0
 
     # Always divide by k to get the actual thresholds
     min_assignment_threshold = min_assignment_ratio / k
