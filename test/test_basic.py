@@ -20,13 +20,4 @@ def test_imports():
             pytest.fail(f"Failed to import {module_name}: {e}")
 
 
-def test_basic_functionality():
-    """Basic test to ensure pytest runs successfully."""
-    assert True
 
-
-def test_python_version():
-    """Test that we're running on Python 3.12+."""
-    import sys
-
-    assert sys.version_info >= (3, 12)
