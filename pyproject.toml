@@ -198,6 +198,7 @@ nnterp = ["setuptools"]
 sae-bench = ["setuptools"]
 transformer-lens = ["setuptools"]
 transformers = ["setuptools"]
+moe-router-study = ["editables"]
 
 [tool.uv.workspace]
 members = [
