@@ -190,9 +190,9 @@ nnterp = { git = "https://github.com/d0rbu/nnterp.git" }
 dictionary-learning = { git = "https://github.com/d0rbu/dictionary_learning" }
 sae-bench = { git = "https://github.com/d0rbu/SAEBench" }
 transformer-lens = { git = "https://github.com/d0rbu/TransformerLens", branch = "OLMo" }
-eai-delphi = { workspace = true }
+eai-delphi = { git = "https://github.com/d0rbu/delphi" }
 
-[tool.uv.workspace]
-members = [
-    "delphi",
-]
+
+
+[tool.uv.extra-build-dependencies]
+dictionary-learning = ["poetry"]
