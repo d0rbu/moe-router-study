@@ -50,7 +50,7 @@ jobs:
     
     - name: Run ty type checking
       run: |
-        uv run ty check core/ viz/ test/ $(find exp/ -name "*.py" | grep -v eval_intruder.py | tr '\n' ' ')
+        uv run ty check core/ exp/ viz/ test/
 
   test:
     runs-on: ubuntu-latest
