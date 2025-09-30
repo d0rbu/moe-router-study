@@ -414,7 +414,7 @@ def grid_search_gradient_descent(
         num_cooldown_epochses = [0]
 
     raise NotImplementedError("Refactor this code to use the Activations class")
-    token_topk_mask, indices, tokens, top_k_loaded = None, None, None, None
+    data = None
 
     loss_landscape = th.empty(
         num_seeds,
