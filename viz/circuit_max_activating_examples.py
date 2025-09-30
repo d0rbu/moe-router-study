@@ -727,12 +727,11 @@ def viz_max_cli(
         device: Torch device for computation (e.g., "cuda" or "cpu").
     """
     # Load all data once at the top level
-    # TODO: Implement proper loading using Activations class
-    # activations = await Activations.load(experiment_name=..., device=device)
-    # Extract token_topk_mask, activated_expert_indices, tokens, top_k from activations
     raise NotImplementedError(
         "Need to implement loading using Activations class from exp.activations"
     )
+    token_topk_mask, indices, tokens, top_k = None, None, None, None
+
     circuits = _load_circuits_tensor(
         circuits_path, device=device, token_topk_mask=token_topk_mask
     )
@@ -763,12 +762,11 @@ def viz_mean_cli(
         device: Torch device for computation (e.g., "cuda" or "cpu").
     """
     # Load all data once at the top level
-    # TODO: Implement proper loading using Activations class
-    # activations = await Activations.load(experiment_name=..., device=device)
-    # Extract token_topk_mask, activated_expert_indices, tokens, top_k from activations
     raise NotImplementedError(
         "Need to implement loading using Activations class from exp.activations"
     )
+    token_topk_mask, indices, tokens, top_k = None, None, None, None
+
     circuits = _load_circuits_tensor(
         circuits_path, device=device, token_topk_mask=token_topk_mask
     )

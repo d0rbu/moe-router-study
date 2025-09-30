@@ -109,12 +109,10 @@ def max_activating_examples_server(
         _minibatch_size: Size of the minibatch for the computation.
     """
     # Load all data once at the top level
-    # TODO: Implement proper loading using Activations class
-    # activations = await Activations.load(experiment_name=..., device=device)
-    # Extract token_topk_mask, activated_expert_indices, tokens, top_k from activations
     raise NotImplementedError(
         "Need to implement loading using Activations class from exp.activations"
     )
+    token_topk_mask, indices, tokens, top_k = None, None, None, None
 
     # Get dimensions from token_topk_mask
     num_layers, num_experts = token_topk_mask.shape[1], token_topk_mask.shape[2]

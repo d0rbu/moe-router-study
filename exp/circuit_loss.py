@@ -170,22 +170,11 @@ def min_logit_loss(
 def circuit_loss(
     data: th.Tensor,
     circuits_logits: th.Tensor,
-    topk: int | None = None,
-    top_k: int | None = None,
+    top_k: int,
     complexity_importance: float = 1.0,
     complexity_power: float = 1.0,
 ) -> tuple[th.Tensor, th.Tensor, th.Tensor]:
-    """Compute overall loss with faithfulness and complexity components.
-
-    Accepts both `topk` and `top_k` for compatibility with tests.
-    """
-    # Normalize top-k argument
-    if topk is None and top_k is None:
-        raise TypeError("circuit_loss requires `topk` (or `top_k`) argument")
-    if topk is None:
-        topk = int(top_k)
-    elif top_k is not None and int(top_k) != int(topk):
-        raise ValueError("Conflicting values for topk and top_k")
+    """Compute overall loss with faithfulness and complexity components."""
 
     faithfulness_loss = min_logit_loss(data, circuits_logits)
 
@@ -193,7 +182,7 @@ def circuit_loss(
     base_complexity = th.sigmoid(circuits_logits)
     # sum over experts and account for top-k
     # (..., C, L, E) -> (..., C, L)
-    base_complexity = base_complexity.sum(dim=-1) / float(topk)
+    base_complexity = base_complexity.sum(dim=-1) / float(top_k)
     # average over layers
     # (..., C, L) -> (..., C)
     base_complexity = base_complexity.mean(dim=-1)
