@@ -1,13 +1,12 @@
 # Configuration for ty type checker
+# Ignore certain error types that are causing issues in the existing codebase
+# while still catching more serious type errors
 
 [rules]
 possibly-unbound-attribute = "ignore"
 invalid-return-type = "ignore"
 invalid-argument-type = "ignore"
-call-non-callable = "ignore"
 non-subscriptable = "ignore"
 unresolved-attribute = "ignore"
-too-many-positional-arguments = "ignore"
 unknown-argument = "ignore"
 unresolved-import = "ignore"
-invalid-assignment = "ignore"

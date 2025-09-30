@@ -476,7 +476,7 @@ def main(
     ), "Invalid architecture"
     assert len(submodule_name) > 0, "Submodule name is an empty tuple!"
 
-    dtype = get_dtype(dtype)
+    torch_dtype = get_dtype(dtype)
 
     # Handle None defaults that should be (None,) for union types
     group_weights_tuple: tuple[tuple[float] | None] = (
@@ -518,7 +518,7 @@ def main(
             context_length=context_length,
             num_workers=num_workers,
             debug=log_level_numeric <= debug_level_numeric,
-            dtype=dtype,
+            dtype=torch_dtype,
         )
     )
 
