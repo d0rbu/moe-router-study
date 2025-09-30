@@ -44,7 +44,7 @@ from exp import MODEL_DIRNAME
 from exp.autointerp_saebench import Paths
 
 
-@th.no_grad
+@th.no_grad()
 def get_llm_activations(
     tokens: th.Tensor,  # (B, T)
     model: StandardizedTransformer,
@@ -94,7 +94,7 @@ def get_llm_activations(
     return th.cat(all_acts_BTP, dim=0)
 
 
-@th.no_grad
+@th.no_grad()
 def get_all_llm_activations(
     tokenized_inputs_dict: dict[
         str, dict[str, th.Tensor]  # (B, T)
@@ -113,7 +113,11 @@ def get_all_llm_activations(
         tokens = tokenized_inputs_dict[class_name]["input_ids"]
 
         acts_BTP = get_llm_activations(
-            tokens, model, batch_size, top_k, mask_bos_pad_eos_tokens
+            tokens,
+            model=model,
+            batch_size=batch_size,
+            top_k=top_k,
+            mask_bos_pad_eos_tokens=mask_bos_pad_eos_tokens,
         )
 
         all_classes_acts_BTP[class_name] = acts_BTP
@@ -156,16 +160,16 @@ def get_dataset_activations(
 
     all_train_acts_BTP = get_all_llm_activations(
         train_data,
-        model,
-        llm_batch_size,
-        top_k,
+        model=model,
+        batch_size=llm_batch_size,
+        top_k=top_k,
         mask_bos_pad_eos_tokens=True,
     )
     all_test_acts_BTP = get_all_llm_activations(
         test_data,
-        model,
-        llm_batch_size,
-        top_k,
+        model=model,
+        batch_size=llm_batch_size,
+        top_k=top_k,
         mask_bos_pad_eos_tokens=True,
     )
 
@@ -316,7 +320,7 @@ def run_eval_single_dataset(
         th.cuda.empty_cache()
         gc.collect()
 
-    per_class_results_dict.extend(llm_results)
+    per_class_results_dict.update(llm_results)
 
     for k in config.k_values:
         _sae_top_k_probes, sae_top_k_test_accuracies = train_probe_on_activations(

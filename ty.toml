@@ -1,13 +1,5 @@
 # Configuration for ty type checker
 
 [rules]
-possibly-unbound-attribute = "ignore"
 invalid-return-type = "ignore"
-call-non-callable = "ignore"
-non-subscriptable = "ignore"
-unresolved-attribute = "ignore"
-too-many-positional-arguments = "ignore"
-unknown-argument = "ignore"
 unresolved-import = "ignore"
-invalid-parameter-default = "ignore"
-invalid-assignment = "ignore"

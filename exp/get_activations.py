@@ -96,7 +96,7 @@ def process_batch(
     gpu_minibatch_size: int,
     router_layers: set[int],
     layers_to_store: set[int],
-    activations_to_store: set[str] = ACTIVATION_KEYS,
+    activations_to_store: frozenset[str] = ACTIVATION_KEYS,
 ) -> dict[str, th.Tensor]:
     """Process a batch of texts through the model and extract router logits.
 
@@ -459,7 +459,7 @@ def gpu_worker(
     gpu_busy: list[bool],  # Reference to multiplexer's gpu_busy list
     log_queue: mp.Queue,
     output_queue: mp.Queue,
-    activations_to_store: set[str] = ACTIVATION_KEYS,
+    activations_to_store: frozenset[str] = ACTIVATION_KEYS,
     layers_to_store: set[int] | None = None,
     dtype: th.dtype = th.bfloat16,
     log_level: str = "INFO",
@@ -832,11 +832,13 @@ def get_router_activations(
             str(ActivationKeys.MLP_OUTPUT),
         ]
 
+    layers_to_store_set: set[int] | None
     if not layers_to_store:
-        layers_to_store = None
-
-    if isinstance(layers_to_store, list):
-        layers_to_store = set(layers_to_store)
+        layers_to_store_set = None
+    elif isinstance(layers_to_store, list):
+        layers_to_store_set = set(layers_to_store)
+    else:
+        layers_to_store_set = layers_to_store
 
     if not gpu_available:
         logger.info("Using CPU only")
@@ -978,7 +980,7 @@ def get_router_activations(
             )
 
         logger.debug(f"Storing activations: {activations_to_store}")
-        logger.debug(f"Storing layers: {layers_to_store}")
+        logger.debug(f"Storing layers: {layers_to_store_set}")
         gpu_proc = mp.Process(
             target=gpu_worker,
             args=(
@@ -994,7 +996,7 @@ def get_router_activations(
                 log_queue,
                 output_queue,
                 set(activations_to_store),
-                layers_to_store,
+                layers_to_store_set,
                 torch_dtype,
                 log_level,
             ),
