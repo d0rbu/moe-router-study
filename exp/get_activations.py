@@ -96,7 +96,7 @@ def process_batch(
     gpu_minibatch_size: int,
     router_layers: set[int],
     layers_to_store: set[int],
-    activations_to_store: set[str] = ACTIVATION_KEYS,
+    activations_to_store: frozenset[str] = ACTIVATION_KEYS,
 ) -> dict[str, th.Tensor]:
     """Process a batch of texts through the model and extract router logits.
 
@@ -459,7 +459,7 @@ def gpu_worker(
     gpu_busy: list[bool],  # Reference to multiplexer's gpu_busy list
     log_queue: mp.Queue,
     output_queue: mp.Queue,
-    activations_to_store: set[str] = ACTIVATION_KEYS,
+    activations_to_store: frozenset[str] = ACTIVATION_KEYS,
     layers_to_store: set[int] | None = None,
     dtype: th.dtype = th.bfloat16,
     log_level: str = "INFO",
