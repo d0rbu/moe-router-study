@@ -8,6 +8,9 @@ import shutil
 import sys
 from typing import Any
 
+# Default batch size for LLM processing when not specified in config
+LLM_DEFAULT_BATCH_SIZE = 32
+
 from loguru import logger
 from nnterp import StandardizedTransformer
 from sae_bench.evals.sparse_probing.eval_config import SparseProbingEvalConfig
@@ -237,7 +240,7 @@ def run_eval_single_dataset(
         if config.lower_vram_usage:
             model = model.to(th.device(device))
 
-        batch_size = config.llm_batch_size or 32
+        batch_size = config.llm_batch_size or LLM_DEFAULT_BATCH_SIZE
         all_train_acts_BTP, all_test_acts_BTP = get_dataset_activations(
             dataset_name,
             config,
