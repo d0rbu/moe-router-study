@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from itertools import batched, count, islice, pairwise
 import os
+from typing import cast
 
 from loguru import logger
 import torch as th
@@ -28,13 +29,11 @@ def broadcast_variable_length_list[T](
     if kwargs is None:
         kwargs = {}
 
+    # Broadcast the number of items first
     num_items = [None]
-
     if dist.get_rank() == 0:
         items = list_fn(*args, **kwargs)
         num_items[0] = len(items)
-    else:
-        items = []  # Initialize as empty list for non-zero ranks
 
     dist.broadcast_object_list(num_items, src=src)
     num_items = num_items[0]
@@ -45,14 +44,19 @@ def broadcast_variable_length_list[T](
     if num_items == 0:
         return []
 
-    if dist.get_rank() != 0:
+    # Now broadcast the actual items
+    if dist.get_rank() == 0:
+        # items is already set from list_fn call above
+        pass
+    else:
+        # Create placeholder list for non-zero ranks
         items = [None] * num_items
 
     dist.broadcast_object_list(items, src=src)
     logger.trace(f"Rank {src} broadcasted {num_items} items")
 
-    # After broadcast, items contains the actual values from rank 0
-    return items  # type: ignore[return-value]
+    # At this point, items contains the actual values from rank 0
+    return cast("list[T]", items)
 
 
 class Activations:
