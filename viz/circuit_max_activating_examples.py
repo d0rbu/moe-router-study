@@ -18,22 +18,6 @@ import torch as th
 from exp import OUTPUT_DIR
 
 
-def load_activations_indices_tokens_and_topk(device=None):
-    """
-    Load activations data using the Activations class.
-
-    This function needs to be implemented to use the Activations class
-    from exp.activations to load the required data.
-
-    Returns:
-        tuple: (token_topk_mask, activated_expert_indices, tokens, top_k)
-    """
-    raise NotImplementedError(
-        "This function needs to be implemented using the Activations class. "
-        "Please implement the proper loading logic using exp.activations.Activations."
-    )
-
-
 def _load_circuits_tensor(
     circuits_path: str,
     device: str = "cuda",
@@ -71,8 +55,11 @@ def _load_circuits_tensor(
     if circuits.ndim == 2:
         # Infer (L, E) from activations - use provided data if available
         if token_topk_mask is None:
-            token_topk_mask, _indices, _tokens, _top_k = (
-                load_activations_indices_tokens_and_topk(device=device)
+            # TODO: Implement proper loading using Activations class
+            # activations = await Activations.load(experiment_name=..., device=device)
+            # Extract token_topk_mask, indices, tokens, top_k from activations
+            raise NotImplementedError(
+                "Need to implement loading using Activations class from exp.activations"
             )
         _B, L, E = token_topk_mask.shape
         C = int(circuits.shape[0])
@@ -740,8 +727,11 @@ def viz_max_cli(
         device: Torch device for computation (e.g., "cuda" or "cpu").
     """
     # Load all data once at the top level
-    token_topk_mask, _activated_expert_indices, tokens, top_k = (
-        load_activations_indices_tokens_and_topk(device=device)
+    # TODO: Implement proper loading using Activations class
+    # activations = await Activations.load(experiment_name=..., device=device)
+    # Extract token_topk_mask, activated_expert_indices, tokens, top_k from activations
+    raise NotImplementedError(
+        "Need to implement loading using Activations class from exp.activations"
     )
     circuits = _load_circuits_tensor(
         circuits_path, device=device, token_topk_mask=token_topk_mask
@@ -773,8 +763,11 @@ def viz_mean_cli(
         device: Torch device for computation (e.g., "cuda" or "cpu").
     """
     # Load all data once at the top level
-    token_topk_mask, _activated_expert_indices, tokens, top_k = (
-        load_activations_indices_tokens_and_topk(device=device)
+    # TODO: Implement proper loading using Activations class
+    # activations = await Activations.load(experiment_name=..., device=device)
+    # Extract token_topk_mask, activated_expert_indices, tokens, top_k from activations
+    raise NotImplementedError(
+        "Need to implement loading using Activations class from exp.activations"
     )
     circuits = _load_circuits_tensor(
         circuits_path, device=device, token_topk_mask=token_topk_mask

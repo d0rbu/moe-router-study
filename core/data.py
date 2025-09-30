@@ -97,7 +97,6 @@ def lmsys_chat_1m_text(
             conversations = ds["conversation"]
             iterator = tqdm(conversations, desc="Formatting conversations")
         else:
-            # Use select to get a subset of the dataset, then access conversations
             subset_ds = dataset.select(range(start_idx, stop_idx))
             conversations = subset_ds["conversation"]
             iterator = tqdm(

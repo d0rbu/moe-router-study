@@ -147,15 +147,16 @@ def get_dataset_activations(
     train_data = filter_dataset(train_data, chosen_classes)
     test_data = filter_dataset(test_data, chosen_classes)
 
+    tokenizer = assert_type(model.tokenizer, PreTrainedTokenizer)
     train_data = tokenize_data_dictionary(
         train_data,
-        assert_type(model.tokenizer, PreTrainedTokenizer),
+        tokenizer,
         config.context_length,
         device,
     )
     test_data = tokenize_data_dictionary(
         test_data,
-        assert_type(model.tokenizer, PreTrainedTokenizer),
+        tokenizer,
         config.context_length,
         device,
     )
