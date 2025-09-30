@@ -360,8 +360,8 @@ def run_eval_paths(
 
     results_dict = {}
 
-    dataset_results = {}
-    per_class_dict = {}
+    dataset_results: dict[str, dict[str, float]] = {}
+    per_class_dict: dict[str, dict[str, float]] = {}
     for dataset_name in config.dataset_names:
         results_key = f"{dataset_name}_results"
         (
@@ -377,9 +377,10 @@ def run_eval_paths(
             save_activations,
         )
 
-    results_dict = general_utils.average_results_dictionaries(
+    averaged_results: dict[str, float] = general_utils.average_results_dictionaries(
         dataset_results, config.dataset_names
     )
+    results_dict: dict[str, float | dict[str, float]] = dict(averaged_results)
 
     for dataset_name, dataset_result in dataset_results.items():
         results_dict[dataset_name] = dataset_result
