@@ -890,7 +890,7 @@ def cluster_paths(
     max_iters: int = 128,
     save_every: int | None = None,
     seed: int = 0,
-    gpu_minibatch_size: int = 262144,
+    gpu_minibatch_size: int = 100000,
     tokens_per_file: int = 5_000,
     reshuffled_tokens_per_file: int = 10_000,
     context_length: int = 2048,
@@ -904,8 +904,8 @@ def cluster_paths(
 
     logger.debug(f"Running with log level: {log_level}")
 
-    log_level_numeric = logger._core.levels[log_level].no
-    debug_level_numeric = logger._core.levels["DEBUG"].no
+    log_level_numeric = logger.level(log_level).no
+    debug_level_numeric = logger.level("DEBUG").no
 
     activations, activation_dims, gpu_process_group = asyncio.run(
         load_activations_and_init_dist(
@@ -971,7 +971,7 @@ def main(
     max_iters: int = 128,
     save_every: int | None = None,
     seed: int = 0,
-    gpu_minibatch_size: int = 262144,
+    gpu_minibatch_size: int = 100000,
     tokens_per_file: int = 5_000,
     reshuffled_tokens_per_file: int = 10_000,
     context_length: int = 2048,
