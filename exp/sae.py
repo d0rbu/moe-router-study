@@ -479,12 +479,15 @@ def main(
     dtype = get_dtype(dtype)
 
     # Handle None defaults that should be (None,) for union types
-    if group_weights is None:
-        group_weights = (None,)  # type: ignore[assignment]
-    if decay_start is None:
-        decay_start = (None,)  # type: ignore[assignment]
-    if k_anneal_steps is None:
-        k_anneal_steps = (None,)  # type: ignore[assignment]
+    group_weights_tuple: tuple[tuple[float] | None] = (
+        (None,) if group_weights is None else group_weights
+    )
+    decay_start_tuple: tuple[int | None] = (
+        (None,) if decay_start is None else decay_start
+    )
+    k_anneal_steps_tuple: tuple[int | None] = (
+        (None,) if k_anneal_steps is None else k_anneal_steps
+    )
 
     asyncio.run(
         run_sae_training(
@@ -499,15 +502,15 @@ def main(
             k=k,
             layer=layer,
             group_fractions=group_fractions,
-            group_weights=group_weights,
+            group_weights=group_weights_tuple,
             architecture=architecture,
             lr=lr,
             auxk_alpha=auxk_alpha,
             warmup_steps=warmup_steps,
-            decay_start=decay_start,
+            decay_start=decay_start_tuple,
             threshold_beta=threshold_beta,
             threshold_start_step=threshold_start_step,
-            k_anneal_steps=k_anneal_steps,
+            k_anneal_steps=k_anneal_steps_tuple,
             seed=seed,
             submodule_name=submodule_name,
             tokens_per_file=tokens_per_file,
