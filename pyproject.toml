@@ -205,3 +205,25 @@ members = [
     "saebench_env",
     "delphi",
 ]
+
+[tool.ty.rules]
+# Global rules - keep most rules ignored for now
+invalid-return-type = "ignore"
+invalid-argument-type = "ignore"
+call-non-callable = "ignore"
+non-subscriptable = "ignore"
+unresolved-attribute = "ignore"
+too-many-positional-arguments = "ignore"
+unknown-argument = "ignore"
+unresolved-import = "ignore"
+invalid-parameter-default = "ignore"
+invalid-assignment = "ignore"
+# Keep possibly-unbound-attribute ignored globally
+possibly-unbound-attribute = "ignore"
+
+# Override for core/ directory - enable possibly-unbound-attribute checking
+[[tool.ty.overrides]]
+include = ["core/**"]
+
+[tool.ty.overrides.rules]
+possibly-unbound-attribute = "warn"
