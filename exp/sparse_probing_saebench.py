@@ -6,7 +6,7 @@ import os
 import random
 import shutil
 import sys
-from typing import Any
+from typing import Any, cast
 
 from loguru import logger
 from nnterp import StandardizedTransformer
@@ -347,9 +347,7 @@ def run_eval_paths(
     device: str,
     artifacts_folder: str,
     save_activations: bool = True,
-) -> tuple[
-    dict[str, int | float | dict[str, int | float]], dict[str, dict[str, float]]
-]:
+) -> tuple[dict[str, float | dict[str, float]], dict[str, dict[str, float]]]:
     """
     By default, we save activations for all datasets, and then reuse them for each set of paths.
     This is important to avoid recomputing activations for each set of paths, and to ensure that the same activations are used for all sets of paths.
@@ -379,8 +377,11 @@ def run_eval_paths(
             save_activations,
         )
 
-    results_dict = general_utils.average_results_dictionaries(
-        dataset_results, config.dataset_names
+    results_dict: dict[str, float | dict[str, float]] = cast(
+        "dict[str, float | dict[str, float]]",
+        general_utils.average_results_dictionaries(
+            dataset_results, config.dataset_names
+        ),
     )
 
     for dataset_name, dataset_result in dataset_results.items():
