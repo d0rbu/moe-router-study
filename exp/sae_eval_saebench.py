@@ -10,7 +10,7 @@ from core.dtype import get_dtype
 from exp import OUTPUT_DIR
 
 load_dotenv()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or ""
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 
 @arguably.command()
