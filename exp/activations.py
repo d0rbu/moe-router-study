@@ -80,7 +80,7 @@ class Activations:
         max_cache_size: int = 2,
         num_workers: int = 8,
         debug: bool = False,
-    ) -> list[str]:
+    ) -> "Activations":
         activation_dir = os.path.join(OUTPUT_DIR, experiment_name, ACTIVATION_DIRNAME)
 
         cls.device = device
