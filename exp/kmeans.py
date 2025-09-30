@@ -827,14 +827,13 @@ async def cluster_paths_async(
         dataset_name=dataset_name,
         seed=seed,
         tokens_per_file=tokens_per_file,
+        type=KMEANS_TYPE,
     )
 
     logger.debug(f"Running kmeans with experiment name: {kmeans_experiment_name}")
 
-    save_dir = None
-    if save_every is not None:
-        save_dir = os.path.join(OUTPUT_DIR, kmeans_experiment_name)
-        os.makedirs(save_dir, exist_ok=True)
+    save_dir = os.path.join(OUTPUT_DIR, kmeans_experiment_name)
+    os.makedirs(save_dir, exist_ok=True)
 
     logger.trace(f"Save directory: {save_dir}")
 
@@ -858,7 +857,7 @@ async def cluster_paths_async(
             "top_k": top_k,
             "losses": losses,
         }
-        out_path = os.path.join(OUTPUT_DIR, kmeans_experiment_name, KMEANS_FILENAME)
+        out_path = os.path.join(save_dir, KMEANS_FILENAME)
         th.save(out, out_path)
 
         out_metadata = {
@@ -872,10 +871,9 @@ async def cluster_paths_async(
             "gpu_minibatch_size": gpu_minibatch_size,
             "save_every": save_every,
             "type": KMEANS_TYPE,
+            "kmeans_experiment_name": kmeans_experiment_name,
         }
-        out_metadata_path = os.path.join(
-            OUTPUT_DIR, kmeans_experiment_name, METADATA_FILENAME
-        )
+        out_metadata_path = os.path.join(save_dir, METADATA_FILENAME)
         with open(out_metadata_path, "w") as f:
             yaml.dump(out_metadata, f)
 
