@@ -60,7 +60,7 @@ def main(
         eval_types=eval_types,
         random_seed=seed,
         download_location=OUTPUT_DIR,
-        api_key=OPENAI_API_KEY,
+        api_key=OPENAI_API_KEY or "",
     )
 
 

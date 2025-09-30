@@ -92,7 +92,7 @@ def main(
         ),
         selected_paths_set=paths_set,
         device=device,
-        api_key=OPENAI_API_KEY,
+        api_key=OPENAI_API_KEY or "",
         output_path=autointerp_eval_dir,
         force_rerun=False,
         save_logs_path=logs_path,

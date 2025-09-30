@@ -376,11 +376,13 @@ class PathAutoInterp(autointerp.AutoInterp):
             ) -> list[autointerp.Example]:
                 if all_acts is None:
                     all_acts = th.zeros_like(all_toks).float()
+                # Use 0.0 as default threshold if None provided
+                threshold = act_threshold if act_threshold is not None else 0.0
                 return [
                     autointerp.Example(
                         toks=toks,
                         acts=acts,
-                        act_threshold=act_threshold,
+                        act_threshold=threshold,
                         model=self.model,
                     )
                     for (toks, acts) in zip(

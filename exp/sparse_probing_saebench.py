@@ -234,11 +234,13 @@ def run_eval_single_dataset(
         if config.lower_vram_usage:
             model = model.to(device)
 
+        # Use default batch size of 32 if not specified
+        batch_size = config.llm_batch_size if config.llm_batch_size is not None else 32
         all_train_acts_BTP, all_test_acts_BTP = get_dataset_activations(
             dataset_name,
             config,
             model,
-            config.llm_batch_size,
+            batch_size,
             paths.top_k,
             device,
         )
