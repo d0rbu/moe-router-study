@@ -13,76 +13,6 @@ from exp.get_activations import ActivationKeys
 from viz import FIGURE_DIR
 
 
-def compute_jaccard_similarity_matrix(activated_experts: th.Tensor) -> th.Tensor:
-    """Compute pairwise Jaccard similarity between expert activations.
-
-    Jaccard similarity = |A & B| / |A | B|
-    where A and B are the sets of samples activating each expert.
-
-    Args:
-        activated_experts: Binary activation matrix of shape (num_experts, num_samples).
-
-    Returns:
-        Jaccard similarity matrix of shape (num_experts, num_experts).
-    """
-    # Convert to float for matrix operations
-    activated = activated_experts.float()
-
-    # Compute intersection: A & B
-    # This is the count of samples where both experts are activated
-    intersection = activated @ activated.T
-
-    # Compute union: A | B
-    # This is |A| + |B| - |A & B|
-    expert_activation_counts = activated.sum(dim=1)
-    union = (
-        expert_activation_counts.unsqueeze(1)
-        + expert_activation_counts.unsqueeze(0)
-        - intersection
-    )
-
-    # Compute Jaccard similarity
-    # Avoid division by zero
-    jaccard = th.where(union > 0, intersection / union, th.zeros_like(intersection))
-
-    return jaccard
-
-
-def compute_independent_jaccard_matrix(activated_experts: th.Tensor) -> th.Tensor:
-    """Compute expected Jaccard similarities if experts were independent.
-
-    For independent experts, Jaccard = (xy) / (x + y - xy)
-    where x and y are the activation rates of each expert.
-
-    Args:
-        activated_experts: Binary activation matrix of shape (num_experts, num_samples).
-
-    Returns:
-        Expected Jaccard similarity matrix for independent activations.
-    """
-    # Compute activation rates for each expert
-    activation_rates = activated_experts.float().mean(dim=1)  # Shape: (num_experts,)
-
-    # Compute pairwise independent Jaccard distances
-    x = activation_rates.unsqueeze(1)  # Shape: (num_experts, 1)
-    y = activation_rates.unsqueeze(0)  # Shape: (1, num_experts)
-
-    # Independent coactivation rate: xy
-    independent_coactivation = x * y
-
-    # Independent union rate: x + y - xy
-    independent_union = x + y - independent_coactivation
-
-    # Independent Jaccard: xy / (x + y - xy)
-    independent_jaccard = th.where(
-        independent_union > 0,
-        independent_coactivation / independent_union,
-        th.zeros_like(independent_union),
-    )
-
-    return independent_jaccard
-
-
 async def _router_jaccard_distance_async(
     experiment_name: str, batch_size: int = 4096
 ) -> None:
@@ -128,16 +58,20 @@ async def _router_jaccard_distance_async(
         activated_experts = th.zeros_like(router_logits)
         activated_experts.scatter_(2, top_k_indices, 1)
 
-        # Reshape: (B, L, E) -> (L * E, B)
-        activated_experts_batch = activated_experts.reshape(-1, total_experts).T.float()
+        # Reshape: (B, L, E) -> (B, L * E)
+        activated_experts_batch = activated_experts.reshape(-1, total_experts).float()
 
         # Update running counts
-        expert_activation_counts += activated_experts_batch.sum(dim=1)
+        expert_activation_counts += activated_experts_batch.sum(dim=0)
         pairwise_coactivation_counts += (
-            activated_experts_batch @ activated_experts_batch.T
+            activated_experts_batch.T @ activated_experts_batch
         )
 
-    if top_k is None or expert_activation_counts is None or pairwise_coactivation_counts is None:
+    if (
+        top_k is None
+        or expert_activation_counts is None
+        or pairwise_coactivation_counts is None
+    ):
         raise ValueError("No activation data found")
 
     logger.info("Computing Jaccard similarities...")
@@ -159,7 +93,23 @@ async def _router_jaccard_distance_async(
 
     # Compute independent baseline using marginal probabilities
     expert_probabilities = expert_activation_counts / total_samples
-    independent_jaccard = th.outer(expert_probabilities, expert_probabilities)
+
+    # For independent experts, Jaccard = (p_i * p_j) / (p_i + p_j - p_i * p_j)
+    p_i = expert_probabilities.unsqueeze(1)  # Shape: (num_experts, 1)
+    p_j = expert_probabilities.unsqueeze(0)  # Shape: (1, num_experts)
+
+    # Independent coactivation probability: p_i * p_j
+    independent_coactivation = p_i * p_j
+
+    # Independent union probability: p_i + p_j - p_i * p_j
+    independent_union = p_i + p_j - independent_coactivation
+
+    # Independent Jaccard similarity: coactivation / union
+    independent_jaccard = th.where(
+        independent_union > 0,
+        independent_coactivation / independent_union,
+        th.zeros_like(independent_union),
+    )
 
     # Extract upper triangle (excluding diagonal) for bar plots
     upper_triangular_mask = th.triu(th.ones_like(jaccard).bool(), diagonal=1)
