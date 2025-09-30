@@ -904,8 +904,8 @@ def cluster_paths(
 
     logger.debug(f"Running with log level: {log_level}")
 
-    log_level_numeric = logger._core.levels[log_level].no
-    debug_level_numeric = logger._core.levels["DEBUG"].no
+    log_level_numeric = logger.level(log_level).no
+    debug_level_numeric = logger.level("DEBUG").no
 
     activations, activation_dims, gpu_process_group = asyncio.run(
         load_activations_and_init_dist(

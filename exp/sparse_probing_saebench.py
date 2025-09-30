@@ -316,7 +316,7 @@ def run_eval_single_dataset(
         th.cuda.empty_cache()
         gc.collect()
 
-    per_class_results_dict.extend(llm_results)
+    per_class_results_dict.update(llm_results)
 
     for k in config.k_values:
         _sae_top_k_probes, sae_top_k_test_accuracies = train_probe_on_activations(

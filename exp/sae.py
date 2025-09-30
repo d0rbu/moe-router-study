@@ -449,14 +449,16 @@ def main(
     dtype: str = "bf16",
 ) -> None:
     """Train a sparse autoencoder on the given model and dataset."""
-    assert log_level in logger._core.levels, (
-        f"Invalid log level, must be one of {logger._core.levels.keys()}"
-    )
+    # Check if log level is valid by trying to get it
+    try:
+        logger.level(log_level)
+    except ValueError as err:
+        raise ValueError(f"Invalid log level: {log_level}") from err
 
     logger.remove()
     logger.add(sys.stderr, level=log_level)
-    log_level_numeric = logger._core.levels[log_level].no
-    debug_level_numeric = logger._core.levels["DEBUG"].no
+    log_level_numeric = logger.level(log_level).no
+    debug_level_numeric = logger.level("DEBUG").no
 
     debug = log_level_numeric <= debug_level_numeric
 
