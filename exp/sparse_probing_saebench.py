@@ -212,6 +212,7 @@ def get_paths_meaned_activations(
 
     return all_sae_activations_BF
 
+
 LLM_DEFAULT_BATCH_SIZE = 32
 
 
