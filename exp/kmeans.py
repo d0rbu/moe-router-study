@@ -16,6 +16,7 @@ import yaml
 
 from core.async_utils import handle_exceptions
 from core.moe import convert_router_logits_to_paths
+from core.training import exponential_to_linear_save_steps
 from exp import OUTPUT_DIR
 from exp.activations import Activations, load_activations_and_init_dist
 from exp.get_activations import ActivationKeys
@@ -25,7 +26,7 @@ from exp.kmeans_validation import (
     check_monotonic_increasing_window,
     validate_centroid_distribution,
 )
-from exp.training import exponential_to_linear_save_steps, get_experiment_name
+from exp.training import get_experiment_name
 
 
 @dataclass
@@ -145,9 +146,7 @@ async def compute_centroid_from_assignment(
     num_assigned = centroid_mask.sum()
 
     if num_assigned == 0:
-        return th.zeros_like(data[0]), th.tensor(
-            0, dtype=num_assigned.dtype, device=num_assigned.device
-        )
+        return th.zeros_like(data[0]), num_assigned
 
     return data[centroid_mask].mean(dim=0), num_assigned
 
@@ -828,14 +827,13 @@ async def cluster_paths_async(
         dataset_name=dataset_name,
         seed=seed,
         tokens_per_file=tokens_per_file,
+        type=KMEANS_TYPE,
     )
 
     logger.debug(f"Running kmeans with experiment name: {kmeans_experiment_name}")
 
-    save_dir = None
-    if save_every is not None:
-        save_dir = os.path.join(OUTPUT_DIR, kmeans_experiment_name)
-        os.makedirs(save_dir, exist_ok=True)
+    save_dir = os.path.join(OUTPUT_DIR, kmeans_experiment_name)
+    os.makedirs(save_dir, exist_ok=True)
 
     logger.trace(f"Save directory: {save_dir}")
 
@@ -859,7 +857,7 @@ async def cluster_paths_async(
             "top_k": top_k,
             "losses": losses,
         }
-        out_path = os.path.join(OUTPUT_DIR, kmeans_experiment_name, KMEANS_FILENAME)
+        out_path = os.path.join(save_dir, KMEANS_FILENAME)
         th.save(out, out_path)
 
         out_metadata = {
@@ -873,10 +871,9 @@ async def cluster_paths_async(
             "gpu_minibatch_size": gpu_minibatch_size,
             "save_every": save_every,
             "type": KMEANS_TYPE,
+            "kmeans_experiment_name": kmeans_experiment_name,
         }
-        out_metadata_path = os.path.join(
-            OUTPUT_DIR, kmeans_experiment_name, METADATA_FILENAME
-        )
+        out_metadata_path = os.path.join(save_dir, METADATA_FILENAME)
         with open(out_metadata_path, "w") as f:
             yaml.dump(out_metadata, f)
 

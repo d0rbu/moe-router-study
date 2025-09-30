@@ -383,9 +383,10 @@ def run_eval_paths(
             save_activations,
         )
 
-    averaged_results = general_utils.average_results_dictionaries(
+    averaged_results: dict[str, float] = general_utils.average_results_dictionaries(
         dataset_results, config.dataset_names
     )
+    results_dict: dict[str, float | dict[str, float]] = dict(averaged_results)
 
     results_dict: dict[str, float | dict[str, float]] = {}
     results_dict.update(averaged_results)

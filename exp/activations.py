@@ -14,6 +14,7 @@ from tqdm import tqdm
 
 from core.logging import init_distributed_logging
 from core.memory import clear_memory
+from core.type import assert_type
 from exp import ACTIVATION_DIRNAME, OUTPUT_DIR
 from exp.get_activations import ActivationKeys
 from exp.training import get_experiment_name
@@ -28,27 +29,33 @@ def broadcast_variable_length_list[T](
     if kwargs is None:
         kwargs = {}
 
+    # Broadcast the number of items first
     num_items = [None]
-
     if dist.get_rank() == 0:
         items = list_fn(*args, **kwargs)
         num_items[0] = len(items)
 
     dist.broadcast_object_list(num_items, src=src)
     num_items = num_items[0]
+    assert isinstance(num_items, int), "num_items should be an integer after broadcast"
 
     logger.trace(f"Rank {src} broadcasted that there are {num_items} items")
 
     if num_items == 0:
         return []
 
-    if dist.get_rank() != 0:
+    # Now broadcast the actual items
+    if dist.get_rank() == 0:
+        # items is already set from list_fn call above
+        pass
+    else:
         items = [None] * num_items
 
     dist.broadcast_object_list(items, src=src)
     logger.trace(f"Rank {src} broadcasted {num_items} items")
 
-    return items
+    # At this point, items contains the actual values from rank 0
+    return assert_type(items, list)
 
 
 class Activations:

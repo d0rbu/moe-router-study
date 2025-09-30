@@ -2,4 +2,3 @@
 
 [rules]
 possibly-unbound-attribute = "ignore"
-unresolved-import = "ignore"

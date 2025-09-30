@@ -1,18 +1,5 @@
 from hashlib import sha256
-import math
 import warnings
-
-
-def exponential_to_linear_save_steps(total_steps: int, save_every: int) -> set[int]:
-    num_exponential_save_steps = math.ceil(math.log2(save_every))
-
-    # exponential ramp and then linear
-    # 0, 1, 2, 4, ..., save_every, save_every * 2, save_every * 3, ...
-    save_steps = set(range(0, total_steps, save_every))
-    save_steps |= {2**i for i in range(num_exponential_save_steps)}
-    save_steps.add(0)
-
-    return save_steps
 
 
 def get_experiment_name(model_name: str, dataset_name: str, **kwargs) -> str:
