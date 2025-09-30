@@ -8,9 +8,9 @@ from loguru import logger
 import matplotlib.pyplot as plt
 import torch as th
 
+from core.moe import convert_router_logits_to_paths
 from exp.activations import Activations
 from exp.get_activations import ActivationKeys
-from core.moe import convert_router_logits_to_paths
 from viz import FIGURE_DIR
 
 
