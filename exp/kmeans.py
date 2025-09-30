@@ -145,7 +145,9 @@ async def compute_centroid_from_assignment(
     num_assigned = centroid_mask.sum()
 
     if num_assigned == 0:
-        return th.zeros_like(data[0]), 0
+        return th.zeros_like(data[0]), th.tensor(
+            0, dtype=num_assigned.dtype, device=num_assigned.device
+        )
 
     return data[centroid_mask].mean(dim=0), num_assigned
 
@@ -625,7 +627,7 @@ async def kmeans_manhattan(
     logger.trace(f"Initialized centroids for {len(k_values)} clusters")
 
     # clean up the background workers and queue
-    data_iterable.send("STOP!")
+    data_iterable.close()
     th.cuda.empty_cache()
     gc.collect()
     ### end

@@ -183,7 +183,7 @@ def circuit_loss(
     if topk is None and top_k is None:
         raise TypeError("circuit_loss requires `topk` (or `top_k`) argument")
     if topk is None:
-        topk = int(top_k)  # type: ignore[arg-type]
+        topk = int(top_k)
     elif top_k is not None and int(top_k) != int(topk):
         raise ValueError("Conflicting values for topk and top_k")
 

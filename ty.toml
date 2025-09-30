@@ -2,4 +2,4 @@
 
 [rules]
 possibly-unbound-attribute = "ignore"
-invalid-return-type = "ignore"
+unresolved-import = "ignore"
