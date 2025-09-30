@@ -348,7 +348,7 @@ def run_eval_paths(
     artifacts_folder: str,
     save_activations: bool = True,
 ) -> tuple[
-    dict[str, int | float | dict[str, int | float]], dict[str, dict[str, int | float]]
+    dict[str, int | float | dict[str, int | float]], dict[str, dict[str, float]]
 ]:
     """
     By default, we save activations for all datasets, and then reuse them for each set of paths.
@@ -363,7 +363,7 @@ def run_eval_paths(
     results_dict = {}
 
     dataset_results = {}
-    per_class_dict = {}
+    per_class_dict: dict[str, dict[str, float]] = {}
     for dataset_name in config.dataset_names:
         results_key = f"{dataset_name}_results"
         (
