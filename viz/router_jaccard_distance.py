@@ -10,7 +10,7 @@ import torch as th
 
 from exp.activations import Activations
 from exp.get_activations import ActivationKeys
-from moe import convert_router_logits_to_paths
+from core.moe import convert_router_logits_to_paths
 from viz import FIGURE_DIR
 
 
