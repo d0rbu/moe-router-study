@@ -44,7 +44,7 @@ from exp import MODEL_DIRNAME
 from exp.autointerp_saebench import Paths
 
 
-@th.no_grad
+@th.no_grad()
 def get_llm_activations(
     tokens: th.Tensor,  # (B, T)
     model: StandardizedTransformer,
@@ -94,7 +94,7 @@ def get_llm_activations(
     return th.cat(all_acts_BTP, dim=0)
 
 
-@th.no_grad
+@th.no_grad()
 def get_all_llm_activations(
     tokenized_inputs_dict: dict[
         str, dict[str, th.Tensor]  # (B, T)

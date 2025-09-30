@@ -587,14 +587,14 @@ def run_eval(
                     autointerp_score=score, autointerp_std_dev=std_dev
                 )
             ),
-            eval_result_details=[],
-            eval_result_unstructured=paths_eval_result,
-            sae_bench_commit_hash=sae_bench_commit_hash,
-            sae_lens_id="paths",
-            sae_lens_release_id=paths_with_metadata.name,
-            sae_lens_version=sae_lens_version,
-            sae_cfg_dict=paths_with_metadata.metadata,
         )
+        eval_output.eval_result_details = []
+        eval_output.eval_result_unstructured = paths_eval_result
+        eval_output.sae_bench_commit_hash = sae_bench_commit_hash
+        eval_output.sae_lens_id = "paths"
+        eval_output.sae_lens_release_id = paths_with_metadata.name
+        eval_output.sae_lens_version = sae_lens_version
+        eval_output.sae_cfg_dict = paths_with_metadata.metadata
 
         results_dict[f"{paths_with_metadata.name}"] = asdict(eval_output)
 
