@@ -776,3 +776,19 @@ def load_activations_indices_tokens_and_topk(
     ]
 
     return token_topk_mask, indices, tokens, top_k
+
+
+def load_activations(device: str = "cpu") -> th.Tensor:
+    """Load activations tensor.
+
+    This is a convenience function that returns just the token_topk_mask tensor
+    from load_activations_indices_tokens_and_topk.
+
+    Args:
+        device: Device to place tensors on
+
+    Returns:
+        token_topk_mask tensor
+    """
+    token_topk_mask, _, _, _ = load_activations_indices_tokens_and_topk(device=device)
+    return token_topk_mask
