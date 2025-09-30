@@ -6,7 +6,7 @@ import os
 import random
 import shutil
 import sys
-from typing import Any, cast
+from typing import Any
 
 from loguru import logger
 from nnterp import StandardizedTransformer
@@ -380,9 +380,7 @@ def run_eval_paths(
     averaged_results: dict[str, float] = general_utils.average_results_dictionaries(
         dataset_results, config.dataset_names
     )
-    results_dict: dict[str, float | dict[str, float]] = cast(
-        "dict[str, float | dict[str, float]]", averaged_results.copy()
-    )
+    results_dict: dict[str, float | dict[str, float]] = dict(averaged_results)
 
     for dataset_name, dataset_result in dataset_results.items():
         results_dict[dataset_name] = dataset_result
