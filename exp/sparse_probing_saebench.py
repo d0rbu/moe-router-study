@@ -8,9 +8,6 @@ import shutil
 import sys
 from typing import Any
 
-# Default batch size for LLM processing when not specified in config
-LLM_DEFAULT_BATCH_SIZE = 32
-
 from loguru import logger
 from nnterp import StandardizedTransformer
 from sae_bench.evals.sparse_probing.eval_config import SparseProbingEvalConfig
@@ -214,6 +211,8 @@ def get_paths_meaned_activations(
         all_sae_activations_BF[class_name] = all_acts_BF
 
     return all_sae_activations_BF
+
+LLM_DEFAULT_BATCH_SIZE = 32
 
 
 def run_eval_single_dataset(
