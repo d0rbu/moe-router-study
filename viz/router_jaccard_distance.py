@@ -10,6 +10,7 @@ import torch as th
 
 from exp.activations import Activations
 from exp.get_activations import ActivationKeys
+from moe import convert_router_logits_to_paths
 from viz import FIGURE_DIR
 
 
@@ -54,9 +55,7 @@ async def _router_jaccard_distance_async(
         total_samples += current_batch_size
 
         # Convert to binary activations (top-k selection)
-        top_k_indices = th.topk(router_logits, k=top_k, dim=2).indices
-        activated_experts = th.zeros_like(router_logits)
-        activated_experts.scatter_(2, top_k_indices, 1)
+        activated_experts = convert_router_logits_to_paths(router_logits, top_k)
 
         # Reshape: (B, L, E) -> (B, L * E)
         activated_experts_batch = activated_experts.reshape(-1, total_experts).float()
