@@ -44,6 +44,7 @@ from exp import MODEL_DIRNAME
 from exp.autointerp_saebench import Paths
 
 
+@th.no_grad()
 def get_llm_activations(
     tokens: th.Tensor,  # (B, T)
     model: StandardizedTransformer,
@@ -56,44 +57,44 @@ def get_llm_activations(
     VERY IMPORTANT NOTE: If mask_bos_pad_eos_tokens is True, we zero out activations for BOS, PAD, and EOS tokens.
     Later, we ignore zeroed activations."""
 
-    with th.no_grad():
-        all_acts_BTP = []
+    all_acts_BTP = []
 
-        for batch_idx, tokens_BT in tqdm(
-            enumerate(batched(tokens, batch_size)),
-            total=tokens.shape[0] // batch_size,
-            desc="Collecting activations",
-            disable=not show_progress,
-        ):
-            with model.trace(tokens_BT):
-                acts_BTLE = [
-                    model.routers_output[layer_idx].save()
-                    for layer_idx in tqdm(
-                        model.layers_with_routers,
-                        desc=f"Batch {batch_idx}",
-                        total=len(model.layers_with_routers),
-                        leave=False,
-                    )
-                ]
+    for batch_idx, tokens_BT in tqdm(
+        enumerate(batched(tokens, batch_size)),
+        total=tokens.shape[0] // batch_size,
+        desc="Collecting activations",
+        disable=not show_progress,
+    ):
+        with model.trace(tokens_BT):
+            acts_BTLE = [
+                model.routers_output[layer_idx].save()
+                for layer_idx in tqdm(
+                    model.layers_with_routers,
+                    desc=f"Batch {batch_idx}",
+                    total=len(model.layers_with_routers),
+                    leave=False,
+                )
+            ]
 
-            acts_BTLE = th.stack(acts_BTLE, dim=-2)
-            sparse_paths = th.topk(acts_BTLE, k=top_k, dim=-1).indices
-            acts_BTLE.zero_()
-            acts_BTLE.scatter_(-1, sparse_paths, 1)
-            del sparse_paths
+        acts_BTLE = th.stack(acts_BTLE, dim=-2)
+        sparse_paths = th.topk(acts_BTLE, k=top_k, dim=-1).indices
+        acts_BTLE.zero_()
+        acts_BTLE.scatter_(-1, sparse_paths, 1)
+        del sparse_paths
 
-            acts_BTP = acts_BTLE.view(*tokens_BT.shape, -1)
-            del acts_BTLE
+        acts_BTP = acts_BTLE.view(*tokens_BT.shape, -1)
+        del acts_BTLE
 
-            if mask_bos_pad_eos_tokens:
-                attn_mask_BT = get_bos_pad_eos_mask(tokens_BT, model.tokenizer)
-                acts_BTP *= attn_mask_BT[:, :, None]
+        if mask_bos_pad_eos_tokens:
+            attn_mask_BT = get_bos_pad_eos_mask(tokens_BT, model.tokenizer)
+            acts_BTP *= attn_mask_BT[:, :, None]
 
-            all_acts_BTP.append(acts_BTP)
+        all_acts_BTP.append(acts_BTP)
 
-        return th.cat(all_acts_BTP, dim=0)
+    return th.cat(all_acts_BTP, dim=0)
 
 
+@th.no_grad()
 def get_all_llm_activations(
     tokenized_inputs_dict: dict[
         str, dict[str, th.Tensor]  # (B, T)
@@ -106,23 +107,22 @@ def get_all_llm_activations(
     """If we have a dictionary of tokenized inputs for different classes, this function collects activations for all classes.
     We assume that the tokenized inputs have both the input_ids and attention_mask keys.
     VERY IMPORTANT NOTE: We zero out masked token activations in this function. Later, we ignore zeroed activations."""
-    with th.no_grad():
-        all_classes_acts_BTP = {}
+    all_classes_acts_BTP = {}
 
-        for class_name in tokenized_inputs_dict:
-            tokens = tokenized_inputs_dict[class_name]["input_ids"]
+    for class_name in tokenized_inputs_dict:
+        tokens = tokenized_inputs_dict[class_name]["input_ids"]
 
-            acts_BTP = get_llm_activations(
-                tokens,
-                model=model,
-                batch_size=batch_size,
-                top_k=top_k,
-                mask_bos_pad_eos_tokens=mask_bos_pad_eos_tokens,
-            )
+        acts_BTP = get_llm_activations(
+            tokens,
+            model=model,
+            batch_size=batch_size,
+            top_k=top_k,
+            mask_bos_pad_eos_tokens=mask_bos_pad_eos_tokens,
+        )
 
-            all_classes_acts_BTP[class_name] = acts_BTP
+        all_classes_acts_BTP[class_name] = acts_BTP
 
-        return all_classes_acts_BTP
+    return all_classes_acts_BTP
 
 
 def get_dataset_activations(
