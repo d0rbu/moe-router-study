@@ -1,4 +1,4 @@
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Iterable
 import os
 from typing import Any
 
@@ -12,17 +12,17 @@ from exp import DATASET_DIRNAME
 
 def fineweb_10bt_text(
     _tokenizer: PreTrainedTokenizer | None = None,
-) -> Generator[str, None, None]:
+) -> Iterable[str]:
     fineweb = load_dataset(
         "HuggingFaceFW/fineweb", name="sample-10BT", split="train", streaming=True
     )
 
-    yield from fineweb["text"]
+    return fineweb["text"]
 
 
 def toy_text(
     _tokenizer: PreTrainedTokenizer | None = None,
-) -> Generator[str, None, None]:
+) -> Iterable[str]:
     """Tiny, in-repo dataset for tests and quick runs."""
     samples = [
         "Tiny sample 1",
@@ -31,15 +31,15 @@ def toy_text(
         "Tiny sample 4",
     ]
 
-    yield from samples
+    return samples
 
 
 def smollm2_small(
     _tokenizer: PreTrainedTokenizer | None = None,
-) -> Generator[str, None, None]:
+) -> Iterable[str]:
     smollm2_135m_10b = load_dataset("EleutherAI/SmolLM2-135M-10B", split="train[:1%]")
 
-    yield from smollm2_135m_10b["text"]
+    return smollm2_135m_10b["text"]
 
 
 def lmsys_chat_1m_text(
@@ -47,14 +47,14 @@ def lmsys_chat_1m_text(
     start_idx: int = 0,
     stop_idx: int = 0,
     streaming: bool = True,
-) -> Generator[str, None, None]:
+) -> Iterable[str]:
     """Stream and format conversations from the LMSYS Chat-1M dataset.
 
     Each conversation is formatted as a plain text transcript with "role: content" format,
     with each message on a new line. Redacted conversations are skipped.
 
     Returns:
-        Generator[str, None, None]: Stream of formatted conversation texts
+        Iterable[str]: Stream of formatted conversation texts
     """
     hf_name = "lmsys/lmsys-chat-1m"
     local_path = os.path.join(os.path.abspath(DATASET_DIRNAME), hf_name)
@@ -112,7 +112,7 @@ def lmsys_chat_1m_text(
     return _iter()
 
 
-DATASETS: dict[str, Callable[[PreTrainedTokenizer], Generator[str, None, None]]] = {
+DATASETS: dict[str, Callable[[PreTrainedTokenizer], Iterable[str]]] = {
     "fw": fineweb_10bt_text,
     "toy": toy_text,
     "lmsys": lmsys_chat_1m_text,
@@ -122,7 +122,7 @@ DATASETS: dict[str, Callable[[PreTrainedTokenizer], Generator[str, None, None]]]
 
 def get_dataset_fn(
     dataset_name: str,
-) -> Callable[[PreTrainedTokenizer], Generator[str, None, None]]:
+) -> Callable[[PreTrainedTokenizer], Iterable[str]]:
     dataset_fn = DATASETS.get(dataset_name)
     if dataset_fn is None:
         raise ValueError(f"Dataset {dataset_name} not found")
