@@ -832,11 +832,13 @@ def get_router_activations(
             str(ActivationKeys.MLP_OUTPUT),
         ]
 
+    layers_to_store_set: set[int] | None
     if not layers_to_store:
-        layers_to_store = None
-
-    if isinstance(layers_to_store, list):
-        layers_to_store = set(layers_to_store)
+        layers_to_store_set = None
+    elif isinstance(layers_to_store, list):
+        layers_to_store_set = set(layers_to_store)
+    else:
+        layers_to_store_set = layers_to_store
 
     if not gpu_available:
         logger.info("Using CPU only")
@@ -978,7 +980,7 @@ def get_router_activations(
             )
 
         logger.debug(f"Storing activations: {activations_to_store}")
-        logger.debug(f"Storing layers: {layers_to_store}")
+        logger.debug(f"Storing layers: {layers_to_store_set}")
         gpu_proc = mp.Process(
             target=gpu_worker,
             args=(
@@ -994,7 +996,7 @@ def get_router_activations(
                 log_queue,
                 output_queue,
                 set(activations_to_store),
-                layers_to_store,
+                layers_to_store_set,
                 torch_dtype,
                 log_level,
             ),
