@@ -6,10 +6,7 @@ from itertools import batched
 import os
 import random
 import sys
-from typing import TYPE_CHECKING, Any, cast
-
-if TYPE_CHECKING:
-    from transformers import AutoTokenizer
+from typing import Any
 
 from loguru import logger
 from nnterp import StandardizedTransformer
@@ -31,8 +28,10 @@ from sae_bench.sae_bench_utils.activation_collection import get_bos_pad_eos_mask
 from tabulate import tabulate
 import torch as th
 from tqdm import tqdm
+from transformers import PreTrainedTokenizer
 
 from core.model import get_model_config
+from core.type import assert_type
 from exp import MODEL_DIRNAME
 
 
@@ -453,7 +452,7 @@ def run_eval_paths(
             config.dataset_name,
             config.llm_context_size,
             config.total_tokens,
-            cast("AutoTokenizer", model.tokenizer),
+            assert_type(model.tokenizer, PreTrainedTokenizer),
         ).to(device)
         th.save(tokenized_dataset, tokens_path)
 

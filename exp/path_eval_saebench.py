@@ -20,7 +20,7 @@ from exp.kmeans import KMEANS_FILENAME, KMEANS_TYPE
 from exp.sparse_probing_saebench import run_eval as run_sparse_probing_eval
 
 load_dotenv()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or ""
 
 
 @arguably.command()
@@ -92,7 +92,7 @@ def main(
         ),
         selected_paths_set=paths_set,
         device=device,
-        api_key=OPENAI_API_KEY or "",
+        api_key=OPENAI_API_KEY,
         output_path=autointerp_eval_dir,
         force_rerun=False,
         save_logs_path=logs_path,

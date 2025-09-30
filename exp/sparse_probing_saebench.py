@@ -6,10 +6,7 @@ import os
 import random
 import shutil
 import sys
-from typing import TYPE_CHECKING, Any, cast
-
-if TYPE_CHECKING:
-    from transformers import AutoTokenizer
+from typing import Any
 
 from loguru import logger
 from nnterp import StandardizedTransformer
@@ -41,8 +38,10 @@ from sae_bench.sae_bench_utils.dataset_utils import (
 )
 import torch as th
 from tqdm import tqdm
+from transformers import PreTrainedTokenizer
 
 from core.model import get_model_config
+from core.type import assert_type
 from exp import MODEL_DIRNAME
 from exp.autointerp_saebench import Paths
 
@@ -150,13 +149,13 @@ def get_dataset_activations(
 
     train_data = tokenize_data_dictionary(
         train_data,
-        cast("AutoTokenizer", model.tokenizer),
+        assert_type(model.tokenizer, PreTrainedTokenizer),
         config.context_length,
         device,
     )
     test_data = tokenize_data_dictionary(
         test_data,
-        cast("AutoTokenizer", model.tokenizer),
+        assert_type(model.tokenizer, PreTrainedTokenizer),
         config.context_length,
         device,
     )
@@ -237,8 +236,7 @@ def run_eval_single_dataset(
         if config.lower_vram_usage:
             model = model.to(th.device(device))
 
-        # Use default batch size of 32 if not specified
-        batch_size = config.llm_batch_size if config.llm_batch_size is not None else 32
+        batch_size = config.llm_batch_size or 32
         all_train_acts_BTP, all_test_acts_BTP = get_dataset_activations(
             dataset_name,
             config,
@@ -382,12 +380,12 @@ def run_eval_paths(
             save_activations,
         )
 
-    results_dict = cast(
-        "dict[str, float | dict[str, float]]",
-        general_utils.average_results_dictionaries(
-            dataset_results, config.dataset_names
-        ),
+    averaged_results = general_utils.average_results_dictionaries(
+        dataset_results, config.dataset_names
     )
+
+    results_dict: dict[str, float | dict[str, float]] = {}
+    results_dict.update(averaged_results)
 
     for dataset_name, dataset_result in dataset_results.items():
         results_dict[dataset_name] = dataset_result

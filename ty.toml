@@ -1,6 +1,5 @@
 # Configuration for ty type checker
 
 [rules]
-# invalid-return-type = "ignore"
 possibly-unbound-attribute = "ignore"
 unresolved-import = "ignore"

@@ -10,7 +10,7 @@ from core.dtype import get_dtype
 from exp import OUTPUT_DIR
 
 load_dotenv()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or ""
 
 
 @arguably.command()
@@ -60,7 +60,7 @@ def main(
         eval_types=eval_types,
         random_seed=seed,
         download_location=OUTPUT_DIR,
-        api_key=OPENAI_API_KEY or "",
+        api_key=OPENAI_API_KEY,
     )
 
 

@@ -3,13 +3,20 @@ import os
 import streamlit as st
 import torch as th
 
-# from exp.activations import load_activations_indices_tokens_and_topk
-
 
 def load_activations_indices_tokens_and_topk(device=None):
-    """Placeholder function - original implementation missing"""
+    """
+    Load activations data using the Activations class.
+
+    This function needs to be implemented to use the Activations class
+    from exp.activations to load the required data.
+
+    Returns:
+        tuple: (token_topk_mask, activated_expert_indices, tokens, top_k)
+    """
     raise NotImplementedError(
-        "load_activations_indices_tokens_and_topk function is not implemented"
+        "This function needs to be implemented using the Activations class. "
+        "Please implement the proper loading logic using exp.activations.Activations."
     )
 
 
