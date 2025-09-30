@@ -733,37 +733,3 @@ async def load_activations_and_init_dist(
     data_iterable.send("STOP FIGHTING!!!!!!")
 
     return activations, activation_dims, gpu_process_group
-
-
-def load_activations(device: str = "cpu") -> th.Tensor:
-    """Load activations data.
-
-    Args:
-        device: Device to load data on.
-
-    Returns:
-        Tensor of activations.
-
-    Raises:
-        NotImplementedError: This function is not yet implemented.
-    """
-    raise NotImplementedError("load_activations function is not yet implemented")
-
-
-def load_activations_indices_tokens_and_topk(
-    device: str = "cpu",
-) -> tuple[th.Tensor, th.Tensor, list[list[str]], int]:
-    """Load activations, indices, tokens, and top-k value.
-
-    Args:
-        device: Device to load data on.
-
-    Returns:
-        Tuple of (token_topk_mask, indices, tokens, top_k).
-
-    Raises:
-        NotImplementedError: This function is not yet implemented.
-    """
-    raise NotImplementedError(
-        "load_activations_indices_tokens_and_topk function is not yet implemented"
-    )
