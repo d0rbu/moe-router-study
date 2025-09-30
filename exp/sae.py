@@ -427,18 +427,18 @@ def main(
     expansion_factor: tuple[int] = (16,),
     k: tuple[int] = (160,),
     layer: tuple[int] = (7,),
-    group_fractions: tuple[tuple[float]] = (
+    group_fractions: tuple[tuple[float, float, float, float, float]] = (
         (1.0 / 32, 1.0 / 16, 1.0 / 8, 1.0 / 4, 1.0 / 2 + 1.0 / 32),
     ),
-    group_weights: tuple[tuple[float]] = (None,),
+    group_weights: tuple[tuple[float]] | None = None,
     architecture: tuple[str] = ("batchtopk",),
     lr: tuple[float] = (5e-5,),
     auxk_alpha: tuple[float] = (1 / 32,),
     warmup_steps: tuple[int] | None = None,
-    decay_start: tuple[int] = (None,),
+    decay_start: tuple[int] | None = None,
     threshold_beta: tuple[float] = (0.999,),
     threshold_start_step: tuple[int] = (1024,),
-    k_anneal_steps: tuple[int] = (None,),
+    k_anneal_steps: tuple[int] | None = None,
     seed: tuple[int] = (0,),
     submodule_name: tuple[str] = ("mlp_output",),
     tokens_per_file: int = 5_000,
@@ -477,6 +477,14 @@ def main(
     assert len(submodule_name) > 0, "Submodule name is an empty tuple!"
 
     dtype = get_dtype(dtype)
+
+    # Handle None defaults that should be (None,) for union types
+    if group_weights is None:
+        group_weights = (None,)
+    if decay_start is None:
+        decay_start = (None,)
+    if k_anneal_steps is None:
+        k_anneal_steps = (None,)
 
     asyncio.run(
         run_sae_training(
