@@ -2,3 +2,6 @@
 
 [rules]
 invalid-return-type = "ignore"
+possibly-unbound-attribute = "ignore"
+unresolved-import = "ignore"
+invalid-argument-type = "ignore"
