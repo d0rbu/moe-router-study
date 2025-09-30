@@ -9,7 +9,10 @@ import queue
 import re
 import sys
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Sized
 import warnings
 
 import arguably
@@ -125,7 +128,7 @@ def process_batch(
         gpu_minibatch_size = min(gpu_minibatch_size, batch_size)
 
     num_minibatches = math.ceil(batch_size / gpu_minibatch_size)
-    num_layers = len(model.layers)
+    num_layers = len(cast("Sized", model.layers))
 
     # Extract activations
     activations = {
@@ -507,15 +510,17 @@ def gpu_worker(
     if layers_to_store is None:
         # take the middle 20% of layers by default
         # this does NOT apply to router logits; those are stored at all layers
-        num_layers_to_store = math.ceil(len(model.layers) * 0.2)
-        mid_layer = len(model.layers) // 2
+        num_layers_to_store = math.ceil(len(cast("Sized", model.layers)) * 0.2)
+        mid_layer = len(cast("Sized", model.layers)) // 2
         start_layer_to_store = mid_layer - (num_layers_to_store // 2)
         layers_to_store = set(
             range(start_layer_to_store, start_layer_to_store + num_layers_to_store)
         )
 
-    assert all(layer_idx < len(model.layers) for layer_idx in layers_to_store), (
-        f"Layers to store out of bounds for model with {len(model.layers)} layers: {layers_to_store}"
+    assert all(
+        layer_idx < len(cast("Sized", model.layers)) for layer_idx in layers_to_store
+    ), (
+        f"Layers to store out of bounds for model with {len(cast('Sized', model.layers))} layers: {layers_to_store}"
     )
 
     # Create output directory

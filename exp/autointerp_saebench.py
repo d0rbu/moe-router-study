@@ -6,7 +6,10 @@ from itertools import batched
 import os
 import random
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from transformers import AutoTokenizer
 
 from loguru import logger
 from nnterp import StandardizedTransformer
@@ -450,7 +453,7 @@ def run_eval_paths(
             config.dataset_name,
             config.llm_context_size,
             config.total_tokens,
-            model.tokenizer,  # type: ignore[arg-type]
+            cast("AutoTokenizer", model.tokenizer),
         ).to(device)
         th.save(tokenized_dataset, tokens_path)
 

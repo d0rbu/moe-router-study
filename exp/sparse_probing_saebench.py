@@ -6,7 +6,10 @@ import os
 import random
 import shutil
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from transformers import AutoTokenizer
 
 from loguru import logger
 from nnterp import StandardizedTransformer
@@ -147,13 +150,13 @@ def get_dataset_activations(
 
     train_data = tokenize_data_dictionary(
         train_data,
-        model.tokenizer,  # type: ignore[arg-type]
+        cast("AutoTokenizer", model.tokenizer),
         config.context_length,
         device,
     )
     test_data = tokenize_data_dictionary(
         test_data,
-        model.tokenizer,  # type: ignore[arg-type]
+        cast("AutoTokenizer", model.tokenizer),
         config.context_length,
         device,
     )
