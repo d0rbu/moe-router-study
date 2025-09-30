@@ -1,4 +1,4 @@
-from collections.abc import Callable, Generator, Iterable
+from collections.abc import Callable, Iterable
 import os
 from typing import Any
 
@@ -47,14 +47,14 @@ def lmsys_chat_1m_text(
     start_idx: int = 0,
     stop_idx: int = 0,
     streaming: bool = True,
-) -> Generator[str, None, None]:
+) -> Iterable[str]:
     """Stream and format conversations from the LMSYS Chat-1M dataset.
 
     Each conversation is formatted as a plain text transcript with "role: content" format,
     with each message on a new line. Redacted conversations are skipped.
 
     Returns:
-        Generator[str, None, None]: Stream of formatted conversation texts
+        Iterable[str]: Stream of formatted conversation texts
     """
     hf_name = "lmsys/lmsys-chat-1m"
     local_path = os.path.join(os.path.abspath(DATASET_DIRNAME), hf_name)
@@ -68,19 +68,19 @@ def lmsys_chat_1m_text(
             "Streaming mode does not support start_idx and stop_idx"
         )
     else:
-        ds = assert_type(ds, Dataset)
+        dataset = assert_type(ds, Dataset)
 
         if stop_idx == 0:
-            stop_idx = len(ds)
+            stop_idx = len(dataset)
 
         assert start_idx >= 0 and stop_idx >= 0, (
             "Non-streaming mode requires start_idx and stop_idx to be non-negative"
         )
         assert start_idx < stop_idx, "start_idx must be less than stop_idx"
-        assert start_idx < len(ds), (
+        assert start_idx < len(dataset), (
             "start_idx must be less than the length of the dataset"
         )
-        assert stop_idx <= len(ds), (
+        assert stop_idx <= len(dataset), (
             "stop_idx must be less than or equal to the length of the dataset"
         )
 
@@ -93,13 +93,14 @@ def lmsys_chat_1m_text(
         return chat
 
     def _iter():
-        conversations = ds["conversation"]
-
         if streaming:
+            conversations = ds["conversation"]
             iterator = tqdm(conversations, desc="Formatting conversations")
         else:
+            subset_ds = dataset.select(range(start_idx, stop_idx))
+            conversations = subset_ds["conversation"]
             iterator = tqdm(
-                conversations[start_idx:stop_idx],
+                conversations,
                 desc="Formatting conversations",
                 total=stop_idx - start_idx,
             )
