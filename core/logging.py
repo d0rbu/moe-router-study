@@ -7,7 +7,7 @@ import torch.distributed as dist
 def init_distributed_logging(rank_filename_format: str | None = None) -> None:
     # assert that torch distributed is initialized
     if not hasattr(dist, 'is_initialized'):
-        raise RuntimeError("torch.distributed is not available")
+        raise RuntimeError("torch.distributed.is_initialized is not available")
     
     assert dist.is_initialized(), (
         "Torch distributed must be initialized first, call dist.init_process_group() before calling init_distributed_logging()"
