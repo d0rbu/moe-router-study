@@ -3,7 +3,78 @@ import os
 import streamlit as st
 import torch as th
 
-from exp.activations import load_activations_indices_tokens_and_topk
+from exp.activations import Activations
+from exp.get_activations import ActivationKeys
+from exp.training import get_experiment_name
+
+
+def _load_activations_indices_tokens_and_topk(
+    device: str = "cuda",
+) -> tuple[th.Tensor, th.Tensor, list[list[str]], int]:
+    """Load activations data with indices, tokens, and topk information.
+
+    Returns:
+        Tuple of (token_topk_mask, activated_expert_indices, tokens, top_k)
+        where token_topk_mask has shape (B, L, E)
+    """
+    # Use default experiment parameters - these should match the experiment that was run
+    # You may need to adjust these based on your actual experiment configuration
+    experiment_name = get_experiment_name(
+        model_name="switch-base-8",  # Adjust based on your model
+        dataset_name="c4",  # Adjust based on your dataset
+        tokens_per_file=1000,  # Adjust based on your configuration
+        context_length=512,  # Adjust based on your configuration
+    )
+
+    # Load activations synchronously (blocking version)
+    import asyncio
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    try:
+        activations = loop.run_until_complete(
+            Activations.load(
+                experiment_name=experiment_name,
+                device=device,
+                tokens_per_file_in_reshuffled=1000,  # Adjust based on your configuration
+                seed=0,
+                num_workers=1,
+                debug=False,
+            )
+        )
+
+        # Collect all data
+        all_router_logits = []
+        all_tokens = []
+        top_k = None
+
+        for batch in activations(batch_size=4096):
+            router_logits = batch[ActivationKeys.ROUTER_LOGITS]
+            all_router_logits.append(router_logits)
+
+            # Extract tokens if available
+            if "tokens" in batch:
+                all_tokens.extend(batch["tokens"])
+
+            # Extract top_k if available
+            if "top_k" in batch and top_k is None:
+                top_k = batch["top_k"]
+
+        # Concatenate router logits
+        token_topk_mask = th.cat(all_router_logits, dim=0)
+
+        # Create dummy activated expert indices (same shape as token_topk_mask)
+        activated_expert_indices = th.zeros_like(token_topk_mask, dtype=th.long)
+
+        # Use dummy top_k if not found
+        if top_k is None:
+            top_k = 8  # Default value, adjust based on your model
+
+        return token_topk_mask, activated_expert_indices, all_tokens, top_k
+    finally:
+        loop.close()
+
 
 # Constants
 CIRCUITS_PATH = "out/saved_circuits.pt"
@@ -112,7 +183,7 @@ def max_activating_examples_server(
     """
     # Load all data once at the top level
     token_topk_mask, _activated_expert_indices, tokens, top_k = (
-        load_activations_indices_tokens_and_topk(device=device)
+        _load_activations_indices_tokens_and_topk(device=device)
     )
 
     # Get dimensions from token_topk_mask

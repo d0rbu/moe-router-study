@@ -11,8 +11,55 @@ from tqdm import tqdm
 import trackio as wandb
 
 from exp import OUTPUT_DIR
-from exp.activations import load_activations
+from exp.activations import Activations
 from exp.circuit_loss import circuit_loss
+from exp.get_activations import ActivationKeys
+from exp.training import get_experiment_name
+
+
+def _load_router_logits(device: str = "cuda") -> th.Tensor:
+    """Load router logits tensor from activations.
+
+    Returns:
+        Tensor of shape (B, L, E) containing router logits
+    """
+    # Use default experiment parameters - these should match the experiment that was run
+    # You may need to adjust these based on your actual experiment configuration
+    experiment_name = get_experiment_name(
+        model_name="switch-base-8",  # Adjust based on your model
+        dataset_name="c4",  # Adjust based on your dataset
+        tokens_per_file=1000,  # Adjust based on your configuration
+        context_length=512,  # Adjust based on your configuration
+    )
+
+    # Load activations synchronously (blocking version)
+    import asyncio
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    try:
+        activations = loop.run_until_complete(
+            Activations.load(
+                experiment_name=experiment_name,
+                device=device,
+                tokens_per_file_in_reshuffled=1000,  # Adjust based on your configuration
+                seed=0,
+                num_workers=1,
+                debug=False,
+            )
+        )
+
+        # Collect all router logits data
+        all_router_logits = []
+        for batch in activations(batch_size=4096):
+            router_logits = batch[ActivationKeys.ROUTER_LOGITS]
+            all_router_logits.append(router_logits)
+
+        # Concatenate all batches
+        return th.cat(all_router_logits, dim=0)
+    finally:
+        loop.close()
 
 
 def _round_if_float(x: object, ndigits: int = 6) -> object:
@@ -299,7 +346,7 @@ def load_and_gradient_descent(
     seed: int = 0,
     device: str = "cuda",
 ) -> None:
-    data = load_activations(device=device)
+    data = _load_router_logits(device=device)
 
     wandb_run = wandb.init(
         project="circuit-optimization",
@@ -413,7 +460,7 @@ def grid_search_gradient_descent(
         # num_cooldown_epochses = [0]
         num_cooldown_epochses = [0]
 
-    data = load_activations(device=device)
+    data = _load_router_logits(device=device)
     loss_landscape = th.empty(
         num_seeds,
         len(complexity_importances),
