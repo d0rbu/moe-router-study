@@ -83,33 +83,45 @@ def compute_independent_jaccard_matrix(activated_experts: th.Tensor) -> th.Tenso
     return independent_jaccard
 
 
-async def _router_jaccard_distance_async(experiment_name: str) -> None:
+async def _router_jaccard_distance_async(
+    experiment_name: str, batch_size: int = 4096
+) -> None:
     """Async implementation of Jaccard similarity analysis."""
     logger.info(f"Loading activations for experiment: {experiment_name}")
 
     # Load activations using the Activations class
     activations = await Activations.load(experiment_name=experiment_name)
 
-    activated_experts_collection = []
+    # Initialize running counts for memory-efficient Jaccard computation
     top_k: int | None = None
     num_layers: int | None = None
     num_experts: int | None = None
     total_samples = 0
 
+    # Running counts for Jaccard similarity computation
+    expert_activation_counts: th.Tensor | None = None
+    pairwise_coactivation_counts: th.Tensor | None = None
+
     # Iterate through activation batches
-    for batch in activations(batch_size=4096):
+    for batch in activations(batch_size=batch_size):
         router_logits = batch[ActivationKeys.ROUTER_LOGITS]
 
         if top_k is None:
             top_k = batch["topk"]
             num_layers, num_experts = router_logits.shape[1], router_logits.shape[2]
+            total_experts = num_layers * num_experts
             logger.info(
                 f"Router configuration: {num_layers} layers, {num_experts} experts per layer, top-k={top_k}"
             )
 
-        total_experts = num_layers * num_experts
-        batch_size = router_logits.shape[0]
-        total_samples += batch_size
+            # Initialize running count tensors
+            expert_activation_counts = th.zeros(total_experts, dtype=th.float32)
+            pairwise_coactivation_counts = th.zeros(
+                total_experts, total_experts, dtype=th.float32
+            )
+
+        current_batch_size = router_logits.shape[0]
+        total_samples += current_batch_size
 
         # Convert to binary activations (top-k selection)
         top_k_indices = th.topk(router_logits, k=top_k, dim=2).indices
@@ -117,23 +129,37 @@ async def _router_jaccard_distance_async(experiment_name: str) -> None:
         activated_experts.scatter_(2, top_k_indices, 1)
 
         # Reshape: (B, L, E) -> (L * E, B)
-        activated_experts_collection.append(
-            activated_experts.reshape(-1, total_experts).T
+        activated_experts_batch = activated_experts.reshape(-1, total_experts).T.float()
+
+        # Update running counts
+        expert_activation_counts += activated_experts_batch.sum(dim=1)
+        pairwise_coactivation_counts += (
+            activated_experts_batch @ activated_experts_batch.T
         )
 
-    if top_k is None:
+    if top_k is None or expert_activation_counts is None or pairwise_coactivation_counts is None:
         raise ValueError("No activation data found")
-
-    # Concatenate all batches: (L * E, total_samples)
-    activated_experts = th.cat(activated_experts_collection, dim=-1)
 
     logger.info("Computing Jaccard similarities...")
     logger.info(f"Total samples: {total_samples:,}")
     logger.info(f"Total experts (across all layers): {total_experts}")
 
-    # Compute actual and independent Jaccard similarity matrices
-    jaccard = compute_jaccard_similarity_matrix(activated_experts)
-    independent_jaccard = compute_independent_jaccard_matrix(activated_experts)
+    # Compute Jaccard similarity matrix using running counts
+    # Jaccard similarity = intersection / union = coactivation / (count_i + count_j - coactivation)
+    union_counts = (
+        expert_activation_counts.unsqueeze(1)
+        + expert_activation_counts.unsqueeze(0)
+        - pairwise_coactivation_counts
+    )
+    jaccard = th.where(
+        union_counts > 0,
+        pairwise_coactivation_counts / union_counts,
+        th.zeros_like(pairwise_coactivation_counts),
+    )
+
+    # Compute independent baseline using marginal probabilities
+    expert_probabilities = expert_activation_counts / total_samples
+    independent_jaccard = th.outer(expert_probabilities, expert_probabilities)
 
     # Extract upper triangle (excluding diagonal) for bar plots
     upper_triangular_mask = th.triu(th.ones_like(jaccard).bool(), diagonal=1)
@@ -247,7 +273,7 @@ async def _router_jaccard_distance_async(experiment_name: str) -> None:
 
 
 @arguably.command
-def router_jaccard_distance(experiment_name: str) -> None:
+def router_jaccard_distance(experiment_name: str, batch_size: int = 4096) -> None:
     """Compute Jaccard similarity between expert activations.
 
     This script:
@@ -258,8 +284,9 @@ def router_jaccard_distance(experiment_name: str) -> None:
 
     Args:
         experiment_name: Name of the experiment to analyze.
+        batch_size: Number of samples to process per batch (default: 4096).
     """
-    asyncio.run(_router_jaccard_distance_async(experiment_name))
+    asyncio.run(_router_jaccard_distance_async(experiment_name, batch_size))
 
 
 if __name__ == "__main__":

@@ -64,7 +64,9 @@ def compute_gini_coefficient(frequencies: th.Tensor) -> float:
     return (numerator / denominator).item()
 
 
-async def _router_path_entropy_async(experiment_name: str) -> None:
+async def _router_path_entropy_async(
+    experiment_name: str, batch_size: int = 4096
+) -> None:
     """Async implementation of router path entropy analysis."""
     logger.info(f"Loading activations for experiment: {experiment_name}")
 
@@ -78,7 +80,7 @@ async def _router_path_entropy_async(experiment_name: str) -> None:
     total_tokens = 0
 
     # Iterate through activation batches
-    for batch in activations(batch_size=4096):
+    for batch in activations(batch_size=batch_size):
         router_logits = batch[ActivationKeys.ROUTER_LOGITS]
 
         if top_k is None:
@@ -198,7 +200,7 @@ async def _router_path_entropy_async(experiment_name: str) -> None:
 
 
 @arguably.command
-def router_path_entropy(experiment_name: str) -> None:
+def router_path_entropy(experiment_name: str, batch_size: int = 4096) -> None:
     """Analyze routing path entropy and distribution for an experiment.
 
     This script:
@@ -209,8 +211,9 @@ def router_path_entropy(experiment_name: str) -> None:
 
     Args:
         experiment_name: Name of the experiment to analyze.
+        batch_size: Number of samples to process per batch (default: 4096).
     """
-    asyncio.run(_router_path_entropy_async(experiment_name))
+    asyncio.run(_router_path_entropy_async(experiment_name, batch_size))
 
 
 if __name__ == "__main__":
