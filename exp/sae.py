@@ -476,7 +476,7 @@ def main(
     ), "Invalid architecture"
     assert len(submodule_name) > 0, "Submodule name is an empty tuple!"
 
-    dtype = get_dtype(dtype)
+    torch_dtype = get_dtype(dtype)
 
     asyncio.run(
         run_sae_training(
@@ -507,7 +507,7 @@ def main(
             context_length=context_length,
             num_workers=num_workers,
             debug=log_level_numeric <= debug_level_numeric,
-            dtype=dtype,
+            dtype=torch_dtype,
         )
     )
 
