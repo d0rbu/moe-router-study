@@ -79,7 +79,7 @@ def collect_path_activations(
     mask_bos_pad_eos_tokens: bool = False,
     selected_paths: list[int] | None = None,
     activation_dtype: th.dtype | None = None,
-) -> dict[int, th.Tensor]:
+) -> th.Tensor:
     """Collects path activations for a given set of tokens."""
     path_acts = []
 
@@ -450,7 +450,7 @@ def run_eval_paths(
             config.dataset_name,
             config.llm_context_size,
             config.total_tokens,
-            model.tokenizer,
+            model.tokenizer,  # type: ignore[arg-type]
         ).to(device)
         th.save(tokenized_dataset, tokens_path)
 
