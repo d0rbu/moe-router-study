@@ -347,7 +347,9 @@ def run_eval_paths(
     device: str,
     artifacts_folder: str,
     save_activations: bool = True,
-) -> tuple[dict[str, int | float | dict[str, int | float]], dict[str, dict[str, int | float]]]:
+) -> tuple[
+    dict[str, int | float | dict[str, int | float]], dict[str, dict[str, int | float]]
+]:
     """
     By default, we save activations for all datasets, and then reuse them for each set of paths.
     This is important to avoid recomputing activations for each set of paths, and to ensure that the same activations are used for all sets of paths.
