@@ -1,9 +1,6 @@
 # Configuration for ty type checker
-# Ignore certain error types that are causing issues in the existing codebase
-# while still catching more serious type errors
 
 [rules]
-possibly-unbound-attribute = "ignore"
 invalid-return-type = "ignore"
 invalid-argument-type = "ignore"
 unresolved-import = "ignore"
