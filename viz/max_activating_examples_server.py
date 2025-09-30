@@ -3,8 +3,6 @@ import os
 import streamlit as st
 import torch as th
 
-from exp.activations import load_activations_indices_tokens_and_topk
-
 # Constants
 CIRCUITS_PATH = "out/saved_circuits.pt"
 
@@ -111,9 +109,10 @@ def max_activating_examples_server(
         _minibatch_size: Size of the minibatch for the computation.
     """
     # Load all data once at the top level
-    token_topk_mask, indices, tokens, top_k = load_activations_indices_tokens_and_topk(
-        device=device
+    raise NotImplementedError(
+        "Need to implement loading using Activations class from exp.activations"
     )
+    token_topk_mask, indices, tokens, top_k = None, None, None, None
 
     # Get dimensions from token_topk_mask
     num_layers, num_experts = token_topk_mask.shape[1], token_topk_mask.shape[2]
