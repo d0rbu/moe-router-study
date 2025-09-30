@@ -730,7 +730,7 @@ def viz_max_cli(
     raise NotImplementedError(
         "Need to implement loading using Activations class from exp.activations"
     )
-    data = None
+    token_topk_mask, indices, tokens, top_k = None, None, None, None
     circuits = _load_circuits_tensor(
         circuits_path, device=device, token_topk_mask=token_topk_mask
     )
