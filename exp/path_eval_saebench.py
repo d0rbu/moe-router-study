@@ -40,14 +40,25 @@ def main(
 
     th_dtype = get_dtype(dtype)
     str_dtype = th_dtype.__str__().split(".")[-1]
+    logger.trace(f"Using dtype: {str_dtype}")
 
     device = general_utils.setup_environment()
+    logger.trace(f"Using device: {device}")
 
     experiment_path = os.path.join(OUTPUT_DIR, experiment_dir)
+    logger.trace(f"Using experiment path: {experiment_path}")
 
     config_path = os.path.join(experiment_path, "config.yaml")
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"Config file not found at {config_path}")
+    else:
+        logger.trace(f"Using config path: {config_path}")
+
+    kmeans_data_path = os.path.join(experiment_path, KMEANS_FILENAME)
+    if not os.path.exists(kmeans_data_path):
+        raise FileNotFoundError(f"Kmeans data file not found at {kmeans_data_path}")
+    else:
+        logger.trace(f"Using kmeans data file: {kmeans_data_path}")
 
     with open(config_path) as f:
         config = yaml.safe_load(f)
@@ -58,9 +69,10 @@ def main(
     assert config["model_name"] == model_name, (
         f"Model name mismatch: {model_name} != {config['model_name']}"
     )
+    logger.trace(f"Using config: {config}")
 
     paths_set = []
-    with open(os.path.join(experiment_path, KMEANS_FILENAME)) as f:
+    with open(kmeans_data_path) as f:
         kmeans_data = th.load(f)
 
         # list of tensors of shape (num_centroids, num_layers * num_experts)
@@ -79,10 +91,16 @@ def main(
             },
         )
         paths_set.append(paths)
+        logger.trace(
+            f"Added paths to paths set: len={len(paths.data)} top_k={top_k} name={paths.name} metadata={paths.metadata}"
+        )
+
+    logger.trace(f"Using paths set: len={len(paths_set)}")
 
     # run autointerp
     autointerp_eval_dir = EVAL_DIRS["autointerp"]
     autointerp_eval_dir = os.path.join(OUTPUT_DIR, autointerp_eval_dir)
+    logger.trace(f"Running autointerp evaluation in {autointerp_eval_dir}")
     run_autointerp_eval(
         config=AutoInterpEvalConfig(
             model_name=model_name,
@@ -104,6 +122,7 @@ def main(
 
     sparse_probing_eval_dir = EVAL_DIRS["sparse_probing"]
     sparse_probing_eval_dir = os.path.join(OUTPUT_DIR, sparse_probing_eval_dir)
+    logger.trace(f"Running sparse probing evaluation in {sparse_probing_eval_dir}")
     run_sparse_probing_eval(
         config=SparseProbingEvalConfig(
             model_name=model_name,
@@ -118,3 +137,5 @@ def main(
         artifacts_path=os.path.join(experiment_path, "artifacts"),
         log_level=log_level,
     )
+
+    logger.success("done :)")
