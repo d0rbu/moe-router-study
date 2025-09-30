@@ -18,23 +18,22 @@ import torch as th
 from exp import OUTPUT_DIR
 from exp.activations import load_activations_and_init_dist
 from exp.get_activations import ActivationKeys
-from exp.training import get_experiment_name
 
 
 def _load_activations_data(
     device: str = "cuda",
     model_name: str = "switch-base-8",
-    dataset_name: str = "c4", 
+    dataset_name: str = "c4",
     tokens_per_file: int = 1000,
     context_length: int = 512,
 ) -> tuple[th.Tensor, th.Tensor, list[list[str]], int]:
     """Load activations data using the proper Activations class.
-    
+
     Returns:
         Tuple of (token_topk_mask, activated_expert_indices, tokens, top_k)
     """
     import asyncio
-    
+
     # Load activations using the same pattern as kmeans.py
     activations, activation_dims, gpu_process_group = asyncio.run(
         load_activations_and_init_dist(
@@ -48,34 +47,34 @@ def _load_activations_data(
             debug=False,
         )
     )
-    
+
     # Collect all data
     all_router_logits = []
     all_tokens = []
     top_k = None
-    
+
     for batch in activations(batch_size=4096):
         router_logits = batch[ActivationKeys.ROUTER_LOGITS]
         all_router_logits.append(router_logits)
-        
+
         # Extract tokens if available
         if "tokens" in batch:
             all_tokens.extend(batch["tokens"])
-            
+
         # Extract top_k if available
         if "top_k" in batch and top_k is None:
             top_k = batch["top_k"]
-    
+
     # Concatenate router logits
     token_topk_mask = th.cat(all_router_logits, dim=0).to(device)
-    
+
     # Create dummy activated expert indices (same shape as token_topk_mask)
     activated_expert_indices = th.zeros_like(token_topk_mask, dtype=th.long)
-    
+
     # Use dummy top_k if not found
     if top_k is None:
         top_k = 8  # Default value, adjust based on your model
-        
+
     return token_topk_mask, activated_expert_indices, all_tokens, top_k
 
 
@@ -116,8 +115,8 @@ def _load_circuits_tensor(
     if circuits.ndim == 2:
         # Infer (L, E) from activations - use provided data if available
         if token_topk_mask is None:
-            token_topk_mask, _indices, _tokens, _top_k = (
-                _load_activations_data(device=device)
+            token_topk_mask, _indices, _tokens, _top_k = _load_activations_data(
+                device=device
             )
         _B, L, E = token_topk_mask.shape
         C = int(circuits.shape[0])
@@ -785,8 +784,8 @@ def viz_max_cli(
         device: Torch device for computation (e.g., "cuda" or "cpu").
     """
     # Load all data once at the top level
-    token_topk_mask, _activated_expert_indices, tokens, top_k = (
-        _load_activations_data(device=device)
+    token_topk_mask, _activated_expert_indices, tokens, top_k = _load_activations_data(
+        device=device
     )
     circuits = _load_circuits_tensor(
         circuits_path, device=device, token_topk_mask=token_topk_mask
@@ -818,8 +817,8 @@ def viz_mean_cli(
         device: Torch device for computation (e.g., "cuda" or "cpu").
     """
     # Load all data once at the top level
-    token_topk_mask, _activated_expert_indices, tokens, top_k = (
-        _load_activations_data(device=device)
+    token_topk_mask, _activated_expert_indices, tokens, top_k = _load_activations_data(
+        device=device
     )
     circuits = _load_circuits_tensor(
         circuits_path, device=device, token_topk_mask=token_topk_mask
