@@ -427,18 +427,18 @@ def main(
     expansion_factor: tuple[int] = (16,),
     k: tuple[int] = (160,),
     layer: tuple[int] = (7,),
-    group_fractions: tuple[tuple[float]] = (
+    group_fractions: tuple[tuple[float, float, float, float, float]] = (
         (1.0 / 32, 1.0 / 16, 1.0 / 8, 1.0 / 4, 1.0 / 2 + 1.0 / 32),
     ),
-    group_weights: tuple[tuple[float]] = (None,),
+    group_weights: tuple[tuple[float]] | None = None,
     architecture: tuple[str] = ("batchtopk",),
     lr: tuple[float] = (5e-5,),
     auxk_alpha: tuple[float] = (1 / 32,),
     warmup_steps: tuple[int] | None = None,
-    decay_start: tuple[int] = (None,),
+    decay_start: tuple[int] | None = None,
     threshold_beta: tuple[float] = (0.999,),
     threshold_start_step: tuple[int] = (1024,),
-    k_anneal_steps: tuple[int] = (None,),
+    k_anneal_steps: tuple[int] | None = None,
     seed: tuple[int] = (0,),
     submodule_name: tuple[str] = ("mlp_output",),
     tokens_per_file: int = 5_000,
@@ -449,14 +449,16 @@ def main(
     dtype: str = "bf16",
 ) -> None:
     """Train a sparse autoencoder on the given model and dataset."""
-    assert log_level in logger._core.levels, (
-        f"Invalid log level, must be one of {logger._core.levels.keys()}"
-    )
+    # Check if log level is valid by trying to get it
+    try:
+        logger.level(log_level)
+    except ValueError as err:
+        raise ValueError(f"Invalid log level: {log_level}") from err
 
     logger.remove()
     logger.add(sys.stderr, level=log_level)
-    log_level_numeric = logger._core.levels[log_level].no
-    debug_level_numeric = logger._core.levels["DEBUG"].no
+    log_level_numeric = logger.level(log_level).no
+    debug_level_numeric = logger.level("DEBUG").no
 
     debug = log_level_numeric <= debug_level_numeric
 
@@ -478,6 +480,17 @@ def main(
 
     torch_dtype = get_dtype(dtype)
 
+    # Handle None defaults that should be (None,) for union types
+    group_weights_tuple: tuple[tuple[float] | None] = (
+        (None,) if group_weights is None else group_weights
+    )
+    decay_start_tuple: tuple[int | None] = (
+        (None,) if decay_start is None else decay_start
+    )
+    k_anneal_steps_tuple: tuple[int | None] = (
+        (None,) if k_anneal_steps is None else k_anneal_steps
+    )
+
     asyncio.run(
         run_sae_training(
             model_name=model_name,
@@ -491,15 +504,15 @@ def main(
             k=k,
             layer=layer,
             group_fractions=group_fractions,
-            group_weights=group_weights,
+            group_weights=group_weights_tuple,
             architecture=architecture,
             lr=lr,
             auxk_alpha=auxk_alpha,
             warmup_steps=warmup_steps,
-            decay_start=decay_start,
+            decay_start=decay_start_tuple,
             threshold_beta=threshold_beta,
             threshold_start_step=threshold_start_step,
-            k_anneal_steps=k_anneal_steps,
+            k_anneal_steps=k_anneal_steps_tuple,
             seed=seed,
             submodule_name=submodule_name,
             tokens_per_file=tokens_per_file,

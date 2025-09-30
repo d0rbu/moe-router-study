@@ -427,7 +427,7 @@ def run_eval_paths(
     artifacts_folder: str,
     api_key: str,
     sparsity: th.Tensor | None = None,
-) -> dict[str, float]:
+) -> dict[int, dict[str, Any]]:
     random.seed(config.random_seed)
     th.manual_seed(config.random_seed)
     th.set_grad_enabled(False)
