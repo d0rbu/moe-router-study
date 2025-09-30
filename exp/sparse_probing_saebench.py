@@ -113,7 +113,11 @@ def get_all_llm_activations(
         tokens = tokenized_inputs_dict[class_name]["input_ids"]
 
         acts_BTP = get_llm_activations(
-            tokens, model, batch_size, top_k, mask_bos_pad_eos_tokens
+            tokens,
+            model=model,
+            batch_size=batch_size,
+            top_k=top_k,
+            mask_bos_pad_eos_tokens=mask_bos_pad_eos_tokens,
         )
 
         all_classes_acts_BTP[class_name] = acts_BTP
@@ -156,16 +160,16 @@ def get_dataset_activations(
 
     all_train_acts_BTP = get_all_llm_activations(
         train_data,
-        model,
-        llm_batch_size,
-        top_k,
+        model=model,
+        batch_size=llm_batch_size,
+        top_k=top_k,
         mask_bos_pad_eos_tokens=True,
     )
     all_test_acts_BTP = get_all_llm_activations(
         test_data,
-        model,
-        llm_batch_size,
-        top_k,
+        model=model,
+        batch_size=llm_batch_size,
+        top_k=top_k,
         mask_bos_pad_eos_tokens=True,
     )
 
