@@ -228,7 +228,7 @@ def run_eval_single_dataset(
 
     if not os.path.exists(activations_path):
         if config.lower_vram_usage:
-            model = model.to(device)
+            model = model.to(th.device(device))
 
         all_train_acts_BTP, all_test_acts_BTP = get_dataset_activations(
             dataset_name,
@@ -239,7 +239,7 @@ def run_eval_single_dataset(
             device,
         )
         if config.lower_vram_usage:
-            model = model.to("cpu")
+            model = model.to(th.device("cpu"))
 
         all_train_acts_BP = create_meaned_model_activations(all_train_acts_BTP)
         all_test_acts_BP = create_meaned_model_activations(all_test_acts_BTP)
@@ -275,7 +275,7 @@ def run_eval_single_dataset(
             th.save(acts, activations_path)
     else:
         if config.lower_vram_usage:
-            model = model.to("cpu")
+            model = model.to(th.device("cpu"))
         print(f"Loading activations from {activations_path}")
         acts = th.load(activations_path)
         all_train_acts_BTP = acts["train"]
@@ -381,7 +381,7 @@ def run_eval_paths(
         results_dict[dataset_name] = dataset_result
 
     if config.lower_vram_usage:
-        model = model.to(device)
+        model = model.to(th.device(device))
 
     return results_dict, per_class_dict
 

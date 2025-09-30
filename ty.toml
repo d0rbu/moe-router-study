@@ -3,7 +3,6 @@
 [rules]
 possibly-unbound-attribute = "ignore"
 invalid-return-type = "ignore"
-invalid-argument-type = "ignore"
 call-non-callable = "ignore"
 non-subscriptable = "ignore"
 unresolved-attribute = "ignore"
