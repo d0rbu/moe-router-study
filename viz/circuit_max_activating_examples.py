@@ -16,9 +16,17 @@ import numpy as np
 import torch as th
 
 from exp import OUTPUT_DIR
-from exp.activations import (
-    load_activations_indices_tokens_and_topk,
-)
+
+# from exp.activations import (
+#     load_activations_indices_tokens_and_topk,
+# )
+
+
+def load_activations_indices_tokens_and_topk(device=None):
+    """Placeholder function - original implementation missing"""
+    raise NotImplementedError(
+        "load_activations_indices_tokens_and_topk function is not implemented"
+    )
 
 
 def _load_circuits_tensor(

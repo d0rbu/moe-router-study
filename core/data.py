@@ -68,19 +68,19 @@ def lmsys_chat_1m_text(
             "Streaming mode does not support start_idx and stop_idx"
         )
     else:
-        ds = assert_type(ds, Dataset)
+        dataset = assert_type(ds, Dataset)
 
         if stop_idx == 0:
-            stop_idx = len(ds)
+            stop_idx = len(dataset)
 
         assert start_idx >= 0 and stop_idx >= 0, (
             "Non-streaming mode requires start_idx and stop_idx to be non-negative"
         )
         assert start_idx < stop_idx, "start_idx must be less than stop_idx"
-        assert start_idx < len(ds), (
+        assert start_idx < len(dataset), (
             "start_idx must be less than the length of the dataset"
         )
-        assert stop_idx <= len(ds), (
+        assert stop_idx <= len(dataset), (
             "stop_idx must be less than or equal to the length of the dataset"
         )
 
@@ -93,13 +93,15 @@ def lmsys_chat_1m_text(
         return chat
 
     def _iter():
-        conversations = ds["conversation"]
-
         if streaming:
+            conversations = ds["conversation"]
             iterator = tqdm(conversations, desc="Formatting conversations")
         else:
+            # Use select to get a subset of the dataset, then access conversations
+            subset_ds = dataset.select(range(start_idx, stop_idx))
+            conversations = subset_ds["conversation"]
             iterator = tqdm(
-                conversations[start_idx:stop_idx],
+                conversations,
                 desc="Formatting conversations",
                 total=stop_idx - start_idx,
             )

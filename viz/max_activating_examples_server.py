@@ -3,7 +3,15 @@ import os
 import streamlit as st
 import torch as th
 
-from exp.activations import load_activations_indices_tokens_and_topk
+# from exp.activations import load_activations_indices_tokens_and_topk
+
+
+def load_activations_indices_tokens_and_topk(device=None):
+    """Placeholder function - original implementation missing"""
+    raise NotImplementedError(
+        "load_activations_indices_tokens_and_topk function is not implemented"
+    )
+
 
 # Constants
 CIRCUITS_PATH = "out/saved_circuits.pt"

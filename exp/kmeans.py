@@ -625,7 +625,7 @@ async def kmeans_manhattan(
     logger.trace(f"Initialized centroids for {len(k_values)} clusters")
 
     # clean up the background workers and queue
-    data_iterable.send("STOP!")
+    data_iterable.close()
     th.cuda.empty_cache()
     gc.collect()
     ### end

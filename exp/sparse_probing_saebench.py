@@ -147,13 +147,13 @@ def get_dataset_activations(
 
     train_data = tokenize_data_dictionary(
         train_data,
-        model.tokenizer,
+        model.tokenizer,  # type: ignore[arg-type]
         config.context_length,
         device,
     )
     test_data = tokenize_data_dictionary(
         test_data,
-        model.tokenizer,
+        model.tokenizer,  # type: ignore[arg-type]
         config.context_length,
         device,
     )
@@ -232,7 +232,7 @@ def run_eval_single_dataset(
 
     if not os.path.exists(activations_path):
         if config.lower_vram_usage:
-            model = model.to(device)
+            model = model.to(th.device(device))
 
         # Use default batch size of 32 if not specified
         batch_size = config.llm_batch_size if config.llm_batch_size is not None else 32
@@ -245,7 +245,7 @@ def run_eval_single_dataset(
             device,
         )
         if config.lower_vram_usage:
-            model = model.to("cpu")
+            model = model.to(th.device("cpu"))
 
         all_train_acts_BP = create_meaned_model_activations(all_train_acts_BTP)
         all_test_acts_BP = create_meaned_model_activations(all_test_acts_BTP)
@@ -281,7 +281,7 @@ def run_eval_single_dataset(
             th.save(acts, activations_path)
     else:
         if config.lower_vram_usage:
-            model = model.to("cpu")
+            model = model.to(th.device("cpu"))
         print(f"Loading activations from {activations_path}")
         acts = th.load(activations_path)
         all_train_acts_BTP = acts["train"]
@@ -387,7 +387,7 @@ def run_eval_paths(
         results_dict[dataset_name] = dataset_result
 
     if config.lower_vram_usage:
-        model = model.to(device)
+        model = model.to(th.device(device))
 
     return results_dict, per_class_dict
 
