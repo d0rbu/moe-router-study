@@ -11,7 +11,7 @@ from tqdm import tqdm
 import trackio as wandb
 
 from exp import OUTPUT_DIR
-from exp.activations import load_activations
+from exp.activations import load_activations_indices_tokens_and_topk as load_activations
 from exp.circuit_loss import circuit_loss
 
 
@@ -299,7 +299,8 @@ def load_and_gradient_descent(
     seed: int = 0,
     device: str = "cuda",
 ) -> None:
-    data = load_activations(device=device)
+    data, indices, tokens, top_k_loaded = load_activations(device=device)
+    # Use the first tensor (token_topk_mask) as the data for gradient descent
 
     wandb_run = wandb.init(
         project="circuit-optimization",
@@ -413,7 +414,8 @@ def grid_search_gradient_descent(
         # num_cooldown_epochses = [0]
         num_cooldown_epochses = [0]
 
-    data = load_activations(device=device)
+    data, indices, tokens, top_k_loaded = load_activations(device=device)
+    # Use the first tensor (token_topk_mask) as the data for gradient descent
     loss_landscape = th.empty(
         num_seeds,
         len(complexity_importances),
