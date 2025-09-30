@@ -5,7 +5,6 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from itertools import batched, count, islice, pairwise
 import os
-from typing import cast
 
 from loguru import logger
 import torch as th
@@ -15,6 +14,7 @@ from tqdm import tqdm
 
 from core.logging import init_distributed_logging
 from core.memory import clear_memory
+from core.type import assert_type
 from exp import ACTIVATION_DIRNAME, OUTPUT_DIR
 from exp.get_activations import ActivationKeys
 from exp.training import get_experiment_name
@@ -49,14 +49,13 @@ def broadcast_variable_length_list[T](
         # items is already set from list_fn call above
         pass
     else:
-        # Create placeholder list for non-zero ranks
         items = [None] * num_items
 
     dist.broadcast_object_list(items, src=src)
     logger.trace(f"Rank {src} broadcasted {num_items} items")
 
     # At this point, items contains the actual values from rank 0
-    return cast("list[T]", items)
+    return assert_type(items, list)
 
 
 class Activations:
