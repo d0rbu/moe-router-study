@@ -112,7 +112,7 @@ def max_activating_examples_server(
     raise NotImplementedError(
         "Need to implement loading using Activations class from exp.activations"
     )
-    token_topk_mask, indices, tokens, top_k = None, None, None, None
+    token_topk_mask, tokens, top_k = None, None, None
 
     # Get dimensions from token_topk_mask
     num_layers, num_experts = token_topk_mask.shape[1], token_topk_mask.shape[2]
