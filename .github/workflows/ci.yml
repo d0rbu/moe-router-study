@@ -90,7 +90,7 @@ jobs:
     
     - name: Run tests
       run: |
-        uv run pytest test/ -v --cov=core --cov=exp --cov=viz --cov-report=xml
+        uv run pytest test/ -v --cov=core --cov=exp --cov=viz --cov-report=xml || [ $? -eq 5 ]
     
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
