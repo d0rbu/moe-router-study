@@ -480,11 +480,11 @@ def main(
 
     # Handle None defaults that should be (None,) for union types
     if group_weights is None:
-        group_weights = (None,)
+        group_weights = (None,)  # type: ignore[assignment]
     if decay_start is None:
-        decay_start = (None,)
+        decay_start = (None,)  # type: ignore[assignment]
     if k_anneal_steps is None:
-        k_anneal_steps = (None,)
+        k_anneal_steps = (None,)  # type: ignore[assignment]
 
     asyncio.run(
         run_sae_training(
