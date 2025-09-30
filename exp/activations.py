@@ -351,12 +351,13 @@ class Activations:
 
     @staticmethod
     async def load_files_async(filepaths: list[str]) -> list[dict]:
-        return await asyncio.gather(
+        results = await asyncio.gather(
             *[
                 asyncio.to_thread(th.load, filepath, weights_only=False)
                 for filepath in filepaths
             ]
         )
+        return list(results)
 
     NUM_DEBUG_FILES = 32
 

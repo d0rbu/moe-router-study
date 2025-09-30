@@ -363,10 +363,10 @@ def run_eval_paths(
     th.manual_seed(config.random_seed)
     os.makedirs(artifacts_folder, exist_ok=True)
 
-    results_dict = {}
+    results_dict: dict[str, float | dict[str, float]] = {}
 
-    dataset_results = {}
-    per_class_dict = {}
+    dataset_results: dict[str, dict[str, float]] = {}
+    per_class_dict: dict[str, dict[str, float]] = {}
     for dataset_name in config.dataset_names:
         results_key = f"{dataset_name}_results"
         (
@@ -382,8 +382,11 @@ def run_eval_paths(
             save_activations,
         )
 
-    results_dict = general_utils.average_results_dictionaries(
-        dataset_results, config.dataset_names
+    results_dict = cast(
+        "dict[str, float | dict[str, float]]",
+        general_utils.average_results_dictionaries(
+            dataset_results, config.dataset_names
+        ),
     )
 
     for dataset_name, dataset_result in dataset_results.items():

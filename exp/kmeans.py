@@ -145,7 +145,9 @@ async def compute_centroid_from_assignment(
     num_assigned = centroid_mask.sum()
 
     if num_assigned == 0:
-        return th.zeros_like(data[0]), 0
+        return th.zeros_like(data[0]), th.tensor(
+            0, dtype=num_assigned.dtype, device=num_assigned.device
+        )
 
     return data[centroid_mask].mean(dim=0), num_assigned
 

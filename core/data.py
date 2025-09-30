@@ -17,7 +17,7 @@ def fineweb_10bt_text(
         "HuggingFaceFW/fineweb", name="sample-10BT", split="train", streaming=True
     )
 
-    return fineweb["text"]
+    yield from fineweb["text"]
 
 
 def toy_text(
@@ -31,7 +31,7 @@ def toy_text(
         "Tiny sample 4",
     ]
 
-    return samples
+    yield from samples
 
 
 def smollm2_small(
@@ -39,7 +39,7 @@ def smollm2_small(
 ) -> Generator[str, None, None]:
     smollm2_135m_10b = load_dataset("EleutherAI/SmolLM2-135M-10B", split="train[:1%]")
 
-    return smollm2_135m_10b["text"]
+    yield from smollm2_135m_10b["text"]
 
 
 def lmsys_chat_1m_text(
