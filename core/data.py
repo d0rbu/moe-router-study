@@ -12,18 +12,17 @@ from exp import DATASET_DIRNAME
 
 def fineweb_10bt_text(
     _tokenizer: PreTrainedTokenizer | None = None,
-) -> Generator[str, None, None]:
+):
     fineweb = load_dataset(
         "HuggingFaceFW/fineweb", name="sample-10BT", split="train", streaming=True
     )
 
-    for item in fineweb:
-        yield item["text"]
+    return fineweb["text"]
 
 
 def toy_text(
     _tokenizer: PreTrainedTokenizer | None = None,
-) -> Generator[str, None, None]:
+) -> list[str]:
     """Tiny, in-repo dataset for tests and quick runs."""
     samples = [
         "Tiny sample 1",
@@ -32,16 +31,15 @@ def toy_text(
         "Tiny sample 4",
     ]
 
-    yield from samples
+    return samples
 
 
 def smollm2_small(
     _tokenizer: PreTrainedTokenizer | None = None,
-) -> Generator[str, None, None]:
+):
     smollm2_135m_10b = load_dataset("EleutherAI/SmolLM2-135M-10B", split="train[:1%]")
 
-    for item in smollm2_135m_10b:
-        yield item["text"]
+    return smollm2_135m_10b["text"]
 
 
 def lmsys_chat_1m_text(
@@ -112,7 +110,7 @@ def lmsys_chat_1m_text(
     return _iter()
 
 
-DATASETS: dict[str, Callable[[PreTrainedTokenizer], Generator[str, None, None]]] = {
+DATASETS: dict[str, Callable[[PreTrainedTokenizer], Any]] = {
     "fw": fineweb_10bt_text,
     "toy": toy_text,
     "lmsys": lmsys_chat_1m_text,
@@ -122,7 +120,7 @@ DATASETS: dict[str, Callable[[PreTrainedTokenizer], Generator[str, None, None]]]
 
 def get_dataset_fn(
     dataset_name: str,
-) -> Callable[[PreTrainedTokenizer], Generator[str, None, None]]:
+) -> Callable[[PreTrainedTokenizer], Any]:
     dataset_fn = DATASETS.get(dataset_name)
     if dataset_fn is None:
         raise ValueError(f"Dataset {dataset_name} not found")
