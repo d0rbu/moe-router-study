@@ -16,6 +16,7 @@ import yaml
 
 from core.async_utils import handle_exceptions
 from core.moe import convert_router_logits_to_paths
+from core.training import exponential_to_linear_save_steps
 from exp import OUTPUT_DIR
 from exp.activations import Activations, load_activations_and_init_dist
 from exp.get_activations import ActivationKeys
@@ -25,7 +26,7 @@ from exp.kmeans_validation import (
     check_monotonic_increasing_window,
     validate_centroid_distribution,
 )
-from exp.training import exponential_to_linear_save_steps, get_experiment_name
+from exp.training import get_experiment_name
 
 
 @dataclass
