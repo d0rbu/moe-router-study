@@ -29,7 +29,7 @@ def main(
     experiment_dir: str,
     model_name: str = "olmoe-i",
     batchsize: int = 512,
-    dtype: str = "float32",
+    dtype: str = "bfloat16",
     seed: int = 0,
     logs_path: str | None = None,
     log_level: str = "INFO",
