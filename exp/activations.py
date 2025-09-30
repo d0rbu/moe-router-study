@@ -33,9 +33,12 @@ def broadcast_variable_length_list[T](
     if dist.get_rank() == 0:
         items = list_fn(*args, **kwargs)
         num_items[0] = len(items)
+    else:
+        items = []  # Initialize as empty list for non-zero ranks
 
     dist.broadcast_object_list(num_items, src=src)
     num_items = num_items[0]
+    assert isinstance(num_items, int), "num_items should be an integer after broadcast"
 
     logger.trace(f"Rank {src} broadcasted that there are {num_items} items")
 
@@ -48,7 +51,8 @@ def broadcast_variable_length_list[T](
     dist.broadcast_object_list(items, src=src)
     logger.trace(f"Rank {src} broadcasted {num_items} items")
 
-    return items
+    # After broadcast, items contains the actual values from rank 0
+    return items  # type: ignore[return-value]
 
 
 class Activations:
@@ -351,12 +355,13 @@ class Activations:
 
     @staticmethod
     async def load_files_async(filepaths: list[str]) -> list[dict]:
-        return await asyncio.gather(
+        results = await asyncio.gather(
             *[
                 asyncio.to_thread(th.load, filepath, weights_only=False)
                 for filepath in filepaths
             ]
         )
+        return list(results)
 
     NUM_DEBUG_FILES = 32
 
