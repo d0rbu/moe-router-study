@@ -299,7 +299,7 @@ def load_and_gradient_descent(
     device: str = "cuda",
 ) -> None:
     raise NotImplementedError("Refactor this code to use the Activations class")
-    token_topk_mask, indices, tokens, top_k_loaded = None, None, None, None
+    data = None
 
     wandb_run = wandb.init(
         project="circuit-optimization",
