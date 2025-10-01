@@ -87,9 +87,9 @@ async def process_cache(
         llm_client,
         verbose=run_cfg.verbose,
         n_examples_shown=run_cfg.num_examples_per_scorer_prompt,
-        temperature=run_cfg.temperature,
-        cot=run_cfg.cot,
-        type=run_cfg.intruder_type,
+        temperature=getattr(run_cfg, "temperature", 0.0),
+        cot=getattr(run_cfg, "cot", False),
+        type=getattr(run_cfg, "intruder_type", "default"),
         seed=run_cfg.seed,
     )
 
