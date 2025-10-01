@@ -120,6 +120,11 @@ def validate_centroid_distribution(
             num_empty_centroids=0,
             num_over_concentrated_centroids=0,
             num_under_utilized_centroids=0,
+            min_assignment_ratio=0.0,
+            max_assignment_ratio=0.0,
+            mean_assignment_ratio=0.0,
+            std_assignment_ratio=0.0,
+            entropy=0.0,
         )
 
     # Compute distances and assignments
