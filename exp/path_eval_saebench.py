@@ -1,4 +1,5 @@
 import os
+import sys
 
 import arguably
 from dotenv import load_dotenv
@@ -24,7 +25,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 
 @arguably.command()
-def main(
+def path_eval_saebench(
     *,
     experiment_dir: str,
     model_name: str = "olmoe-i",
@@ -37,6 +38,9 @@ def main(
     """
     Evaluate the paths on the given model.
     """
+    logger.remove()
+    logger.add(sys.stderr, level=log_level)
+    logger.info(f"Running with log level: {log_level}")
 
     th_dtype = get_dtype(dtype)
     str_dtype = th_dtype.__str__().split(".")[-1]
@@ -48,7 +52,7 @@ def main(
     experiment_path = os.path.join(OUTPUT_DIR, experiment_dir)
     logger.trace(f"Using experiment path: {experiment_path}")
 
-    config_path = os.path.join(experiment_path, "config.yaml")
+    config_path = os.path.join(experiment_path, "metadata.yaml")
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"Config file not found at {config_path}")
     else:
@@ -139,3 +143,7 @@ def main(
     )
 
     logger.success("done :)")
+
+
+if __name__ == "__main__":
+    arguably.run()
