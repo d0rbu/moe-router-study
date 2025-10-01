@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from loguru import logger
 import torch as th
 
-# Constants for validation
 WARNING_WINDOW_SIZE = 10
 VALIDATION_SIZE_K_PROPORTION = 10
 
