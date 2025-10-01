@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from loguru import logger
 import torch as th
 
-# Constants for validation
 WARNING_WINDOW_SIZE = 10
 VALIDATION_SIZE_K_PROPORTION = 10
 
@@ -59,6 +58,10 @@ def check_monotonic_increasing_window(
             - has_problem: True if a monotonically increasing window is found
             - start_idx: Starting index of the problematic window (None if no problem)
     """
+    if th.isnan(losses).any():
+        logger.warning("K-means validation: Found NaN in losses")
+        return False, None
+
     if losses.shape[1] < window_size:
         # Not enough data to check
         return False, None
@@ -109,6 +112,20 @@ def validate_centroid_distribution(
             - is_valid: True if distribution is reasonable
             - stats: CentroidValidationStats containing distribution statistics
     """
+    # check for any nans
+    if th.isnan(validation_data).any() or th.isnan(centroids).any():
+        logger.warning("K-means validation: Found NaN in validation data or centroids")
+        return False, CentroidValidationStats(
+            num_empty_centroids=0,
+            num_over_concentrated_centroids=0,
+            num_under_utilized_centroids=0,
+            min_assignment_ratio=0.0,
+            max_assignment_ratio=0.0,
+            mean_assignment_ratio=0.0,
+            std_assignment_ratio=0.0,
+            entropy=0.0,
+        )
+
     # Compute distances and assignments
     distances = th.cdist(validation_data.to(th.float32), centroids.to(th.float32), p=1)
     assignments = th.argmin(distances, dim=1)

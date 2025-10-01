@@ -6,7 +6,7 @@
 #SBATCH --ntasks=8                      # Total number of tasks (processes) across all nodes
 #SBATCH --ntasks-per-node=1             # Number of tasks per node
 #SBATCH --cpus-per-task=16              # Number of CPUs per task
-#SBATCH --mem=64G                       # Request 64GB per node
+#SBATCH --mem=256G                      # Request 256GB per node
 #SBATCH --output=train_saes.%j          # Send stdout/err to "train_saes.[jobID]"
 #SBATCH --error=train_saes.%j.err       # Send stderr to separate file
 #SBATCH --gres=gpu:a100:2               # Request 2 "a100" GPUs per node

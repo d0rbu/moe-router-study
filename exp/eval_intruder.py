@@ -63,7 +63,9 @@ async def process_cache(
     Converts SAE latent activations in on-disk cache in the `latents_path` directory
     and scores in the `scores_path` directory.
     """
-    latent_dict = dict.fromkeys(hookpoints, latent_range) if latent_range else None
+    latent_dict: dict[str, th.Tensor] | None = (
+        dict.fromkeys(hookpoints, latent_range) if latent_range is not None else None
+    )
 
     dataset = LatentDataset(
         raw_dir=latents_path,
@@ -85,9 +87,9 @@ async def process_cache(
         llm_client,
         verbose=run_cfg.verbose,
         n_examples_shown=run_cfg.num_examples_per_scorer_prompt,
-        temperature=run_cfg.temperature,
-        cot=run_cfg.cot,
-        type=run_cfg.intruder_type,
+        temperature=getattr(run_cfg, "temperature", 0.0),
+        cot=getattr(run_cfg, "cot", False),
+        type=getattr(run_cfg, "intruder_type", "default"),
         seed=run_cfg.seed,
     )
 
@@ -460,7 +462,7 @@ def eval_intruder(
             test_type="quantiles",
         ),
         model=model_name,
-        sparse_model=root_dir,
+        sparse_model=str(root_dir),
         hookpoints=hookpoints,
         explainer_model=explainer_model,
         explainer_model_max_len=explainer_model_max_len,

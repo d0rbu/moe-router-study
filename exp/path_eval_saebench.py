@@ -1,4 +1,5 @@
 import os
+import sys
 
 import arguably
 from dotenv import load_dotenv
@@ -20,16 +21,16 @@ from exp.kmeans import KMEANS_FILENAME, KMEANS_TYPE
 from exp.sparse_probing_saebench import run_eval as run_sparse_probing_eval
 
 load_dotenv()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 
 @arguably.command()
-def main(
+def path_eval_saebench(
     *,
     experiment_dir: str,
     model_name: str = "olmoe-i",
     batchsize: int = 512,
-    dtype: str = "float32",
+    dtype: str = "bfloat16",
     seed: int = 0,
     logs_path: str | None = None,
     log_level: str = "INFO",
@@ -37,17 +38,31 @@ def main(
     """
     Evaluate the paths on the given model.
     """
+    logger.remove()
+    logger.add(sys.stderr, level=log_level)
+    logger.info(f"Running with log level: {log_level}")
 
     th_dtype = get_dtype(dtype)
     str_dtype = th_dtype.__str__().split(".")[-1]
+    logger.trace(f"Using dtype: {str_dtype}")
 
     device = general_utils.setup_environment()
+    logger.trace(f"Using device: {device}")
 
     experiment_path = os.path.join(OUTPUT_DIR, experiment_dir)
+    logger.trace(f"Using experiment path: {experiment_path}")
 
-    config_path = os.path.join(experiment_path, "config.yaml")
+    config_path = os.path.join(experiment_path, "metadata.yaml")
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"Config file not found at {config_path}")
+    else:
+        logger.trace(f"Using config path: {config_path}")
+
+    kmeans_data_path = os.path.join(experiment_path, KMEANS_FILENAME)
+    if not os.path.exists(kmeans_data_path):
+        raise FileNotFoundError(f"Kmeans data file not found at {kmeans_data_path}")
+    else:
+        logger.trace(f"Using kmeans data file: {kmeans_data_path}")
 
     with open(config_path) as f:
         config = yaml.safe_load(f)
@@ -58,9 +73,10 @@ def main(
     assert config["model_name"] == model_name, (
         f"Model name mismatch: {model_name} != {config['model_name']}"
     )
+    logger.trace(f"Using config: {config}")
 
     paths_set = []
-    with open(os.path.join(experiment_path, KMEANS_FILENAME)) as f:
+    with open(kmeans_data_path) as f:
         kmeans_data = th.load(f)
 
         # list of tensors of shape (num_centroids, num_layers * num_experts)
@@ -79,10 +95,16 @@ def main(
             },
         )
         paths_set.append(paths)
+        logger.trace(
+            f"Added paths to paths set: len={len(paths.data)} top_k={top_k} name={paths.name} metadata={paths.metadata}"
+        )
+
+    logger.trace(f"Using paths set: len={len(paths_set)}")
 
     # run autointerp
     autointerp_eval_dir = EVAL_DIRS["autointerp"]
     autointerp_eval_dir = os.path.join(OUTPUT_DIR, autointerp_eval_dir)
+    logger.trace(f"Running autointerp evaluation in {autointerp_eval_dir}")
     run_autointerp_eval(
         config=AutoInterpEvalConfig(
             model_name=model_name,
@@ -104,6 +126,7 @@ def main(
 
     sparse_probing_eval_dir = EVAL_DIRS["sparse_probing"]
     sparse_probing_eval_dir = os.path.join(OUTPUT_DIR, sparse_probing_eval_dir)
+    logger.trace(f"Running sparse probing evaluation in {sparse_probing_eval_dir}")
     run_sparse_probing_eval(
         config=SparseProbingEvalConfig(
             model_name=model_name,
@@ -118,3 +141,9 @@ def main(
         artifacts_path=os.path.join(experiment_path, "artifacts"),
         log_level=log_level,
     )
+
+    logger.success("done :)")
+
+
+if __name__ == "__main__":
+    arguably.run()

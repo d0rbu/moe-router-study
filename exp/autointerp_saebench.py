@@ -28,8 +28,10 @@ from sae_bench.sae_bench_utils.activation_collection import get_bos_pad_eos_mask
 from tabulate import tabulate
 import torch as th
 from tqdm import tqdm
+from transformers import PreTrainedTokenizer
 
 from core.model import get_model_config
+from core.type import assert_type
 from exp import MODEL_DIRNAME
 
 
@@ -79,7 +81,7 @@ def collect_path_activations(
     mask_bos_pad_eos_tokens: bool = False,
     selected_paths: list[int] | None = None,
     activation_dtype: th.dtype | None = None,
-) -> dict[int, th.Tensor]:
+) -> th.Tensor:
     """Collects path activations for a given set of tokens."""
     path_acts = []
 
@@ -376,11 +378,13 @@ class PathAutoInterp(autointerp.AutoInterp):
             ) -> list[autointerp.Example]:
                 if all_acts is None:
                     all_acts = th.zeros_like(all_toks).float()
+                # Use 0.0 as default threshold if None provided
+                threshold = act_threshold if act_threshold is not None else 0.0
                 return [
                     autointerp.Example(
                         toks=toks,
                         acts=acts,
-                        act_threshold=act_threshold,
+                        act_threshold=threshold,
                         model=self.model,
                     )
                     for (toks, acts) in zip(
@@ -448,7 +452,7 @@ def run_eval_paths(
             config.dataset_name,
             config.llm_context_size,
             config.total_tokens,
-            model.tokenizer,
+            assert_type(model.tokenizer, PreTrainedTokenizer),
         ).to(device)
         th.save(tokenized_dataset, tokens_path)
 

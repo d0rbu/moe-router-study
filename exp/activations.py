@@ -14,6 +14,7 @@ from tqdm import tqdm
 
 from core.logging import init_distributed_logging
 from core.memory import clear_memory
+from core.type import assert_type
 from exp import ACTIVATION_DIRNAME, OUTPUT_DIR
 from exp.get_activations import ActivationKeys
 from exp.training import get_experiment_name
@@ -28,27 +29,33 @@ def broadcast_variable_length_list[T](
     if kwargs is None:
         kwargs = {}
 
+    # Broadcast the number of items first
     num_items = [None]
-
     if dist.get_rank() == 0:
         items = list_fn(*args, **kwargs)
         num_items[0] = len(items)
 
     dist.broadcast_object_list(num_items, src=src)
     num_items = num_items[0]
+    assert isinstance(num_items, int), "num_items should be an integer after broadcast"
 
     logger.trace(f"Rank {src} broadcasted that there are {num_items} items")
 
     if num_items == 0:
         return []
 
-    if dist.get_rank() != 0:
+    # Now broadcast the actual items
+    if dist.get_rank() == 0:
+        # items is already set from list_fn call above
+        pass
+    else:
         items = [None] * num_items
 
     dist.broadcast_object_list(items, src=src)
     logger.trace(f"Rank {src} broadcasted {num_items} items")
 
-    return items
+    # At this point, items contains the actual values from rank 0
+    return assert_type(items, list)
 
 
 class Activations:
@@ -142,121 +149,121 @@ class Activations:
         )
         worker_process.start()
 
-        current_data = cached_file_data.get(block=True)
-        cached_file_data.task_done()
-        current_local_idx = 0
-        current_data_size = current_data[ActivationKeys.MLP_OUTPUT].shape[0]
+        try:
+            current_data = cached_file_data.get(block=True)
+            cached_file_data.task_done()
+            current_local_idx = 0
+            current_data_size = current_data[ActivationKeys.MLP_OUTPUT].shape[0]
 
-        current_batch = {}
-        remaining_batch_size = batch_size
+            current_batch = {}
+            remaining_batch_size = batch_size
 
-        for _batch_idx in count():
-            while current_data_size - current_local_idx <= remaining_batch_size:
-                for key, value in current_data.items():
-                    match value:
-                        case th.Tensor():
-                            if key in current_batch:
-                                current_batch[key] = th.cat(
-                                    [
-                                        current_batch[key],
-                                        value[
-                                            current_local_idx : current_local_idx
-                                            + batch_size
-                                        ].to(self.device),
-                                    ],
-                                    dim=0,
-                                )
-                            else:
-                                current_batch[key] = value[
-                                    current_local_idx : current_local_idx + batch_size
-                                ].to(self.device)
-                        case list():
-                            if key in current_batch:
-                                assert current_batch[key] == value, (
-                                    f"Inconsistent value for {key}: {current_batch[key]} != {value}"
-                                )
-                            else:
-                                current_batch[key] = value
-                        case _:
-                            if key in current_batch:
-                                assert current_batch[key] == value, (
-                                    f"Inconsistent value for {key}: {current_batch[key]} != {value}"
-                                )
-                            else:
-                                current_batch[key] = value
+            for _batch_idx in count():
+                while current_data_size - current_local_idx <= remaining_batch_size:
+                    for key, value in current_data.items():
+                        match value:
+                            case th.Tensor():
+                                if key in current_batch:
+                                    current_batch[key] = th.cat(
+                                        [
+                                            current_batch[key],
+                                            value[
+                                                current_local_idx : current_local_idx
+                                                + batch_size
+                                            ].to(self.device),
+                                        ],
+                                        dim=0,
+                                    )
+                                else:
+                                    current_batch[key] = value[
+                                        current_local_idx : current_local_idx
+                                        + batch_size
+                                    ].to(self.device)
+                            case list():
+                                if key in current_batch:
+                                    assert current_batch[key] == value, (
+                                        f"Inconsistent value for {key}: {current_batch[key]} != {value}"
+                                    )
+                                else:
+                                    current_batch[key] = value
+                            case _:
+                                if key in current_batch:
+                                    assert current_batch[key] == value, (
+                                        f"Inconsistent value for {key}: {current_batch[key]} != {value}"
+                                    )
+                                else:
+                                    current_batch[key] = value
 
-                remaining_batch_size -= current_data_size - current_local_idx
-                current_data = cached_file_data.get(block=True)
-                cached_file_data.task_done()
+                    remaining_batch_size -= current_data_size - current_local_idx
+                    current_data = cached_file_data.get(block=True)
+                    cached_file_data.task_done()
 
-                if current_data is None:
-                    logger.debug(
-                        "No more data to load, stopping activations worker process"
-                    )
-                    worker_process.join()
-                    logger.trace("Activations worker process joined")
-                    cached_file_data.close()
-                    logger.trace("Cached file data queue closed")
-                    return
+                    if current_data is None:
+                        logger.debug(
+                            "No more data to load, stopping activations worker process"
+                        )
+                        worker_process.join()
+                        logger.trace("Activations worker process joined")
+                        cached_file_data.close()
+                        logger.trace("Cached file data queue closed")
+                        return
 
-                current_local_idx = 0
-                current_data_size = current_data[ActivationKeys.MLP_OUTPUT].shape[0]
-            else:
-                for key, value in current_data.items():
-                    match value:
-                        case th.Tensor():
-                            if key in current_batch:
-                                current_batch[key] = th.cat(
-                                    [
-                                        current_batch[key],
-                                        value[
-                                            current_local_idx : current_local_idx
-                                            + batch_size
-                                        ].to(self.device),
-                                    ],
-                                    dim=0,
-                                )
-                            else:
-                                current_batch[key] = value[
-                                    current_local_idx : current_local_idx + batch_size
-                                ].to(self.device)
-                        case list():
-                            if key in current_batch:
-                                assert current_batch[key] == value, (
-                                    f"Inconsistent value for {key}: {current_batch[key]} != {value}"
-                                )
-                            else:
-                                current_batch[key] = value
-                        case _:
-                            if key in current_batch:
-                                assert current_batch[key] == value, (
-                                    f"Inconsistent value for {key}: {current_batch[key]} != {value}"
-                                )
-                            else:
-                                current_batch[key] = value
+                    current_local_idx = 0
+                    current_data_size = current_data[ActivationKeys.MLP_OUTPUT].shape[0]
+                else:
+                    for key, value in current_data.items():
+                        match value:
+                            case th.Tensor():
+                                if key in current_batch:
+                                    current_batch[key] = th.cat(
+                                        [
+                                            current_batch[key],
+                                            value[
+                                                current_local_idx : current_local_idx
+                                                + batch_size
+                                            ].to(self.device),
+                                        ],
+                                        dim=0,
+                                    )
+                                else:
+                                    current_batch[key] = value[
+                                        current_local_idx : current_local_idx
+                                        + batch_size
+                                    ].to(self.device)
+                            case list():
+                                if key in current_batch:
+                                    assert current_batch[key] == value, (
+                                        f"Inconsistent value for {key}: {current_batch[key]} != {value}"
+                                    )
+                                else:
+                                    current_batch[key] = value
+                            case _:
+                                if key in current_batch:
+                                    assert current_batch[key] == value, (
+                                        f"Inconsistent value for {key}: {current_batch[key]} != {value}"
+                                    )
+                                else:
+                                    current_batch[key] = value
 
-                assert len(current_batch) > 0, "Current batch is empty"
-                stop = yield current_batch
+                    assert len(current_batch) > 0, "Current batch is empty"
+                    yield current_batch
 
-                if stop is not None:
-                    # this is the stop signal, so we stop the process and queue
-                    logger.debug(
-                        "Stop signal received, stopping activations worker process"
-                    )
-                    worker_process.terminate()
-                    logger.trace("Activations worker process terminated")
-                    cached_file_data.close()
-                    logger.trace("Cached file data queue closed")
-                    del worker_process, cached_file_data, current_data, current_batch
+                    current_batch = {}
+                    current_local_idx += remaining_batch_size
+                    remaining_batch_size = batch_size
+
                     clear_memory()
-                    yield  # dummy yield so that we don't raise a StopIteration
-                    return
 
-                current_batch = {}
-                current_local_idx += remaining_batch_size
-                remaining_batch_size = batch_size
-
-                clear_memory()
+        except GeneratorExit:
+            # Handle generator close() - clean up resources
+            logger.debug("GeneratorExit received, stopping activations worker process")
+            worker_process.terminate()
+            logger.trace("Activations worker process terminated")
+            cached_file_data.close()
+            logger.trace("Cached file data queue closed")
+            del worker_process, cached_file_data, current_data, current_batch
+            clear_memory()
+            raise  # Re-raise GeneratorExit to properly close the generator
 
     def __iter__(self) -> Generator[dict, None, None]:
         return self()
@@ -351,12 +358,13 @@ class Activations:
 
     @staticmethod
     async def load_files_async(filepaths: list[str]) -> list[dict]:
-        return await asyncio.gather(
+        results = await asyncio.gather(
             *[
                 asyncio.to_thread(th.load, filepath, weights_only=False)
                 for filepath in filepaths
             ]
         )
+        return list(results)
 
     NUM_DEBUG_FILES = 32
 
@@ -730,6 +738,6 @@ async def load_activations_and_init_dist(
     logger.debug(f"Activation dims: {activation_dims}")
 
     # clean up the background worker and queue
-    data_iterable.send("STOP FIGHTING!!!!!!")
+    data_iterable.close()
 
     return activations, activation_dims, gpu_process_group

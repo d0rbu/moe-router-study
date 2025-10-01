@@ -38,8 +38,10 @@ from sae_bench.sae_bench_utils.dataset_utils import (
 )
 import torch as th
 from tqdm import tqdm
+from transformers import PreTrainedTokenizer
 
 from core.model import get_model_config
+from core.type import assert_type
 from exp import MODEL_DIRNAME
 from exp.autointerp_saebench import Paths
 
@@ -145,15 +147,16 @@ def get_dataset_activations(
     train_data = filter_dataset(train_data, chosen_classes)
     test_data = filter_dataset(test_data, chosen_classes)
 
+    tokenizer = assert_type(model.tokenizer, PreTrainedTokenizer)
     train_data = tokenize_data_dictionary(
         train_data,
-        model.tokenizer,
+        tokenizer,
         config.context_length,
         device,
     )
     test_data = tokenize_data_dictionary(
         test_data,
-        model.tokenizer,
+        tokenizer,
         config.context_length,
         device,
     )
@@ -210,6 +213,9 @@ def get_paths_meaned_activations(
     return all_sae_activations_BF
 
 
+LLM_DEFAULT_BATCH_SIZE = 32
+
+
 def run_eval_single_dataset(
     dataset_name: str,
     config: SparseProbingEvalConfig,
@@ -232,18 +238,19 @@ def run_eval_single_dataset(
 
     if not os.path.exists(activations_path):
         if config.lower_vram_usage:
-            model = model.to(device)
+            model = model.to(th.device(device))
 
+        batch_size = config.llm_batch_size or LLM_DEFAULT_BATCH_SIZE
         all_train_acts_BTP, all_test_acts_BTP = get_dataset_activations(
             dataset_name,
             config,
             model,
-            config.llm_batch_size,
+            batch_size,
             paths.top_k,
             device,
         )
         if config.lower_vram_usage:
-            model = model.to("cpu")
+            model = model.to(th.device("cpu"))
 
         all_train_acts_BP = create_meaned_model_activations(all_train_acts_BTP)
         all_test_acts_BP = create_meaned_model_activations(all_test_acts_BTP)
@@ -279,7 +286,7 @@ def run_eval_single_dataset(
             th.save(acts, activations_path)
     else:
         if config.lower_vram_usage:
-            model = model.to("cpu")
+            model = model.to(th.device("cpu"))
         print(f"Loading activations from {activations_path}")
         acts = th.load(activations_path)
         all_train_acts_BTP = acts["train"]
@@ -358,10 +365,10 @@ def run_eval_paths(
     th.manual_seed(config.random_seed)
     os.makedirs(artifacts_folder, exist_ok=True)
 
-    results_dict = {}
+    results_dict: dict[str, float | dict[str, float]] = {}
 
-    dataset_results = {}
-    per_class_dict = {}
+    dataset_results: dict[str, dict[str, float]] = {}
+    per_class_dict: dict[str, dict[str, float]] = {}
     for dataset_name in config.dataset_names:
         results_key = f"{dataset_name}_results"
         (
@@ -377,15 +384,19 @@ def run_eval_paths(
             save_activations,
         )
 
-    results_dict = general_utils.average_results_dictionaries(
+    averaged_results: dict[str, float] = general_utils.average_results_dictionaries(
         dataset_results, config.dataset_names
     )
+    results_dict: dict[str, float | dict[str, float]] = dict(averaged_results)
+
+    results_dict: dict[str, float | dict[str, float]] = {}
+    results_dict.update(averaged_results)
 
     for dataset_name, dataset_result in dataset_results.items():
         results_dict[dataset_name] = dataset_result
 
     if config.lower_vram_usage:
-        model = model.to(device)
+        model = model.to(th.device(device))
 
     return results_dict, per_class_dict
 

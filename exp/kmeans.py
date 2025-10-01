@@ -146,7 +146,7 @@ async def compute_centroid_from_assignment(
     num_assigned = centroid_mask.sum()
 
     if num_assigned == 0:
-        return th.zeros_like(data[0]), 0
+        return th.zeros_like(data[0]), num_assigned
 
     return data[centroid_mask].mean(dim=0), num_assigned
 
@@ -439,7 +439,7 @@ async def kmeans_manhattan(
     seed: int = 0,
     save_every: int | None = None,
     save_dir: str | None = None,
-    validate_every: int | None = None,
+    validate_every: int = 4,
     group: dist.ProcessGroup | None = None,
 ) -> tuple[list[th.Tensor], int, th.Tensor]:
     """
@@ -626,7 +626,7 @@ async def kmeans_manhattan(
     logger.trace(f"Initialized centroids for {len(k_values)} clusters")
 
     # clean up the background workers and queue
-    data_iterable.send("STOP!")
+    data_iterable.close()
     th.cuda.empty_cache()
     gc.collect()
     ### end
@@ -889,7 +889,7 @@ def cluster_paths(
     max_iters: int = 128,
     save_every: int | None = None,
     seed: int = 0,
-    gpu_minibatch_size: int = 100000,
+    gpu_minibatch_size: int = 150_000,
     tokens_per_file: int = 5_000,
     reshuffled_tokens_per_file: int = 10_000,
     context_length: int = 2048,
@@ -970,7 +970,7 @@ def main(
     max_iters: int = 128,
     save_every: int | None = None,
     seed: int = 0,
-    gpu_minibatch_size: int = 100000,
+    gpu_minibatch_size: int = 150_000,
     tokens_per_file: int = 5_000,
     reshuffled_tokens_per_file: int = 10_000,
     context_length: int = 2048,
