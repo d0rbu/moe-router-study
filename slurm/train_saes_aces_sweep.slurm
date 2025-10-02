@@ -28,7 +28,7 @@ export WORLD_SIZE=$SLURM_NTASKS
 module load GCCcore/13.3.0 Python/3.12.3
 
 # Change to the project directory
-cd ~/moe-router-study
+cd $SCRATCH/moe-router-study
 
 # Run the distributed job
 srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/sae.py main --trainers-per-gpu 16 --expansion-factor 16,32,64 --k 160,320,640 --layer 6,7,8,9 --tokens-per-file 100000 --reshuffled-tokens-per-file 1000000

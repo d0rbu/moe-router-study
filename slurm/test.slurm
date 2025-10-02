@@ -26,7 +26,7 @@ export RANK=$SLURM_PROCID
 export WORLD_SIZE=$SLURM_NTASKS
 
 # Change to the project directory
-cd ~/moe-router-study
+cd $SCRATCH/moe-router-study
 
 # Run the distributed job
 srun uv run scripts/test_slurm.py

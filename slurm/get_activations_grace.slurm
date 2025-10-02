@@ -41,7 +41,7 @@ echo "WORLD_SIZE: $WORLD_SIZE"
 echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 
 # Change to the project directory
-cd ~/moe-router-study
+cd $SCRATCH/moe-router-study
 
 # Run the distributed job
 srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/get_activations.py --tokens-per-file 100000
