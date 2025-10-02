@@ -379,8 +379,6 @@ class Activations:
         debug: bool = False,
         num_workers: int = 8,
     ) -> list[str]:
-        cls._total_tokens = None
-
         activation_filepaths = broadcast_variable_length_list(
             cls.get_activation_filepaths,
             args=(activation_dir, debug),
@@ -513,16 +511,17 @@ class Activations:
         total_tokens = th.tensor(total_tokens, dtype=th.int32)
         dist.reduce(total_tokens, dst=0, op=dist.ReduceOp.SUM)
 
-        cls._total_tokens = total_tokens.item()
-
-        remaining_stacked_batches = [None] * dist.get_world_size()
+        if dist.get_rank() == 0:
+            remaining_stacked_batches = [None] * dist.get_world_size()
+            logger.debug(f"Total tokens: {total_tokens.item()}")
+        else:
+            remaining_stacked_batches = None
 
         # Stack lists of tensors before gathering to improve performance
         stacked_current_batch = cls._stack_batch_for_gather(current_batch)
+        dist.gather_object(stacked_current_batch, remaining_stacked_batches, dst=0)
 
         if dist.get_rank() == 0:
-            logger.debug(f"Total tokens: {total_tokens.item()}")
-            dist.gather_object(stacked_current_batch, remaining_stacked_batches, dst=0)
             logger.debug(f"Gathered {len(remaining_stacked_batches)} batches")
 
             # Unstack the gathered batches back to original format
@@ -593,7 +592,6 @@ class Activations:
                 for filename in reshuffled_activation_filenames
             ]
         else:
-            dist.gather_object(stacked_current_batch, dst=0)
             renamed_activation_filepaths = None
 
         renamed_activation_filepaths = broadcast_variable_length_list(
@@ -613,11 +611,8 @@ class Activations:
                 and len(value) > 0
                 and isinstance(value[0], th.Tensor)
             ):
-                # Stack list of tensors into a single tensor
                 stacked_batch[key] = th.stack(value, dim=0)
-            else:
-                # Keep non-tensor lists and other values as-is
-                stacked_batch[key] = value
+
         return stacked_batch
 
     @staticmethod
