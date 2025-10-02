@@ -833,6 +833,7 @@ def get_router_activations(
         activations_to_store = [
             str(ActivationKeys.ROUTER_LOGITS),
             str(ActivationKeys.MLP_OUTPUT),
+            str(ActivationKeys.LAYER_OUTPUT),
         ]
 
     layers_to_store_set: set[int] | None
