@@ -6,10 +6,10 @@
 #SBATCH --ntasks=1                      # Total number of tasks (processes) across all nodes
 #SBATCH --ntasks-per-node=1             # Number of tasks per node
 #SBATCH --cpus-per-task=16              # Number of CPUs per task
-#SBATCH --mem=64G                       # Request 64GB per node
+#SBATCH --mem=128G                      # Request 128GB per node
 #SBATCH --output=get_activations.%j     # Send stdout/err to "get_activations.[jobID]"
 #SBATCH --error=get_activations.%j.err  # Send stderr to separate file
-#SBATCH --gres=gpu:a100:4               # Request 4 a100 GPUs per node
+#SBATCH --gres=gpu:a100:4               # Request 4 A100 GPUs per node
 #SBATCH --partition=gpu                 # Request the GPU partition/queue
 
 ##OPTIONAL JOB SPECIFICATIONS
@@ -46,7 +46,7 @@ export MASTER_PORT=$(expr 10000 + $(echo -n $SLURM_JOBID | tail -c 4))
 export WORLD_SIZE=$SLURM_NTASKS
 
 # Change to the project directory
-cd ~/moe-router-study
+cd $SCRATCH/moe-router-study
 
 # Run the distributed job
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/get_activations.py --tokens-per-file 5000
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/get_activations.py --tokens-per-file 20000
