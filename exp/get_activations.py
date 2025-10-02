@@ -95,7 +95,7 @@ def process_batch(
     batch_idx: int,
     model: StandardizedTransformer,
     rank: int,
-    gpu_minibatch_size: int,
+    minibatch_size: int,
     router_layers: set[int],
     layers_to_store: set[int],
     activations_to_store: frozenset[str] = ACTIVATION_KEYS,
@@ -107,7 +107,7 @@ def process_batch(
         batch_idx: Index of the batch.
         model: Model to process the batch.
         rank: Rank of the GPU.
-        gpu_minibatch_size: Size of the minibatch to process on each GPU.
+        minibatch_size: Size of the minibatch to process on each GPU.
         router_layers: Set of router layer indices to extract.
         layers_to_store: Set of layer indices to store.
         stored_activations: Activations to score
@@ -121,12 +121,13 @@ def process_batch(
 
     batch_size = encoded_batch["input_ids"].shape[0]
 
-    if gpu_minibatch_size <= 0:
-        gpu_minibatch_size = batch_size
+    if minibatch_size <= 0:
+        minibatch_size = batch_size
+        logger.warning(f"Minibatch size is 0, using batch size {batch_size}")
     else:
-        gpu_minibatch_size = min(gpu_minibatch_size, batch_size)
+        minibatch_size = min(minibatch_size, batch_size)
 
-    num_minibatches = math.ceil(batch_size / gpu_minibatch_size)
+    num_minibatches = math.ceil(batch_size / minibatch_size)
     num_layers = len(assert_type(model.layers, Sized))
 
     # Extract activations
@@ -145,8 +146,8 @@ def process_batch(
         th.cuda.empty_cache()
         gc.collect()
 
-        minibatch_start = minibatch_idx * gpu_minibatch_size
-        minibatch_end = min(minibatch_start + gpu_minibatch_size, batch_size)
+        minibatch_start = minibatch_idx * minibatch_size
+        minibatch_end = min(minibatch_start + minibatch_size, batch_size)
         encoded_minibatch = {
             k: v[minibatch_start:minibatch_end].to(model.device)
             for k, v in encoded_batch.items()
@@ -454,7 +455,7 @@ def gpu_worker(
     device_ids: list[int],
     gpu_queue: mp.Queue,
     model_name: str,
-    gpu_minibatch_size: int,
+    minibatch_size: int,
     experiment_name: str,
     gpu_available: bool,
     stop_event: Any,  # mp.Event is not properly typed
@@ -575,7 +576,7 @@ def gpu_worker(
                 batch_idx,
                 model,
                 rank,
-                gpu_minibatch_size,
+                minibatch_size,
                 layers_with_routers,
                 layers_to_store,
                 activations_to_store=current_activations_to_store,
@@ -748,7 +749,7 @@ def get_router_activations(
     dataset_name: str = "lmsys",
     *_args,
     context_length: int = 2048,
-    gpu_minibatch_size: int = 2,
+    minibatch_size: int = 2,
     gpus_per_worker: int = 2,
     cuda_devices: str = "",
     tokens_per_file: int = 5_000,
@@ -767,7 +768,7 @@ def get_router_activations(
         model_name: Name of the model to use
         dataset_name: Name of the dataset to use
         context_length: Context length for processing
-        gpu_minibatch_size: Batch size for processing on each GPU
+        minibatch_size: Batch size for processing on each GPU
         gpus_per_worker: Number of GPUs to shard the model across
         cuda_devices: Comma-separated list of CUDA devices to use. If empty, defaults to CUDA_VISIBLE_DEVICES environment variable or CPU if it's not set.
         tokens_per_file: Target number of tokens per output file
@@ -990,7 +991,7 @@ def get_router_activations(
                 device_ids,
                 gpu_queues[rank],
                 model_name,
-                gpu_minibatch_size,
+                minibatch_size,
                 name,
                 gpu_available,
                 stop_event,

@@ -435,7 +435,7 @@ async def kmeans_manhattan(
     k_values: list[int],
     effective_batch_size: int | None = None,
     max_iters: int = 128,
-    gpu_minibatch_size: int | None = None,
+    minibatch_size: int | None = None,
     seed: int = 0,
     save_every: int | None = None,
     save_dir: str | None = None,
@@ -486,14 +486,14 @@ async def kmeans_manhattan(
 
     batch_size = effective_batch_size // total_gpus
 
-    if gpu_minibatch_size is None:
-        gpu_minibatch_size = batch_size
+    if minibatch_size is None:
+        minibatch_size = batch_size
 
-    if (leftover_minibatch_size := (batch_size % gpu_minibatch_size)) > 0:
+    if (leftover_minibatch_size := (batch_size % minibatch_size)) > 0:
         total_leftover_minibatch_size = leftover_minibatch_size * total_gpus
         logger.warning(
             f"Per-GPU batch size {batch_size} is not divisible by GPU minibatch size "
-            f"{gpu_minibatch_size}; {leftover_minibatch_size} left over per GPU, "
+            f"{minibatch_size}; {leftover_minibatch_size} left over per GPU, "
             f"{total_leftover_minibatch_size} left over total"
         )
         batch_size -= leftover_minibatch_size
@@ -507,7 +507,7 @@ async def kmeans_manhattan(
             f"{leftover_minibatch_size * total_gpus + leftover_batch_size} data points discarded"
         )
 
-    assert gpu_minibatch_size > 0, "gpu_minibatch_size must be positive"
+    assert minibatch_size > 0, "minibatch_size must be positive"
     assert batch_size > 0, "batch_size must be positive"
     assert effective_batch_size % total_gpus == 0, (
         f"effective_batch_size {effective_batch_size} must be a multiple of total_gpus {total_gpus}"
@@ -515,13 +515,13 @@ async def kmeans_manhattan(
     assert effective_batch_size / batch_size == total_gpus, (
         f"effective_batch_size {effective_batch_size} must be batch_size {batch_size} times total_gpus {total_gpus}"
     )
-    assert batch_size % gpu_minibatch_size == 0, (
-        f"batch_size {batch_size} must be a multiple of gpu_minibatch_size {gpu_minibatch_size}"
+    assert batch_size % minibatch_size == 0, (
+        f"batch_size {batch_size} must be a multiple of minibatch_size {minibatch_size}"
     )
 
-    accumulation_size = batch_size // gpu_minibatch_size
+    accumulation_size = batch_size // minibatch_size
 
-    num_gpu_minibatches = len(activations) // gpu_minibatch_size
+    num_gpu_minibatches = len(activations) // minibatch_size
 
     logger.trace(f"Accumulation size: {accumulation_size}")
     logger.trace(f"Number of GPU minibatches: {num_gpu_minibatches}")
@@ -681,7 +681,7 @@ async def kmeans_manhattan(
     for iter_idx in iterator:
         # process data in batches, parallelized over devices and nodes
         logger.trace(f"Running iteration {iter_idx}")
-        minibatch_iterator = activations(batch_size=gpu_minibatch_size)
+        minibatch_iterator = activations(batch_size=minibatch_size)
 
         distributed_iterator = islice(
             minibatch_iterator,
@@ -818,7 +818,7 @@ async def cluster_paths_async(
     max_iters: int,
     seed: int,
     tokens_per_file: int,
-    gpu_minibatch_size: int,
+    minibatch_size: int,
     save_every: int | None = None,
     group: dist.ProcessGroup | None = None,
 ) -> None:
@@ -842,7 +842,7 @@ async def cluster_paths_async(
         activation_dim=activation_dim,
         k_values=k,
         max_iters=max_iters,
-        gpu_minibatch_size=gpu_minibatch_size,
+        minibatch_size=minibatch_size,
         seed=seed,
         save_every=save_every,
         save_dir=save_dir,
@@ -868,7 +868,7 @@ async def cluster_paths_async(
             "max_iters": max_iters,
             "seed": seed,
             "tokens_per_file": tokens_per_file,
-            "gpu_minibatch_size": gpu_minibatch_size,
+            "minibatch_size": minibatch_size,
             "save_every": save_every,
             "type": KMEANS_TYPE,
             "kmeans_experiment_name": kmeans_experiment_name,
@@ -889,7 +889,7 @@ def cluster_paths(
     max_iters: int = 128,
     save_every: int | None = None,
     seed: int = 0,
-    gpu_minibatch_size: int = 100_000,
+    minibatch_size: int = 100_000,
     tokens_per_file: int = 5_000,
     reshuffled_tokens_per_file: int = 10_000,
     context_length: int = 2048,
@@ -953,7 +953,7 @@ def cluster_paths(
             max_iters=max_iters,
             seed=seed,
             tokens_per_file=reshuffled_tokens_per_file,
-            gpu_minibatch_size=gpu_minibatch_size,
+            minibatch_size=minibatch_size,
             save_every=save_every,
             group=gpu_process_group,
         )
@@ -970,7 +970,7 @@ def main(
     max_iters: int = 128,
     save_every: int | None = None,
     seed: int = 0,
-    gpu_minibatch_size: int = 100_000,
+    minibatch_size: int = 100_000,
     tokens_per_file: int = 5_000,
     reshuffled_tokens_per_file: int = 10_000,
     context_length: int = 2048,
@@ -989,7 +989,7 @@ def main(
         max_iters=max_iters,
         save_every=save_every,
         seed=seed,
-        gpu_minibatch_size=gpu_minibatch_size,
+        minibatch_size=minibatch_size,
         tokens_per_file=tokens_per_file,
         reshuffled_tokens_per_file=reshuffled_tokens_per_file,
         context_length=context_length,
