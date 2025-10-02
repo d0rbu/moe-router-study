@@ -816,7 +816,7 @@ def get_router_activations(
         {
             worker_idx: device_ids[gpu_start_idx:gpu_end_idx]
             for worker_idx, (gpu_start_idx, gpu_end_idx) in enumerate(
-                pairwise(range(0, num_gpus, gpus_per_worker))
+                pairwise(range(0, num_gpus + 1, gpus_per_worker))
             )
         }
         if gpu_available
@@ -840,8 +840,6 @@ def get_router_activations(
         layers_to_store_set = None
     elif isinstance(layers_to_store, list):
         layers_to_store_set = set(layers_to_store)
-    else:
-        layers_to_store_set = layers_to_store
 
     if not gpu_available:
         logger.info("Using CPU only")
