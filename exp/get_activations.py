@@ -1,5 +1,6 @@
 import asyncio
 from collections import deque
+from collections.abc import Sized
 from enum import StrEnum
 import gc
 from itertools import pairwise
@@ -126,7 +127,7 @@ def process_batch(
         gpu_minibatch_size = min(gpu_minibatch_size, batch_size)
 
     num_minibatches = math.ceil(batch_size / gpu_minibatch_size)
-    num_layers = len(assert_type(model.layers, list))
+    num_layers = len(assert_type(model.layers, Sized))
 
     # Extract activations
     activations = {
@@ -504,22 +505,20 @@ def gpu_worker(
     logger.debug("Model initialized")
     layers_with_routers = set(model.layers_with_routers)
     top_k = model.router_probabilities.get_top_k()
+    num_layers = len(assert_type(model.layers, Sized))
 
     if layers_to_store is None:
         # take the middle 20% of layers by default
         # this does NOT apply to router logits; those are stored at all layers
-        num_layers_to_store = math.ceil(len(assert_type(model.layers, list)) * 0.2)
-        mid_layer = len(assert_type(model.layers, list)) // 2
+        num_layers_to_store = math.ceil(num_layers * 0.2)
+        mid_layer = num_layers // 2
         start_layer_to_store = mid_layer - (num_layers_to_store // 2)
         layers_to_store = set(
             range(start_layer_to_store, start_layer_to_store + num_layers_to_store)
         )
 
-    assert all(
-        layer_idx < len(assert_type(model.layers, list))
-        for layer_idx in layers_to_store
-    ), (
-        f"Layers to store out of bounds for model with {len(assert_type(model.layers, list))} layers: {layers_to_store}"
+    assert all(layer_idx < num_layers for layer_idx in layers_to_store), (
+        f"Layers to store out of bounds for model with {num_layers} layers: {layers_to_store}"
     )
 
     # Create output directory
@@ -816,8 +815,8 @@ def get_router_activations(
     worker_device_map = (
         {
             worker_idx: device_ids[gpu_start_idx:gpu_end_idx]
-            for worker_idx, gpu_start_idx, gpu_end_idx in enumerate(
-                pairwise(range(0, num_gpus, gpus_per_worker))
+            for worker_idx, (gpu_start_idx, gpu_end_idx) in enumerate(
+                pairwise(range(0, num_gpus + 1, gpus_per_worker))
             )
         }
         if gpu_available
@@ -834,6 +833,7 @@ def get_router_activations(
         activations_to_store = [
             str(ActivationKeys.ROUTER_LOGITS),
             str(ActivationKeys.MLP_OUTPUT),
+            str(ActivationKeys.LAYER_OUTPUT),
         ]
 
     layers_to_store_set: set[int] | None
@@ -841,8 +841,6 @@ def get_router_activations(
         layers_to_store_set = None
     elif isinstance(layers_to_store, list):
         layers_to_store_set = set(layers_to_store)
-    else:
-        layers_to_store_set = layers_to_store
 
     if not gpu_available:
         logger.info("Using CPU only")

@@ -263,6 +263,7 @@ async def run_sae_training(
     }
 
     num_gpus = th.cuda.device_count()
+    logger.info(f"Number of GPUs: {num_gpus}")
     gpu_queues = [asyncio.PriorityQueue() for _ in range(num_gpus)]
 
     workers = [

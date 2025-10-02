@@ -2,14 +2,14 @@
 
 ##NECESSARY JOB SPECIFICATIONS
 #SBATCH --job-name=get_activations      # Set the job name to "get_activations"
-#SBATCH --time=6:00:00                  # Set the wall clock limit to 6 hours
+#SBATCH --time=12:00:00                 # Set the wall clock limit to 12 hours
 #SBATCH --ntasks=1                      # Total number of tasks (processes) across all nodes
 #SBATCH --ntasks-per-node=1             # Number of tasks per node
 #SBATCH --cpus-per-task=16              # Number of CPUs per task
 #SBATCH --mem=128G                      # Request 128GB per node
 #SBATCH --output=get_activations.%j     # Send stdout/err to "get_activations.[jobID]"
 #SBATCH --error=get_activations.%j.err  # Send stderr to separate file
-#SBATCH --gres=gpu:a100:4               # Request 4 A100 GPUs per node
+#SBATCH --gres=gpu:h100:4               # Request 4 A100 GPUs per node
 #SBATCH --partition=gpu                 # Request the GPU partition/queue
 
 ##OPTIONAL JOB SPECIFICATIONS
@@ -49,4 +49,4 @@ export WORLD_SIZE=$SLURM_NTASKS
 cd $SCRATCH/moe-router-study
 
 # Run the distributed job
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/get_activations.py --tokens-per-file 40000
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/get_activations.py --gpu-minibatch-size 5 --gpus-per-worker 1 --tokens-per-file 100000
