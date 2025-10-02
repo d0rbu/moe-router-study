@@ -40,10 +40,7 @@ echo "RANK: $RANK"
 echo "WORLD_SIZE: $WORLD_SIZE"
 echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 
-export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
-export MASTER_PORT=$(expr 10000 + $(echo -n $SLURM_JOBID | tail -c 4))
-
-export WORLD_SIZE=$SLURM_NTASKS
+module load GCCcore/13.3.0 Python/3.12.3
 
 # Change to the project directory
 cd $SCRATCH/moe-router-study
