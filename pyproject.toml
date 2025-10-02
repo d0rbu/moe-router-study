@@ -51,6 +51,7 @@ dependencies = [
     "sae-lens>=6.12.1",
     "transformer-lens",
     "eai-delphi",
+    "docstring-parser>=0.16",
 ]
 
 [project.optional-dependencies]
