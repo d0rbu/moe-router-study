@@ -522,9 +522,7 @@ class Activations:
         dist.gather_object(stacked_current_batch, remaining_stacked_batches, dst=0)
 
         if dist.get_rank() == 0:
-            assert (
-                remaining_stacked_batches is not None
-            )  # Type checker hint: only rank 0 reaches here
+            assert remaining_stacked_batches is not None
             logger.debug(f"Gathered {len(remaining_stacked_batches)} batches")
 
             # Unstack the gathered batches back to original format
