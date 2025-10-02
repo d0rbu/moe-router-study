@@ -816,7 +816,7 @@ def get_router_activations(
     worker_device_map = (
         {
             worker_idx: device_ids[gpu_start_idx:gpu_end_idx]
-            for worker_idx, gpu_start_idx, gpu_end_idx in enumerate(
+            for worker_idx, (gpu_start_idx, gpu_end_idx) in enumerate(
                 pairwise(range(0, num_gpus, gpus_per_worker))
             )
         }
