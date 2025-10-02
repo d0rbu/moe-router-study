@@ -48,5 +48,7 @@ export WORLD_SIZE=$SLURM_NTASKS
 # Change to the project directory
 cd $SCRATCH/moe-router-study
 
+module load GCCcore/13.3.0 Python/3.12.3
+
 # Run the distributed job
 srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/get_activations.py --tokens-per-file 40000
