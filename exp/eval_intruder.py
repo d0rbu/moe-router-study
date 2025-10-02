@@ -26,7 +26,12 @@ from core.type import assert_type
 from delphi.__main__ import non_redundant_hookpoints  # type: ignore
 from delphi.__main__ import populate_cache as sae_populate_cache  # type: ignore
 from delphi.clients import Offline  # type: ignore
-from delphi.config import CacheConfig, ConstructorConfig, RunConfig, SamplerConfig  # type: ignore
+from delphi.config import (  # type: ignore
+    CacheConfig,
+    ConstructorConfig,
+    RunConfig,
+    SamplerConfig,
+)
 from delphi.latents import LatentDataset, LatentRecord  # type: ignore
 from delphi.latents.cache import InMemoryCache, LatentCache  # type: ignore
 from delphi.log.result_analysis import log_results  # type: ignore
