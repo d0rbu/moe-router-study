@@ -2,3 +2,10 @@
 
 [rules]
 possibly-unbound-attribute = "ignore"
+
+# Ignore unresolved imports from the delphi submodule in eval_intruder.py
+[[overrides]]
+include = ["exp/eval_intruder.py"]
+
+[overrides.rules]
+unresolved-import = "ignore"
