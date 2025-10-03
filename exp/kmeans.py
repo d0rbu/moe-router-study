@@ -489,6 +489,7 @@ async def kmeans_manhattan(
 
     if effective_batch_size is None:
         effective_batch_size = (len(activations) // total_gpus) * total_gpus
+        logger.trace(f"Size of activations: {len(activations)}")
 
     logger.trace(f"Effective batch size: {effective_batch_size}")
 
