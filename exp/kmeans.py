@@ -613,6 +613,21 @@ async def kmeans_manhattan(
         f"Validation router logits {validation_router_logits.shape} {validation_router_logits.dtype} {validation_router_logits.device}"
     )
 
+    logger.debug(
+        f"Init router logits stats: "
+        f"Min: {init_activation_logits.min()}, "
+        f"Max: {init_activation_logits.max()}, "
+        f"Mean: {init_activation_logits.mean()}, "
+        f"Std: {init_activation_logits.std()}"
+    )
+    logger.debug(
+        f"Validation router logits stats: "
+        f"Min: {validation_router_logits.min()}, "
+        f"Max: {validation_router_logits.max()}, "
+        f"Mean: {validation_router_logits.mean()}, "
+        f"Std: {validation_router_logits.std()}"
+    )
+
     # Convert validation data to flat paths format (same as training data)
     validation_data = convert_router_logits_to_paths(
         validation_router_logits, top_k
