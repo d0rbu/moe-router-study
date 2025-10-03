@@ -636,6 +636,21 @@ async def kmeans_manhattan(
         init_activation_logits, top_k
     ).to(dtype=th.float32, device="cpu")
 
+    logger.debug(
+        f"Init activation data stats: "
+        f"Min: {init_activation_data.min()}, "
+        f"Max: {init_activation_data.max()}, "
+        f"Mean: {init_activation_data.mean()}, "
+        f"Std: {init_activation_data.std()}"
+    )
+    logger.debug(
+        f"Validation data stats: "
+        f"Min: {validation_data.min()}, "
+        f"Max: {validation_data.max()}, "
+        f"Mean: {validation_data.mean()}, "
+        f"Std: {validation_data.std()}"
+    )
+
     validate_centroids = partial(validate_centroid_distribution, validation_data)
 
     logger.info(
