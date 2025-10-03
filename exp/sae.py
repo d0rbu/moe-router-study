@@ -132,7 +132,7 @@ async def gpu_worker(
 
     for worker_batch_idx in count():
         logger.debug(f"[worker {device_idx}]: Awaiting batch {worker_batch_idx}")
-        _priority, batch = await gpu_queue.get()
+        _priority, _trainer_batch_idx, batch = await gpu_queue.get()
 
         if batch is None:
             logger.debug(f"[worker {device_idx}]: Stopping")
@@ -332,7 +332,9 @@ async def run_sae_training(
         f"Number of iterations: {math.ceil(len(hparam_sweep_iterator) / (trainers_per_gpu * num_gpus * dist.get_world_size()))}"
     )
 
-    for trainer_batch in concurrent_trainer_batched_iterator:
+    for trainer_batch_idx, trainer_batch in enumerate(
+        concurrent_trainer_batched_iterator
+    ):
         device_idx, gpu_queue = select_least_loaded_gpu(gpu_queues)
 
         trainer_cfgs = []
@@ -394,12 +396,12 @@ async def run_sae_training(
             submodule_name=current_submodule_name,
         )
         logger.debug(f"Putting batch {hparam_idx} into queue {device_idx}")
-        await gpu_queue.put((0, batch))
+        await gpu_queue.put((0, trainer_batch_idx, batch))
 
     # put a sentinel value in the gpu queues to stop the workers
     for gpu_idx, gpu_queue in enumerate(gpu_queues):
         logger.debug(f"Putting sentinel value in queue {gpu_idx}")
-        await gpu_queue.put((1, None))
+        await gpu_queue.put((1, 0, None))
 
     logger.debug("Waiting for queues to finish")
     for gpu_queue in gpu_queues:
