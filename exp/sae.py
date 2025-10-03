@@ -357,9 +357,19 @@ async def run_sae_training(
             current_seed,
             current_submodule_name,
         ) in trainer_batch:
-            trainer_names.append(str(hparam_idx))
+            # check if results file already exists
+            trainer_results_dir = os.path.join(
+                OUTPUT_DIR, sae_experiment_name, str(hparam_idx)
+            )
+            config_filepath = os.path.join(trainer_results_dir, "config.json")
 
-            # TODO: check if a results file already exists
+            if os.path.exists(config_filepath):
+                logger.debug(
+                    f"Skipping trainer {hparam_idx} - results already exist at {config_filepath}"
+                )
+                continue
+
+            trainer_names.append(str(hparam_idx))
 
             architecture_config = ARCHITECTURES[current_architecture]
 
@@ -388,6 +398,12 @@ async def run_sae_training(
             )
 
             trainer_cfgs.append(filtered_trainer_cfg)
+
+        if len(trainer_cfgs) == 0:
+            logger.info(
+                f"Skipping trainer batch {trainer_batch_idx} - no trainers to run"
+            )
+            continue
 
         batch = GPUBatch(
             trainer_cfgs=trainer_cfgs,
