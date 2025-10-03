@@ -416,6 +416,123 @@ DEFAULT_WARMUP_STEPS = (1024 * 256 // 256,)
 DEFAULT_DEBUG_WARMUP_STEPS = (1024 * 1 // 256,)
 
 
+def parse_int_tuple(s: str) -> tuple[int, ...]:
+    """Parse comma-separated string of integers into tuple."""
+    assert isinstance(s, str), f"Expected string, got {type(s)}"
+    if not s.strip():
+        return ()
+    parts = [x.strip() for x in s.split(",") if x.strip()]
+    assert all(
+        part.isdigit() or (part.startswith("-") and part[1:].isdigit())
+        for part in parts
+    ), f"Invalid integer format in: {s}"
+    return tuple(int(x) for x in parts)
+
+
+def parse_float_tuple(s: str) -> tuple[float, ...]:
+    """Parse comma-separated string of floats into tuple."""
+    assert isinstance(s, str), f"Expected string, got {type(s)}"
+    if not s.strip():
+        return ()
+    parts = [x.strip() for x in s.split(",") if x.strip()]
+
+    # Check if all parts are valid float representations
+    def is_valid_float(part: str) -> bool:
+        try:
+            float(part)
+            return True
+        except ValueError:
+            return False
+
+    assert all(is_valid_float(part) for part in parts), f"Invalid float format in: {s}"
+    return tuple(float(x) for x in parts)
+
+
+def parse_optional_int_tuple(s: str | None) -> tuple[int | None, ...] | None:
+    """Parse comma-separated string of integers or None into tuple, or return None if input is None."""
+    assert s is None or isinstance(s, str), f"Expected string or None, got {type(s)}"
+    if s is None:
+        return None
+    if not s.strip():
+        return ()
+    parts = [x.strip() for x in s.split(",") if x.strip()]
+    result = []
+    for part in parts:
+        if part.lower() == "none":
+            result.append(None)
+        else:
+            assert part.isdigit() or (part.startswith("-") and part[1:].isdigit()), (
+                f"Invalid integer or 'none' format in: {part} (from {s})"
+            )
+            result.append(int(part))
+    return tuple(result)
+
+
+def parse_str_tuple(s: str) -> tuple[str, ...]:
+    """Parse comma-separated string into tuple of strings."""
+    assert isinstance(s, str), f"Expected string, got {type(s)}"
+    if not s.strip():
+        return ()
+    parts = [x.strip() for x in s.split(",") if x.strip()]
+    return tuple(parts)
+
+
+def parse_group_fractions(s: str) -> tuple[tuple[float, ...], ...]:
+    """Parse group fractions string into tuple of tuples of floats, using ; to separate groups."""
+    assert isinstance(s, str), f"Expected string, got {type(s)}"
+    if not s.strip():
+        return ()
+    result = []
+    # Split by semicolon for groups, comma for values within groups
+    group_strings = [x.strip() for x in s.split(";") if x.strip()]
+    for group_str in group_strings:
+        values = [x.strip() for x in group_str.split(",") if x.strip()]
+
+        # Check if all values in this group are valid floats
+        def is_valid_float(part: str) -> bool:
+            try:
+                float(part)
+                return True
+            except ValueError:
+                return False
+
+        assert all(is_valid_float(value) for value in values), (
+            f"Invalid float format in group fractions group: {group_str} (from {s})"
+        )
+        if values:
+            result.append(tuple(float(x) for x in values))
+    return tuple(result)
+
+
+def parse_group_weights(s: str | None) -> tuple[tuple[float, ...], ...] | None:
+    """Parse group weights string into tuple of tuples of floats, or return None if input is None."""
+    assert s is None or isinstance(s, str), f"Expected string or None, got {type(s)}"
+    if s is None:
+        return None
+    if not s.strip():
+        return ()
+    result = []
+    # Split by semicolon for groups, comma for values within groups
+    group_strings = [x.strip() for x in s.split(";") if x.strip()]
+    for group_str in group_strings:
+        values = [x.strip() for x in group_str.split(",") if x.strip()]
+
+        # Check if all values in this group are valid floats
+        def is_valid_float(part: str) -> bool:
+            try:
+                float(part)
+                return True
+            except ValueError:
+                return False
+
+        assert all(is_valid_float(value) for value in values), (
+            f"Invalid float format in group weights group: {group_str} (from {s})"
+        )
+        if values:
+            result.append(tuple(float(x) for x in values))
+    return tuple(result) if result else None
+
+
 @arguably.command()
 def main(
     model_name: str = "olmoe-i",
@@ -426,23 +543,21 @@ def main(
     steps: int | None = None,
     save_every: int = 1024,
     num_epochs: int = 1,
-    expansion_factor: tuple[int] = (16,),
-    k: tuple[int] = (160,),
-    layer: tuple[int] = (7,),
-    group_fractions: tuple[tuple[float, float, float, float, float]] = (
-        (1.0 / 32, 1.0 / 16, 1.0 / 8, 1.0 / 4, 1.0 / 2 + 1.0 / 32),
-    ),
-    group_weights: tuple[tuple[float]] | None = None,
-    architecture: tuple[str] = ("batchtopk",),
-    lr: tuple[float] = (5e-5,),
-    auxk_alpha: tuple[float] = (1 / 32,),
-    warmup_steps: tuple[int] | None = None,
-    decay_start: tuple[int] | None = None,
-    threshold_beta: tuple[float] = (0.999,),
-    threshold_start_step: tuple[int] = (1024,),
-    k_anneal_steps: tuple[int] | None = None,
-    seed: tuple[int] = (0,),
-    submodule_name: tuple[str] = ("mlp_output",),
+    expansion_factor: str = "16",
+    k: str = "160",
+    layer: str = "7",
+    group_fractions: str = "0.03125,0.0625,0.125,0.25,0.53125",
+    group_weights: str | None = None,
+    architecture: str = "batchtopk",
+    lr: str = "5e-5",
+    auxk_alpha: str = "0.03125",
+    warmup_steps: str | None = None,
+    decay_start: str | None = None,
+    threshold_beta: str = "0.999",
+    threshold_start_step: str = "1024",
+    k_anneal_steps: str | None = None,
+    seed: str = "0",
+    submodule_name: str = "mlp_output",
     tokens_per_file: int = 5_000,
     reshuffled_tokens_per_file: int = 20_000,
     context_length: int = 2048,
@@ -478,19 +593,38 @@ def main(
     assert all(
         current_architecture in ARCHITECTURES for current_architecture in architecture
     ), "Invalid architecture"
-    assert len(submodule_name) > 0, "Submodule name is an empty tuple!"
+    assert len(submodule_name) > 0, "Submodule name is an empty string!"
 
     torch_dtype = get_dtype(dtype)
 
+    # Parse string parameters into appropriate tuple types
+    expansion_factor_parsed = parse_int_tuple(expansion_factor)
+    k_parsed = parse_int_tuple(k)
+    layer_parsed = parse_int_tuple(layer)
+    group_fractions_parsed = parse_group_fractions(group_fractions)
+    group_weights_parsed = parse_group_weights(group_weights)
+    architecture_parsed = parse_str_tuple(architecture)
+    lr_parsed = parse_float_tuple(lr)
+    auxk_alpha_parsed = parse_float_tuple(auxk_alpha)
+    warmup_steps_parsed = (
+        parse_int_tuple(warmup_steps) if warmup_steps is not None else None
+    )
+    decay_start_parsed = parse_optional_int_tuple(decay_start)
+    threshold_beta_parsed = parse_float_tuple(threshold_beta)
+    threshold_start_step_parsed = parse_int_tuple(threshold_start_step)
+    k_anneal_steps_parsed = parse_optional_int_tuple(k_anneal_steps)
+    seed_parsed = parse_int_tuple(seed)
+    submodule_name_parsed = parse_str_tuple(submodule_name)
+
     # Handle None defaults that should be (None,) for union types
-    group_weights_tuple: tuple[tuple[float] | None] = (
-        (None,) if group_weights is None else group_weights
+    group_weights_tuple: tuple[tuple[float, ...] | None, ...] = (
+        (None,) if group_weights_parsed is None else (group_weights_parsed,)
     )
-    decay_start_tuple: tuple[int | None] = (
-        (None,) if decay_start is None else decay_start
+    decay_start_tuple: tuple[int | None, ...] = (
+        (None,) if decay_start_parsed is None else decay_start_parsed
     )
-    k_anneal_steps_tuple: tuple[int | None] = (
-        (None,) if k_anneal_steps is None else k_anneal_steps
+    k_anneal_steps_tuple: tuple[int | None, ...] = (
+        (None,) if k_anneal_steps_parsed is None else k_anneal_steps_parsed
     )
 
     asyncio.run(
@@ -502,21 +636,21 @@ def main(
             steps=steps,
             save_every=save_every,
             num_epochs=num_epochs,
-            expansion_factor=expansion_factor,
-            k=k,
-            layer=layer,
-            group_fractions=group_fractions,
+            expansion_factor=expansion_factor_parsed,
+            k=k_parsed,
+            layer=layer_parsed,
+            group_fractions=group_fractions_parsed,
             group_weights=group_weights_tuple,
-            architecture=architecture,
-            lr=lr,
-            auxk_alpha=auxk_alpha,
-            warmup_steps=warmup_steps,
+            architecture=architecture_parsed,
+            lr=lr_parsed,
+            auxk_alpha=auxk_alpha_parsed,
+            warmup_steps=warmup_steps_parsed,
             decay_start=decay_start_tuple,
-            threshold_beta=threshold_beta,
-            threshold_start_step=threshold_start_step,
+            threshold_beta=threshold_beta_parsed,
+            threshold_start_step=threshold_start_step_parsed,
             k_anneal_steps=k_anneal_steps_tuple,
-            seed=seed,
-            submodule_name=submodule_name,
+            seed=seed_parsed,
+            submodule_name=submodule_name_parsed,
             tokens_per_file=tokens_per_file,
             reshuffled_tokens_per_file=reshuffled_tokens_per_file,
             context_length=context_length,
