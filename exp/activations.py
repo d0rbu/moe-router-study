@@ -139,7 +139,9 @@ class Activations:
         cached_file_data.put(None, block=True)
         cached_file_data.join()
 
-    def __call__(self, batch_size: int = 4096) -> Generator[dict, None, None]:
+    def __call__(
+        self, batch_size: int = 4096, start_idx: int = 0
+    ) -> Generator[dict, None, None]:
         # cache of file data to come
         cached_file_data = mp.JoinableQueue(maxsize=self.max_cache_size)
 
@@ -148,6 +150,7 @@ class Activations:
             target=self._get_file_data, args=(cached_file_data,)
         )
         worker_process.start()
+        skipped_start = False
 
         try:
             current_data = cached_file_data.get(block=True)
@@ -156,7 +159,7 @@ class Activations:
             current_data_size = current_data[ActivationKeys.MLP_OUTPUT].shape[0]
 
             current_batch = {}
-            remaining_batch_size = batch_size
+            remaining_batch_size = start_idx
 
             for _batch_idx in count():
                 while current_data_size - current_local_idx <= remaining_batch_size:
@@ -246,7 +249,11 @@ class Activations:
                                     current_batch[key] = value
 
                     assert len(current_batch) > 0, "Current batch is empty"
-                    yield current_batch
+
+                    if skipped_start:
+                        yield current_batch
+                    else:
+                        skipped_start = True
 
                     current_batch = {}
                     current_local_idx += remaining_batch_size

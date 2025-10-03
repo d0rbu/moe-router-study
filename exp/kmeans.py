@@ -2,7 +2,7 @@ import asyncio
 from asyncio import Barrier
 from dataclasses import dataclass
 import gc
-from itertools import batched, islice, pairwise
+from itertools import batched, islice
 import os
 import sys
 from typing import Any
@@ -576,28 +576,27 @@ async def kmeans_manhattan(
     logger.trace(f"Initialized GPU data for {len(all_gpu_data)} GPUs")
 
     ### get top_k and initialize centroids from random data points
-    k_ranges = th.cat(
-        [
-            th.tensor([0], device=0),
-            th.cumsum(th.tensor(k_values, device=0), dim=0),
-        ],
-        dim=0,
-    )
 
     # load a batch of activations to initialize the centroids and reserve validation data
     # Reserve extra data for validation (we'll use VALIDATION_SIZE_K_PROPORTION x the largest k value)
-    validation_size = max(k_values) * VALIDATION_SIZE_K_PROPORTION
-    num_total_centroids = k_ranges[-1].item()
-    total_init_size = num_total_centroids + validation_size
+    max_k = max(k_values)
+    validation_size = max_k * VALIDATION_SIZE_K_PROPORTION
 
-    data_iterable = activations(batch_size=total_init_size)
-    activation_batch = next(data_iterable)
+    data_iterable = activations(batch_size=max_k + validation_size)
+    try:
+        activation_batch = next(data_iterable)
+    except StopIteration:
+        logger.error(
+            f"Not enough activations found for validation size {validation_size} and max k {max_k}"
+        )
+        raise
+    data_iterable.close()
     router_activations = activation_batch[ActivationKeys.ROUTER_LOGITS]
     top_k = activation_batch["topk"]
 
     # Split into initialization and validation data
-    init_activations = router_activations[:num_total_centroids]
-    validation_router_logits = router_activations[num_total_centroids:]
+    init_activations = router_activations[:max_k]
+    validation_router_logits = router_activations[max_k:]
 
     # Convert validation data to flat paths format (same as training data)
     validation_data = convert_router_logits_to_paths(
@@ -608,17 +607,14 @@ async def kmeans_manhattan(
         f"Reserved {validation_size} data points for validation (shape: {validation_data.shape})"
     )
 
-    for k_idx, (k_start, k_end) in enumerate(pairwise(k_ranges)):
-        k = k_values[k_idx]
-        assert k_end - k_start == k, "k_end - k_start must be equal to k"
-
+    for k_idx, k in enumerate(k_values):
         for _gpu_idx, gpu_data in enumerate(all_gpu_data):
             current_device = gpu_data.dirty_data.centroid_sets[k_idx].device
             current_dtype = gpu_data.dirty_data.centroid_sets[k_idx].dtype
             current_shape = gpu_data.dirty_data.centroid_sets[k_idx].shape
 
             gpu_data.dirty_data.centroid_sets[k_idx] = (
-                init_activations[k_start:k_end]
+                init_activations[:k]
                 .view(current_shape)
                 .to(device=current_device, dtype=current_dtype)
             )
@@ -626,7 +622,6 @@ async def kmeans_manhattan(
     logger.trace(f"Initialized centroids for {len(k_values)} clusters")
 
     # clean up the background workers and queue
-    data_iterable.close()
     th.cuda.empty_cache()
     gc.collect()
     ### end
@@ -681,7 +676,10 @@ async def kmeans_manhattan(
     for iter_idx in iterator:
         # process data in batches, parallelized over devices and nodes
         logger.trace(f"Running iteration {iter_idx}")
-        minibatch_iterator = activations(batch_size=minibatch_size)
+        # skip over the first validation_size data points for validation
+        minibatch_iterator = activations(
+            batch_size=minibatch_size, start_idx=validation_size
+        )
 
         distributed_iterator = islice(
             minibatch_iterator,

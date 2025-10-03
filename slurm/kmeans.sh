@@ -1,1 +1,1 @@
-uv run torchrun --nnodes 1 --nproc-per-node 1 exp/kmeans.py main --expansion-factor 16,32,64 --tokens-per-file 2000 --reshuffled-tokens-per-file 10000 --minibatch-size 10000
+uv run torchrun --nnodes 1 --nproc-per-node 1 exp/kmeans.py main --expansion-factor 16,32,64 --tokens-per-file 2000 --reshuffled-tokens-per-file 10000 --minibatch-size 10000 --log-level DEBUG
