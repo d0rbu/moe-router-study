@@ -581,20 +581,6 @@ def main(
 
     logger.debug(f"Running with log level: {log_level}")
 
-    if batch_size is None:
-        batch_size = DEFAULT_BATCH_SIZE if not debug else DEFAULT_DEBUG_BATCH_SIZE
-
-    if steps is None:
-        steps = DEFAULT_STEPS if not debug else DEFAULT_DEBUG_STEPS
-
-    if warmup_steps is None:
-        warmup_steps = DEFAULT_WARMUP_STEPS if not debug else DEFAULT_DEBUG_WARMUP_STEPS
-
-    assert all(
-        current_architecture in ARCHITECTURES for current_architecture in architecture
-    ), "Invalid architecture"
-    assert len(submodule_name) > 0, "Submodule name is an empty string!"
-
     torch_dtype = get_dtype(dtype)
 
     # Parse string parameters into appropriate tuple types
@@ -615,6 +601,23 @@ def main(
     k_anneal_steps_parsed = parse_optional_int_tuple(k_anneal_steps)
     seed_parsed = parse_int_tuple(seed)
     submodule_name_parsed = parse_str_tuple(submodule_name)
+
+    if batch_size is None:
+        batch_size = DEFAULT_BATCH_SIZE if not debug else DEFAULT_DEBUG_BATCH_SIZE
+
+    if steps is None:
+        steps = DEFAULT_STEPS if not debug else DEFAULT_DEBUG_STEPS
+
+    if warmup_steps_parsed is None:
+        warmup_steps_parsed = (
+            DEFAULT_WARMUP_STEPS if not debug else DEFAULT_DEBUG_WARMUP_STEPS
+        )
+
+    assert all(
+        current_architecture in ARCHITECTURES
+        for current_architecture in architecture_parsed
+    ), "Invalid architecture"
+    assert len(submodule_name) > 0, "Submodule name is an empty string!"
 
     # Handle None defaults that should be (None,) for union types
     group_weights_tuple: tuple[tuple[float, ...] | None, ...] = (
