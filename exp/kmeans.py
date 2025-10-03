@@ -630,6 +630,10 @@ async def kmeans_manhattan(
             current_dtype = gpu_data.dirty_data.centroid_sets[k_idx].dtype
             current_shape = gpu_data.dirty_data.centroid_sets[k_idx].shape
 
+            logger.trace(
+                f"Initializing centroid set {k_idx} for k {k} with shape {current_shape} on device {current_device} and dtype {current_dtype}"
+            )
+
             gpu_data.dirty_data.centroid_sets[k_idx] = (
                 init_activation_data[:k]
                 .view(current_shape)
@@ -828,7 +832,7 @@ async def cluster_paths_async(
     model_name: str,
     dataset_name: str,
     activations: Activations,
-    activation_dim: int,
+    activation_dim: int,  # router activation dimension
     k: tuple[int, ...],
     max_iters: int,
     seed: int,
@@ -933,21 +937,27 @@ def cluster_paths(
             debug=log_level_numeric <= debug_level_numeric,
         )
     )
-    activation_dim = activation_dims[ActivationKeys.MLP_OUTPUT]
+    residual_activation_dim = activation_dims[ActivationKeys.MLP_OUTPUT]
+    router_activation_dim = activation_dims[ActivationKeys.ROUTER_LOGITS]
 
-    assert activation_dim > 0, "Activation dimension must be greater than 0"
+    assert residual_activation_dim > 0, (
+        "Residual activation dimension must be greater than 0"
+    )
+    assert router_activation_dim > 0, (
+        "Router activation dimension must be greater than 0"
+    )
 
     match k, expansion_factor:
         case None, None:
             # 1 to 131072
             k = tuple(2**i for i in range(17))
         case None, int(ef):
-            k = (ef * activation_dim,)
+            k = (ef * residual_activation_dim,)
         case int(k_val), None:
             k = (k_val,)
         case None, tuple(ef_tuple):
             k = tuple(
-                current_expansion_factor * activation_dim
+                current_expansion_factor * residual_activation_dim
                 for current_expansion_factor in ef_tuple
             )
         case tuple(), None:
@@ -963,7 +973,7 @@ def cluster_paths(
             model_name=model_name,
             dataset_name=dataset_name,
             activations=activations,
-            activation_dim=activation_dim,
+            activation_dim=router_activation_dim,
             k=k,
             max_iters=max_iters,
             seed=seed,
