@@ -178,7 +178,7 @@ async def run_sae_training(
     seed: tuple[int, ...],
     submodule_name: tuple[str, ...],
     batch_size: int = 4096,
-    trainers_per_gpu: int = 2,
+    trainers_per_gpu: int = 8,
     steps: int = 1024 * 256,
     save_every: int = 1024,
     num_epochs: int = 1,
