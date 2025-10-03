@@ -432,7 +432,7 @@ GPU_QUEUE_MAXSIZE = 4
 async def kmeans_manhattan(
     activations: Activations,
     activation_dim: int,
-    k_values: list[int],
+    k_values: tuple[int, ...],
     effective_batch_size: int | None = None,
     max_iters: int = 128,
     minibatch_size: int | None = None,
@@ -814,7 +814,7 @@ async def cluster_paths_async(
     dataset_name: str,
     activations: Activations,
     activation_dim: int,
-    k: list[int],
+    k: tuple[int, ...],
     max_iters: int,
     seed: int,
     tokens_per_file: int,
@@ -884,8 +884,8 @@ def cluster_paths(
     model_name: str = "olmoe-i",
     dataset_name: str = "lmsys",
     *_args,
-    k: list[int] | int | None = None,
-    expansion_factor: list[int] | int | None = None,
+    k: tuple[int, ...] | int | None = None,
+    expansion_factor: tuple[int, ...] | int | None = None,
     max_iters: int = 128,
     save_every: int | None = None,
     seed: int = 0,
@@ -918,30 +918,30 @@ def cluster_paths(
             debug=log_level_numeric <= debug_level_numeric,
         )
     )
-    activation_dim = activation_dims[ActivationKeys.ROUTER_LOGITS]
+    activation_dim = activation_dims[ActivationKeys.MLP_OUTPUT]
 
     assert activation_dim > 0, "Activation dimension must be greater than 0"
 
     match k, expansion_factor:
         case None, None:
             # 1 to 131072
-            k = [2**i for i in range(17)]
+            k = tuple(2**i for i in range(17))
         case None, int(ef):
-            k = [ef * activation_dim]
+            k = (ef * activation_dim,)
         case int(k_val), None:
-            k = [k_val]
-        case None, list(ef_list):
-            k = [
+            k = (k_val,)
+        case None, tuple(ef_tuple):
+            k = tuple(
                 current_expansion_factor * activation_dim
-                for current_expansion_factor in ef_list
-            ]
-        case list(), None:
+                for current_expansion_factor in ef_tuple
+            )
+        case tuple(), None:
             pass
         case _, _:
             raise ValueError("Cannot specify both k and expansion_factor")
 
-    # At this point, k is guaranteed to be a list[int]
-    assert isinstance(k, list), "k must be a list after processing"
+    # At this point, k is guaranteed to be a tuple[int, ...]
+    assert isinstance(k, tuple), "k must be a tuple after processing"
 
     asyncio.run(
         cluster_paths_async(
@@ -965,8 +965,8 @@ def main(
     model_name: str = "olmoe-i",
     dataset_name: str = "lmsys",
     *args: Any,
-    k: list[int] | None = None,
-    expansion_factor: list[int] | None = None,
+    k: tuple[int, ...] | None = None,
+    expansion_factor: tuple[int, ...] | None = None,
     max_iters: int = 128,
     save_every: int | None = None,
     seed: int = 0,
@@ -979,6 +979,9 @@ def main(
 ) -> None:
     if not k:
         k = None
+
+    if not expansion_factor:
+        expansion_factor = None
 
     cluster_paths(
         model_name,
