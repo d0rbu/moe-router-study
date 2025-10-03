@@ -1,0 +1,1 @@
+uv run torchrun --nnodes 1 --nproc-per-node 1 exp/sae.py main --log-level TRACE --num-workers 16 --trainers-per-gpu 1 --expansion-factor 16 --k 160 --layer 6,7,8,9 --submodule-name mlp_output,layer_output --architecture matryoshka --tokens-per-file 2000 --reshuffled-tokens-per-file 10000
