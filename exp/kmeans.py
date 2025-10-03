@@ -912,7 +912,7 @@ def cluster_paths(
             dataset_name=dataset_name,
             tokens_per_file=tokens_per_file,
             reshuffled_tokens_per_file=reshuffled_tokens_per_file,
-            submodule_names=[ActivationKeys.ROUTER_LOGITS],
+            submodule_names=[ActivationKeys.ROUTER_LOGITS, ActivationKeys.MLP_OUTPUT],
             context_length=context_length,
             num_workers=num_workers,
             debug=log_level_numeric <= debug_level_numeric,
