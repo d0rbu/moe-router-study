@@ -220,6 +220,17 @@ async def sync(
     # N, num_K
     dist.all_gather_into_tensor(all_losses, gpu_data.dirty_data.losses, group=group)
 
+    logger.trace(
+        f"All losses: {all_losses.shape} {all_losses.dtype} {all_losses.device} {all_losses}"
+    )
+    logger.trace(
+        f"All losses stats: "
+        f"Min: {all_losses.min()}, "
+        f"Max: {all_losses.max()}, "
+        f"Mean: {all_losses.mean()}, "
+        f"Std: {all_losses.std()}"
+    )
+
     for losses_idx, (
         centroids,
         weights,
@@ -809,13 +820,6 @@ async def kmeans_manhattan(
             logger.info(
                 f"Running intermittent validation at iteration {iter_idx + 1}..."
             )
-
-            # wait for queue to empty
-            while True:
-                if all(gpu_data.queue.empty() for gpu_data in all_gpu_data):
-                    break
-
-                await asyncio.sleep(0.1)
 
             for centroid_set in all_gpu_data[0].synced_data.centroid_sets:
                 _is_valid, _stats = validate_centroids(centroid_set.cpu())
