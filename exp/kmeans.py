@@ -657,7 +657,7 @@ async def kmeans_manhattan(
         f"Reserved {validation_size} data points for validation (shape: {validation_data.shape})"
     )
 
-    for centroid_set in all_gpu_data[0].synced_data.centroid_sets:
+    for centroid_set in all_gpu_data[0].dirty_data.centroid_sets:
         _is_valid, _stats = validate_centroids(centroid_set.cpu())
 
     for k_idx, k in enumerate(k_values):
@@ -676,7 +676,7 @@ async def kmeans_manhattan(
                 .to(device=current_device, dtype=current_dtype)
             )
 
-    for centroid_set in all_gpu_data[0].synced_data.centroid_sets:
+    for centroid_set in all_gpu_data[0].dirty_data.centroid_sets:
         _is_valid, _stats = validate_centroids(centroid_set.cpu())
 
     logger.trace(f"Initialized centroids for {len(k_values)} clusters")
@@ -773,7 +773,7 @@ async def kmeans_manhattan(
         ):
             logger.trace(f"Running distributed batch {distributed_batch_idx}")
 
-            should_sync = distributed_batch_idx % accumulation_size == (
+            should_sync = (distributed_batch_idx % accumulation_size) == (
                 accumulation_size - 1
             )
 
@@ -800,7 +800,7 @@ async def kmeans_manhattan(
                     )
                 )
 
-        # Intermittent validation during training
+        # intermittent validation during training
         if (
             validate_every is not None
             and (iter_idx + 1) % validate_every == 0
@@ -809,6 +809,14 @@ async def kmeans_manhattan(
             logger.info(
                 f"Running intermittent validation at iteration {iter_idx + 1}..."
             )
+
+            # wait for queue to empty
+            while True:
+                if all(gpu_data.queue.empty() for gpu_data in all_gpu_data):
+                    break
+
+                await asyncio.sleep(0.1)
+
             for centroid_set in all_gpu_data[0].synced_data.centroid_sets:
                 _is_valid, _stats = validate_centroids(centroid_set.cpu())
 
