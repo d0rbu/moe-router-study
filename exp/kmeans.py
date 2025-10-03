@@ -490,6 +490,8 @@ async def kmeans_manhattan(
     if effective_batch_size is None:
         effective_batch_size = (len(activations) // total_gpus) * total_gpus
 
+    logger.trace(f"Effective batch size: {effective_batch_size}")
+
     if (leftover_batch_size := (effective_batch_size % total_gpus)) > 0:
         logger.warning(
             f"Effective batch size {effective_batch_size} is not divisible by total number of gpus {total_gpus}; {leftover_batch_size} left over"
@@ -793,6 +795,8 @@ async def kmeans_manhattan(
             save_idx = effective_step_idx if effective_step_idx in save_steps else None
 
             logger.trace(f"Should sync: {should_sync}")
+            logger.trace(f"Accumulation size: {accumulation_size}")
+            logger.trace(f"Distributed batch index: {distributed_batch_idx}")
             logger.trace(f"Effective step index: {effective_step_idx}")
             logger.trace(f"Save index: {save_idx}")
 
