@@ -223,7 +223,7 @@ class Activations:
                                             current_batch[key],
                                             value[
                                                 current_local_idx : current_local_idx
-                                                + batch_size
+                                                + remaining_batch_size
                                             ].to(self.device),
                                         ],
                                         dim=0,
@@ -231,7 +231,7 @@ class Activations:
                                 else:
                                     current_batch[key] = value[
                                         current_local_idx : current_local_idx
-                                        + batch_size
+                                        + remaining_batch_size
                                     ].to(self.device)
                             case list():
                                 if key in current_batch:

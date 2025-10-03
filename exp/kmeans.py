@@ -582,6 +582,10 @@ async def kmeans_manhattan(
     max_k = max(k_values)
     validation_size = max_k * VALIDATION_SIZE_K_PROPORTION
 
+    logger.trace(f"Validation size: {validation_size}")
+    logger.trace(f"Max k: {max_k}")
+    logger.trace(f"Total size: {max_k + validation_size}")
+
     data_iterable = activations(batch_size=max_k + validation_size)
     try:
         activation_batch = next(data_iterable)
@@ -595,12 +599,25 @@ async def kmeans_manhattan(
     top_k = activation_batch["topk"]
 
     # Split into initialization and validation data
-    init_activations = router_activations[:max_k]
+    init_activation_logits = router_activations[:max_k]
     validation_router_logits = router_activations[max_k:]
+
+    logger.trace(
+        f"Router logits {router_activations.shape} {router_activations.dtype} {router_activations.device}"
+    )
+    logger.trace(
+        f"Init router logits {init_activation_logits.shape} {init_activation_logits.dtype} {init_activation_logits.device}"
+    )
+    logger.trace(
+        f"Validation router logits {validation_router_logits.shape} {validation_router_logits.dtype} {validation_router_logits.device}"
+    )
 
     # Convert validation data to flat paths format (same as training data)
     validation_data = convert_router_logits_to_paths(
         validation_router_logits, top_k
+    ).to(dtype=th.float32, device="cpu")
+    init_activation_data = convert_router_logits_to_paths(
+        init_activation_logits, top_k
     ).to(dtype=th.float32, device="cpu")
 
     logger.info(
@@ -614,7 +631,7 @@ async def kmeans_manhattan(
             current_shape = gpu_data.dirty_data.centroid_sets[k_idx].shape
 
             gpu_data.dirty_data.centroid_sets[k_idx] = (
-                init_activations[:k]
+                init_activation_data[:k]
                 .view(current_shape)
                 .to(device=current_device, dtype=current_dtype)
             )
