@@ -1027,7 +1027,7 @@ wheels = [
 [[package]]
 name = "dictionary-learning"
 version = "0.1.0"
-source = { git = "https://github.com/d0rbu/dictionary_learning#a74463941f75ad3f3c0640ec3e9485a23810e9bd" }
+source = { git = "https://github.com/d0rbu/dictionary_learning#658ed11e6b93bd1ad25eda3b97e289076cce07d5" }
 dependencies = [
     { name = "circuitsvis" },
     { name = "datasets" },

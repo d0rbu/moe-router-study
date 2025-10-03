@@ -395,7 +395,7 @@ async def run_sae_training(
             sae_experiment_name=sae_experiment_name,
             submodule_name=current_submodule_name,
         )
-        logger.debug(f"Putting batch {hparam_idx} into queue {device_idx}")
+        logger.debug(f"Putting batch {trainer_batch_idx} into queue {device_idx}")
         await gpu_queue.put((0, trainer_batch_idx, batch))
 
     # put a sentinel value in the gpu queues to stop the workers
