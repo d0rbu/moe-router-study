@@ -155,6 +155,21 @@ class Activations:
         try:
             current_data = cached_file_data.get(block=True)
             cached_file_data.task_done()
+
+            if current_data is None:
+                logger.debug(
+                    "No more data to load, stopping activations worker process"
+                )
+                worker_process.join()
+                logger.trace("Activations worker process joined")
+                cached_file_data.close()
+                logger.trace("Cached file data queue closed")
+                return
+            else:
+                logger.debug(
+                    f"Loaded data with shape {current_data[ActivationKeys.MLP_OUTPUT].shape}"
+                )
+
             current_local_idx = 0
             current_data_size = current_data[ActivationKeys.MLP_OUTPUT].shape[0]
 

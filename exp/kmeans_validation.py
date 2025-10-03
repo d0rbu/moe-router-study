@@ -27,6 +27,10 @@ class CentroidValidationStats:
     mean_assignment_ratio: float
     std_assignment_ratio: float
     entropy: float
+    min_norm: float
+    max_norm: float
+    mean_norm: float
+    std_norm: float
 
     def __str__(self) -> str:
         """Format stats for logging."""
@@ -38,7 +42,11 @@ class CentroidValidationStats:
             f"Max ratio: {self.max_assignment_ratio:.4f}, "
             f"Mean ratio: {self.mean_assignment_ratio:.4f}, "
             f"Std ratio: {self.std_assignment_ratio:.4f}, "
-            f"Entropy: {self.entropy:.4f}"
+            f"Entropy: {self.entropy:.4f}, "
+            f"Min norm: {self.min_norm:.4f}, "
+            f"Max norm: {self.max_norm:.4f}, "
+            f"Mean norm: {self.mean_norm:.4f}, "
+            f"Std norm: {self.std_norm:.4f}"
         )
 
 
@@ -124,6 +132,10 @@ def validate_centroid_distribution(
             mean_assignment_ratio=0.0,
             std_assignment_ratio=0.0,
             entropy=0.0,
+            min_norm=0.0,
+            max_norm=0.0,
+            mean_norm=0.0,
+            std_norm=0.0,
         )
 
     # Compute distances and assignments
@@ -158,6 +170,13 @@ def validate_centroid_distribution(
     probs = assignment_ratios + epsilon
     entropy = -(probs * th.log(probs)).sum().item()
 
+    # Calculate norm of assignment distribution
+    norms = th.norm(centroids, p=2, dim=1)
+    min_norm = norms.min().item()
+    max_norm = norms.max().item()
+    mean_norm = norms.mean().item()
+    std_norm = norms.std().item()
+
     # Create statistics dataclass
     stats = CentroidValidationStats(
         num_empty_centroids=num_empty,
@@ -170,6 +189,10 @@ def validate_centroid_distribution(
         mean_assignment_ratio=assignment_ratios.mean().item(),
         std_assignment_ratio=assignment_ratios.std().item(),
         entropy=entropy,
+        min_norm=min_norm,
+        max_norm=max_norm,
+        mean_norm=mean_norm,
+        std_norm=std_norm,
     )
 
     is_valid = (

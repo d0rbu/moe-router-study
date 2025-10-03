@@ -1,6 +1,7 @@
 import asyncio
 from asyncio import Barrier
 from dataclasses import dataclass
+from functools import partial
 import gc
 from itertools import batched, islice
 import os
@@ -620,9 +621,14 @@ async def kmeans_manhattan(
         init_activation_logits, top_k
     ).to(dtype=th.float32, device="cpu")
 
+    validate_centroids = partial(validate_centroid_distribution, validation_data)
+
     logger.info(
         f"Reserved {validation_size} data points for validation (shape: {validation_data.shape})"
     )
+
+    for centroid_set in all_gpu_data[0].synced_data.centroid_sets:
+        _is_valid, _stats = validate_centroids(centroid_set.cpu())
 
     for k_idx, k in enumerate(k_values):
         for _gpu_idx, gpu_data in enumerate(all_gpu_data):
@@ -639,6 +645,9 @@ async def kmeans_manhattan(
                 .view(current_shape)
                 .to(device=current_device, dtype=current_dtype)
             )
+
+    for centroid_set in all_gpu_data[0].synced_data.centroid_sets:
+        _is_valid, _stats = validate_centroids(centroid_set.cpu())
 
     logger.trace(f"Initialized centroids for {len(k_values)} clusters")
 
@@ -770,22 +779,8 @@ async def kmeans_manhattan(
             logger.info(
                 f"Running intermittent validation at iteration {iter_idx + 1}..."
             )
-            for _k_idx, centroid_set in enumerate(
-                all_gpu_data[0].synced_data.centroid_sets
-            ):
-                is_valid, stats = validate_centroid_distribution(
-                    validation_data,
-                    centroid_set.cpu(),
-                )
-                k_value = centroid_set.shape[0]
-                if is_valid:
-                    logger.success(
-                        f"✓ K={k_value} (iter {iter_idx + 1}): Valid. {stats}"
-                    )
-                else:
-                    logger.warning(
-                        f"✗ K={k_value} (iter {iter_idx + 1}): Issues. {stats}"
-                    )
+            for centroid_set in all_gpu_data[0].synced_data.centroid_sets:
+                _is_valid, _stats = validate_centroids(centroid_set.cpu())
 
     for gpu_data in all_gpu_data:
         logger.trace(
@@ -839,6 +834,7 @@ async def cluster_paths_async(
     tokens_per_file: int,
     minibatch_size: int,
     save_every: int | None = None,
+    validate_every: int = 4,
     group: dist.ProcessGroup | None = None,
 ) -> None:
     kmeans_experiment_name = get_experiment_name(
@@ -865,6 +861,7 @@ async def cluster_paths_async(
         seed=seed,
         save_every=save_every,
         save_dir=save_dir,
+        validate_every=validate_every,
         group=group,
     )
 
@@ -907,6 +904,7 @@ def cluster_paths(
     expansion_factor: tuple[int, ...] | int | None = None,
     max_iters: int = 128,
     save_every: int | None = None,
+    validate_every: int = 4,
     seed: int = 0,
     minibatch_size: int = 100_000,
     tokens_per_file: int = 5_000,
@@ -980,6 +978,7 @@ def cluster_paths(
             tokens_per_file=reshuffled_tokens_per_file,
             minibatch_size=minibatch_size,
             save_every=save_every,
+            validate_every=validate_every,
             group=gpu_process_group,
         )
     )
@@ -994,6 +993,7 @@ def main(
     expansion_factor: tuple[int, ...] | None = None,
     max_iters: int = 128,
     save_every: int | None = None,
+    validate_every: int = 4,
     seed: int = 0,
     minibatch_size: int = 100_000,
     tokens_per_file: int = 5_000,
@@ -1016,6 +1016,7 @@ def main(
         expansion_factor=expansion_factor,
         max_iters=max_iters,
         save_every=save_every,
+        validate_every=validate_every,
         seed=seed,
         minibatch_size=minibatch_size,
         tokens_per_file=tokens_per_file,
