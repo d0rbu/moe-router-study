@@ -480,15 +480,15 @@ def main(
     group_fractions: tuple[tuple[float, ...], ...] = (
         (1.0 / 32, 1.0 / 16, 1.0 / 8, 1.0 / 4, 1.0 / 2 + 1.0 / 32),
     ),
-    group_weights: tuple[tuple[float, ...] | None, ...] = (None,),
+    group_weights: tuple[tuple[float, ...], ...] = (),
     architecture: tuple[str, ...] = ("batchtopk",),
     lr: tuple[float, ...] = (5e-5,),
     auxk_alpha: tuple[float, ...] = (1 / 32,),
     warmup_steps: tuple[int, ...] | None = None,
-    decay_start: tuple[int | None, ...] = (None,),
+    decay_start: tuple[int, ...] = (),
     threshold_beta: tuple[float, ...] = (0.999,),
     threshold_start_step: tuple[int, ...] = (1024,),
-    k_anneal_steps: tuple[int | None, ...] = (None,),
+    k_anneal_steps: tuple[int, ...] = (),
     seed: tuple[int, ...] = (0,),
     submodule_name: tuple[str, ...] = ("mlp_output",),
     tokens_per_file: int = 5_000,
@@ -523,6 +523,21 @@ def main(
     if warmup_steps is None:
         warmup_steps = DEFAULT_WARMUP_STEPS if not debug else DEFAULT_DEBUG_WARMUP_STEPS
 
+    if group_weights:
+        parsed_group_weights: tuple[tuple[float, ...] | None, ...] = group_weights
+    else:
+        parsed_group_weights = (None,)
+
+    if decay_start:
+        parsed_decay_start: tuple[int | None, ...] = decay_start
+    else:
+        parsed_decay_start = (None,)
+
+    if k_anneal_steps:
+        parsed_k_anneal_steps: tuple[int | None, ...] = k_anneal_steps
+    else:
+        parsed_k_anneal_steps = (None,)
+
     assert all(
         current_architecture in ARCHITECTURES for current_architecture in architecture
     ), "Invalid architecture"
@@ -543,15 +558,15 @@ def main(
             k=k,
             layer=layer,
             group_fractions=group_fractions,
-            group_weights=group_weights,
+            group_weights=parsed_group_weights,
             architecture=architecture,
             lr=lr,
             auxk_alpha=auxk_alpha,
             warmup_steps=warmup_steps,
-            decay_start=decay_start,
+            decay_start=parsed_decay_start,
             threshold_beta=threshold_beta,
             threshold_start_step=threshold_start_step,
-            k_anneal_steps=k_anneal_steps,
+            k_anneal_steps=parsed_k_anneal_steps,
             seed=seed,
             submodule_name=submodule_name,
             tokens_per_file=tokens_per_file,
