@@ -45,10 +45,7 @@ def broadcast_variable_length_list[T](
         return []
 
     # Now broadcast the actual items
-    if dist.get_rank() == 0:
-        # items is already set from list_fn call above
-        pass
-    else:
+    if dist.get_rank() != 0:
         items = [None] * num_items
 
     dist.broadcast_object_list(items, src=src)
@@ -615,7 +612,7 @@ class Activations:
                 for filename in reshuffled_activation_filenames
             ]
         else:
-            renamed_activation_filepaths = None
+            renamed_activation_filepaths = []
 
         renamed_activation_filepaths = broadcast_variable_length_list(
             lambda: renamed_activation_filepaths,
@@ -739,7 +736,38 @@ async def load_activations_and_init_dist(
 
     # load a batch of activations to get the dimension
     data_iterable = activations(batch_size=1)
-    activation = next(data_iterable)
+
+    logger.debug(f"Activation filepaths count: {len(activations.activation_filepaths)}")
+    if activations.activation_filepaths:
+        logger.debug(f"First filepath: {activations.activation_filepaths[0]}")
+
+        first_file = activations.activation_filepaths[0]
+        if os.path.exists(first_file):
+            try:
+                sample_data = th.load(first_file, weights_only=False)
+                logger.debug(f"Sample data keys: {list(sample_data.keys())}")
+                if ActivationKeys.MLP_OUTPUT in sample_data:
+                    logger.debug(
+                        f"MLP output shape: {sample_data[ActivationKeys.MLP_OUTPUT].shape}"
+                    )
+                else:
+                    logger.error(
+                        f"{ActivationKeys.MLP_OUTPUT} key not found in activation data"
+                    )
+            except Exception as e:
+                logger.error(f"Error loading first file {first_file}: {e}")
+        else:
+            logger.error(f"First file does not exist: {first_file}")
+
+    try:
+        activation = next(data_iterable)
+    except StopIteration as e:
+        logger.error("Data iterator is empty - no activations found")
+
+        raise RuntimeError(
+            "No activation data found. Check that activation files are properly created and contain data."
+        ) from e
+
     logger.trace(
         f"Activation: {', '.join(f'{key}: {value.shape}' for key, value in activation.items() if isinstance(value, th.Tensor))}"
     )
