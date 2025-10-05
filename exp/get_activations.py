@@ -239,7 +239,7 @@ def tokenizer_worker(
     log_queue: mp.Queue,
     rank: int,
     world_size: int,
-    resume_from_batch: int = 0,
+    completed_batches: set[int] | None = None,
     num_tokens: int = 1_000_000_000,  # 1B tokens
     log_level: str = "INFO",
 ) -> None:
@@ -277,9 +277,11 @@ def tokenizer_worker(
 
     assert num_tokens > 0, "Total number of tokens to process must be greater than 0"
 
+    if completed_batches is None:
+        completed_batches = set()
+
     batch_skip_progress_bar = tqdm(
         desc="Skipping batches",
-        total=resume_from_batch,
         leave=False,
     )
 
@@ -308,8 +310,8 @@ def tokenizer_worker(
                 buffer_token_count = 0
                 batch_idx += 1
 
-                # skip if we are resuming past this batch or if this batch is not for this rank
-                if batch_idx < resume_from_batch or batch_idx % world_size != rank:
+                # skip if this batch is already completed or if this batch is not for this rank
+                if batch_idx in completed_batches or batch_idx % world_size != rank:
                     logger.debug(f"Skipping batch {batch_idx}")
                     batch_skip_progress_bar.update(1)
                     log_queue.put({"tokenizer/skipping_batches": batch_idx})
@@ -890,14 +892,21 @@ def get_router_activations(
     wandb.init(project="router_activations", resume="allow", config=config)
 
     # Find completed batches if resuming
-    resume_batch_idx = 0
+    completed_batches = set()
     if resume:
         completed_batches = find_completed_batches(experiment_dir)
         if completed_batches:
             max_batch_idx = max(completed_batches) if completed_batches else 0
-            resume_batch_idx = max_batch_idx + 1
-            logger.info(f"Resuming from batch {resume_batch_idx}")
-            wandb.log({"resume/batch_idx": resume_batch_idx})
+            logger.info(
+                f"Found {len(completed_batches)} completed batches, max batch idx: {max_batch_idx}"
+            )
+            logger.info("Will skip completed batches and process missing ones")
+            wandb.log(
+                {
+                    "resume/max_batch_idx": max_batch_idx,
+                    "resume/completed_count": len(completed_batches),
+                }
+            )
 
     # Initialize multiprocessing resources
     mp.set_start_method("spawn", force=True)
@@ -939,7 +948,7 @@ def get_router_activations(
             log_queue,
             rank,
             world_size,
-            resume_batch_idx,
+            completed_batches,
             num_tokens,
             log_level,
         ),
