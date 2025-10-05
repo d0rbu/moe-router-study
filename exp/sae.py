@@ -490,7 +490,7 @@ def main(
     threshold_start_step: tuple[int, ...] = (1024,),
     k_anneal_steps: tuple[int, ...] = (),
     seed: tuple[int, ...] = (0,),
-    submodule_name: tuple[str, ...] = ("mlp_output",),
+    submodule_name: tuple[str, ...] = (),
     tokens_per_file: int = 5_000,
     reshuffled_tokens_per_file: int = 20_000,
     context_length: int = 2048,
@@ -538,10 +538,12 @@ def main(
     else:
         parsed_k_anneal_steps = (None,)
 
+    if not submodule_name:
+        submodule_name = (str(ActivationKeys.MLP_OUTPUT),)
+
     assert all(
         current_architecture in ARCHITECTURES for current_architecture in architecture
     ), "Invalid architecture"
-    assert len(submodule_name) > 0, "Submodule name is an empty tuple!"
 
     torch_dtype = get_dtype(dtype)
 
