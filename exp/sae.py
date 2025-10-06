@@ -334,7 +334,7 @@ async def run_sae_training(
         "seed": seed,
         "submodule_name": submodule_name,
     }
-    
+
     logger.debug("Parameters before product():")
     for param_name, param_value in debug_params.items():
         logger.debug(f"  {param_name}: {param_value} (len: {len(param_value)})")
