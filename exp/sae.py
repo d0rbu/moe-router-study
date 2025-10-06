@@ -549,9 +549,13 @@ def main(
         warmup_steps = DEFAULT_WARMUP_STEPS if not debug else DEFAULT_DEBUG_WARMUP_STEPS
 
     # Ensure no empty tuples are passed to run_sae_training() to avoid empty iterator
-    parsed_group_weights: tuple[tuple[float, ...] | None, ...] = group_weights if group_weights else (None,)
+    parsed_group_weights: tuple[tuple[float, ...] | None, ...] = (
+        group_weights if group_weights else (None,)
+    )
     parsed_decay_start: tuple[int | None, ...] = decay_start if decay_start else (None,)
-    parsed_k_anneal_steps: tuple[int | None, ...] = k_anneal_steps if k_anneal_steps else (None,)
+    parsed_k_anneal_steps: tuple[int | None, ...] = (
+        k_anneal_steps if k_anneal_steps else (None,)
+    )
 
     if not submodule_name:
         submodule_name = (str(ActivationKeys.MLP_OUTPUT),)
