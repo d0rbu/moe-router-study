@@ -2,3 +2,7 @@
 
 [rules]
 possibly-unbound-attribute = "ignore"
+
+[environment]
+# Add the delphi submodule to the search path
+extra-paths = ["delphi"]
