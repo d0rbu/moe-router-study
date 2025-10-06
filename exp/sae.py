@@ -316,6 +316,14 @@ async def run_sae_training(
     for worker in workers:
         worker.add_done_callback(handle_exceptions)
 
+    # Ensure no empty tuples are passed to product() to avoid empty iterator
+    safe_group_weights = group_weights if group_weights else (None,)
+    safe_decay_start = decay_start if decay_start else (None,)
+    safe_k_anneal_steps = k_anneal_steps if k_anneal_steps else (None,)
+    safe_submodule_name = (
+        submodule_name if submodule_name else (str(ActivationKeys.MLP_OUTPUT),)
+    )
+
     hparam_sweep_iterator = list(
         enumerate(
             product(
@@ -323,17 +331,17 @@ async def run_sae_training(
                 k,
                 layer,
                 group_fractions,
-                group_weights,
+                safe_group_weights,
                 architecture,
                 lr,
                 auxk_alpha,
                 warmup_steps,
-                decay_start,
+                safe_decay_start,
                 threshold_beta,
                 threshold_start_step,
-                k_anneal_steps,
+                safe_k_anneal_steps,
                 seed,
-                submodule_name,
+                safe_submodule_name,
             )
         )
     )
