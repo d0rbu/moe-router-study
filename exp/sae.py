@@ -337,6 +337,31 @@ async def run_sae_training(
             )
         )
     )
+
+    if len(hparam_sweep_iterator) == 0:
+        hparam_reprs = "\n".join(
+            f"{key}={values}"
+            for key, values in {
+                "expansion_factor": expansion_factor,
+                "k": k,
+                "layer": layer,
+                "group_fractions": group_fractions,
+                "group_weights": group_weights,
+                "architecture": architecture,
+                "lr": lr,
+                "auxk_alpha": auxk_alpha,
+                "warmup_steps": warmup_steps,
+                "decay_start": decay_start,
+                "threshold_beta": threshold_beta,
+                "threshold_start_step": threshold_start_step,
+                "k_anneal_steps": k_anneal_steps,
+                "seed": seed,
+                "submodule_name": submodule_name,
+            }.items()
+        )
+        logger.error(f"Hparam sweep iterator is empty:\n{hparam_reprs}")
+        return
+
     distributed_iterator = hparam_sweep_iterator[
         dist.get_rank() :: dist.get_world_size()
     ]
