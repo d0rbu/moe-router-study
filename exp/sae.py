@@ -316,7 +316,7 @@ async def run_sae_training(
     for worker in workers:
         worker.add_done_callback(handle_exceptions)
 
-    # Debug logging to identify which parameters are empty
+
     debug_params = {
         "expansion_factor": expansion_factor,
         "k": k,
@@ -571,7 +571,7 @@ def main(
     if warmup_steps is None:
         warmup_steps = DEFAULT_WARMUP_STEPS if not debug else DEFAULT_DEBUG_WARMUP_STEPS
 
-    # Ensure no empty tuples are passed to run_sae_training() to avoid empty iterator
+
     parsed_group_weights: tuple[tuple[float, ...] | None, ...] = (
         group_weights if group_weights else (None,)
     )
