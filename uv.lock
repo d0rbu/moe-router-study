@@ -173,7 +173,7 @@ wheels = [
 [[package]]
 name = "arguably"
 version = "1.3.0"
-source = { git = "https://github.com/d0rbu/arguably.git#2a90e3f56aba5888f4fef2ed5703a24969f22c74" }
+source = { git = "https://github.com/d0rbu/arguably.git#0ea5833a3eb4dc2cbe1e919a1cc84ec14dfb0967" }
 dependencies = [
     { name = "docstring-parser" },
 ]
