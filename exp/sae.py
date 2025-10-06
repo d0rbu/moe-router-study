@@ -316,6 +316,28 @@ async def run_sae_training(
     for worker in workers:
         worker.add_done_callback(handle_exceptions)
 
+    debug_params = {
+        "expansion_factor": expansion_factor,
+        "k": k,
+        "layer": layer,
+        "group_fractions": group_fractions,
+        "group_weights": group_weights,
+        "architecture": architecture,
+        "lr": lr,
+        "auxk_alpha": auxk_alpha,
+        "warmup_steps": warmup_steps,
+        "decay_start": decay_start,
+        "threshold_beta": threshold_beta,
+        "threshold_start_step": threshold_start_step,
+        "k_anneal_steps": k_anneal_steps,
+        "seed": seed,
+        "submodule_name": submodule_name,
+    }
+
+    logger.debug("Parameters before product():")
+    for param_name, param_value in debug_params.items():
+        logger.debug(f"  {param_name}: {param_value} (len: {len(param_value)})")
+
     hparam_sweep_iterator = list(
         enumerate(
             product(
@@ -548,20 +570,13 @@ def main(
     if warmup_steps is None:
         warmup_steps = DEFAULT_WARMUP_STEPS if not debug else DEFAULT_DEBUG_WARMUP_STEPS
 
-    if group_weights:
-        parsed_group_weights: tuple[tuple[float, ...] | None, ...] = group_weights
-    else:
-        parsed_group_weights = (None,)
-
-    if decay_start:
-        parsed_decay_start: tuple[int | None, ...] = decay_start
-    else:
-        parsed_decay_start = (None,)
-
-    if k_anneal_steps:
-        parsed_k_anneal_steps: tuple[int | None, ...] = k_anneal_steps
-    else:
-        parsed_k_anneal_steps = (None,)
+    parsed_group_weights: tuple[tuple[float, ...] | None, ...] = (
+        group_weights if group_weights else (None,)
+    )
+    parsed_decay_start: tuple[int | None, ...] = decay_start if decay_start else (None,)
+    parsed_k_anneal_steps: tuple[int | None, ...] = (
+        k_anneal_steps if k_anneal_steps else (None,)
+    )
 
     if not submodule_name:
         submodule_name = (str(ActivationKeys.MLP_OUTPUT),)
