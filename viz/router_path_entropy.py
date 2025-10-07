@@ -135,10 +135,10 @@ def compute_gini_coefficient(frequencies: th.Tensor) -> float:
 
 
 async def _router_path_entropy_async(
-    model_name: str,
-    dataset_name: str,
-    tokens_per_file: int,
-    context_length: int,
+    model_name: str = "olmoe-i",
+    dataset_name: str = "lmsys",
+    tokens_per_file: int = 5_000,
+    context_length: int = 2048,
     batch_size: int = 4096,
     reshuffled_tokens_per_file: int = 100000,
     num_workers: int = 8,
@@ -464,10 +464,10 @@ async def _router_path_entropy_async(
 @arguably.command
 def router_path_entropy(
     *,
-    model_name: str,
-    dataset_name: str,
-    tokens_per_file: int,
-    context_length: int,
+    model_name: str = "olmoe-i",
+    dataset_name: str = "lmsys",
+    tokens_per_file: int = 5_000,
+    context_length: int = 2048,
     batch_size: int = 4096,
     reshuffled_tokens_per_file: int = 100000,
     num_workers: int = 8,
