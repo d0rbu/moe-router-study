@@ -1,12 +1,13 @@
 import asyncio
 from asyncio import Barrier
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from functools import partial
 import gc
 from itertools import batched, islice
 import os
 import sys
-from typing import Any, Awaitable, TypeVar
+from typing import Any, TypeVar
 
 import arguably
 from loguru import logger
@@ -43,20 +44,20 @@ def check_worker_health(workers: list[asyncio.Task], context: str) -> None:
                 raise RuntimeError(f"GPU worker {gpu_idx} completed unexpectedly")
 
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
-async def safe_await_with_worker_check(
-    awaitable: Awaitable[T], 
-    workers: list[asyncio.Task] | asyncio.Task, 
+async def safe_await_with_worker_check[T](
+    awaitable: Awaitable[T],
+    workers: list[asyncio.Task] | asyncio.Task,
     timeout: float,
-    operation_name: str
+    operation_name: str,
 ) -> T:
     """Safely await an operation with timeout and worker health checking on error."""
     # Normalize workers to always be a list
     if isinstance(workers, asyncio.Task):
         workers = [workers]
-    
+
     try:
         result = await asyncio.wait_for(awaitable, timeout=timeout)
         logger.trace(f"Successfully completed {operation_name}")
@@ -68,7 +69,9 @@ async def safe_await_with_worker_check(
             if worker.done():
                 exception = worker.exception()
                 if exception:
-                    logger.error(f"GPU {gpu_idx} worker failed with exception: {exception}")
+                    logger.error(
+                        f"GPU {gpu_idx} worker failed with exception: {exception}"
+                    )
                 else:
                     logger.error(f"GPU {gpu_idx} worker completed unexpectedly")
             else:
@@ -523,9 +526,9 @@ async def gpu_worker(
             sync(gpu_idx, all_gpu_data, losses_over_time, barrier, group),
             [],  # No other workers to check during sync
             300.0,
-            f"sync operation for GPU {gpu_idx}"
+            f"sync operation for GPU {gpu_idx}",
         )
-        
+
         logger.debug(f"GPU {gpu_idx} completed sync operation")
 
         # save checkpoint if save_idx is not None and we're on rank 0 gpu 0
@@ -954,14 +957,16 @@ async def kmeans_manhattan(
                 )
 
                 await safe_await_with_worker_check(
-                    gpu_data.queue.put((
-                        gpu_minibatch[ActivationKeys.ROUTER_LOGITS],
-                        should_sync,
-                        save_idx,
-                    )),
+                    gpu_data.queue.put(
+                        (
+                            gpu_minibatch[ActivationKeys.ROUTER_LOGITS],
+                            should_sync,
+                            save_idx,
+                        )
+                    ),
                     workers[gpu_idx],
                     30.0,
-                    f"queue put for GPU {gpu_idx}"
+                    f"queue put for GPU {gpu_idx}",
                 )
 
         # intermittent validation during training
