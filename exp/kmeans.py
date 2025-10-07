@@ -6,7 +6,7 @@ import gc
 from itertools import batched, islice
 import os
 import sys
-from typing import Any
+from typing import Any, Awaitable, TypeVar
 
 import arguably
 from loguru import logger
@@ -43,30 +43,39 @@ def check_worker_health(workers: list[asyncio.Task], context: str) -> None:
                 raise RuntimeError(f"GPU worker {gpu_idx} completed unexpectedly")
 
 
-async def safe_queue_put(
-    gpu_data, item, gpu_idx: int, workers: list[asyncio.Task], timeout: float = 30.0
-):
-    """Safely put an item in a GPU queue with timeout and worker health checking."""
+T = TypeVar('T')
+
+
+async def safe_await_with_worker_check(
+    awaitable: Awaitable[T], 
+    workers: list[asyncio.Task] | asyncio.Task, 
+    timeout: float,
+    operation_name: str
+) -> T:
+    """Safely await an operation with timeout and worker health checking on error."""
+    # Normalize workers to always be a list
+    if isinstance(workers, asyncio.Task):
+        workers = [workers]
+    
     try:
-        await asyncio.wait_for(gpu_data.queue.put(item), timeout=timeout)
-        logger.trace(f"Successfully queued data for GPU {gpu_idx}")
+        result = await asyncio.wait_for(awaitable, timeout=timeout)
+        logger.trace(f"Successfully completed {operation_name}")
+        return result
     except TimeoutError:
-        logger.error(
-            f"Timeout putting data on GPU {gpu_idx} queue - worker may have failed!"
-        )
-        # Check if worker is still alive
-        worker = workers[gpu_idx]
-        if worker.done():
-            exception = worker.exception()
-            if exception:
-                logger.error(f"GPU {gpu_idx} worker failed with exception: {exception}")
+        logger.error(f"Timeout during {operation_name} - workers may have failed!")
+        # Check if any workers have failed
+        for gpu_idx, worker in enumerate(workers):
+            if worker.done():
+                exception = worker.exception()
+                if exception:
+                    logger.error(f"GPU {gpu_idx} worker failed with exception: {exception}")
+                else:
+                    logger.error(f"GPU {gpu_idx} worker completed unexpectedly")
             else:
-                logger.error(f"GPU {gpu_idx} worker completed unexpectedly")
-        else:
-            logger.error(f"GPU {gpu_idx} worker appears to be hanging")
+                logger.error(f"GPU {gpu_idx} worker appears to be hanging")
         raise
     except Exception as e:
-        logger.error(f"Unexpected error putting data on GPU {gpu_idx} queue: {e}")
+        logger.error(f"Unexpected error during {operation_name}: {e}")
         raise
 
 
@@ -510,18 +519,14 @@ async def gpu_worker(
 
         logger.debug(f"GPU {gpu_idx} starting sync operation")
 
-        try:
-            await asyncio.wait_for(
-                sync(gpu_idx, all_gpu_data, losses_over_time, barrier, group),
-                timeout=300.0,
-            )
-            logger.debug(f"GPU {gpu_idx} completed sync operation")
-        except TimeoutError:
-            logger.error(f"GPU {gpu_idx} sync operation timed out after 5 minutes!")
-            raise
-        except Exception as e:
-            logger.error(f"GPU {gpu_idx} sync operation failed with exception: {e}")
-            raise
+        await safe_await_with_worker_check(
+            sync(gpu_idx, all_gpu_data, losses_over_time, barrier, group),
+            [],  # No other workers to check during sync
+            300.0,
+            f"sync operation for GPU {gpu_idx}"
+        )
+        
+        logger.debug(f"GPU {gpu_idx} completed sync operation")
 
         # save checkpoint if save_idx is not None and we're on rank 0 gpu 0
         if (
@@ -948,15 +953,15 @@ async def kmeans_manhattan(
                     f"Putting data on GPU {gpu_idx} with queue size {gpu_data.queue.qsize()}"
                 )
 
-                await safe_queue_put(
-                    gpu_data,
-                    (
+                await safe_await_with_worker_check(
+                    gpu_data.queue.put((
                         gpu_minibatch[ActivationKeys.ROUTER_LOGITS],
                         should_sync,
                         save_idx,
-                    ),
-                    gpu_idx,
-                    workers,
+                    )),
+                    workers[gpu_idx],
+                    30.0,
+                    f"queue put for GPU {gpu_idx}"
                 )
 
         # intermittent validation during training
