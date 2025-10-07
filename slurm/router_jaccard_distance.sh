@@ -18,7 +18,7 @@ echo "Tokens per file: $TOKENS_PER_FILE"
 echo "Batch size: $BATCH_SIZE"
 
 # Run the router Jaccard distance analysis
-uv run viz/router_jaccard_distance.py router-jaccard-distance --model-name "$MODEL_NAME" --dataset-name "$DATASET_NAME" --context-length "$CONTEXT_LENGTH" --tokens-per-file "$TOKENS_PER_FILE" --batch-size "$BATCH_SIZE"
+uv run viz/router_jaccard_distance.py router-jaccard-distance --model-name $MODEL_NAME --dataset-name $DATASET_NAME --context-length $CONTEXT_LENGTH --tokens-per-file $TOKENS_PER_FILE --batch-size $BATCH_SIZE
 
 echo "Router Jaccard distance analysis completed!"
 echo "Check the fig/ directory for generated plots:"
