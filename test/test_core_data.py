@@ -425,7 +425,7 @@ class TestDatasetIntegration:
         dataset_fn = get_dataset_fn("toy")
 
         # Should work without tokenizer - this tests real functionality
-        result = dataset_fn(None)
+        result = dataset_fn(None)  # type: ignore[arg-type]
         samples = list(result)
 
         # Test actual content and behavior
@@ -434,7 +434,7 @@ class TestDatasetIntegration:
         assert all("Tiny sample" in sample for sample in samples)
 
         # Test deterministic behavior
-        result2 = list(dataset_fn(None))
+        result2 = list(dataset_fn(None))  # type: ignore[arg-type]
         assert samples == result2
 
     def test_dataset_function_signatures_compatibility(self):
@@ -443,7 +443,7 @@ class TestDatasetIntegration:
         for dataset_name, dataset_fn in DATASETS.items():
             if dataset_name == "toy":
                 # toy_text should work with None tokenizer
-                result = dataset_fn(None)
+                result = dataset_fn(None)  # type: ignore[arg-type]
                 assert hasattr(result, "__iter__")
             else:
                 # Other functions should at least be callable

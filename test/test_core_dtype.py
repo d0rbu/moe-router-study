@@ -82,7 +82,7 @@ class TestGetDtype:
     def test_get_dtype_none_input(self):
         """Test get_dtype with None input."""
         with pytest.raises((ValueError, TypeError)):
-            get_dtype(None)
+            get_dtype(None)  # type: ignore[arg-type]
 
     def test_get_dtype_case_sensitivity(self):
         """Test that get_dtype is case sensitive."""
