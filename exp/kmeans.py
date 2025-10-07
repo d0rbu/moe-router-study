@@ -43,7 +43,9 @@ def check_worker_health(workers: dict[str, asyncio.Task], *, context: str = "") 
                 logger.error(f"{worker_name} worker failed{context_str}: {exception}")
                 raise RuntimeError(f"{worker_name} worker failed") from exception
             else:
-                logger.error(f"{worker_name} worker completed unexpectedly{context_str}")
+                logger.error(
+                    f"{worker_name} worker completed unexpectedly{context_str}"
+                )
                 raise RuntimeError(f"{worker_name} worker completed unexpectedly")
 
 
@@ -75,7 +77,9 @@ async def safe_await_with_worker_check[T](
             if worker.done():
                 exception = worker.exception()
                 if exception:
-                    logger.error(f"{worker_name} worker failed with exception: {exception}")
+                    logger.error(
+                        f"{worker_name} worker failed with exception: {exception}"
+                    )
                 else:
                     logger.error(f"{worker_name} worker completed unexpectedly")
             else:
@@ -940,7 +944,9 @@ async def kmeans_manhattan(
 
             # Periodic worker health check during long iterations
             if distributed_batch_idx % 10 == 0:
-                check_worker_health(workers_dict, context=f"batch {distributed_batch_idx}")
+                check_worker_health(
+                    workers_dict, context=f"batch {distributed_batch_idx}"
+                )
 
             should_sync = (distributed_batch_idx % accumulation_size) == (
                 accumulation_size - 1
