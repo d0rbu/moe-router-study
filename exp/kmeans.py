@@ -744,7 +744,6 @@ async def kmeans_manhattan(
         for gpu_idx in range(num_gpus)
     ]
 
-    # Add exception handling to all worker tasks
     for worker in workers:
         worker.add_done_callback(handle_exceptions)
 
