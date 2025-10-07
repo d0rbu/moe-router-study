@@ -31,33 +31,30 @@ from exp.kmeans_validation import (
 from exp.training import get_experiment_name
 
 
-def check_worker_health(workers: list[asyncio.Task], context: str) -> None:
+T = TypeVar("T")
+
+
+def check_worker_health(workers: dict[str, asyncio.Task], *, context: str) -> None:
     """Check if any workers have failed and raise appropriate exceptions."""
-    for gpu_idx, worker in enumerate(workers):
+    for worker_name, worker in workers.items():
         if worker.done():
             exception = worker.exception()
             if exception:
-                logger.error(f"GPU {gpu_idx} worker failed {context}: {exception}")
-                raise RuntimeError(f"GPU worker {gpu_idx} failed") from exception
+                logger.error(f"{worker_name} worker failed {context}: {exception}")
+                raise RuntimeError(f"{worker_name} worker failed") from exception
             else:
-                logger.error(f"GPU {gpu_idx} worker completed unexpectedly {context}")
-                raise RuntimeError(f"GPU worker {gpu_idx} completed unexpectedly")
-
-
-T = TypeVar("T")
+                logger.error(f"{worker_name} worker completed unexpectedly {context}")
+                raise RuntimeError(f"{worker_name} worker completed unexpectedly")
 
 
 async def safe_await_with_worker_check[T](
     awaitable: Awaitable[T],
-    workers: list[asyncio.Task] | asyncio.Task,
+    *,
+    workers: dict[str, asyncio.Task] | None = None,
     timeout: float,
     operation_name: str,
 ) -> T:
     """Safely await an operation with timeout and worker health checking on error."""
-    # Normalize workers to always be a list
-    if isinstance(workers, asyncio.Task):
-        workers = [workers]
-
     try:
         result = await asyncio.wait_for(awaitable, timeout=timeout)
         logger.trace(f"Successfully completed {operation_name}")
@@ -65,17 +62,16 @@ async def safe_await_with_worker_check[T](
     except TimeoutError:
         logger.error(f"Timeout during {operation_name} - workers may have failed!")
         # Check if any workers have failed
-        for gpu_idx, worker in enumerate(workers):
-            if worker.done():
-                exception = worker.exception()
-                if exception:
-                    logger.error(
-                        f"GPU {gpu_idx} worker failed with exception: {exception}"
-                    )
+        if workers:
+            for worker_name, worker in workers.items():
+                if worker.done():
+                    exception = worker.exception()
+                    if exception:
+                        logger.error(f"{worker_name} worker failed with exception: {exception}")
+                    else:
+                        logger.error(f"{worker_name} worker completed unexpectedly")
                 else:
-                    logger.error(f"GPU {gpu_idx} worker completed unexpectedly")
-            else:
-                logger.error(f"GPU {gpu_idx} worker appears to be hanging")
+                    logger.error(f"{worker_name} worker appears to be hanging")
         raise
     except Exception as e:
         logger.error(f"Unexpected error during {operation_name}: {e}")
@@ -524,9 +520,9 @@ async def gpu_worker(
 
         await safe_await_with_worker_check(
             sync(gpu_idx, all_gpu_data, losses_over_time, barrier, group),
-            [],  # No other workers to check during sync
-            300.0,
-            f"sync operation for GPU {gpu_idx}",
+            workers=None,  # No other workers to check during sync
+            timeout=300.0,
+            operation_name=f"sync operation for GPU {gpu_idx}",
         )
 
         logger.debug(f"GPU {gpu_idx} completed sync operation")
@@ -888,7 +884,8 @@ async def kmeans_manhattan(
         logger.trace(f"Running iteration {iter_idx}")
 
         # Check worker health at start of each iteration
-        check_worker_health(workers, f"before iteration {iter_idx}")
+        workers_dict = {f"GPU {i}": worker for i, worker in enumerate(workers)}
+        check_worker_health(workers_dict, context=f"before iteration {iter_idx}")
 
         # Log queue states for observability
         queue_sizes = [gpu_data.queue.qsize() for gpu_data in all_gpu_data]
@@ -933,7 +930,7 @@ async def kmeans_manhattan(
 
             # Periodic worker health check during long iterations
             if distributed_batch_idx % 10 == 0:
-                check_worker_health(workers, f"during batch {distributed_batch_idx}")
+                check_worker_health(workers_dict, context=f"during batch {distributed_batch_idx}")
 
             should_sync = (distributed_batch_idx % accumulation_size) == (
                 accumulation_size - 1
@@ -964,9 +961,9 @@ async def kmeans_manhattan(
                             save_idx,
                         )
                     ),
-                    workers[gpu_idx],
-                    30.0,
-                    f"queue put for GPU {gpu_idx}",
+                    workers={f"GPU {gpu_idx}": workers[gpu_idx]},
+                    timeout=30.0,
+                    operation_name=f"queue put for GPU {gpu_idx}",
                 )
 
         # intermittent validation during training
