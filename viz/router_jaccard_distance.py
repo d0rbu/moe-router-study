@@ -46,9 +46,13 @@ async def _router_jaccard_distance_async(
         logger.trace(f"Processing batch {batch_count}")
 
         router_logits = batch[ActivationKeys.ROUTER_LOGITS]
-        logger.trace(f"Router logits shape: {router_logits.shape}, dtype: {router_logits.dtype}")
+        logger.trace(
+            f"Router logits shape: {router_logits.shape}, dtype: {router_logits.dtype}"
+        )
 
-        assert router_logits.dim() == 3, f"Expected 3D router logits, got {router_logits.dim()}D"
+        assert router_logits.dim() == 3, (
+            f"Expected 3D router logits, got {router_logits.dim()}D"
+        )
         assert router_logits.shape[0] > 0, "Batch size must be positive"
         assert router_logits.shape[1] > 0, "Number of layers must be positive"
         assert router_logits.shape[2] > 0, "Number of experts must be positive"
@@ -63,9 +67,15 @@ async def _router_jaccard_distance_async(
             logger.debug(f"Total experts across all layers: {total_experts}")
 
             assert top_k > 0, f"Top-k must be positive, got {top_k}"
-            assert top_k <= num_experts, f"Top-k {top_k} cannot exceed number of experts {num_experts}"
-            assert num_layers > 0, f"Number of layers must be positive, got {num_layers}"
-            assert num_experts > 0, f"Number of experts must be positive, got {num_experts}"
+            assert top_k <= num_experts, (
+                f"Top-k {top_k} cannot exceed number of experts {num_experts}"
+            )
+            assert num_layers > 0, (
+                f"Number of layers must be positive, got {num_layers}"
+            )
+            assert num_experts > 0, (
+                f"Number of experts must be positive, got {num_experts}"
+            )
 
             # Initialize running count tensors
             logger.debug("Initializing running count tensors...")
@@ -73,37 +83,54 @@ async def _router_jaccard_distance_async(
             pairwise_coactivation_counts = th.zeros(
                 total_experts, total_experts, dtype=th.float32
             )
-            logger.trace(f"Expert activation counts shape: {expert_activation_counts.shape}")
-            logger.trace(f"Pairwise coactivation counts shape: {pairwise_coactivation_counts.shape}")
+            logger.trace(
+                f"Expert activation counts shape: {expert_activation_counts.shape}"
+            )
+            logger.trace(
+                f"Pairwise coactivation counts shape: {pairwise_coactivation_counts.shape}"
+            )
 
         current_batch_size = router_logits.shape[0]
         total_samples += current_batch_size
-        logger.trace(f"Current batch size: {current_batch_size}, total samples: {total_samples}")
+        logger.trace(
+            f"Current batch size: {current_batch_size}, total samples: {total_samples}"
+        )
 
         # Convert to binary activations (top-k selection)
         logger.trace("Converting router logits to binary activations...")
         activated_experts = convert_router_logits_to_paths(router_logits, top_k)
-        logger.trace(f"Activated experts shape: {activated_experts.shape}, dtype: {activated_experts.dtype}")
+        logger.trace(
+            f"Activated experts shape: {activated_experts.shape}, dtype: {activated_experts.dtype}"
+        )
 
         # Validate activated experts
-        assert activated_experts.shape == (current_batch_size, num_layers, num_experts), \
-            f"Unexpected activated experts shape: {activated_experts.shape}"
-        assert activated_experts.dtype == th.bool, f"Expected bool tensor, got {activated_experts.dtype}"
+        assert activated_experts.shape == (
+            current_batch_size,
+            num_layers,
+            num_experts,
+        ), f"Unexpected activated experts shape: {activated_experts.shape}"
+        assert activated_experts.dtype == th.bool, (
+            f"Expected bool tensor, got {activated_experts.dtype}"
+        )
 
         # Check that exactly top_k experts are activated per layer
         experts_per_layer = activated_experts.sum(dim=2)
         logger.trace(f"Experts per layer: {experts_per_layer}")
-        assert th.all(experts_per_layer == top_k), f"Expected {top_k} experts per layer, got {experts_per_layer}"
+        assert th.all(experts_per_layer == top_k), (
+            f"Expected {top_k} experts per layer, got {experts_per_layer}"
+        )
 
         # Reshape: (B, L, E) -> (B, L * E)
         activated_experts_batch = activated_experts.reshape(-1, total_experts).float()
         logger.trace(f"Reshaped activated experts: {activated_experts_batch.shape}")
 
         # Validate reshaped tensor
-        assert activated_experts_batch.shape == (current_batch_size, total_experts), \
+        assert activated_experts_batch.shape == (current_batch_size, total_experts), (
             f"Unexpected reshaped shape: {activated_experts_batch.shape}"
-        assert th.all((activated_experts_batch == 0) | (activated_experts_batch == 1)), \
-            "Binary activations must be 0 or 1"
+        )
+        assert th.all(
+            (activated_experts_batch == 0) | (activated_experts_batch == 1)
+        ), "Binary activations must be 0 or 1"
 
         # Update running counts
         logger.trace("Updating running counts...")
@@ -112,15 +139,24 @@ async def _router_jaccard_distance_async(
             activated_experts_batch.T @ activated_experts_batch
         )
 
-        logger.trace(f"Expert activation counts sum: {expert_activation_counts.sum().item():.6f}")
-        logger.trace(f"Pairwise coactivation counts sum: {pairwise_coactivation_counts.sum().item():.6f}")
+        logger.trace(
+            f"Expert activation counts sum: {expert_activation_counts.sum().item():.6f}"
+        )
+        logger.trace(
+            f"Pairwise coactivation counts sum: {pairwise_coactivation_counts.sum().item():.6f}"
+        )
 
         # Validate running counts
         expected_expert_sum = total_samples * num_layers * top_k
-        assert abs(expert_activation_counts.sum().item() - expected_expert_sum) < 1e-6, \
+        assert (
+            abs(expert_activation_counts.sum().item() - expected_expert_sum) < 1e-6
+        ), (
             f"Expert activation sum {expert_activation_counts.sum().item()} != expected {expected_expert_sum}"
+        )
 
-        logger.debug(f"Batch {batch_count} complete: {current_batch_size} samples processed, {total_samples} total")
+        logger.debug(
+            f"Batch {batch_count} complete: {current_batch_size} samples processed, {total_samples} total"
+        )
 
     if (
         top_k is None
@@ -135,15 +171,27 @@ async def _router_jaccard_distance_async(
     logger.info(f"Total experts (across all layers): {total_experts}")
 
     assert total_samples > 0, "No samples were processed"
-    assert expert_activation_counts is not None, "Expert activation counts not initialized"
-    assert pairwise_coactivation_counts is not None, "Pairwise coactivation counts not initialized"
-    assert expert_activation_counts.shape == (total_experts,), f"Unexpected expert counts shape: {expert_activation_counts.shape}"
-    assert pairwise_coactivation_counts.shape == (total_experts, total_experts), f"Unexpected pairwise counts shape: {pairwise_coactivation_counts.shape}"
+    assert expert_activation_counts is not None, (
+        "Expert activation counts not initialized"
+    )
+    assert pairwise_coactivation_counts is not None, (
+        "Pairwise coactivation counts not initialized"
+    )
+    assert expert_activation_counts.shape == (total_experts,), (
+        f"Unexpected expert counts shape: {expert_activation_counts.shape}"
+    )
+    assert pairwise_coactivation_counts.shape == (total_experts, total_experts), (
+        f"Unexpected pairwise counts shape: {pairwise_coactivation_counts.shape}"
+    )
 
     # Compute Jaccard similarity matrix using running counts
     logger.debug("Computing Jaccard similarity matrix...")
-    logger.trace(f"Expert activation counts range: min={expert_activation_counts.min().item():.2f}, max={expert_activation_counts.max().item():.2f}")
-    logger.trace(f"Pairwise coactivation counts range: min={pairwise_coactivation_counts.min().item():.2f}, max={pairwise_coactivation_counts.max().item():.2f}")
+    logger.trace(
+        f"Expert activation counts range: min={expert_activation_counts.min().item():.2f}, max={expert_activation_counts.max().item():.2f}"
+    )
+    logger.trace(
+        f"Pairwise coactivation counts range: min={pairwise_coactivation_counts.min().item():.2f}, max={pairwise_coactivation_counts.max().item():.2f}"
+    )
 
     # Jaccard similarity = intersection / union = coactivation / (count_i + count_j - coactivation)
     union_counts = (
@@ -151,18 +199,24 @@ async def _router_jaccard_distance_async(
         + expert_activation_counts.unsqueeze(0)
         - pairwise_coactivation_counts
     )
-    logger.trace(f"Union counts range: min={union_counts.min().item():.2f}, max={union_counts.max().item():.2f}")
+    logger.trace(
+        f"Union counts range: min={union_counts.min().item():.2f}, max={union_counts.max().item():.2f}"
+    )
 
     # Validate union counts
     assert th.all(union_counts >= 0), "Union counts must be non-negative"
-    assert th.all(union_counts >= pairwise_coactivation_counts), "Union counts must be >= coactivation counts"
+    assert th.all(union_counts >= pairwise_coactivation_counts), (
+        "Union counts must be >= coactivation counts"
+    )
 
     jaccard = th.where(
         union_counts > 0,
         pairwise_coactivation_counts / union_counts,
         th.zeros_like(pairwise_coactivation_counts),
     )
-    logger.trace(f"Jaccard similarity range: min={jaccard.min().item():.6f}, max={jaccard.max().item():.6f}")
+    logger.trace(
+        f"Jaccard similarity range: min={jaccard.min().item():.6f}, max={jaccard.max().item():.6f}"
+    )
 
     # Validate Jaccard similarities
     assert th.all(jaccard >= 0), "Jaccard similarities must be non-negative"
@@ -172,14 +226,19 @@ async def _router_jaccard_distance_async(
     # Compute independent baseline using marginal probabilities
     logger.debug("Computing independent baseline...")
     expert_probabilities = expert_activation_counts / total_samples
-    logger.trace(f"Expert probabilities range: min={expert_probabilities.min().item():.6f}, max={expert_probabilities.max().item():.6f}")
+    logger.trace(
+        f"Expert probabilities range: min={expert_probabilities.min().item():.6f}, max={expert_probabilities.max().item():.6f}"
+    )
     logger.trace(f"Expert probabilities sum: {expert_probabilities.sum().item():.6f}")
 
     # Validate probabilities
-    assert th.all(expert_probabilities >= 0), "Expert probabilities must be non-negative"
+    assert th.all(expert_probabilities >= 0), (
+        "Expert probabilities must be non-negative"
+    )
     assert th.all(expert_probabilities <= 1), "Expert probabilities must be <= 1"
-    assert abs(expert_probabilities.sum().item() - num_layers * top_k) < 1e-6, \
+    assert abs(expert_probabilities.sum().item() - num_layers * top_k) < 1e-6, (
         f"Expert probabilities sum {expert_probabilities.sum().item()} != expected {num_layers * top_k}"
+    )
 
     # For independent experts, Jaccard = (p_i * p_j) / (p_i + p_j - p_i * p_j)
     p_i = expert_probabilities.unsqueeze(1)  # Shape: (num_experts, 1)
@@ -188,17 +247,27 @@ async def _router_jaccard_distance_async(
 
     # Independent coactivation probability: p_i * p_j
     independent_coactivation = p_i * p_j
-    logger.trace(f"Independent coactivation range: min={independent_coactivation.min().item():.8f}, max={independent_coactivation.max().item():.8f}")
+    logger.trace(
+        f"Independent coactivation range: min={independent_coactivation.min().item():.8f}, max={independent_coactivation.max().item():.8f}"
+    )
 
     # Independent union probability: p_i + p_j - p_i * p_j
     independent_union = p_i + p_j - independent_coactivation
-    logger.trace(f"Independent union range: min={independent_union.min().item():.6f}, max={independent_union.max().item():.6f}")
+    logger.trace(
+        f"Independent union range: min={independent_union.min().item():.6f}, max={independent_union.max().item():.6f}"
+    )
 
     # Validate independent calculations
-    assert th.all(independent_coactivation >= 0), "Independent coactivation must be non-negative"
-    assert th.all(independent_coactivation <= 1), "Independent coactivation must be <= 1"
+    assert th.all(independent_coactivation >= 0), (
+        "Independent coactivation must be non-negative"
+    )
+    assert th.all(independent_coactivation <= 1), (
+        "Independent coactivation must be <= 1"
+    )
     assert th.all(independent_union >= 0), "Independent union must be non-negative"
-    assert th.all(independent_union >= independent_coactivation), "Independent union must be >= coactivation"
+    assert th.all(independent_union >= independent_coactivation), (
+        "Independent union must be >= coactivation"
+    )
 
     # Independent Jaccard similarity: coactivation / union
     independent_jaccard = th.where(
@@ -206,12 +275,16 @@ async def _router_jaccard_distance_async(
         independent_coactivation / independent_union,
         th.zeros_like(independent_union),
     )
-    logger.trace(f"Independent Jaccard range: min={independent_jaccard.min().item():.8f}, max={independent_jaccard.max().item():.8f}")
+    logger.trace(
+        f"Independent Jaccard range: min={independent_jaccard.min().item():.8f}, max={independent_jaccard.max().item():.8f}"
+    )
 
     # Validate independent Jaccard
     assert th.all(independent_jaccard >= 0), "Independent Jaccard must be non-negative"
     assert th.all(independent_jaccard <= 1), "Independent Jaccard must be <= 1"
-    assert th.allclose(independent_jaccard, independent_jaccard.T), "Independent Jaccard matrix should be symmetric"
+    assert th.allclose(independent_jaccard, independent_jaccard.T), (
+        "Independent Jaccard matrix should be symmetric"
+    )
 
     # Extract upper triangle (excluding diagonal) for bar plots
     logger.debug("Extracting upper triangular matrices...")
@@ -220,14 +293,24 @@ async def _router_jaccard_distance_async(
     independent_upper = independent_jaccard[upper_triangular_mask]
 
     logger.trace(f"Upper triangular mask shape: {upper_triangular_mask.shape}")
-    logger.trace(f"Upper triangular elements count: {upper_triangular_mask.sum().item()}")
-    logger.trace(f"Jaccard upper range: min={jaccard_upper.min().item():.6f}, max={jaccard_upper.max().item():.6f}")
-    logger.trace(f"Independent upper range: min={independent_upper.min().item():.8f}, max={independent_upper.max().item():.8f}")
+    logger.trace(
+        f"Upper triangular elements count: {upper_triangular_mask.sum().item()}"
+    )
+    logger.trace(
+        f"Jaccard upper range: min={jaccard_upper.min().item():.6f}, max={jaccard_upper.max().item():.6f}"
+    )
+    logger.trace(
+        f"Independent upper range: min={independent_upper.min().item():.8f}, max={independent_upper.max().item():.8f}"
+    )
 
     # Validate upper triangular extraction
     expected_upper_count = total_experts * (total_experts - 1) // 2
-    assert len(jaccard_upper) == expected_upper_count, f"Unexpected upper triangular count: {len(jaccard_upper)} != {expected_upper_count}"
-    assert len(independent_upper) == expected_upper_count, f"Unexpected independent upper count: {len(independent_upper)} != {expected_upper_count}"
+    assert len(jaccard_upper) == expected_upper_count, (
+        f"Unexpected upper triangular count: {len(jaccard_upper)} != {expected_upper_count}"
+    )
+    assert len(independent_upper) == expected_upper_count, (
+        f"Unexpected independent upper count: {len(independent_upper)} != {expected_upper_count}"
+    )
 
     # Sort distances for bar plots
     logger.debug("Sorting similarities for visualization...")
@@ -235,8 +318,12 @@ async def _router_jaccard_distance_async(
     sorted_independent, _ = th.sort(independent_upper, descending=True)
 
     # Validate sorting
-    assert th.all(sorted_jaccard[:-1] >= sorted_jaccard[1:]), "Jaccard similarities not properly sorted"
-    assert th.all(sorted_independent[:-1] >= sorted_independent[1:]), "Independent similarities not properly sorted"
+    assert th.all(sorted_jaccard[:-1] >= sorted_jaccard[1:]), (
+        "Jaccard similarities not properly sorted"
+    )
+    assert th.all(sorted_independent[:-1] >= sorted_independent[1:]), (
+        "Independent similarities not properly sorted"
+    )
 
     # Separate cross-layer distances
     logger.debug("Computing cross-layer similarities...")
@@ -251,15 +338,22 @@ async def _router_jaccard_distance_async(
 
     # Validate cross-layer mask
     assert num_layers is not None, "num_layers should not be None at this point"
-    expected_cross_layer_count = num_layers * (num_layers - 1) * num_experts * num_experts // 2
-    assert cross_layer_mask.sum().item() == expected_cross_layer_count, \
+    expected_cross_layer_count = (
+        num_layers * (num_layers - 1) * num_experts * num_experts // 2
+    )
+    assert cross_layer_mask.sum().item() == expected_cross_layer_count, (
         f"Unexpected cross-layer count: {cross_layer_mask.sum().item()} != {expected_cross_layer_count}"
+    )
 
     cross_layer_jaccard = jaccard[cross_layer_mask]
     sorted_cross_layer, _ = th.sort(cross_layer_jaccard, descending=True)
 
-    logger.trace(f"Cross-layer Jaccard range: min={cross_layer_jaccard.min().item():.6f}, max={cross_layer_jaccard.max().item():.6f}")
-    assert th.all(sorted_cross_layer[:-1] >= sorted_cross_layer[1:]), "Cross-layer similarities not properly sorted"
+    logger.trace(
+        f"Cross-layer Jaccard range: min={cross_layer_jaccard.min().item():.6f}, max={cross_layer_jaccard.max().item():.6f}"
+    )
+    assert th.all(sorted_cross_layer[:-1] >= sorted_cross_layer[1:]), (
+        "Cross-layer similarities not properly sorted"
+    )
 
     # Print statistics
     logger.info("Jaccard similarity statistics:")
@@ -280,8 +374,12 @@ async def _router_jaccard_distance_async(
 
     # Additional validation statistics
     logger.debug("Validation statistics:")
-    logger.debug(f"  Diagonal Jaccard (should be 1.0): {th.diag(jaccard).mean().item():.6f}")
-    logger.debug(f"  Diagonal Independent (should be 1.0): {th.diag(independent_jaccard).mean().item():.6f}")
+    logger.debug(
+        f"  Diagonal Jaccard (should be 1.0): {th.diag(jaccard).mean().item():.6f}"
+    )
+    logger.debug(
+        f"  Diagonal Independent (should be 1.0): {th.diag(independent_jaccard).mean().item():.6f}"
+    )
     logger.debug(f"  Zero Jaccard count: {(jaccard_upper == 0).sum().item()}")
     logger.debug(f"  Zero Independent count: {(independent_upper == 0).sum().item()}")
 
@@ -294,7 +392,9 @@ async def _router_jaccard_distance_async(
     logger.debug("Creating absolute Jaccard similarity matrix plot...")
     plt.figure()
     jaccard_numpy = jaccard.cpu().numpy()
-    logger.trace(f"Plotting Jaccard matrix: {jaccard_numpy.shape}, range=[{jaccard_numpy.min():.6f}, {jaccard_numpy.max():.6f}]")
+    logger.trace(
+        f"Plotting Jaccard matrix: {jaccard_numpy.shape}, range=[{jaccard_numpy.min():.6f}, {jaccard_numpy.max():.6f}]"
+    )
 
     plt.imshow(jaccard_numpy, cmap="viridis", aspect="auto")
     plt.colorbar(label="Jaccard Similarity")
@@ -313,7 +413,9 @@ async def _router_jaccard_distance_async(
     logger.debug("Creating independent Jaccard similarity matrix plot...")
     plt.figure()
     independent_numpy = independent_jaccard.cpu().numpy()
-    logger.trace(f"Plotting Independent matrix: {independent_numpy.shape}, range=[{independent_numpy.min():.8f}, {independent_numpy.max():.8f}]")
+    logger.trace(
+        f"Plotting Independent matrix: {independent_numpy.shape}, range=[{independent_numpy.min():.8f}, {independent_numpy.max():.8f}]"
+    )
 
     plt.imshow(independent_numpy, cmap="viridis", aspect="auto")
     plt.colorbar(label="Independent Jaccard Similarity")
@@ -333,11 +435,15 @@ async def _router_jaccard_distance_async(
     # Red = 0, Black = independent value, Blue = 2x independent value
     relative_jaccard = jaccard / (independent_jaccard + 1e-8)  # Avoid division by zero
     relative_numpy = relative_jaccard.cpu().numpy()
-    logger.trace(f"Plotting Relative matrix: {relative_numpy.shape}, range=[{relative_numpy.min():.6f}, {relative_numpy.max():.6f}]")
+    logger.trace(
+        f"Plotting Relative matrix: {relative_numpy.shape}, range=[{relative_numpy.min():.6f}, {relative_numpy.max():.6f}]"
+    )
 
     # Validate relative Jaccard
     assert th.all(relative_jaccard >= 0), "Relative Jaccard must be non-negative"
-    logger.trace(f"Relative Jaccard statistics: mean={relative_jaccard.mean().item():.4f}, std={relative_jaccard.std().item():.4f}")
+    logger.trace(
+        f"Relative Jaccard statistics: mean={relative_jaccard.mean().item():.4f}, std={relative_jaccard.std().item():.4f}"
+    )
 
     # Create custom colormap: red (0) -> black (1) -> blue (2)
     from matplotlib.colors import LinearSegmentedColormap
@@ -367,7 +473,9 @@ async def _router_jaccard_distance_async(
     plt.figure()
     sorted_jaccard_numpy = sorted_jaccard.cpu().numpy()
     logger.trace(f"Plotting {len(sorted_jaccard_numpy)} sorted Jaccard similarities")
-    logger.trace(f"Sorted Jaccard range: [{sorted_jaccard_numpy.min():.6f}, {sorted_jaccard_numpy.max():.6f}]")
+    logger.trace(
+        f"Sorted Jaccard range: [{sorted_jaccard_numpy.min():.6f}, {sorted_jaccard_numpy.max():.6f}]"
+    )
 
     plt.bar(range(len(sorted_jaccard_numpy)), sorted_jaccard_numpy)
     plt.xlabel("Expert Pair Rank")
@@ -385,8 +493,12 @@ async def _router_jaccard_distance_async(
     logger.debug("Creating cross-layer Jaccard similarities bar plot...")
     plt.figure()
     sorted_cross_layer_numpy = sorted_cross_layer.cpu().numpy()
-    logger.trace(f"Plotting {len(sorted_cross_layer_numpy)} sorted cross-layer similarities")
-    logger.trace(f"Cross-layer range: [{sorted_cross_layer_numpy.min():.6f}, {sorted_cross_layer_numpy.max():.6f}]")
+    logger.trace(
+        f"Plotting {len(sorted_cross_layer_numpy)} sorted cross-layer similarities"
+    )
+    logger.trace(
+        f"Cross-layer range: [{sorted_cross_layer_numpy.min():.6f}, {sorted_cross_layer_numpy.max():.6f}]"
+    )
 
     plt.bar(range(len(sorted_cross_layer_numpy)), sorted_cross_layer_numpy)
     plt.xlabel("Cross-Layer Pair Rank")
@@ -394,7 +506,9 @@ async def _router_jaccard_distance_async(
     plt.title("Sorted Cross-Layer Jaccard Similarities")
     plt.tight_layout()
 
-    cross_layer_plot_path = os.path.join(FIGURE_DIR, "router_jaccard_bar_cross_layer.png")
+    cross_layer_plot_path = os.path.join(
+        FIGURE_DIR, "router_jaccard_bar_cross_layer.png"
+    )
     logger.debug(f"Saving cross-layer bar plot to: {cross_layer_plot_path}")
     plt.savefig(cross_layer_plot_path)
     plt.close()
@@ -408,7 +522,13 @@ async def _router_jaccard_distance_async(
     logger.info("  - router_jaccard_bar_cross_layer.png")
 
     # Validate all files were created
-    plot_paths = [abs_plot_path, indep_plot_path, rel_plot_path, sorted_plot_path, cross_layer_plot_path]
+    plot_paths = [
+        abs_plot_path,
+        indep_plot_path,
+        rel_plot_path,
+        sorted_plot_path,
+        cross_layer_plot_path,
+    ]
     for plot_path in plot_paths:
         assert os.path.exists(plot_path), f"Plot file not created: {plot_path}"
         file_size = os.path.getsize(plot_path)
