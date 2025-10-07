@@ -1049,12 +1049,6 @@ def main(
     log_level: str = "INFO",
     num_workers: int = 64,
 ) -> None:
-    if not k:
-        k = None
-
-    if not expansion_factor:
-        expansion_factor = None
-
     cluster_paths(
         model_name,
         dataset_name,

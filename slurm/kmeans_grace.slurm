@@ -6,10 +6,10 @@
 #SBATCH --ntasks=1                      # Total number of tasks (processes) across all nodes
 #SBATCH --ntasks-per-node=1             # Number of tasks per node
 #SBATCH --cpus-per-task=16              # Number of CPUs per task
-#SBATCH --mem=256G                      # Request 256GB per node
+#SBATCH --mem=2128G                      # Request 128GB per node
 #SBATCH --output=kmeans.%j              # Send stdout/err to "kmeans.[jobID]"
 #SBATCH --error=kmeans.%j.err           # Send stderr to separate file
-#SBATCH --gres=gpu:h100:4               # Request 4 H100 GPUs per node
+#SBATCH --gres=gpu:a100:2               # Request 2 A100 GPUs per node
 #SBATCH --partition=gpu                 # Request the GPU partition/queue
 
 ##OPTIONAL JOB SPECIFICATIONS
@@ -24,8 +24,6 @@ export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
 export MASTER_PORT=$(expr 10000 + $(echo -n $SLURM_JOBID | tail -c 4))
 export RANK=$SLURM_PROCID
 export WORLD_SIZE=$SLURM_NTASKS
-
-module load GCCcore/13.3.0 Python/3.12.3
 
 # Change to the project directory
 cd $SCRATCH/moe-router-study
