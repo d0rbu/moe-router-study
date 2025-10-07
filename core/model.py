@@ -24,6 +24,18 @@ class Checkpoint:
                 "ModelConfig.revision_format is required for string representation"
             )
         return self.model_config.revision_format.format(self.step, self.num_tokens)
+    
+    def __hash__(self):
+        return hash((self.step, self.num_tokens, self.revision))
+    
+    def __eq__(self, other):
+        if not isinstance(other, Checkpoint):
+            return False
+        return (
+            self.step == other.step 
+            and self.num_tokens == other.num_tokens 
+            and self.revision == other.revision
+        )
 
 
 LATEST_REVISION = "main"
