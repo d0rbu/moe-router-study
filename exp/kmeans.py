@@ -52,8 +52,8 @@ async def safe_await_with_worker_check[T](
     awaitable: Awaitable[T],
     *,
     workers: dict[str, asyncio.Task] | None = None,
-    timeout: float,
-    operation_name: str,
+    timeout: float = 30.0,
+    operation_name: str = "",
 ) -> T:
     """Safely await an operation with timeout and worker health checking on error."""
     if workers is None:
@@ -61,10 +61,14 @@ async def safe_await_with_worker_check[T](
     
     try:
         result = await asyncio.wait_for(awaitable, timeout=timeout)
-        logger.trace(f"Successfully completed {operation_name}")
+        if operation_name:
+            logger.trace(f"Successfully completed {operation_name}")
         return result
     except TimeoutError:
-        logger.error(f"Timeout during {operation_name} - workers may have failed!")
+        if operation_name:
+            logger.error(f"Timeout during {operation_name} - workers may have failed!")
+        else:
+            logger.error("Operation timed out - workers may have failed!")
         # Check if any workers have failed
         for worker_name, worker in workers.items():
             if worker.done():
@@ -77,7 +81,10 @@ async def safe_await_with_worker_check[T](
                 logger.error(f"{worker_name} worker appears to be hanging")
         raise
     except Exception as e:
-        logger.error(f"Unexpected error during {operation_name}: {e}")
+        if operation_name:
+            logger.error(f"Unexpected error during {operation_name}: {e}")
+        else:
+            logger.error(f"Unexpected error: {e}")
         raise
 
 
@@ -523,7 +530,6 @@ async def gpu_worker(
 
         await safe_await_with_worker_check(
             sync(gpu_idx, all_gpu_data, losses_over_time, barrier, group),
-            workers=None,  # Sync is internal to worker, can't check other workers
             timeout=300.0,
             operation_name=f"sync operation for GPU {gpu_idx}",
         )
@@ -965,7 +971,6 @@ async def kmeans_manhattan(
                         )
                     ),
                     workers={f"GPU {gpu_idx}": workers[gpu_idx]},
-                    timeout=30.0,
                     operation_name=f"queue put for GPU {gpu_idx}",
                 )
 
