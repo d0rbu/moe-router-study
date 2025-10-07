@@ -85,7 +85,6 @@ class Activations:
         num_workers: int = 8,
         debug: bool = False,
     ) -> "Activations":
-        # Check if distributed training is initialized
         if not (dist.is_available() and dist.is_initialized()):
             raise RuntimeError(
                 "PyTorch distributed training is not initialized. "
