@@ -57,36 +57,50 @@ class TestFineweb10btText:
     """Test fineweb_10bt_text dataset function."""
     
     @patch('core.data.load_dataset')
-    def test_fineweb_10bt_text_basic(self, mock_load_dataset):
-        """Test basic fineweb_10bt_text functionality."""
-        # Mock dataset response
-        mock_dataset = {"text": ["Sample 1", "Sample 2", "Sample 3"]}
-        mock_load_dataset.return_value = mock_dataset
+    def test_fineweb_10bt_text_calls_correct_dataset(self, mock_load_dataset):
+        """Test that fineweb_10bt_text calls load_dataset with correct parameters."""
+        # Mock dataset response - we only care about the call, not the return
+        mock_load_dataset.return_value = {"text": []}
         
-        result = fineweb_10bt_text()
+        fineweb_10bt_text()
         
-        # Should call load_dataset with correct parameters
+        # Verify the function calls HuggingFace with the right dataset and config
         mock_load_dataset.assert_called_once_with(
             "HuggingFaceFW/fineweb", 
             name="sample-10BT", 
             split="train", 
             streaming=True
         )
-        
-        # Should return the text field
-        assert result == ["Sample 1", "Sample 2", "Sample 3"]
     
     @patch('core.data.load_dataset')
-    def test_fineweb_10bt_text_with_tokenizer(self, mock_load_dataset):
-        """Test fineweb_10bt_text with tokenizer parameter (should be ignored)."""
-        mock_dataset = {"text": ["Sample"]}
+    def test_fineweb_10bt_text_extracts_text_field(self, mock_load_dataset):
+        """Test that fineweb_10bt_text correctly extracts the 'text' field."""
+        # Create a mock dataset that behaves like a real HF dataset
+        mock_dataset = {
+            "text": ["Sample 1", "Sample 2"], 
+            "url": ["http://example1.com", "http://example2.com"],
+            "timestamp": ["2023-01-01", "2023-01-02"]
+        }
         mock_load_dataset.return_value = mock_dataset
+        
+        result = fineweb_10bt_text()
+        
+        # Should extract only the text field, ignoring other fields
+        assert result == ["Sample 1", "Sample 2"]
+        assert "url" not in str(result)
+        assert "timestamp" not in str(result)
+    
+    @patch('core.data.load_dataset')
+    def test_fineweb_10bt_text_ignores_tokenizer(self, mock_load_dataset):
+        """Test that fineweb_10bt_text ignores tokenizer parameter."""
+        mock_load_dataset.return_value = {"text": ["Sample"]}
         
         mock_tokenizer = MagicMock()
         result = fineweb_10bt_text(mock_tokenizer)
         
-        # Tokenizer should not be used
+        # The key test: tokenizer should never be called
         mock_tokenizer.assert_not_called()
+        # Function should still work normally
         assert result == ["Sample"]
 
 
@@ -94,33 +108,44 @@ class TestSmollm2Small:
     """Test smollm2_small dataset function."""
     
     @patch('core.data.load_dataset')
-    def test_smollm2_small_basic(self, mock_load_dataset):
-        """Test basic smollm2_small functionality."""
-        # Mock dataset response
-        mock_dataset = {"text": ["SmolLM sample 1", "SmolLM sample 2"]}
-        mock_load_dataset.return_value = mock_dataset
+    def test_smollm2_small_calls_correct_dataset(self, mock_load_dataset):
+        """Test that smollm2_small calls load_dataset with correct parameters."""
+        mock_load_dataset.return_value = {"text": []}
         
-        result = smollm2_small()
+        smollm2_small()
         
-        # Should call load_dataset with correct parameters
+        # Verify it calls the right dataset with 1% split
         mock_load_dataset.assert_called_once_with(
             "EleutherAI/SmolLM2-135M-10B", 
             split="train[:1%]"
         )
-        
-        # Should return the text field
-        assert result == ["SmolLM sample 1", "SmolLM sample 2"]
     
     @patch('core.data.load_dataset')
-    def test_smollm2_small_with_tokenizer(self, mock_load_dataset):
-        """Test smollm2_small with tokenizer parameter (should be ignored)."""
-        mock_dataset = {"text": ["Sample"]}
+    def test_smollm2_small_extracts_text_field(self, mock_load_dataset):
+        """Test that smollm2_small correctly extracts the 'text' field."""
+        # Mock a dataset with multiple fields like a real HF dataset
+        mock_dataset = {
+            "text": ["SmolLM sample 1", "SmolLM sample 2"],
+            "meta": [{"source": "web"}, {"source": "books"}],
+            "id": [12345, 67890]
+        }
         mock_load_dataset.return_value = mock_dataset
+        
+        result = smollm2_small()
+        
+        # Should only return text content, not metadata
+        assert result == ["SmolLM sample 1", "SmolLM sample 2"]
+        assert all(isinstance(item, str) for item in result)
+    
+    @patch('core.data.load_dataset')
+    def test_smollm2_small_ignores_tokenizer(self, mock_load_dataset):
+        """Test that smollm2_small ignores tokenizer parameter."""
+        mock_load_dataset.return_value = {"text": ["Sample"]}
         
         mock_tokenizer = MagicMock()
         result = smollm2_small(mock_tokenizer)
         
-        # Tokenizer should not be used
+        # Tokenizer should never be called for this dataset
         mock_tokenizer.assert_not_called()
         assert result == ["Sample"]
 
@@ -128,23 +153,28 @@ class TestSmollm2Small:
 class TestLmsysChatText:
     """Test lmsys_chat_1m_text dataset function."""
     
-    def test_lmsys_chat_1m_text_requires_tokenizer(self):
-        """Test that lmsys_chat_1m_text requires a tokenizer."""
-        # Should work with a tokenizer
+    def test_lmsys_chat_1m_text_conversation_formatting_logic(self):
+        """Test the actual conversation formatting logic."""
         mock_tokenizer = MagicMock()
-        mock_tokenizer.apply_chat_template.return_value = "formatted chat"
+        mock_tokenizer.apply_chat_template.return_value = "User: Hello\nAssistant: Hi there!"
         
         with patch('core.data.load_dataset') as mock_load_dataset:
+            # Create a mock dataset that yields conversation data
             mock_dataset = MagicMock()
             mock_dataset.__getitem__.return_value = [
-                [{"role": "user", "content": "Hello"}]
+                [{"role": "user", "content": "Hello"}, {"role": "assistant", "content": "Hi there!"}]
             ]
             mock_load_dataset.return_value = mock_dataset
             
             result = lmsys_chat_1m_text(mock_tokenizer)
             
-            # Should be iterable
+            # Test that it's iterable and processes conversations
             assert hasattr(result, '__iter__')
+            
+            # Test that the tokenizer's apply_chat_template is actually called
+            # This tests the real logic of the function
+            list(result)  # Force iteration to trigger the formatting
+            mock_tokenizer.apply_chat_template.assert_called()
     
     @patch('core.data.load_dataset')
     def test_lmsys_chat_1m_text_streaming_mode(self, mock_load_dataset):
@@ -286,8 +316,8 @@ class TestLmsysChatText:
             assert call_args.start == 10
             assert call_args.stop == 100
     
-    def test_lmsys_chat_1m_text_format_conversation_error(self):
-        """Test error handling in conversation formatting."""
+    def test_lmsys_chat_1m_text_validates_string_output(self):
+        """Test that the function validates tokenizer output is a string."""
         mock_tokenizer = MagicMock()
         mock_tokenizer.apply_chat_template.return_value = 123  # Not a string
         
@@ -300,9 +330,33 @@ class TestLmsysChatText:
             
             result_iter = lmsys_chat_1m_text(mock_tokenizer)
             
-            # Should raise ValueError when iterating
+            # This tests the actual validation logic in the function
             with pytest.raises(ValueError, match="Expected chat to be a string"):
                 list(result_iter)
+    
+    def test_lmsys_chat_1m_text_conversation_structure_validation(self):
+        """Test that conversations are passed correctly to the tokenizer."""
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.apply_chat_template.return_value = "formatted output"
+        
+        # Test conversation with specific structure
+        test_conversation = [
+            {"role": "user", "content": "What is 2+2?"},
+            {"role": "assistant", "content": "2+2 equals 4."}
+        ]
+        
+        with patch('core.data.load_dataset') as mock_load_dataset:
+            mock_dataset = MagicMock()
+            mock_dataset.__getitem__.return_value = [test_conversation]
+            mock_load_dataset.return_value = mock_dataset
+            
+            result_iter = lmsys_chat_1m_text(mock_tokenizer)
+            list(result_iter)  # Force iteration
+            
+            # Verify the tokenizer was called with the exact conversation structure
+            mock_tokenizer.apply_chat_template.assert_called_with(
+                test_conversation, tokenize=False
+            )
     
     @patch('core.data.os.path.exists')
     @patch('core.data.load_dataset')
@@ -382,40 +436,53 @@ class TestDatasetIntegration:
     """Integration tests for dataset functionality."""
     
     def test_toy_dataset_integration(self):
-        """Test toy dataset can be used end-to-end."""
+        """Test toy dataset can be used end-to-end without external dependencies."""
         dataset_fn = get_dataset_fn("toy")
         
-        # Should work without tokenizer
+        # Should work without tokenizer - this tests real functionality
         result = dataset_fn(None)
         samples = list(result)
         
+        # Test actual content and behavior
         assert len(samples) == 4
         assert all(isinstance(sample, str) for sample in samples)
+        assert all("Tiny sample" in sample for sample in samples)
+        
+        # Test deterministic behavior
+        result2 = list(dataset_fn(None))
+        assert samples == result2
     
-    @patch('core.data.load_dataset')
-    def test_fineweb_dataset_integration(self, mock_load_dataset):
-        """Test fineweb dataset integration."""
-        mock_load_dataset.return_value = {"text": ["Sample text"]}
-        
-        dataset_fn = get_dataset_fn("fw")
-        result = dataset_fn(None)
-        
-        assert result == ["Sample text"]
+    def test_dataset_function_signatures_compatibility(self):
+        """Test that all dataset functions accept the same signature."""
+        # Test that all functions can be called with (tokenizer=None)
+        for dataset_name, dataset_fn in DATASETS.items():
+            if dataset_name == "toy":
+                # toy_text should work with None tokenizer
+                result = dataset_fn(None)
+                assert hasattr(result, '__iter__')
+            else:
+                # Other functions should at least be callable
+                assert callable(dataset_fn)
+                # We can't test them without mocking external dependencies
+                # but we can verify they have the expected signature
+                import inspect
+                sig = inspect.signature(dataset_fn)
+                # Should accept a tokenizer parameter
+                assert len(sig.parameters) >= 1
     
-    def test_dataset_function_signatures(self):
-        """Test that all dataset functions have compatible signatures."""
-        mock_tokenizer = MagicMock()
+    def test_dataset_registry_completeness(self):
+        """Test that the DATASETS registry contains expected functions."""
+        expected_datasets = {"fw", "toy", "lmsys", "smol"}
+        actual_datasets = set(DATASETS.keys())
         
-        # toy and smol should work with None tokenizer
-        for dataset_name in ["toy"]:
-            dataset_fn = get_dataset_fn(dataset_name)
-            result = dataset_fn(None)
-            assert hasattr(result, '__iter__')
+        assert expected_datasets.issubset(actual_datasets), \
+            f"Missing datasets: {expected_datasets - actual_datasets}"
         
-        # lmsys requires a tokenizer
-        lmsys_fn = get_dataset_fn("lmsys")
-        # This would fail without proper mocking, but we can test the function exists
-        assert callable(lmsys_fn)
+        # Test that get_dataset_fn works for all registered datasets
+        for dataset_name in expected_datasets:
+            fn = get_dataset_fn(dataset_name)
+            assert callable(fn)
+            assert fn is DATASETS[dataset_name]
 
 
 class TestDatasetMainScript:

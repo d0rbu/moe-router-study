@@ -31,6 +31,7 @@ class Checkpoint:
     def __eq__(self, other):
         if not isinstance(other, Checkpoint):
             return False
+        
         return (
             self.step == other.step 
             and self.num_tokens == other.num_tokens 
