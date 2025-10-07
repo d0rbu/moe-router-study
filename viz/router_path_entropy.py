@@ -438,7 +438,7 @@ async def _router_path_entropy_async(
 
 
 @arguably.command
-def router_path_entropy(experiment_name: str, batch_size: int = 4096) -> None:
+def router_path_entropy(*, experiment_name: str, batch_size: int = 4096) -> None:
     """Analyze routing path entropy and distribution for an experiment.
 
     This script:

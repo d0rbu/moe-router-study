@@ -537,7 +537,7 @@ async def _router_jaccard_distance_async(
 
 
 @arguably.command
-def router_jaccard_distance(experiment_name: str, batch_size: int = 4096) -> None:
+def router_jaccard_distance(*, experiment_name: str, batch_size: int = 4096) -> None:
     """Compute Jaccard similarity between expert activations.
 
     This script:
