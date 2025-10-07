@@ -16,6 +16,42 @@ from tqdm import tqdm
 import yaml
 
 from core.async_utils import handle_exceptions
+
+
+def check_worker_health(workers: list[asyncio.Task], context: str) -> None:
+    """Check if any workers have failed and raise appropriate exceptions."""
+    for gpu_idx, worker in enumerate(workers):
+        if worker.done():
+            exception = worker.exception()
+            if exception:
+                logger.error(f"GPU {gpu_idx} worker failed {context}: {exception}")
+                raise RuntimeError(f"GPU worker {gpu_idx} failed") from exception
+            else:
+                logger.error(f"GPU {gpu_idx} worker completed unexpectedly {context}")
+                raise RuntimeError(f"GPU worker {gpu_idx} completed unexpectedly")
+
+
+async def safe_queue_put(gpu_data, item, gpu_idx: int, workers: list[asyncio.Task], timeout: float = 30.0):
+    """Safely put an item in a GPU queue with timeout and worker health checking."""
+    try:
+        await asyncio.wait_for(gpu_data.queue.put(item), timeout=timeout)
+        logger.trace(f"Successfully queued data for GPU {gpu_idx}")
+    except asyncio.TimeoutError:
+        logger.error(f"Timeout putting data on GPU {gpu_idx} queue - worker may have failed!")
+        # Check if worker is still alive
+        worker = workers[gpu_idx]
+        if worker.done():
+            exception = worker.exception()
+            if exception:
+                logger.error(f"GPU {gpu_idx} worker failed with exception: {exception}")
+            else:
+                logger.error(f"GPU {gpu_idx} worker completed unexpectedly")
+        else:
+            logger.error(f"GPU {gpu_idx} worker appears to be hanging")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error putting data on GPU {gpu_idx} queue: {e}")
+        raise
 from core.moe import convert_router_logits_to_paths
 from core.training import exponential_to_linear_save_steps
 from exp import OUTPUT_DIR
@@ -469,7 +505,7 @@ async def gpu_worker(
         try:
             await asyncio.wait_for(
                 sync(gpu_idx, all_gpu_data, losses_over_time, barrier, group),
-                timeout=300.0  # 5 minute timeout for sync operations
+                timeout=300.0
             )
             logger.debug(f"GPU {gpu_idx} completed sync operation")
         except asyncio.TimeoutError:
@@ -836,15 +872,7 @@ async def kmeans_manhattan(
         logger.trace(f"Running iteration {iter_idx}")
         
         # Check worker health at start of each iteration
-        for gpu_idx, worker in enumerate(workers):
-            if worker.done():
-                exception = worker.exception()
-                if exception:
-                    logger.error(f"GPU {gpu_idx} worker failed before iteration {iter_idx}: {exception}")
-                    raise RuntimeError(f"GPU worker {gpu_idx} failed") from exception
-                else:
-                    logger.error(f"GPU {gpu_idx} worker completed unexpectedly before iteration {iter_idx}")
-                    raise RuntimeError(f"GPU worker {gpu_idx} completed unexpectedly")
+        check_worker_health(workers, f"before iteration {iter_idx}")
         
         # Log queue states for observability
         queue_sizes = [gpu_data.queue.qsize() for gpu_data in all_gpu_data]
@@ -888,16 +916,8 @@ async def kmeans_manhattan(
             logger.trace(f"Running distributed batch {distributed_batch_idx}")
             
             # Periodic worker health check during long iterations
-            if distributed_batch_idx % 10 == 0:  # Check every 10 batches
-                for gpu_idx, worker in enumerate(workers):
-                    if worker.done():
-                        exception = worker.exception()
-                        if exception:
-                            logger.error(f"GPU {gpu_idx} worker failed during batch {distributed_batch_idx}: {exception}")
-                            raise RuntimeError(f"GPU worker {gpu_idx} failed") from exception
-                        else:
-                            logger.error(f"GPU {gpu_idx} worker completed unexpectedly during batch {distributed_batch_idx}")
-                            raise RuntimeError(f"GPU worker {gpu_idx} completed unexpectedly")
+            if distributed_batch_idx % 10 == 0:
+                check_worker_health(workers, f"during batch {distributed_batch_idx}")
 
             should_sync = (distributed_batch_idx % accumulation_size) == (
                 accumulation_size - 1
@@ -920,34 +940,16 @@ async def kmeans_manhattan(
                     f"Putting data on GPU {gpu_idx} with queue size {gpu_data.queue.qsize()}"
                 )
 
-                try:
-                    await asyncio.wait_for(
-                        gpu_data.queue.put(
-                            (
-                                gpu_minibatch[ActivationKeys.ROUTER_LOGITS],
-                                should_sync,
-                                save_idx,
-                            )
-                        ),
-                        timeout=30.0  # 30 second timeout for queue operations
-                    )
-                    logger.trace(f"Successfully queued data for GPU {gpu_idx}")
-                except asyncio.TimeoutError:
-                    logger.error(f"Timeout putting data on GPU {gpu_idx} queue - worker may have failed!")
-                    # Check if worker is still alive
-                    worker = workers[gpu_idx]
-                    if worker.done():
-                        exception = worker.exception()
-                        if exception:
-                            logger.error(f"GPU {gpu_idx} worker failed with exception: {exception}")
-                        else:
-                            logger.error(f"GPU {gpu_idx} worker completed unexpectedly")
-                    else:
-                        logger.error(f"GPU {gpu_idx} worker appears to be hanging")
-                    raise
-                except Exception as e:
-                    logger.error(f"Unexpected error putting data on GPU {gpu_idx} queue: {e}")
-                    raise
+                await safe_queue_put(
+                    gpu_data,
+                    (
+                        gpu_minibatch[ActivationKeys.ROUTER_LOGITS],
+                        should_sync,
+                        save_idx,
+                    ),
+                    gpu_idx,
+                    workers
+                )
 
         # intermittent validation during training
         if (
