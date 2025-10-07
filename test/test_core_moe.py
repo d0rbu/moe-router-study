@@ -27,14 +27,13 @@ class TestConvertRouterLogitsToPaths:
 
         # Check output shape
         batch_size, seq_len, num_experts = router_logits.shape
-        expected_shape = (batch_size, seq_len * num_experts)
+        expected_shape = (batch_size, seq_len, num_experts)
         assert_tensor_shape(result, expected_shape)
 
         # Check that exactly top_k experts are selected per position
-        result_reshaped = result.view(batch_size, seq_len, num_experts)
         for b in range(batch_size):
             for s in range(seq_len):
-                selected_experts = result_reshaped[b, s].sum().item()
+                selected_experts = result[b, s].sum().item()
                 assert selected_experts == top_k, (
                     f"Expected {top_k} experts, got {selected_experts}"
                 )
@@ -51,9 +50,8 @@ class TestConvertRouterLogitsToPaths:
         top_k = 2
         result = convert_router_logits_to_paths(router_logits, top_k)
 
-        # Reshape to check individual positions
-        result_reshaped = result.view(1, 1, 4)
-        selected_mask = result_reshaped[0, 0]  # Shape: (4,)
+        # Check individual positions (result is already unflattened)
+        selected_mask = result[0, 0]  # Shape: (4,)
 
         # Check that experts 1 and 3 are selected (indices with highest logits)
         assert selected_mask[1].item() == 1.0  # Expert 1 (highest logit: 5.0)
@@ -71,12 +69,11 @@ class TestConvertRouterLogitsToPaths:
             result = convert_router_logits_to_paths(router_logits, top_k)
 
             # Check shape
-            expected_shape = (1, 1 * 8)  # (batch_size, seq_len * num_experts)
+            expected_shape = (1, 1, 8)  # (batch_size, seq_len, num_experts)
             assert_tensor_shape(result, expected_shape)
 
             # Check that exactly top_k experts are selected
-            result_reshaped = result.view(1, 1, 8)
-            selected_count = result_reshaped[0, 0].sum().item()
+            selected_count = result[0, 0].sum().item()
             assert selected_count == top_k
 
     def test_multiple_batch_and_sequence(self):
@@ -90,14 +87,13 @@ class TestConvertRouterLogitsToPaths:
         result = convert_router_logits_to_paths(router_logits, top_k)
 
         # Check output shape
-        expected_shape = (batch_size, seq_len * num_experts)
+        expected_shape = (batch_size, seq_len, num_experts)
         assert_tensor_shape(result, expected_shape)
 
         # Check that each position has exactly top_k selected experts
-        result_reshaped = result.view(batch_size, seq_len, num_experts)
         for b in range(batch_size):
             for s in range(seq_len):
-                selected_count = result_reshaped[b, s].sum().item()
+                selected_count = result[b, s].sum().item()
                 assert selected_count == top_k
 
     def test_edge_case_top_k_equals_num_experts(self):
@@ -110,13 +106,12 @@ class TestConvertRouterLogitsToPaths:
         result = convert_router_logits_to_paths(router_logits, top_k)
 
         # All experts should be selected
-        result_reshaped = result.view(2, 3, 4)
         for b in range(2):
             for s in range(3):
-                selected_count = result_reshaped[b, s].sum().item()
+                selected_count = result[b, s].sum().item()
                 assert selected_count == 4
                 # All values should be 1
-                assert th.all(result_reshaped[b, s] == 1.0)
+                assert th.all(result[b, s] == 1.0)
 
     def test_edge_case_top_k_one(self):
         """Test when top_k is 1."""
@@ -128,14 +123,13 @@ class TestConvertRouterLogitsToPaths:
         result = convert_router_logits_to_paths(router_logits, top_k)
 
         # Only one expert should be selected per position
-        result_reshaped = result.view(2, 2, 5)
         for b in range(2):
             for s in range(2):
-                selected_count = result_reshaped[b, s].sum().item()
+                selected_count = result[b, s].sum().item()
                 assert selected_count == 1
                 # Exactly one value should be 1, others should be 0
-                assert th.sum(result_reshaped[b, s] == 1.0).item() == 1
-                assert th.sum(result_reshaped[b, s] == 0.0).item() == 4
+                assert th.sum(result[b, s] == 1.0).item() == 1
+                assert th.sum(result[b, s] == 0.0).item() == 4
 
     def test_output_dtype_and_device(self):
         """Test that output has correct dtype and device."""
@@ -202,9 +196,8 @@ class TestConvertRouterLogitsToPaths:
             assert result.dtype == dtype
 
             # Check basic functionality still works
-            result_reshaped = result.view(1, 2, 4)
             for s in range(2):
-                selected_count = result_reshaped[0, s].sum().item()
+                selected_count = result[0, s].sum().item()
                 assert selected_count == top_k
 
     @pytest.mark.parametrize(
@@ -225,14 +218,13 @@ class TestConvertRouterLogitsToPaths:
         result = convert_router_logits_to_paths(router_logits, top_k)
 
         # Check output shape
-        expected_shape = (batch_size, seq_len * num_experts)
+        expected_shape = (batch_size, seq_len, num_experts)
         assert_tensor_shape(result, expected_shape)
 
         # Check that each position has exactly top_k selected experts
-        result_reshaped = result.view(batch_size, seq_len, num_experts)
         for b in range(batch_size):
             for s in range(seq_len):
-                selected_count = result_reshaped[b, s].sum().item()
+                selected_count = result[b, s].sum().item()
                 assert selected_count == top_k
 
     def test_invalid_inputs(self):
@@ -254,7 +246,6 @@ class TestConvertRouterLogitsToPaths:
         result = convert_router_logits_to_paths(router_logits, top_k)
 
         # Should still select top_k experts (even if they're all zero)
-        result_reshaped = result.view(1, 2, 4)
         for s in range(2):
-            selected_count = result_reshaped[0, s].sum().item()
+            selected_count = result[0, s].sum().item()
             assert selected_count == top_k

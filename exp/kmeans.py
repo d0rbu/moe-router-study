@@ -695,12 +695,16 @@ async def kmeans_manhattan(
     )
 
     # Convert validation data to flat paths format (same as training data)
-    validation_data = convert_router_logits_to_paths(
-        validation_router_logits, top_k
-    ).to(dtype=th.float32, device="cpu")
-    init_activation_data = convert_router_logits_to_paths(
-        init_activation_logits, top_k
-    ).to(dtype=th.float32, device="cpu")
+    validation_data = (
+        convert_router_logits_to_paths(validation_router_logits, top_k)
+        .view(validation_router_logits.shape[0], -1)
+        .to(dtype=th.float32, device="cpu")
+    )
+    init_activation_data = (
+        convert_router_logits_to_paths(init_activation_logits, top_k)
+        .view(init_activation_logits.shape[0], -1)
+        .to(dtype=th.float32, device="cpu")
+    )
 
     logger.debug(
         f"Init activation data stats: "
