@@ -1,0 +1,22 @@
+#!/bin/bash
+
+# Local script for running router path entropy analysis
+# Usage: ./run_router_path_entropy_local.sh [experiment_name] [batch_size]
+
+# Set default values
+EXPERIMENT_NAME=${1:-"olmoe-i_lmsys_context_length=2048_tokens_per_file=2000"}
+BATCH_SIZE=${2:-10000}
+
+echo "Running router path entropy analysis locally..."
+echo "Experiment: $EXPERIMENT_NAME"
+echo "Batch size: $BATCH_SIZE"
+
+# Run the router path entropy analysis
+uv run viz/router_path_entropy.py router_path_entropy --experiment-name "$EXPERIMENT_NAME" --batch-size "$BATCH_SIZE"
+
+echo "Router path entropy analysis completed!"
+echo "Check the fig/ directory for generated plots:"
+echo "  - router_path_frequency.png"
+echo "  - router_path_coverage.png"
+echo "  - router_path_histogram.png"
+
