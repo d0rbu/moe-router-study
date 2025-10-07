@@ -29,6 +29,13 @@ def broadcast_variable_length_list[T](
     if kwargs is None:
         kwargs = {}
 
+    # Check if distributed is initialized
+    is_distributed = dist.is_available() and dist.is_initialized()
+
+    if not is_distributed:
+        # In non-distributed mode, just call the function directly
+        return list_fn(*args, **kwargs)
+
     # Broadcast the number of items first
     num_items = [None]
     if dist.get_rank() == 0:
@@ -109,19 +116,25 @@ class Activations:
         if self._total_tokens is not None:
             return self._total_tokens
 
+        is_distributed = dist.is_available() and dist.is_initialized()
+
         num_tokens = th.zeros(1, dtype=th.int32)
-        local_activation_filepath_iterator = islice(
-            self.activation_filepaths,
-            dist.get_rank(),  # start
-            len(self.activation_filepaths),  # stop
-            dist.get_world_size(),  # step
-        )
+        if is_distributed:
+            local_activation_filepath_iterator = islice(
+                self.activation_filepaths,
+                dist.get_rank(),  # start
+                len(self.activation_filepaths),  # stop
+                dist.get_world_size(),  # step
+            )
+        else:
+            local_activation_filepath_iterator = iter(self.activation_filepaths)
 
         for filepath in local_activation_filepath_iterator:
             activations = th.load(filepath, weights_only=False)
             num_tokens += activations[ActivationKeys.MLP_OUTPUT].shape[0]
 
-        dist.all_reduce(num_tokens, op=dist.ReduceOp.SUM)
+        if is_distributed:
+            dist.all_reduce(num_tokens, op=dist.ReduceOp.SUM)
         self._total_tokens = num_tokens.item()
 
         return self._total_tokens
@@ -301,9 +314,13 @@ class Activations:
             f"reshuffled-seed={seed}-tokens_per_file={tokens_per_file_in_reshuffled}"
         )
         activation_files_dir = os.path.join(activation_dir, shuffle_dirname)
-        if dist.get_rank() == 0:
+
+        # Handle both distributed and non-distributed execution
+        is_distributed = dist.is_available() and dist.is_initialized()
+        if not is_distributed or dist.get_rank() == 0:
             os.makedirs(activation_files_dir, exist_ok=True)
-        dist.barrier()
+        if is_distributed:
+            dist.barrier()
 
         activation_filepaths = cls.get_activation_filepaths(
             activation_files_dir, debug=debug
@@ -314,6 +331,13 @@ class Activations:
             return activation_filepaths
 
         # if we are here then there are no activation files
+        if not is_distributed:
+            raise RuntimeError(
+                f"No reshuffled activation files found at {activation_files_dir} "
+                "and cannot reshuffle in non-distributed mode. "
+                "Please run the activation reshuffling with multiple processes using torchrun or SLURM with --ntasks > 1."
+            )
+
         logger.info(
             f"Reshuffling activations from {activation_dir} to {activation_files_dir}"
         )
