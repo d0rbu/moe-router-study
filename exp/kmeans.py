@@ -34,16 +34,17 @@ from exp.training import get_experiment_name
 T = TypeVar("T")
 
 
-def check_worker_health(workers: dict[str, asyncio.Task], *, context: str) -> None:
+def check_worker_health(workers: dict[str, asyncio.Task], *, context: str = "") -> None:
     """Check if any workers have failed and raise appropriate exceptions."""
     for worker_name, worker in workers.items():
         if worker.done():
             exception = worker.exception()
+            context_str = f" [{context}]" if context else ""
             if exception:
-                logger.error(f"{worker_name} worker failed {context}: {exception}")
+                logger.error(f"{worker_name} worker failed{context_str}: {exception}")
                 raise RuntimeError(f"{worker_name} worker failed") from exception
             else:
-                logger.error(f"{worker_name} worker completed unexpectedly {context}")
+                logger.error(f"{worker_name} worker completed unexpectedly{context_str}")
                 raise RuntimeError(f"{worker_name} worker completed unexpectedly")
 
 
@@ -55,6 +56,9 @@ async def safe_await_with_worker_check[T](
     operation_name: str,
 ) -> T:
     """Safely await an operation with timeout and worker health checking on error."""
+    if workers is None:
+        workers = {}
+    
     try:
         result = await asyncio.wait_for(awaitable, timeout=timeout)
         logger.trace(f"Successfully completed {operation_name}")
@@ -62,16 +66,15 @@ async def safe_await_with_worker_check[T](
     except TimeoutError:
         logger.error(f"Timeout during {operation_name} - workers may have failed!")
         # Check if any workers have failed
-        if workers:
-            for worker_name, worker in workers.items():
-                if worker.done():
-                    exception = worker.exception()
-                    if exception:
-                        logger.error(f"{worker_name} worker failed with exception: {exception}")
-                    else:
-                        logger.error(f"{worker_name} worker completed unexpectedly")
+        for worker_name, worker in workers.items():
+            if worker.done():
+                exception = worker.exception()
+                if exception:
+                    logger.error(f"{worker_name} worker failed with exception: {exception}")
                 else:
-                    logger.error(f"{worker_name} worker appears to be hanging")
+                    logger.error(f"{worker_name} worker completed unexpectedly")
+            else:
+                logger.error(f"{worker_name} worker appears to be hanging")
         raise
     except Exception as e:
         logger.error(f"Unexpected error during {operation_name}: {e}")
@@ -520,7 +523,7 @@ async def gpu_worker(
 
         await safe_await_with_worker_check(
             sync(gpu_idx, all_gpu_data, losses_over_time, barrier, group),
-            workers=None,  # No other workers to check during sync
+            workers=None,  # Sync is internal to worker, can't check other workers
             timeout=300.0,
             operation_name=f"sync operation for GPU {gpu_idx}",
         )
@@ -885,7 +888,7 @@ async def kmeans_manhattan(
 
         # Check worker health at start of each iteration
         workers_dict = {f"GPU {i}": worker for i, worker in enumerate(workers)}
-        check_worker_health(workers_dict, context=f"before iteration {iter_idx}")
+        check_worker_health(workers_dict, context=f"iteration {iter_idx}")
 
         # Log queue states for observability
         queue_sizes = [gpu_data.queue.qsize() for gpu_data in all_gpu_data]
@@ -930,7 +933,7 @@ async def kmeans_manhattan(
 
             # Periodic worker health check during long iterations
             if distributed_batch_idx % 10 == 0:
-                check_worker_health(workers_dict, context=f"during batch {distributed_batch_idx}")
+                check_worker_health(workers_dict, context=f"batch {distributed_batch_idx}")
 
             should_sync = (distributed_batch_idx % accumulation_size) == (
                 accumulation_size - 1
