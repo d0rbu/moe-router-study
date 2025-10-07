@@ -89,8 +89,9 @@ class Activations:
         if not (dist.is_available() and dist.is_initialized()):
             raise RuntimeError(
                 "PyTorch distributed training is not initialized. "
-                "Please use `load_activations_and_init_dist()` instead of `Activations.load()` "
-                "to properly initialize distributed training from SLURM environment variables. "
+                "Ensure that PyTorch distributed training is initialized with "
+                "`dist.init_process_group`. You can use `load_activations_and_init_dist()` "
+                "to have this done automatically from SLURM environment variables. "
                 "This function handles both single and multi-process execution and ensures "
                 "proper distributed training setup."
             )
