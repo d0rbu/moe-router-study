@@ -251,8 +251,12 @@ async def sync(
 
         # (K)
         weights_total = all_weights.sum(dim=0)
-        # (N, K)
-        weights_proportion = all_weights / weights_total
+        # (N, K) - handle division by zero for empty centroids
+        weights_proportion = th.where(
+            weights_total.unsqueeze(0) > 0,
+            all_weights / weights_total.unsqueeze(0),
+            th.zeros_like(all_weights)
+        )
 
         # (K, D)
         new_centroids = (all_centroids * weights_proportion.unsqueeze(-1)).sum(dim=0)
