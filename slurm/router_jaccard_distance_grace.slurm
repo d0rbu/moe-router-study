@@ -29,4 +29,4 @@ export WORLD_SIZE=$SLURM_NTASKS
 cd $SCRATCH/moe-router-study
 
 # Run the router Jaccard distance analysis
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run viz/router_jaccard_distance.py router-jaccard-distance --model-name "olmoe-i" --dataset-name "lmsys" --context-length 2048 --tokens-per-file 100000 --batch-size 100000
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run viz/router_jaccard_distance.py router-jaccard-distance --model-name olmoe-i --dataset-name lmsys --context-length 2048 --tokens-per-file 100000 --batch-size 100000
