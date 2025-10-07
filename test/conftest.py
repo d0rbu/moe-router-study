@@ -1,9 +1,9 @@
 """Pytest configuration and shared fixtures for moe-router-study tests."""
 
+from collections.abc import Generator
 import os
-import tempfile
 from pathlib import Path
-from typing import Any, Generator
+import tempfile
 from unittest.mock import patch
 
 import pytest
@@ -52,15 +52,15 @@ def tiny_tokenizer():
                 if tokenize:
                     return [1, 2, 3]  # Mock token IDs
                 return "mock chat template output"
-            
+
             @property
             def pad_token(self):
                 return "<pad>"
-                
+
             @property
             def eos_token(self):
                 return "</s>"
-        
+
         return MockTokenizer()
 
 
@@ -83,13 +83,13 @@ def mock_dataset_path(temp_dir: Path):
 
 class TestConfig:
     """Test configuration constants."""
-    
+
     # Small tensor sizes for testing
     BATCH_SIZE = 2
     SEQ_LEN = 4
     HIDDEN_DIM = 8
     NUM_EXPERTS = 4
-    
+
     # Test model configurations
     TEST_MODEL_CONFIGS = {
         "test_model": {
@@ -108,10 +108,14 @@ def test_config():
 
 def pytest_configure(config):
     """Configure pytest with custom markers."""
-    config.addinivalue_line("markers", "slow: marks tests as slow (deselect with '-m \"not slow\"')")
+    config.addinivalue_line(
+        "markers", "slow: marks tests as slow (deselect with '-m \"not slow\"')"
+    )
     config.addinivalue_line("markers", "integration: marks tests as integration tests")
     config.addinivalue_line("markers", "unit: marks tests as unit tests")
-    config.addinivalue_line("markers", "requires_network: marks tests that require network access")
+    config.addinivalue_line(
+        "markers", "requires_network: marks tests that require network access"
+    )
     config.addinivalue_line("markers", "requires_gpu: marks tests that require GPU")
 
 
@@ -121,17 +125,20 @@ def pytest_collection_modifyitems(config, items):
         # Mark slow tests
         if "slow" in item.name or "integration" in item.name:
             item.add_marker(pytest.mark.slow)
-        
+
         # Mark integration tests
         if "integration" in item.name or "test_integration" in str(item.fspath):
             item.add_marker(pytest.mark.integration)
         else:
             item.add_marker(pytest.mark.unit)
-        
+
         # Mark network-dependent tests
-        if any(keyword in item.name.lower() for keyword in ["network", "download", "fetch", "hub"]):
+        if any(
+            keyword in item.name.lower()
+            for keyword in ["network", "download", "fetch", "hub"]
+        ):
             item.add_marker(pytest.mark.requires_network)
-        
+
         # Mark GPU-dependent tests
         if any(keyword in item.name.lower() for keyword in ["gpu", "cuda"]):
             item.add_marker(pytest.mark.requires_gpu)
