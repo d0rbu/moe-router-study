@@ -147,9 +147,23 @@ async def compute_centroid_from_assignment(
     num_assigned = centroid_mask.sum()
 
     if num_assigned == 0:
+        # Debug: Log when we have empty centroids
+        logger.trace(
+            f"Centroid {centroid_idx} has no assigned points, returning zero vector"
+        )
         return th.zeros_like(data[0]), num_assigned
 
-    return data[centroid_mask].mean(dim=0), num_assigned
+    new_centroid = data[centroid_mask].mean(dim=0)
+
+    # Debug: Check for NaN in computed centroid
+    if th.isnan(new_centroid).any():
+        logger.error(f"NaN detected in centroid {centroid_idx} computation!")
+        logger.error(f"num_assigned: {num_assigned}, data shape: {data.shape}")
+        logger.error(
+            f"assigned data stats: min={data[centroid_mask].min()}, max={data[centroid_mask].max()}"
+        )
+
+    return new_centroid, num_assigned
 
 
 async def kmeans_step(
@@ -251,6 +265,14 @@ async def sync(
 
         # (K)
         weights_total = all_weights.sum(dim=0)
+
+        # Debug: Check for empty centroids
+        empty_centroids = (weights_total == 0).sum().item()
+        if empty_centroids > 0:
+            logger.debug(
+                f"Found {empty_centroids} empty centroids out of {len(weights_total)}"
+            )
+
         # (N, K) - handle division by zero for empty centroids
         weights_proportion = th.where(
             weights_total.unsqueeze(0) > 0,
@@ -258,8 +280,41 @@ async def sync(
             th.zeros_like(all_weights),
         )
 
+        # Debug: Check for NaN values in weights_proportion
+        if th.isnan(weights_proportion).any():
+            logger.error(
+                f"NaN values found in weights_proportion! weights_total: {weights_total}"
+            )
+            logger.error(f"all_weights: {all_weights}")
+
         # (K, D)
         new_centroids = (all_centroids * weights_proportion.unsqueeze(-1)).sum(dim=0)
+
+        # Debug: Check for NaN values in new_centroids
+        nan_centroids = th.isnan(new_centroids).any(dim=1).sum().item()
+        if nan_centroids > 0:
+            logger.error(
+                f"Found {nan_centroids} centroids with NaN values after aggregation!"
+            )
+            logger.error(f"Centroid norms: {th.norm(new_centroids, dim=1)}")
+            logger.error(f"weights_total: {weights_total}")
+            logger.error(f"weights_proportion: {weights_proportion}")
+
+        # Debug: Log centroid statistics
+        centroid_norms = th.norm(new_centroids, dim=1)
+        zero_norm_centroids = (centroid_norms == 0).sum().item()
+        if zero_norm_centroids > 0:
+            logger.debug(f"Found {zero_norm_centroids} centroids with zero norm")
+            logger.debug(
+                f"Centroid norm stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}"
+            )
+
+        # Additional check: ensure centroids are finite
+        if not th.isfinite(new_centroids).all():
+            logger.error("Non-finite values detected in centroids!")
+            inf_centroids = th.isinf(new_centroids).any(dim=1).sum().item()
+            logger.error(f"Centroids with inf values: {inf_centroids}")
+            logger.error(f"Centroids with nan values: {nan_centroids}")
 
         # (K)
         loss_proportion = all_weights.sum(dim=1) / weights_total.sum()
@@ -693,6 +748,23 @@ async def kmeans_manhattan(
                 .view(current_shape)
                 .to(device=current_device, dtype=current_dtype)
             )
+
+            # Debug: Check initialized centroids for issues
+            initialized_centroids = gpu_data.dirty_data.centroid_sets[k_idx]
+            if th.isnan(initialized_centroids).any():
+                logger.error(f"NaN values in initialized centroids for k={k}!")
+            if not th.isfinite(initialized_centroids).all():
+                logger.error(f"Non-finite values in initialized centroids for k={k}!")
+
+            centroid_norms = th.norm(initialized_centroids, dim=1)
+            zero_norm_count = (centroid_norms == 0).sum().item()
+            if zero_norm_count > 0:
+                logger.debug(
+                    f"Initialized centroids for k={k}: {zero_norm_count} have zero norm"
+                )
+                logger.debug(
+                    f"Centroid norm stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}"
+                )
 
     for centroid_set in all_gpu_data[0].dirty_data.centroid_sets:
         _is_valid, _stats = validate_centroids(centroid_set.cpu())
