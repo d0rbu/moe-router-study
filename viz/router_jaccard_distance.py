@@ -9,23 +9,48 @@ import matplotlib.pyplot as plt
 import torch as th
 
 from core.moe import convert_router_logits_to_paths
-from exp.activations import Activations
+from exp.activations import load_activations_and_init_dist
 from exp.get_activations import ActivationKeys
 from viz import FIGURE_DIR
 
 
 async def _router_jaccard_distance_async(
-    experiment_name: str, batch_size: int = 4096
+    model_name: str = "olmoe-i",
+    dataset_name: str = "lmsys",
+    tokens_per_file: int = 5_000,
+    context_length: int = 2048,
+    batch_size: int = 4096,
+    reshuffled_tokens_per_file: int = 100000,
+    num_workers: int = 8,
+    debug: bool = False,
 ) -> None:
     """Async implementation of Jaccard similarity analysis."""
-    logger.info(f"Loading activations for experiment: {experiment_name}")
+    logger.info(f"Loading activations for model: {model_name}, dataset: {dataset_name}")
     logger.debug(f"Batch size: {batch_size}")
 
-    assert experiment_name, "Experiment name cannot be empty"
+    assert model_name, "Model name cannot be empty"
+    assert dataset_name, "Dataset name cannot be empty"
+    assert tokens_per_file > 0, (
+        f"Tokens per file must be positive, got {tokens_per_file}"
+    )
+    assert context_length > 0, f"Context length must be positive, got {context_length}"
     assert batch_size > 0, f"Batch size must be positive, got {batch_size}"
 
-    logger.debug("Loading activations...")
-    activations = await Activations.load(experiment_name=experiment_name)
+    logger.debug("Loading activations and initializing distributed...")
+    (
+        activations,
+        activation_dims,
+        _gpu_process_group,
+    ) = await load_activations_and_init_dist(
+        model_name=model_name,
+        dataset_name=dataset_name,
+        tokens_per_file=tokens_per_file,
+        reshuffled_tokens_per_file=reshuffled_tokens_per_file,
+        submodule_names=[ActivationKeys.ROUTER_LOGITS],
+        context_length=context_length,
+        num_workers=num_workers,
+        debug=debug,
+    )
     logger.debug("Activations loaded successfully")
 
     # Initialize running counts for memory-efficient Jaccard computation
@@ -537,20 +562,47 @@ async def _router_jaccard_distance_async(
 
 
 @arguably.command
-def router_jaccard_distance(*, experiment_name: str, batch_size: int = 4096) -> None:
+def router_jaccard_distance(
+    *,
+    model_name: str = "olmoe-i",
+    dataset_name: str = "lmsys",
+    tokens_per_file: int = 5_000,
+    context_length: int = 2048,
+    batch_size: int = 4096,
+    reshuffled_tokens_per_file: int = 100000,
+    num_workers: int = 8,
+    debug: bool = False,
+) -> None:
     """Compute Jaccard similarity between expert activations.
 
     This script:
-    1. Loads router activations using the Activations class
+    1. Loads router activations using load_activations_and_init_dist
     2. Converts router logits to binary activations via top-k
     3. Computes Jaccard similarity for each pair of experts
     4. Generates matrix visualizations and bar plots
 
     Args:
-        experiment_name: Name of the experiment to analyze.
+        model_name: Name of the model (e.g., "olmoe-i").
+        dataset_name: Name of the dataset (e.g., "lmsys").
+        tokens_per_file: Number of tokens per activation file.
+        context_length: Context length used during activation collection.
         batch_size: Number of samples to process per batch (default: 4096).
+        reshuffled_tokens_per_file: Number of tokens per reshuffled file (default: 100000).
+        num_workers: Number of worker processes for data loading (default: 8).
+        debug: Enable debug logging (default: False).
     """
-    asyncio.run(_router_jaccard_distance_async(experiment_name, batch_size))
+    asyncio.run(
+        _router_jaccard_distance_async(
+            model_name=model_name,
+            dataset_name=dataset_name,
+            tokens_per_file=tokens_per_file,
+            context_length=context_length,
+            batch_size=batch_size,
+            reshuffled_tokens_per_file=reshuffled_tokens_per_file,
+            num_workers=num_workers,
+            debug=debug,
+        )
+    )
 
 
 if __name__ == "__main__":
