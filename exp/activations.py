@@ -85,6 +85,16 @@ class Activations:
         num_workers: int = 8,
         debug: bool = False,
     ) -> "Activations":
+        # Check if distributed training is initialized
+        if not (dist.is_available() and dist.is_initialized()):
+            raise RuntimeError(
+                "PyTorch distributed training is not initialized. "
+                "Please use `load_activations_and_init_dist()` instead of `Activations.load()` "
+                "to properly initialize distributed training from SLURM environment variables. "
+                "This function handles both single and multi-process execution and ensures "
+                "proper distributed training setup."
+            )
+        
         activation_dir = os.path.join(OUTPUT_DIR, experiment_name, ACTIVATION_DIRNAME)
 
         cls.device = device
