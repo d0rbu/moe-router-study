@@ -16,6 +16,18 @@ from tqdm import tqdm
 import yaml
 
 from core.async_utils import handle_exceptions
+from core.moe import convert_router_logits_to_paths
+from core.training import exponential_to_linear_save_steps
+from exp import OUTPUT_DIR
+from exp.activations import Activations, load_activations_and_init_dist
+from exp.get_activations import ActivationKeys
+from exp.kmeans_validation import (
+    VALIDATION_SIZE_K_PROPORTION,
+    WARNING_WINDOW_SIZE,
+    check_monotonic_increasing_window,
+    validate_centroid_distribution,
+)
+from exp.training import get_experiment_name
 
 
 def check_worker_health(workers: list[asyncio.Task], context: str) -> None:
@@ -31,13 +43,17 @@ def check_worker_health(workers: list[asyncio.Task], context: str) -> None:
                 raise RuntimeError(f"GPU worker {gpu_idx} completed unexpectedly")
 
 
-async def safe_queue_put(gpu_data, item, gpu_idx: int, workers: list[asyncio.Task], timeout: float = 30.0):
+async def safe_queue_put(
+    gpu_data, item, gpu_idx: int, workers: list[asyncio.Task], timeout: float = 30.0
+):
     """Safely put an item in a GPU queue with timeout and worker health checking."""
     try:
         await asyncio.wait_for(gpu_data.queue.put(item), timeout=timeout)
         logger.trace(f"Successfully queued data for GPU {gpu_idx}")
-    except asyncio.TimeoutError:
-        logger.error(f"Timeout putting data on GPU {gpu_idx} queue - worker may have failed!")
+    except TimeoutError:
+        logger.error(
+            f"Timeout putting data on GPU {gpu_idx} queue - worker may have failed!"
+        )
         # Check if worker is still alive
         worker = workers[gpu_idx]
         if worker.done():
@@ -52,18 +68,6 @@ async def safe_queue_put(gpu_data, item, gpu_idx: int, workers: list[asyncio.Tas
     except Exception as e:
         logger.error(f"Unexpected error putting data on GPU {gpu_idx} queue: {e}")
         raise
-from core.moe import convert_router_logits_to_paths
-from core.training import exponential_to_linear_save_steps
-from exp import OUTPUT_DIR
-from exp.activations import Activations, load_activations_and_init_dist
-from exp.get_activations import ActivationKeys
-from exp.kmeans_validation import (
-    VALIDATION_SIZE_K_PROPORTION,
-    WARNING_WINDOW_SIZE,
-    check_monotonic_increasing_window,
-    validate_centroid_distribution,
-)
-from exp.training import get_experiment_name
 
 
 @dataclass
@@ -423,8 +427,10 @@ async def gpu_worker(
         try:
             queue_item = await asyncio.wait_for(gpu_data.queue.get(), timeout=60.0)
             logger.trace(f"GPU {gpu_idx} picked up item from queue")
-        except asyncio.TimeoutError:
-            logger.warning(f"GPU {gpu_idx} timed out waiting for queue item - may indicate main loop hang")
+        except TimeoutError:
+            logger.warning(
+                f"GPU {gpu_idx} timed out waiting for queue item - may indicate main loop hang"
+            )
             continue
 
         if queue_item is None:
@@ -433,7 +439,9 @@ async def gpu_worker(
 
         router_logits, should_sync, save_idx = queue_item
 
-        logger.trace(f"GPU {gpu_idx} received queue item (should_sync={should_sync}, save_idx={save_idx})")
+        logger.trace(
+            f"GPU {gpu_idx} received queue item (should_sync={should_sync}, save_idx={save_idx})"
+        )
 
         # assert that if save_idx is not None, then should_sync is also true
         if save_idx is not None:
@@ -505,10 +513,10 @@ async def gpu_worker(
         try:
             await asyncio.wait_for(
                 sync(gpu_idx, all_gpu_data, losses_over_time, barrier, group),
-                timeout=300.0
+                timeout=300.0,
             )
             logger.debug(f"GPU {gpu_idx} completed sync operation")
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error(f"GPU {gpu_idx} sync operation timed out after 5 minutes!")
             raise
         except Exception as e:
@@ -870,14 +878,14 @@ async def kmeans_manhattan(
     for iter_idx in iterator:
         # process data in batches, parallelized over devices and nodes
         logger.trace(f"Running iteration {iter_idx}")
-        
+
         # Check worker health at start of each iteration
         check_worker_health(workers, f"before iteration {iter_idx}")
-        
+
         # Log queue states for observability
         queue_sizes = [gpu_data.queue.qsize() for gpu_data in all_gpu_data]
         logger.debug(f"Iteration {iter_idx} starting - Queue sizes: {queue_sizes}")
-        
+
         # skip over the first validation_size data points for validation
         minibatch_iterator = activations(
             batch_size=minibatch_size, start_idx=validation_size
@@ -914,7 +922,7 @@ async def kmeans_manhattan(
             concurrent_minibatch_iterator
         ):
             logger.trace(f"Running distributed batch {distributed_batch_idx}")
-            
+
             # Periodic worker health check during long iterations
             if distributed_batch_idx % 10 == 0:
                 check_worker_health(workers, f"during batch {distributed_batch_idx}")
@@ -933,9 +941,9 @@ async def kmeans_manhattan(
             logger.trace(f"Effective step index: {effective_step_idx}")
             logger.trace(f"Save index: {save_idx}")
 
-            for gpu_idx, (gpu_data, gpu_minibatch) in enumerate(zip(
-                all_gpu_data, gpu_minibatches, strict=False
-            )):
+            for gpu_idx, (gpu_data, gpu_minibatch) in enumerate(
+                zip(all_gpu_data, gpu_minibatches, strict=False)
+            ):
                 logger.trace(
                     f"Putting data on GPU {gpu_idx} with queue size {gpu_data.queue.qsize()}"
                 )
@@ -948,7 +956,7 @@ async def kmeans_manhattan(
                         save_idx,
                     ),
                     gpu_idx,
-                    workers
+                    workers,
                 )
 
         # intermittent validation during training
