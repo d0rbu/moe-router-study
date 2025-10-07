@@ -30,7 +30,6 @@ from exp.kmeans_validation import (
 )
 from exp.training import get_experiment_name
 
-
 T = TypeVar("T")
 
 
@@ -58,11 +57,13 @@ async def safe_await_with_worker_check[T](
     """Safely await an operation with timeout and worker health checking on error."""
     if workers is None:
         workers = {}
-    
+
     try:
         result = await asyncio.wait_for(awaitable, timeout=timeout)
         if operation_name:
             logger.trace(f"Successfully completed {operation_name}")
+        else:
+            logger.trace("Successfully completed")
         return result
     except TimeoutError:
         if operation_name:
