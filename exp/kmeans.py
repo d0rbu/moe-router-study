@@ -255,7 +255,7 @@ async def sync(
         weights_proportion = th.where(
             weights_total.unsqueeze(0) > 0,
             all_weights / weights_total.unsqueeze(0),
-            th.zeros_like(all_weights)
+            th.zeros_like(all_weights),
         )
 
         # (K, D)
