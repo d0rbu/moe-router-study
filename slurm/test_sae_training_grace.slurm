@@ -29,4 +29,4 @@ export WORLD_SIZE=$SLURM_NTASKS
 cd $SCRATCH/moe-router-study
 
 # Run the distributed job
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/sae.py main --log-level TRACE --num-workers 16 --trainers-per-gpu 2 --expansion-factor 16,32,64 --k 160,320,640 --layer 6,7,8,9 --tokens-per-file 100000 --reshuffled-tokens-per-file 100000
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/sae.py main --log-level DEBUG --num-workers 16 --trainers-per-gpu 2 --expansion-factor 16 --k 160 --layer 6 --tokens-per-file 100000 --reshuffled-tokens-per-file 100000
