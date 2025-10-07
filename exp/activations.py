@@ -94,7 +94,7 @@ class Activations:
                 "This function handles both single and multi-process execution and ensures "
                 "proper distributed training setup."
             )
-        
+
         activation_dir = os.path.join(OUTPUT_DIR, experiment_name, ACTIVATION_DIRNAME)
 
         cls.device = device

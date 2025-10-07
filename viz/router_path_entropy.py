@@ -151,12 +151,18 @@ async def _router_path_entropy_async(
     # Input validation
     assert model_name, "Model name cannot be empty"
     assert dataset_name, "Dataset name cannot be empty"
-    assert tokens_per_file > 0, f"Tokens per file must be positive, got {tokens_per_file}"
+    assert tokens_per_file > 0, (
+        f"Tokens per file must be positive, got {tokens_per_file}"
+    )
     assert context_length > 0, f"Context length must be positive, got {context_length}"
     assert batch_size > 0, f"Batch size must be positive, got {batch_size}"
 
     logger.debug("Loading activations and initializing distributed...")
-    activations, activation_dims, _gpu_process_group = await load_activations_and_init_dist(
+    (
+        activations,
+        activation_dims,
+        _gpu_process_group,
+    ) = await load_activations_and_init_dist(
         model_name=model_name,
         dataset_name=dataset_name,
         tokens_per_file=tokens_per_file,
@@ -485,16 +491,18 @@ def router_path_entropy(
         num_workers: Number of worker processes for data loading (default: 8).
         debug: Enable debug logging (default: False).
     """
-    asyncio.run(_router_path_entropy_async(
-        model_name=model_name,
-        dataset_name=dataset_name,
-        tokens_per_file=tokens_per_file,
-        context_length=context_length,
-        batch_size=batch_size,
-        reshuffled_tokens_per_file=reshuffled_tokens_per_file,
-        num_workers=num_workers,
-        debug=debug,
-    ))
+    asyncio.run(
+        _router_path_entropy_async(
+            model_name=model_name,
+            dataset_name=dataset_name,
+            tokens_per_file=tokens_per_file,
+            context_length=context_length,
+            batch_size=batch_size,
+            reshuffled_tokens_per_file=reshuffled_tokens_per_file,
+            num_workers=num_workers,
+            debug=debug,
+        )
+    )
 
 
 if __name__ == "__main__":
