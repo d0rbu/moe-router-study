@@ -22,13 +22,13 @@ async def _router_correlations_async(
     logger.debug("Parsing experiment name...")
     experiment_params = parse_experiment_name(experiment_name)
     logger.debug(f"Parsed experiment parameters: {experiment_params}")
-    
+
     # Extract required parameters with defaults
-    model_name = experiment_params["model_name"]
-    dataset_name = experiment_params["dataset_name"]
-    tokens_per_file = experiment_params.get("tokens_per_file", 100000)
-    context_length = experiment_params.get("context_length", 2048)
-    
+    model_name = str(experiment_params["model_name"])
+    dataset_name = str(experiment_params["dataset_name"])
+    tokens_per_file = int(experiment_params.get("tokens_per_file", 100000))
+    context_length = int(experiment_params.get("context_length", 2048))
+
     # Use default values for other parameters
     reshuffled_tokens_per_file = 100000  # Default value used in other scripts
     submodule_names = [ActivationKeys.ROUTER_LOGITS]
@@ -36,7 +36,11 @@ async def _router_correlations_async(
     debug = False
 
     logger.debug("Loading activations and initializing distributed...")
-    activations, activation_dims, _gpu_process_group = await load_activations_and_init_dist(
+    (
+        activations,
+        activation_dims,
+        _gpu_process_group,
+    ) = await load_activations_and_init_dist(
         model_name=model_name,
         dataset_name=dataset_name,
         tokens_per_file=tokens_per_file,

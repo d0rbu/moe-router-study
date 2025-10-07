@@ -40,61 +40,62 @@ def get_experiment_name(model_name: str, dataset_name: str, **kwargs) -> str:
 
 def parse_experiment_name(experiment_name: str) -> dict[str, str | int]:
     """Parse an experiment name back into its components.
-    
+
     Args:
         experiment_name: Experiment name in format "model_dataset_param1=value1_param2=value2..."
-        
+
     Returns:
         Dictionary with parsed components including model_name, dataset_name, and other parameters
     """
     # Handle hashed experiment names
-    if len(experiment_name) == 64 and all(c in '0123456789abcdef' for c in experiment_name):
+    if len(experiment_name) == 64 and all(
+        c in "0123456789abcdef" for c in experiment_name
+    ):
         raise ValueError(
             f"Cannot parse hashed experiment name: {experiment_name}. "
             "The original experiment name was too long and was hashed."
         )
-    
-    parts = experiment_name.split('_')
-    
+
+    parts = experiment_name.split("_")
+
     # Find the first part that contains '=' to separate model_dataset from parameters
     param_start_idx = None
     for i, part in enumerate(parts):
-        if '=' in part:
+        if "=" in part:
             param_start_idx = i
             break
-    
+
     if param_start_idx is None:
         # No parameters, just model_dataset
         if len(parts) < 2:
             raise ValueError(f"Invalid experiment name format: {experiment_name}")
-        return {
-            "model_name": parts[0],
-            "dataset_name": "_".join(parts[1:])
-        }
-    
+        return {"model_name": parts[0], "dataset_name": "_".join(parts[1:])}
+
     # Split into model_dataset and parameters
     model_dataset_parts = parts[:param_start_idx]
     param_parts = parts[param_start_idx:]
-    
+
     if len(model_dataset_parts) < 2:
         raise ValueError(f"Invalid experiment name format: {experiment_name}")
-    
+
     result = {
         "model_name": model_dataset_parts[0],
-        "dataset_name": "_".join(model_dataset_parts[1:])
+        "dataset_name": "_".join(model_dataset_parts[1:]),
     }
-    
+
     # Parse parameters
     for param_part in param_parts:
-        if '=' not in param_part:
-            raise ValueError(f"Invalid parameter format in experiment name: {param_part}")
-        
-        key, value = param_part.split('=', 1)
-        
+        if "=" not in param_part:
+            raise ValueError(
+                f"Invalid parameter format in experiment name: {param_part}"
+            )
+
+        key, value = param_part.split("=", 1)
+
         # Try to convert to int if possible
         try:
             result[key] = int(value)
         except ValueError:
             result[key] = value
-    
+
     return result
