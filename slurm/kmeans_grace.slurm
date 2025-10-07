@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1                      # Total number of tasks (processes) across all nodes
 #SBATCH --ntasks-per-node=1             # Number of tasks per node
 #SBATCH --cpus-per-task=16              # Number of CPUs per task
-#SBATCH --mem=2128G                      # Request 128GB per node
+#SBATCH --mem=128G                      # Request 128GB per node
 #SBATCH --output=kmeans.%j              # Send stdout/err to "kmeans.[jobID]"
 #SBATCH --error=kmeans.%j.err           # Send stderr to separate file
 #SBATCH --gres=gpu:a100:2               # Request 2 A100 GPUs per node
