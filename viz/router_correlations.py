@@ -6,19 +6,42 @@ from loguru import logger
 import matplotlib.pyplot as plt
 import torch as th
 
-from exp.activations import Activations
+from exp.activations import load_activations_and_init_dist
 from exp.get_activations import ActivationKeys
 from viz import FIGURE_DIR
 
 
 async def _router_correlations_async(
-    experiment_name: str, batch_size: int = 4096
+    model_name: str,
+    dataset_name: str,
+    tokens_per_file: int,
+    context_length: int,
+    batch_size: int = 4096,
+    reshuffled_tokens_per_file: int = 100000,
+    num_workers: int = 8,
+    debug: bool = False,
 ) -> None:
     """Async implementation of router correlation analysis."""
-    logger.info(f"Loading activations for experiment: {experiment_name}")
+    logger.info(f"Loading activations for model: {model_name}, dataset: {dataset_name}")
 
-    # Load activations using the Activations class
-    activations = await Activations.load(experiment_name=experiment_name)
+    # Input validation
+    assert model_name, "Model name cannot be empty"
+    assert dataset_name, "Dataset name cannot be empty"
+    assert tokens_per_file > 0, f"Tokens per file must be positive, got {tokens_per_file}"
+    assert context_length > 0, f"Context length must be positive, got {context_length}"
+    assert batch_size > 0, f"Batch size must be positive, got {batch_size}"
+
+    logger.debug("Loading activations and initializing distributed...")
+    activations, activation_dims, _gpu_process_group = await load_activations_and_init_dist(
+        model_name=model_name,
+        dataset_name=dataset_name,
+        tokens_per_file=tokens_per_file,
+        reshuffled_tokens_per_file=reshuffled_tokens_per_file,
+        submodule_names=[ActivationKeys.ROUTER_LOGITS],
+        context_length=context_length,
+        num_workers=num_workers,
+        debug=debug,
+    )
 
     activated_experts_collection = []
     top_k: int | None = None
@@ -171,20 +194,45 @@ async def _router_correlations_async(
 
 
 @arguably.command
-def router_correlations(experiment_name: str, batch_size: int = 4096) -> None:
+def router_correlations(
+    *,
+    model_name: str,
+    dataset_name: str,
+    tokens_per_file: int,
+    context_length: int,
+    batch_size: int = 4096,
+    reshuffled_tokens_per_file: int = 100000,
+    num_workers: int = 8,
+    debug: bool = False,
+) -> None:
     """Generate router correlation plots for an experiment.
 
     This script:
-    1. Loads router activations using the Activations class
+    1. Loads router activations using load_activations_and_init_dist
     2. Computes correlations between expert activations across layers
     3. Generates correlation matrices and visualizations
     4. Analyzes cross-layer correlations
 
     Args:
-        experiment_name: Name of the experiment to analyze.
+        model_name: Name of the model (e.g., "olmoe-i").
+        dataset_name: Name of the dataset (e.g., "lmsys").
+        tokens_per_file: Number of tokens per activation file.
+        context_length: Context length used during activation collection.
         batch_size: Number of samples to process per batch (default: 4096).
+        reshuffled_tokens_per_file: Number of tokens per reshuffled file (default: 100000).
+        num_workers: Number of worker processes for data loading (default: 8).
+        debug: Enable debug logging (default: False).
     """
-    asyncio.run(_router_correlations_async(experiment_name, batch_size))
+    asyncio.run(_router_correlations_async(
+        model_name=model_name,
+        dataset_name=dataset_name,
+        tokens_per_file=tokens_per_file,
+        context_length=context_length,
+        batch_size=batch_size,
+        reshuffled_tokens_per_file=reshuffled_tokens_per_file,
+        num_workers=num_workers,
+        debug=debug,
+    ))
 
 
 if __name__ == "__main__":

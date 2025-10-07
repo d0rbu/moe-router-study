@@ -9,7 +9,7 @@ from loguru import logger
 import matplotlib.pyplot as plt
 import torch as th
 
-from exp.activations import Activations
+from exp.activations import load_activations_and_init_dist
 from exp.get_activations import ActivationKeys
 from viz import FIGURE_DIR
 
@@ -135,19 +135,37 @@ def compute_gini_coefficient(frequencies: th.Tensor) -> float:
 
 
 async def _router_path_entropy_async(
-    experiment_name: str, batch_size: int = 4096
+    model_name: str,
+    dataset_name: str,
+    tokens_per_file: int,
+    context_length: int,
+    batch_size: int = 4096,
+    reshuffled_tokens_per_file: int = 100000,
+    num_workers: int = 8,
+    debug: bool = False,
 ) -> None:
     """Async implementation of router path entropy analysis."""
-    logger.info(f"Loading activations for experiment: {experiment_name}")
+    logger.info(f"Loading activations for model: {model_name}, dataset: {dataset_name}")
     logger.debug(f"Batch size: {batch_size}")
 
     # Input validation
-    assert experiment_name, "Experiment name cannot be empty"
+    assert model_name, "Model name cannot be empty"
+    assert dataset_name, "Dataset name cannot be empty"
+    assert tokens_per_file > 0, f"Tokens per file must be positive, got {tokens_per_file}"
+    assert context_length > 0, f"Context length must be positive, got {context_length}"
     assert batch_size > 0, f"Batch size must be positive, got {batch_size}"
 
-    # Load activations using the Activations class
-    logger.debug("Loading activations...")
-    activations = await Activations.load(experiment_name=experiment_name)
+    logger.debug("Loading activations and initializing distributed...")
+    activations, activation_dims, _gpu_process_group = await load_activations_and_init_dist(
+        model_name=model_name,
+        dataset_name=dataset_name,
+        tokens_per_file=tokens_per_file,
+        reshuffled_tokens_per_file=reshuffled_tokens_per_file,
+        submodule_names=[ActivationKeys.ROUTER_LOGITS],
+        context_length=context_length,
+        num_workers=num_workers,
+        debug=debug,
+    )
     logger.debug("Activations loaded successfully")
 
     path_counter: Counter[tuple[int, ...]] = Counter()
@@ -438,20 +456,45 @@ async def _router_path_entropy_async(
 
 
 @arguably.command
-def router_path_entropy(*, experiment_name: str, batch_size: int = 4096) -> None:
+def router_path_entropy(
+    *,
+    model_name: str,
+    dataset_name: str,
+    tokens_per_file: int,
+    context_length: int,
+    batch_size: int = 4096,
+    reshuffled_tokens_per_file: int = 100000,
+    num_workers: int = 8,
+    debug: bool = False,
+) -> None:
     """Analyze routing path entropy and distribution for an experiment.
 
     This script:
-    1. Loads router activations using the Activations class
+    1. Loads router activations using load_activations_and_init_dist
     2. Converts router logits to binary activations via top-k
     3. Hashes the complete routing path for each token across all layers
     4. Measures the entropy and non-uniformity of the path distribution
 
     Args:
-        experiment_name: Name of the experiment to analyze.
+        model_name: Name of the model (e.g., "olmoe-i").
+        dataset_name: Name of the dataset (e.g., "lmsys").
+        tokens_per_file: Number of tokens per activation file.
+        context_length: Context length used during activation collection.
         batch_size: Number of samples to process per batch (default: 4096).
+        reshuffled_tokens_per_file: Number of tokens per reshuffled file (default: 100000).
+        num_workers: Number of worker processes for data loading (default: 8).
+        debug: Enable debug logging (default: False).
     """
-    asyncio.run(_router_path_entropy_async(experiment_name, batch_size))
+    asyncio.run(_router_path_entropy_async(
+        model_name=model_name,
+        dataset_name=dataset_name,
+        tokens_per_file=tokens_per_file,
+        context_length=context_length,
+        batch_size=batch_size,
+        reshuffled_tokens_per_file=reshuffled_tokens_per_file,
+        num_workers=num_workers,
+        debug=debug,
+    ))
 
 
 if __name__ == "__main__":
