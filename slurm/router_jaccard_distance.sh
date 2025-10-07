@@ -12,7 +12,7 @@ echo "Experiment: $EXPERIMENT_NAME"
 echo "Batch size: $BATCH_SIZE"
 
 # Run the router Jaccard distance analysis
-uv run viz/router_jaccard_distance.py router_jaccard_distance --experiment-name "$EXPERIMENT_NAME" --batch-size "$BATCH_SIZE"
+uv run viz/router_jaccard_distance.py router-jaccard-distance --experiment-name "$EXPERIMENT_NAME" --batch-size "$BATCH_SIZE"
 
 echo "Router Jaccard distance analysis completed!"
 echo "Check the fig/ directory for generated plots:"
