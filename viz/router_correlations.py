@@ -6,8 +6,9 @@ from loguru import logger
 import matplotlib.pyplot as plt
 import torch as th
 
-from exp.activations import Activations
+from exp.activations import load_activations_and_init_dist
 from exp.get_activations import ActivationKeys
+from exp.training import parse_experiment_name
 from viz import FIGURE_DIR
 
 
@@ -17,8 +18,34 @@ async def _router_correlations_async(
     """Async implementation of router correlation analysis."""
     logger.info(f"Loading activations for experiment: {experiment_name}")
 
-    # Load activations using the Activations class
-    activations = await Activations.load(experiment_name=experiment_name)
+    # Parse experiment name to get parameters
+    logger.debug("Parsing experiment name...")
+    experiment_params = parse_experiment_name(experiment_name)
+    logger.debug(f"Parsed experiment parameters: {experiment_params}")
+    
+    # Extract required parameters with defaults
+    model_name = experiment_params["model_name"]
+    dataset_name = experiment_params["dataset_name"]
+    tokens_per_file = experiment_params.get("tokens_per_file", 100000)
+    context_length = experiment_params.get("context_length", 2048)
+    
+    # Use default values for other parameters
+    reshuffled_tokens_per_file = 100000  # Default value used in other scripts
+    submodule_names = [ActivationKeys.ROUTER_LOGITS]
+    num_workers = 8
+    debug = False
+
+    logger.debug("Loading activations and initializing distributed...")
+    activations, activation_dims, _gpu_process_group = await load_activations_and_init_dist(
+        model_name=model_name,
+        dataset_name=dataset_name,
+        tokens_per_file=tokens_per_file,
+        reshuffled_tokens_per_file=reshuffled_tokens_per_file,
+        submodule_names=submodule_names,
+        context_length=context_length,
+        num_workers=num_workers,
+        debug=debug,
+    )
 
     activated_experts_collection = []
     top_k: int | None = None
