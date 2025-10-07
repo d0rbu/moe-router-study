@@ -297,14 +297,14 @@ class TestModelConfig:
         with patch.object(ModelConfig, "fetch_checkpoints") as mock_fetch:
             mock_fetch.return_value = []
 
-            config = ModelConfig(hf_name="test/model", eager_fetch=True)
+            ModelConfig(hf_name="test/model", eager_fetch=True)
 
             mock_fetch.assert_called_once()
 
     def test_post_init_no_eager_fetch(self):
         """Test that __post_init__ doesn't call fetch_checkpoints when eager_fetch=False."""
         with patch.object(ModelConfig, "fetch_checkpoints") as mock_fetch:
-            config = ModelConfig(hf_name="test/model", eager_fetch=False)
+            ModelConfig(hf_name="test/model", eager_fetch=False)
 
             mock_fetch.assert_not_called()
 
@@ -464,7 +464,7 @@ class TestGetModelConfig:
 
     def test_get_model_config_all_models(self):
         """Test get_model_config with all defined models."""
-        for model_name in MODELS.keys():
+        for model_name in MODELS:
             config = get_model_config(model_name)
             assert isinstance(config, ModelConfig)
             assert config is MODELS[model_name]

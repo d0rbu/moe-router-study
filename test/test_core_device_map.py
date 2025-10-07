@@ -134,7 +134,7 @@ class TestMlpGpu:
         for layer_idx in range(min(5, MAX_LAYERS)):  # Test first 5 layers
             # At least one component per layer should exist
             layer_components = [
-                key for key in result.keys() if f"model.layers.{layer_idx}." in key
+                key for key in result if f"model.layers.{layer_idx}." in key
             ]
             assert len(layer_components) > 0
 
@@ -144,9 +144,7 @@ class TestMlpGpu:
 
         # Check that we have expert components for the expected range
         expert_keys = [
-            key
-            for key in result.keys()
-            if "mlp.experts." in key and "gate_proj.weight" in key
+            key for key in result if "mlp.experts." in key and "gate_proj.weight" in key
         ]
 
         # Should have entries for layer 0, experts 0-511
@@ -318,7 +316,7 @@ class TestDeviceMappingComparison:
             "post_attention_layernorm": False,
         }
 
-        for key in mlp_result.keys():
+        for key in mlp_result:
             for component_type in component_types:
                 if component_type in key:
                     component_types[component_type] = True
@@ -333,7 +331,7 @@ class TestCustomDevicesIntegration:
 
     def test_custom_devices_functions_work(self):
         """Test that functions in CUSTOM_DEVICES can be called."""
-        for name, func in CUSTOM_DEVICES.items():
+        for func in CUSTOM_DEVICES.values():
             result = func()
             assert isinstance(result, dict)
             assert len(result) > 0
@@ -352,11 +350,11 @@ class TestCustomDevicesIntegration:
 
     def test_device_mapping_consistency(self):
         """Test that device mappings are internally consistent."""
-        for name, func in CUSTOM_DEVICES.items():
+        for func in CUSTOM_DEVICES.values():
             device_map = func()
 
             # All keys should be strings
-            for key in device_map.keys():
+            for key in device_map:
                 assert isinstance(key, str)
                 assert len(key) > 0
 
@@ -398,7 +396,7 @@ class TestDeviceMappingEdgeCases:
         attn_result = attn_gpu()
 
         # Should have a substantial number of entries
-        assert len(mlp_result) > 1000  # Many layers × many experts
+        assert len(mlp_result) > 1000  # Many layers x many experts
         assert len(attn_result) > 1000
 
         # Both should have the same number of entries

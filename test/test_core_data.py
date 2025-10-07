@@ -187,7 +187,7 @@ class TestLmsysChatText:
         mock_load_dataset.return_value = mock_dataset
 
         # Test streaming mode (default)
-        result = lmsys_chat_1m_text(mock_tokenizer, streaming=True)
+        lmsys_chat_1m_text(mock_tokenizer, streaming=True)
 
         mock_load_dataset.assert_called_once_with(
             "lmsys/lmsys-chat-1m", split="train", streaming=True
@@ -401,7 +401,7 @@ class TestGetDatasetFn:
 
     def test_get_dataset_fn_valid(self):
         """Test get_dataset_fn with valid dataset names."""
-        for dataset_name in DATASETS.keys():
+        for dataset_name in DATASETS:
             result = get_dataset_fn(dataset_name)
             assert callable(result)
             assert result is DATASETS[dataset_name]

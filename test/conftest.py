@@ -4,6 +4,7 @@ from collections.abc import Generator
 import os
 from pathlib import Path
 import tempfile
+from typing import Any, ClassVar
 from unittest.mock import patch
 
 import pytest
@@ -91,7 +92,7 @@ class TestConfig:
     NUM_EXPERTS = 4
 
     # Test model configurations
-    TEST_MODEL_CONFIGS = {
+    TEST_MODEL_CONFIGS: ClassVar[dict[str, dict[str, Any]]] = {
         "test_model": {
             "hf_name": "test/model",
             "total_steps": 1000,

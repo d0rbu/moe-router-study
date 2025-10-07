@@ -95,7 +95,7 @@ class TestGetDtype:
 
     def test_get_dtype_all_aliases(self):
         """Test get_dtype with all defined aliases."""
-        for alias in DTYPE_MAP.keys():
+        for alias in DTYPE_MAP:
             result = get_dtype(alias)
             assert isinstance(result, th.dtype)
             assert result == DTYPE_MAP[alias]

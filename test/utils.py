@@ -70,7 +70,7 @@ def create_mock_dataset_sample(text_samples: list[str]) -> list[dict[str, str]]:
 class MockHuggingFaceModel:
     """Mock HuggingFace model for testing."""
 
-    def __init__(self, config: dict[str, Any] = None):
+    def __init__(self, config: dict[str, Any] | None = None):
         self.config = config or {}
         self.device = "cpu"
 
