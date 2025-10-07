@@ -1,34 +1,42 @@
-from itertools import count
+import asyncio
 import os
 
 import arguably
+from loguru import logger
 import matplotlib.pyplot as plt
 import torch as th
-from tqdm import tqdm
 
-from exp import ACTIVATION_DIRNAME, OUTPUT_DIR
+from exp.activations import Activations
+from exp.get_activations import ActivationKeys
 from viz import FIGURE_DIR
 
 
-@arguably.command()
-def router_correlations(experiment_name: str) -> None:
-    """Generate router correlation plots for an experiment."""
+async def _router_correlations_async(
+    experiment_name: str, batch_size: int = 4096
+) -> None:
+    """Async implementation of router correlation analysis."""
+    logger.info(f"Loading activations for experiment: {experiment_name}")
+
+    # Load activations using the Activations class
+    activations = await Activations.load(experiment_name=experiment_name)
+
     activated_experts_collection = []
     top_k: int | None = None
+    num_layers: int | None = None
+    num_experts: int | None = None
 
-    for file_idx in tqdm(count(), desc="Loading router logits"):
-        file_path = os.path.join(
-            OUTPUT_DIR, experiment_name, ACTIVATION_DIRNAME, f"{file_idx}.pt"
-        )
-        if not os.path.exists(file_path):
-            break
+    # Iterate through activation batches
+    for batch in activations(batch_size=batch_size):
+        router_logits = batch[ActivationKeys.ROUTER_LOGITS]
 
-        output = th.load(file_path)
-        top_k = output["topk"]
-        router_logits = output["router_logits"]
+        if top_k is None:
+            top_k = batch["topk"]
+            num_layers, num_experts = router_logits.shape[1], router_logits.shape[2]
+            total_experts = num_layers * num_experts
+            logger.info(
+                f"Router configuration: {num_layers} layers, {num_experts} experts per layer, top-k={top_k}"
+            )
 
-        num_layers, num_experts = router_logits.shape[1], router_logits.shape[2]
-        total_experts = num_layers * num_experts
         top_k_indices = th.topk(router_logits, k=top_k, dim=2).indices
         activated_experts = th.zeros_like(router_logits)
         activated_experts.scatter_(2, top_k_indices, 1)
@@ -38,8 +46,8 @@ def router_correlations(experiment_name: str) -> None:
             activated_experts.reshape(-1, total_experts).T
         )
 
-    if top_k is None:
-        raise ValueError("No data files found")
+    if top_k is None or num_layers is None or num_experts is None:
+        raise ValueError("No activation data found")
 
     # (L * E, B)
     activated_experts = th.cat(activated_experts_collection, dim=-1)
@@ -160,6 +168,23 @@ def router_correlations(experiment_name: str) -> None:
             f"layer {first_layer_idx} expert {first_expert_idx} -> layer {second_layer_idx} expert {second_expert_idx}: {correlation}"
         )
     print()
+
+
+@arguably.command
+def router_correlations(experiment_name: str, batch_size: int = 4096) -> None:
+    """Generate router correlation plots for an experiment.
+
+    This script:
+    1. Loads router activations using the Activations class
+    2. Computes correlations between expert activations across layers
+    3. Generates correlation matrices and visualizations
+    4. Analyzes cross-layer correlations
+
+    Args:
+        experiment_name: Name of the experiment to analyze.
+        batch_size: Number of samples to process per batch (default: 4096).
+    """
+    asyncio.run(_router_correlations_async(experiment_name, batch_size))
 
 
 if __name__ == "__main__":
