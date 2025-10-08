@@ -5,45 +5,26 @@
 #SBATCH --time=12:00:00                    # Set the wall clock limit to 12 hours
 #SBATCH --ntasks=1                         # Total number of tasks (processes) across all nodes
 #SBATCH --ntasks-per-node=1                # Number of tasks per node
-#SBATCH --cpus-per-task=16                 # Number of CPUs per task
-#SBATCH --mem=128G                         # Request 128GB per node
+#SBATCH --cpus-per-task=32                 # Number of CPUs per task (increased for faster processing)
+#SBATCH --mem=256G                         # Request 256GB per node (increased for large datasets)
 #SBATCH --output=shuffle_activations.%j    # Send stdout/err to "shuffle_activations.[jobID]"
 #SBATCH --error=shuffle_activations.%j.err # Send stderr to separate file
-#SBATCH --partition=cpu                    # Request the CPU partition/queue (no GPU needed)
 
 ##OPTIONAL JOB SPECIFICATIONS
 ##SBATCH --account=123456                  # Set billing account to 123456
 ##SBATCH --mail-type=ALL                   # Send email on all job events
 ##SBATCH --mail-user=email_address         # Send all emails to email_address
 
-# Enable detailed logging
 set -x
 
-module load GCCcore/13.3.0 Python/3.12.3
+cd $SCRATCH/moe-router-study
 
-# Change to the project directory
-cd $WORK/moe-router-study
-
-# Run the activation shuffling script
-# Example usage - modify these parameters as needed:
-# uv run scripts/shuffle_activations.py \
-#     "mixtral-8x7b" \
-#     "openwebtext" \
-#     100000 \
-#     2048 \
-#     --reshuffled-tokens-per-file 100000 \
-#     --seed 0 \
-#     --shuffle-batch-size 100 \
-#     --num-workers 16
-
-# Placeholder - replace with actual parameters
-echo "Please modify this script with your specific parameters:"
-echo "uv run scripts/shuffle_activations.py \\"
-echo "    \"your-model-name\" \\"
-echo "    \"your-dataset-name\" \\"
-echo "    your-tokens-per-file \\"
-echo "    your-context-length \\"
-echo "    --reshuffled-tokens-per-file your-reshuffled-tokens-per-file \\"
-echo "    --seed 0 \\"
-echo "    --shuffle-batch-size 100 \\"
-echo "    --num-workers 16"
+uv run scripts/shuffle_activations.py \
+    "mixtral-8x7b" \
+    "openwebtext" \
+    100000 \
+    2048 \
+    --reshuffled-tokens-per-file 100000 \
+    --seed 0 \
+    --shuffle-batch-size 50 \
+    --num-workers 32
