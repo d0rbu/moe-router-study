@@ -27,10 +27,10 @@ cd $SCRATCH/moe-router-study
 # Run the activation shuffling script
 # Example usage - modify these parameters as needed:
 # uv run scripts/shuffle_activations.py \
-#     --model-name "mixtral-8x7b" \
-#     --dataset-name "openwebtext" \
-#     --tokens-per-file 100000 \
-#     --context-length 2048 \
+#     "mixtral-8x7b" \
+#     "openwebtext" \
+#     100000 \
+#     2048 \
 #     --reshuffled-tokens-per-file 100000 \
 #     --seed 0 \
 #     --shuffle-batch-size 100 \
@@ -39,10 +39,10 @@ cd $SCRATCH/moe-router-study
 # Placeholder - replace with actual parameters
 echo "Please modify this script with your specific parameters:"
 echo "uv run scripts/shuffle_activations.py \\"
-echo "    --model-name \"your-model-name\" \\"
-echo "    --dataset-name \"your-dataset-name\" \\"
-echo "    --tokens-per-file your-tokens-per-file \\"
-echo "    --context-length your-context-length \\"
+echo "    \"your-model-name\" \\"
+echo "    \"your-dataset-name\" \\"
+echo "    your-tokens-per-file \\"
+echo "    your-context-length \\"
 echo "    --reshuffled-tokens-per-file your-reshuffled-tokens-per-file \\"
 echo "    --seed 0 \\"
 echo "    --shuffle-batch-size 100 \\"

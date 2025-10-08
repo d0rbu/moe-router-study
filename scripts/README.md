@@ -19,10 +19,10 @@ The activation shuffling process takes original activation files and reshuffles 
 
 ```bash
 uv run scripts/shuffle_activations.py \
-    --model-name "mixtral-8x7b" \
-    --dataset-name "openwebtext" \
-    --tokens-per-file 100000 \
-    --context-length 2048 \
+    "mixtral-8x7b" \
+    "openwebtext" \
+    100000 \
+    2048 \
     --reshuffled-tokens-per-file 100000 \
     --seed 0
 ```
@@ -57,12 +57,12 @@ sbatch slurm/shuffle_activations_grace.slurm
 
 ## Parameters
 
-### Required Parameters
+### Required Parameters (Positional)
 
-- `--model-name`: Name of the model (e.g., 'mixtral-8x7b')
-- `--dataset-name`: Name of the dataset (e.g., 'openwebtext')
-- `--tokens-per-file`: Number of tokens per original activation file
-- `--context-length`: Context length used for activation generation
+- `model_name`: Name of the model (e.g., 'mixtral-8x7b')
+- `dataset_name`: Name of the dataset (e.g., 'openwebtext')
+- `tokens_per_file`: Number of tokens per original activation file
+- `context_length`: Context length used for activation generation
 
 ### Optional Parameters
 

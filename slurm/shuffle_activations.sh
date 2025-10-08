@@ -41,8 +41,8 @@ echo "  Additional args: $@"
 echo ""
 
 uv run scripts/shuffle_activations.py \
-    --model-name "$MODEL_NAME" \
-    --dataset-name "$DATASET_NAME" \
-    --tokens-per-file "$TOKENS_PER_FILE" \
-    --context-length "$CONTEXT_LENGTH" \
+    "$MODEL_NAME" \
+    "$DATASET_NAME" \
+    "$TOKENS_PER_FILE" \
+    "$CONTEXT_LENGTH" \
     "$@"
