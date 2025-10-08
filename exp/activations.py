@@ -723,8 +723,12 @@ class Activations:
 
     @staticmethod
     def _batch_idx_to_file_and_local_idx(
-        batch_size_ranges: th.Tensor, batch_idx: int
+        batch_size_ranges: th.Tensor, batch_idx: int | th.Tensor
     ) -> tuple[int, int]:
+        if isinstance(batch_idx, th.Tensor):
+            assert batch_idx.ndim == 0, "Batch index must be a scalar"
+            batch_idx = batch_idx.item()
+
         file_idx = th.searchsorted(batch_size_ranges, batch_idx, side="right").item()
 
         file_start_idx = batch_size_ranges[file_idx - 1].item() if file_idx > 0 else 0
