@@ -414,7 +414,7 @@ async def sync(
     # reset dirty data now that it has been synced
     for weights in gpu_data.dirty_data.weight_sets:
         weights.zero_()
-    
+
     for centroids in gpu_data.dirty_data.centroid_sets:
         centroids.zero_()
 
