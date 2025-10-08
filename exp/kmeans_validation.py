@@ -143,35 +143,39 @@ def validate_centroid_distribution(
 
     # Use GPU if available, otherwise CPU
     device = th.device("cuda" if th.cuda.is_available() else "cpu")
-    
+
     # Move centroids to device
     centroids_gpu = centroids.to(device).to(th.float32)
-    
+
     # Process validation data in minibatches to avoid OOM
     all_assignments = []
     n_samples = validation_data.shape[0]
-    
-    logger.debug(f"🚀 GPU validation: Processing {n_samples} samples in batches of {minibatch_size}")
-    
-    for start_idx in tqdm(range(0, n_samples, minibatch_size), desc="Validation batches", leave=False):
+
+    logger.debug(
+        f"🚀 GPU validation: Processing {n_samples} samples in batches of {minibatch_size}"
+    )
+
+    for start_idx in tqdm(
+        range(0, n_samples, minibatch_size), desc="Validation batches", leave=False
+    ):
         end_idx = min(start_idx + minibatch_size, n_samples)
         batch_data = validation_data[start_idx:end_idx].to(device).to(th.float32)
-        
+
         # Compute distances for this batch
         batch_distances = th.cdist(batch_data, centroids_gpu, p=1)
         batch_assignments = th.argmin(batch_distances, dim=1)
-        
+
         # Move back to CPU to save GPU memory
         all_assignments.append(batch_assignments.cpu())
-        
+
         # Clear GPU cache
         del batch_data, batch_distances, batch_assignments
         if device.type == "cuda":
             th.cuda.empty_cache()
-    
+
     # Concatenate all assignments
     assignments = th.cat(all_assignments, dim=0)
-    
+
     logger.debug("✅ GPU validation completed successfully")
 
     # Count assignments per centroid
