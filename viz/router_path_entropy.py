@@ -40,7 +40,7 @@ def compute_entropy(frequencies: th.Tensor) -> float:
     # Normalize to probabilities
     probabilities = frequencies / total_freq
     logger.trace(f"Probability sum: {probabilities.sum().item():.10f} (should be ~1.0)")
-    assert th.allclose(probabilities.sum(), th.tensor(1.0), rtol=1e-4), (
+    assert th.allclose(probabilities.sum(), th.tensor(1.0)), (
         f"Probabilities don't sum to 1: {probabilities.sum().item()}"
     )
 
@@ -65,7 +65,7 @@ def compute_entropy(frequencies: th.Tensor) -> float:
     # Validation
     assert entropy >= 0, f"Entropy should be non-negative, got {entropy}"
     max_entropy = th.log2(th.tensor(float(len(nonzero_probabilities)))).item()
-    assert entropy <= max_entropy * (1 + 1e-4) + 1e-6, (
+    assert entropy <= max_entropy * (1 + 1e-4), (
         f"Entropy {entropy} exceeds maximum {max_entropy}"
     )
 
@@ -399,7 +399,7 @@ async def _router_path_entropy_async(
     )
 
     # Validate cumulative coverage
-    assert th.allclose(th.tensor(cum_norm_numpy[-1]), th.tensor(1.0), rtol=1e-4), (
+    assert th.allclose(th.tensor(cum_norm_numpy[-1]), th.tensor(1.0)), (
         f"Final coverage {cum_norm_numpy[-1]} != 1.0"
     )
     assert th.all(cumulative_normalized >= 0), (
