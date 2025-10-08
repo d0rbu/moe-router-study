@@ -123,7 +123,7 @@ async def _router_jaccard_distance_async(
 
         # Convert to binary activations (top-k selection)
         logger.trace("Converting router logits to binary activations...")
-        activated_experts = convert_router_logits_to_paths(router_logits, top_k)
+        activated_experts = convert_router_logits_to_paths(router_logits, top_k).bool()
         logger.trace(
             f"Activated experts shape: {activated_experts.shape}, dtype: {activated_experts.dtype}"
         )
@@ -412,6 +412,10 @@ async def _router_jaccard_distance_async(
     plt.rcParams["figure.figsize"] = (12, 10)
 
     logger.info("Generating visualizations...")
+
+    # Ensure output directory exists
+    os.makedirs(FIGURE_DIR, exist_ok=True)
+    logger.debug(f"Ensured output directory exists: {FIGURE_DIR}")
 
     # Plot 1: Absolute Jaccard similarity matrix
     logger.debug("Creating absolute Jaccard similarity matrix plot...")
