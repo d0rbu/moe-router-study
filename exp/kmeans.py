@@ -850,9 +850,7 @@ async def kmeans_manhattan(
     )
 
     validate_centroids = partial(
-        validate_centroid_distribution, 
-        validation_data, 
-        minibatch_size=minibatch_size
+        validate_centroid_distribution, validation_data, minibatch_size=minibatch_size
     )
 
     logger.info(
