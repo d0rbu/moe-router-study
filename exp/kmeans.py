@@ -415,6 +415,9 @@ async def sync(
     for weights in gpu_data.dirty_data.weight_sets:
         weights.zero_()
 
+    for centroids in gpu_data.dirty_data.centroid_sets:
+        centroids.zero_()
+
     if rank == 0 and gpu_idx == 0:
         losses_over_time.append(gpu_data.synced_data.losses.detach().cpu().clone())
 
