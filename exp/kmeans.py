@@ -265,6 +265,12 @@ async def kmeans_step(
     new_centroids = th.stack(new_centroids_raw, dim=0)
     new_weights = th.tensor(new_weights_raw, dtype=th.int64, device=data.device)
 
+    # Log update statistics
+    update_norms = th.norm(new_centroids, dim=1)
+    zero_update_norms = (update_norms == 0).sum().item()
+    total_weight = new_weights.sum().item()
+    logger.debug(f"📊 UPDATE: Computed updates - zero_norms={zero_update_norms}/{len(update_norms)}, norm_stats: min={update_norms.min():.6f}, max={update_norms.max():.6f}, mean={update_norms.mean():.6f}, total_weight={total_weight}")
+
     logger.trace(
         f"New centroids: {new_centroids.dtype} {new_centroids.device} {new_centroids.shape}"
     )
@@ -286,6 +292,15 @@ async def sync(
     rank = dist.get_rank()
     world_size = dist.get_world_size()
     gpu_data = all_gpu_data[gpu_idx]
+    
+    logger.info(f"🔄 SYNC: Starting sync for GPU {gpu_idx}, rank {rank}")
+    
+    # Log dirty data state before sync
+    for k_idx, (centroids, weights) in enumerate(zip(gpu_data.dirty_data.centroid_sets, gpu_data.dirty_data.weight_sets, strict=True)):
+        centroid_norms = th.norm(centroids, dim=1)
+        zero_norms = (centroid_norms == 0).sum().item()
+        weight_sum = weights.sum().item()
+        logger.debug(f"🔄 SYNC GPU {gpu_idx} k_idx={k_idx} BEFORE: Dirty centroids zero_norms={zero_norms}/{len(centroid_norms)}, norm_stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}, weight_sum={weight_sum:.2f}")
 
     # gather across nodes
     all_losses = (
@@ -380,6 +395,11 @@ async def sync(
         gpu_data.dirty_data.centroid_sets[losses_idx] = new_centroids
         gpu_data.dirty_data.weight_sets[losses_idx] = weights_total
         gpu_data.dirty_data.losses[losses_idx] = new_loss
+        
+        # Log new centroids after aggregation
+        new_centroid_norms = th.norm(new_centroids, dim=1)
+        new_zero_norms = (new_centroid_norms == 0).sum().item()
+        logger.debug(f"🔄 SYNC GPU {gpu_idx} k_idx={losses_idx} AFTER AGGREGATION: New centroids zero_norms={new_zero_norms}/{len(new_centroid_norms)}, norm_stats: min={new_centroid_norms.min():.6f}, max={new_centroid_norms.max():.6f}, mean={new_centroid_norms.mean():.6f}, weights_total_sum={weights_total.sum().item():.2f}")
 
         del (
             all_centroids,
@@ -412,11 +432,19 @@ async def sync(
     await barrier.wait()
 
     # reset dirty data now that it has been synced
+    logger.debug(f"🔄 SYNC GPU {gpu_idx}: Resetting dirty data to zero...")
     for weights in gpu_data.dirty_data.weight_sets:
         weights.zero_()
 
     for centroids in gpu_data.dirty_data.centroid_sets:
         centroids.zero_()
+    
+    # Log synced data state after sync
+    logger.info(f"🔄 SYNC GPU {gpu_idx}: Sync completed, logging final synced state...")
+    for k_idx, centroids in enumerate(gpu_data.synced_data.centroid_sets):
+        centroid_norms = th.norm(centroids, dim=1)
+        zero_norms = (centroid_norms == 0).sum().item()
+        logger.info(f"🔄 SYNC GPU {gpu_idx} k_idx={k_idx} FINAL: Synced centroids zero_norms={zero_norms}/{len(centroid_norms)}, norm_stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}")
 
     if rank == 0 and gpu_idx == 0:
         losses_over_time.append(gpu_data.synced_data.losses.detach().cpu().clone())
@@ -809,8 +837,10 @@ async def kmeans_manhattan(
         f"Reserved {validation_size} data points for validation (shape: {validation_data.shape})"
     )
 
-    for centroid_set in all_gpu_data[0].dirty_data.centroid_sets:
+    logger.info("🔍 VALIDATION: Checking centroids BEFORE initialization...")
+    for k_idx, centroid_set in enumerate(all_gpu_data[0].dirty_data.centroid_sets):
         _is_valid, _stats = validate_centroids(centroid_set.cpu())
+        logger.info(f"📊 PRE-INIT VALIDATION k_idx={k_idx}: Empty={_stats.num_empty_centroids}, Norms: min={_stats.min_norm:.6f}, max={_stats.max_norm:.6f}, mean={_stats.mean_norm:.6f}")
 
     for k_idx, k in enumerate(k_values):
         for _gpu_idx, gpu_data in enumerate(all_gpu_data):
@@ -844,8 +874,10 @@ async def kmeans_manhattan(
                     f"Centroid norm stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}"
                 )
 
-    for centroid_set in all_gpu_data[0].dirty_data.centroid_sets:
+    logger.info("🔍 VALIDATION: Checking centroids AFTER initialization...")
+    for k_idx, centroid_set in enumerate(all_gpu_data[0].dirty_data.centroid_sets):
         _is_valid, _stats = validate_centroids(centroid_set.cpu())
+        logger.info(f"📊 POST-INIT VALIDATION k_idx={k_idx}: Empty={_stats.num_empty_centroids}, Norms: min={_stats.min_norm:.6f}, max={_stats.max_norm:.6f}, mean={_stats.mean_norm:.6f}")
 
     logger.trace(f"Initialized centroids for {len(k_values)} clusters")
 
@@ -902,6 +934,16 @@ async def kmeans_manhattan(
     # distributed kmeans
     for iter_idx in iterator:
         # process data in batches, parallelized over devices and nodes
+        logger.info(f"🚀 ITERATION {iter_idx}: Starting k-means iteration")
+        
+        # Log centroid states at start of iteration
+        if iter_idx == 0 or iter_idx % 5 == 0:  # Log every 5 iterations
+            logger.info(f"🔍 ITERATION {iter_idx}: Checking centroid states at start...")
+            for k_idx, centroid_set in enumerate(all_gpu_data[0].synced_data.centroid_sets):
+                centroid_norms = th.norm(centroid_set, dim=1)
+                zero_norms = (centroid_norms == 0).sum().item()
+                logger.info(f"📊 ITER {iter_idx} START k_idx={k_idx}: Zero norms={zero_norms}/{len(centroid_norms)}, Norm stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}")
+        
         logger.trace(f"Running iteration {iter_idx}")
 
         # Check worker health at start of each iteration
@@ -995,11 +1037,12 @@ async def kmeans_manhattan(
             and rank == 0
         ):
             logger.info(
-                f"Running intermittent validation at iteration {iter_idx + 1}..."
+                f"🔍 VALIDATION: Running intermittent validation at iteration {iter_idx + 1}..."
             )
 
-            for centroid_set in all_gpu_data[0].synced_data.centroid_sets:
+            for k_idx, centroid_set in enumerate(all_gpu_data[0].synced_data.centroid_sets):
                 _is_valid, _stats = validate_centroids(centroid_set.cpu())
+                logger.warning(f"🚨 ITER {iter_idx + 1} VALIDATION k_idx={k_idx}: Empty={_stats.num_empty_centroids}, Over-concentrated={_stats.num_over_concentrated_centroids}, Norms: min={_stats.min_norm:.6f}, max={_stats.max_norm:.6f}, mean={_stats.mean_norm:.6f}")
 
     for gpu_data in all_gpu_data:
         logger.trace(
