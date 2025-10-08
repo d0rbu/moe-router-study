@@ -478,6 +478,13 @@ class Activations:
             batch_size_ranges = th.cumsum(batch_sizes, dim=0)
             total_size = batch_size_ranges[-1].item()
 
+            expected_combinations = {
+                (file_idx, local_idx)
+                for file_idx in range(len(filepaths))
+                for local_idx in range(batch_sizes[file_idx].item())
+            }
+            processed_combinations = set()
+
             batch_shuffled_indices = th.randperm(total_size)
 
             for batch_idx in tqdm(
@@ -490,6 +497,17 @@ class Activations:
                 file_idx, local_idx = Activations._batch_idx_to_file_and_local_idx(
                     batch_size_ranges, batch_idx
                 )
+
+                combination = (file_idx, local_idx)
+
+                assert combination not in processed_combinations, (
+                    f"Duplicate combination {combination} in shuffle batch {shuffle_batch_idx}"
+                )
+                assert combination in expected_combinations, (
+                    f"Invalid combination {combination} in shuffle batch {shuffle_batch_idx}"
+                )
+
+                processed_combinations.add(combination)
                 batch_size = batch_sizes[file_idx]
                 data = file_data[file_idx]
                 data_to_copy = data.copy()
@@ -525,6 +543,15 @@ class Activations:
                     total_tokens += num_batch_tokens
                     num_batch_tokens = 0
                     current_batch_idx += 1
+
+            unprocessed_combinations = expected_combinations - processed_combinations
+            extra_combinations = processed_combinations - expected_combinations
+            assert len(unprocessed_combinations) == 0, (
+                f"Missing combinations in shuffle batch {shuffle_batch_idx}: {unprocessed_combinations}"
+            )
+            assert len(extra_combinations) == 0, (
+                f"Extra combinations in shuffle batch {shuffle_batch_idx}: {extra_combinations}"
+            )
 
         total_tokens += num_batch_tokens
         total_tokens = th.tensor(total_tokens, dtype=th.int32)
