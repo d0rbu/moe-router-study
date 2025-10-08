@@ -9,7 +9,6 @@
 #SBATCH --mem=128G                            # Request 128GB per node
 #SBATCH --output=shuffle_activations.%j       # Send stdout/err to "shuffle_activations.[jobID]"
 #SBATCH --error=shuffle_activations.%j.err    # Send stderr to separate file
-#SBATCH --partition=cpu                       # Request the CPU partition/queue (no GPU needed)
 
 ##OPTIONAL JOB SPECIFICATIONS
 ##SBATCH --account=123456                     # Set billing account to 123456
