@@ -284,25 +284,19 @@ async def _router_jaccard_distance_async(
     )
     assert th.all(expert_probabilities <= 1), "Expert probabilities must be <= 1"
 
-    # Validate probability sum with relative error tolerance
+    # Validate probability sum with relative error tolerance using th.allclose
     expected_prob_sum = num_layers * top_k
-    actual_prob_sum = expert_probabilities.sum().item()
-    prob_sum_diff = abs(actual_prob_sum - expected_prob_sum)
-    prob_sum_rel_error = (
-        prob_sum_diff / expected_prob_sum if expected_prob_sum > 0 else 0
-    )
+    actual_prob_sum = expert_probabilities.sum()
 
     logger.trace(
-        f"Probability sum validation: actual={actual_prob_sum:.8f}, "
-        f"expected={expected_prob_sum}, diff={prob_sum_diff:.8f}, "
-        f"rel_error={prob_sum_rel_error:.2e}"
+        f"Probability sum validation: actual={actual_prob_sum.item():.8f}, "
+        f"expected={expected_prob_sum}"
     )
 
-    # Use relative error tolerance for floating-point operations
-    assert prob_sum_rel_error < 1e-4, (
+    # Use th.allclose with relative tolerance for floating-point operations
+    assert th.allclose(actual_prob_sum, th.tensor(expected_prob_sum), rtol=1e-4), (
         f"Expert probabilities sum validation failed: "
-        f"actual={actual_prob_sum:.8f}, expected={expected_prob_sum}, "
-        f"diff={prob_sum_diff:.8f}, rel_error={prob_sum_rel_error:.2e}"
+        f"actual={actual_prob_sum.item():.8f}, expected={expected_prob_sum}"
     )
 
     # For independent experts, Jaccard = (p_i * p_j) / (p_i + p_j - p_i * p_j)
