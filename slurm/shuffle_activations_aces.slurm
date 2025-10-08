@@ -25,4 +25,4 @@ module load GCCcore/13.3.0 Python/3.12.3
 cd $SCRATCH/moe-router-study
 
 # Run the activation shuffling
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run scripts/shuffle_activations.py --tokens-per-file 100000 --reshuffled-tokens-per-file 100000
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run scripts/shuffle_activations.py shuffle-activations --tokens-per-file 100000 --reshuffled-tokens-per-file 100000

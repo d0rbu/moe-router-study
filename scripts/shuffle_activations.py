@@ -17,8 +17,8 @@ from exp.activations import Activations
 from exp.training import get_experiment_name
 
 
-@arguably.command
-async def main(
+@arguably.command()
+async def shuffle_activations(
     *,
     model_name: str = "olmoe_i",
     dataset_name: str = "lmsys",
