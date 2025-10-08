@@ -7,12 +7,14 @@ import gc
 from itertools import batched, islice
 import os
 import sys
+import time
 from typing import Any, TypeVar
 
 import arguably
 from loguru import logger
 import torch as th
 import torch.distributed as dist
+from torch.profiler import profile, record_function, ProfilerActivity
 from tqdm import tqdm
 import yaml
 
@@ -854,10 +856,6 @@ async def kmeans_manhattan(
     )
 
     logger.debug("🔍 VALIDATION: Checking centroids BEFORE initialization...")
-    
-    # Import profiler
-    from torch.profiler import profile, record_function, ProfilerActivity
-    import time
     
     for k_idx, centroid_set in enumerate(all_gpu_data[0].dirty_data.centroid_sets):
         logger.debug(f"⏱️ Starting validation for k_idx={k_idx} (k={k_values[k_idx]}) with {centroid_set.shape[0]} centroids...")
