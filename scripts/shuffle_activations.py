@@ -20,7 +20,7 @@ from exp.training import get_experiment_name
 @arguably.command()
 async def shuffle_activations(
     *,
-    model_name: str = "olmoe_i",
+    model_name: str = "olmoe-i",
     dataset_name: str = "lmsys",
     tokens_per_file: int = 5000,
     context_length: int = 2048,
