@@ -462,11 +462,6 @@ class Activations:
         if not cpu_only:
             dist.all_reduce(all_batch_sizes, op=dist.ReduceOp.SUM)
 
-        # maybe not the bestest practice but this is good enough lol
-        th.manual_seed(seed + rank)
-        if not cpu_only:
-            th.cuda.manual_seed_all(seed + rank)
-
         current_batch = defaultdict(list)
         current_batch_idx = 0
         total_tokens = 0
@@ -489,6 +484,15 @@ class Activations:
             leave=False,
             position=rank * 2,
         ):
+            current_seed = (
+                seed * len(local_activation_file_batches) * world_size
+                + shuffle_batch_idx * world_size
+                + rank
+            )
+            th.manual_seed(current_seed)
+            if not cpu_only:
+                th.cuda.manual_seed_all(current_seed)
+
             filepaths, batch_sizes = zip(*shuffle_batch, strict=True)
 
             file_data = await cls.load_files_async(filepaths)
