@@ -358,6 +358,11 @@ async def _router_path_entropy_async(
 
     # Plot 1: Path frequency distribution (sorted)
     logger.info("Generating visualizations...")
+
+    # Ensure output directory exists
+    os.makedirs(FIGURE_DIR, exist_ok=True)
+    logger.debug(f"Ensured output directory exists: {FIGURE_DIR}")
+
     logger.debug("Creating path frequency distribution plot...")
     plt.figure()
     sorted_freq_numpy = sorted_frequencies.cpu().numpy()
