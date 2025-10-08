@@ -849,7 +849,9 @@ async def kmeans_manhattan(
         f"Std: {validation_data.std()}"
     )
 
-    validate_centroids = partial(validate_centroid_distribution, validation_data)
+    validate_centroids = partial(
+        validate_centroid_distribution, validation_data, minibatch_size=minibatch_size
+    )
 
     logger.info(
         f"Reserved {validation_size} data points for validation (shape: {validation_data.shape})"
