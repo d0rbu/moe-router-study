@@ -25,7 +25,7 @@ async def main(
     tokens_per_file: int = 5000,
     context_length: int = 2048,
     reshuffled_tokens_per_file: int = 100_000,
-    shuffle_batch_size: int = 100,
+    shuffle_batch_size: int = 10,
     seed: int = 0,
     debug: bool = False,
     num_workers: int = 8,

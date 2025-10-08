@@ -23,4 +23,4 @@ set -x
 cd $SCRATCH/moe-router-study
 
 # Run the activation shuffling
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run scripts/shuffle_activations.py --model-name olmoe_i --dataset-name lmsys --tokens-per-file 5000 --context-length 2048 --reshuffled-tokens-per-file 100000 --seed 0
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run scripts/shuffle_activations.py --tokens-per-file 100000 --reshuffled-tokens-per-file 100000
