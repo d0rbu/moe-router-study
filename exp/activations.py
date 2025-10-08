@@ -409,9 +409,14 @@ class Activations:
         num_workers: int = 8,
         cpu_only: bool = False,
     ) -> list[str]:
+        # Set rank and world_size based on cpu_only mode
         if cpu_only:
+            rank = 0
+            world_size = 1
             activation_filepaths = cls.get_activation_filepaths(activation_dir, debug)
         else:
+            rank = dist.get_rank()
+            world_size = dist.get_world_size()
             activation_filepaths = broadcast_variable_length_list(
                 cls.get_activation_filepaths,
                 args=(activation_dir, debug),
@@ -430,14 +435,9 @@ class Activations:
                 activation_filepath_limit, cls.NUM_DEBUG_FILES
             )
 
-        if cpu_only:
-            local_activation_filepaths = activation_filepaths[
-                :activation_filepath_limit
-            ]
-        else:
-            local_activation_filepaths = activation_filepaths[
-                dist.get_rank() : activation_filepath_limit : dist.get_world_size()
-            ]
+        local_activation_filepaths = activation_filepaths[
+            rank:activation_filepath_limit:world_size
+        ]
 
         # start threadpool to load the files
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
@@ -446,21 +446,12 @@ class Activations:
                 executor.submit(load_unsafe, filepath)
                 for filepath in local_activation_filepaths
             )
-            if cpu_only:
-                future_range = range(activation_filepath_limit)
-                position = 0
-            else:
-                future_range = range(
-                    dist.get_rank(), activation_filepath_limit, dist.get_world_size()
-                )
-                position = dist.get_rank()
-
             for future_idx in tqdm(
-                future_range,
+                range(rank, activation_filepath_limit, world_size),
                 total=len(futures),
                 desc="Loading batch sizes",
                 leave=False,
-                position=position,
+                position=rank,
             ):
                 future = futures.popleft()
                 data = future.result()
@@ -472,11 +463,9 @@ class Activations:
             dist.all_reduce(all_batch_sizes, op=dist.ReduceOp.SUM)
 
         # maybe not the bestest practice but this is good enough lol
-        if cpu_only:
-            th.manual_seed(seed)
-        else:
-            th.manual_seed(seed + dist.get_rank())
-            th.cuda.manual_seed_all(seed + dist.get_rank())
+        th.manual_seed(seed + rank)
+        if not cpu_only:
+            th.cuda.manual_seed_all(seed + rank)
 
         current_batch = defaultdict(list)
         current_batch_idx = 0
@@ -489,28 +478,16 @@ class Activations:
                 shuffle_batch_size,
             )
         )
-        if cpu_only:
-            local_activation_file_batches = activation_file_batches[
-                :activation_filepath_limit
-            ]
-        else:
-            local_activation_file_batches = activation_file_batches[
-                dist.get_rank() : activation_filepath_limit : dist.get_world_size()
-            ]
-
-        if cpu_only:
-            desc = "Processing batches"
-            position = 0
-        else:
-            desc = f"Rank {dist.get_rank()}"
-            position = dist.get_rank() * 2
+        local_activation_file_batches = activation_file_batches[
+            rank:activation_filepath_limit:world_size
+        ]
 
         for shuffle_batch_idx, shuffle_batch in tqdm(
             enumerate(local_activation_file_batches),
-            desc=desc,
+            desc=f"Rank {rank}" if not cpu_only else "Processing batches",
             total=len(local_activation_file_batches),
             leave=False,
-            position=position,
+            position=rank * 2,
         ):
             filepaths, batch_sizes = zip(*shuffle_batch, strict=True)
 
@@ -522,14 +499,12 @@ class Activations:
 
             batch_shuffled_indices = th.randperm(total_size)
 
-            inner_position = 1 if cpu_only else dist.get_rank() * 2 + 1
-
             for batch_idx in tqdm(
                 batch_shuffled_indices,
                 desc=f"Shuffle batch {shuffle_batch_idx}",
                 total=total_size,
                 leave=False,
-                position=inner_position,
+                position=rank * 2 + 1,
             ):
                 file_idx, local_idx = Activations._batch_idx_to_file_and_local_idx(
                     batch_size_ranges, batch_idx
@@ -558,14 +533,9 @@ class Activations:
                 num_batch_tokens += 1
 
                 if num_batch_tokens >= tokens_per_file_in_reshuffled:
-                    if cpu_only:
-                        output_filepath = os.path.join(
-                            output_dir, f"0_{current_batch_idx}.pt-temp"
-                        )
-                    else:
-                        output_filepath = os.path.join(
-                            output_dir, f"{dist.get_rank()}_{current_batch_idx}.pt-temp"
-                        )
+                    output_filepath = os.path.join(
+                        output_dir, f"{rank}_{current_batch_idx}.pt-temp"
+                    )
                     new_activation_filepaths.append(
                         cls._collate_and_save_batch(current_batch, output_filepath)
                     )
@@ -584,8 +554,8 @@ class Activations:
         else:
             dist.reduce(total_tokens, dst=0, op=dist.ReduceOp.SUM)
 
-            if dist.get_rank() == 0:
-                remaining_stacked_batches = [None] * dist.get_world_size()
+            if rank == 0:
+                remaining_stacked_batches = [None] * world_size
                 logger.debug(f"Total tokens: {total_tokens.item()}")
             else:
                 remaining_stacked_batches = None
@@ -594,7 +564,7 @@ class Activations:
             stacked_current_batch = cls._stack_batch_for_gather(current_batch)
             dist.gather_object(stacked_current_batch, remaining_stacked_batches, dst=0)
 
-        if cpu_only or dist.get_rank() == 0:
+        if rank == 0:
             assert remaining_stacked_batches is not None
             logger.debug(f"Gathered {len(remaining_stacked_batches)} batches")
 
@@ -636,16 +606,10 @@ class Activations:
                         else:
                             extra_batch[key] = value
 
-                    if cpu_only:
-                        output_filepath = os.path.join(
-                            output_dir,
-                            f"0_{current_batch_idx + extra_batch_idx}.pt-temp",
-                        )
-                    else:
-                        output_filepath = os.path.join(
-                            output_dir,
-                            f"{dist.get_rank()}_{current_batch_idx + extra_batch_idx}.pt-temp",
-                        )
+                    output_filepath = os.path.join(
+                        output_dir,
+                        f"{rank}_{current_batch_idx + extra_batch_idx}.pt-temp",
+                    )
                     extra_activation_filepaths.append(
                         cls._collate_and_save_batch(extra_batch, output_filepath)
                     )
