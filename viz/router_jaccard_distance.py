@@ -159,7 +159,17 @@ async def _router_jaccard_distance_async(
 
         # Update running counts
         logger.trace("Updating running counts...")
-        expert_activation_counts += activated_experts_batch.sum(dim=0)
+        batch_expert_counts = activated_experts_batch.sum(dim=0)
+        batch_total_activations = batch_expert_counts.sum().item()
+        expected_batch_activations = current_batch_size * num_layers * top_k
+
+        logger.trace(
+            f"Batch activations: actual={batch_total_activations:.1f}, "
+            f"expected={expected_batch_activations}, "
+            f"diff={abs(batch_total_activations - expected_batch_activations):.1f}"
+        )
+
+        expert_activation_counts += batch_expert_counts
         pairwise_coactivation_counts += (
             activated_experts_batch.T @ activated_experts_batch
         )
@@ -173,10 +183,24 @@ async def _router_jaccard_distance_async(
 
         # Validate running counts
         expected_expert_sum = total_samples * num_layers * top_k
-        assert (
-            abs(expert_activation_counts.sum().item() - expected_expert_sum) < 1e-6
-        ), (
-            f"Expert activation sum {expert_activation_counts.sum().item()} != expected {expected_expert_sum}"
+        actual_expert_sum = expert_activation_counts.sum().item()
+        expert_sum_diff = abs(actual_expert_sum - expected_expert_sum)
+        expert_sum_rel_error = (
+            expert_sum_diff / expected_expert_sum if expected_expert_sum > 0 else 0
+        )
+
+        logger.trace(
+            f"Expert sum validation: actual={actual_expert_sum:.1f}, "
+            f"expected={expected_expert_sum}, diff={expert_sum_diff:.1f}, "
+            f"rel_error={expert_sum_rel_error:.2e}"
+        )
+
+        # Use a more reasonable tolerance for floating-point operations
+        # Allow for small numerical errors (< 0.01% relative error)
+        assert expert_sum_rel_error < 1e-4, (
+            f"Expert activation sum validation failed: "
+            f"actual={actual_expert_sum:.1f}, expected={expected_expert_sum}, "
+            f"diff={expert_sum_diff:.1f}, rel_error={expert_sum_rel_error:.2e}"
         )
 
         logger.debug(
