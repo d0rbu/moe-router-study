@@ -155,23 +155,38 @@ def validate_centroid_distribution(
         f"🚀 GPU validation: Processing {n_samples} samples in batches of {minibatch_size}"
     )
 
-    for start_idx in tqdm(
-        range(0, n_samples, minibatch_size), desc="Validation batches", leave=False
-    ):
-        end_idx = min(start_idx + minibatch_size, n_samples)
-        batch_data = validation_data[start_idx:end_idx].to(device).to(th.float32)
+    try:
+        for start_idx in tqdm(
+            range(0, n_samples, minibatch_size), desc="Validation batches", leave=False
+        ):
+            end_idx = min(start_idx + minibatch_size, n_samples)
+            batch_data = validation_data[start_idx:end_idx].to(device).to(th.float32)
 
-        # Compute distances for this batch
-        batch_distances = th.cdist(batch_data, centroids_gpu, p=1)
-        batch_assignments = th.argmin(batch_distances, dim=1)
+            # Compute distances for this batch
+            batch_distances = th.cdist(batch_data, centroids_gpu, p=1)
+            batch_assignments = th.argmin(batch_distances, dim=1)
 
-        # Move back to CPU to save GPU memory
-        all_assignments.append(batch_assignments.cpu())
+            # Move back to CPU to save GPU memory
+            all_assignments.append(batch_assignments.cpu())
 
-        # Clear GPU cache
-        del batch_data, batch_distances, batch_assignments
-        if device.type == "cuda":
-            th.cuda.empty_cache()
+            # Clear GPU cache
+            del batch_data, batch_distances, batch_assignments
+            if device.type == "cuda":
+                th.cuda.empty_cache()
+    
+    except (RuntimeError, th.cuda.OutOfMemoryError) as e:
+        error_msg = str(e)
+        k = centroids.shape[0]
+        
+        if "invalid configuration argument" in error_msg or "CUDA error" in error_msg:
+            logger.error(f"❌ GPU validation failed for k={k}: {error_msg}")
+            logger.error(f"💡 This typically happens when k-value ({k}) exceeds GPU memory/configuration limits")
+            logger.error(f"🔧 Try reducing minibatch_size (current: {minibatch_size}) or using a smaller k-value")
+            logger.error(f"📊 Tested working limits: k≤16384 with minibatch_size=100000")
+            raise RuntimeError(f"GPU validation failed for k={k}. Try smaller minibatch_size or k-value. Original error: {error_msg}")
+        else:
+            logger.error(f"❌ Unexpected GPU error during validation: {error_msg}")
+            raise
 
     # Concatenate all assignments
     assignments = th.cat(all_assignments, dim=0)
