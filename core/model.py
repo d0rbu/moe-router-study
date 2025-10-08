@@ -25,6 +25,19 @@ class Checkpoint:
             )
         return self.model_config.revision_format.format(self.step, self.num_tokens)
 
+    def __hash__(self):
+        return hash((self.step, self.num_tokens, self.revision))
+
+    def __eq__(self, other):
+        if not isinstance(other, Checkpoint):
+            return False
+
+        return (
+            self.step == other.step
+            and self.num_tokens == other.num_tokens
+            and self.revision == other.revision
+        )
+
 
 LATEST_REVISION = "main"
 
@@ -77,7 +90,9 @@ class ModelConfig:
 
             checkpoints.append(Checkpoint(int(step_str), num_tokens_val, self))
 
-        self.checkpoints = sorted(checkpoints, key=lambda x: (x.step, x.num_tokens))
+        self.checkpoints = sorted(
+            checkpoints, key=lambda x: (x.step, x.num_tokens or 0)
+        )
 
         if not self.checkpoints:
             return [self.latest_checkpoint]
@@ -101,11 +116,11 @@ class ModelConfig:
 
         # don't add the main revision if it's already in the checkpoints
         if self.total_steps == max_steps and self.total_tokens == max_num_tokens:
-            return checkpoints
+            return self.checkpoints
 
-        checkpoints.append(self.latest_checkpoint)
+        self.checkpoints.append(self.latest_checkpoint)
 
-        return checkpoints
+        return self.checkpoints
 
     def __post_init__(self):
         if self.eager_fetch:

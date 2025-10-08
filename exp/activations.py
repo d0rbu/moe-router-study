@@ -85,6 +85,16 @@ class Activations:
         num_workers: int = 8,
         debug: bool = False,
     ) -> "Activations":
+        if not (dist.is_available() and dist.is_initialized()):
+            raise RuntimeError(
+                "PyTorch distributed training is not initialized. "
+                "Ensure that PyTorch distributed training is initialized with "
+                "`dist.init_process_group`. You can use `load_activations_and_init_dist()` "
+                "to have this done automatically from SLURM environment variables. "
+                "This function handles both single and multi-process execution and ensures "
+                "proper distributed training setup."
+            )
+
         activation_dir = os.path.join(OUTPUT_DIR, experiment_name, ACTIVATION_DIRNAME)
 
         cls.device = device
@@ -293,7 +303,7 @@ class Activations:
         activation_dir: str,
         seed: int = 0,
         tokens_per_file_in_reshuffled: int = 100_000,
-        shuffle_batch_size: int = 100,
+        shuffle_batch_size: int = 10,
         debug: bool = False,
         num_workers: int = 8,
     ) -> list[str]:
@@ -393,16 +403,25 @@ class Activations:
         activation_dir: str,
         output_dir: str,
         tokens_per_file_in_reshuffled: int = 100_000,
-        shuffle_batch_size: int = 100,
+        shuffle_batch_size: int = 10,
         seed: int = 0,
         debug: bool = False,
         num_workers: int = 8,
+        cpu_only: bool = False,
     ) -> list[str]:
-        activation_filepaths = broadcast_variable_length_list(
-            cls.get_activation_filepaths,
-            args=(activation_dir, debug),
-            src=0,
-        )
+        # Set rank and world_size based on cpu_only mode
+        if cpu_only:
+            rank = 0
+            world_size = 1
+            activation_filepaths = cls.get_activation_filepaths(activation_dir, debug)
+        else:
+            rank = dist.get_rank()
+            world_size = dist.get_world_size()
+            activation_filepaths = broadcast_variable_length_list(
+                cls.get_activation_filepaths,
+                args=(activation_dir, debug),
+                src=0,
+            )
 
         assert len(activation_filepaths) > 0, "No activation files found :("
 
@@ -417,7 +436,7 @@ class Activations:
             )
 
         local_activation_filepaths = activation_filepaths[
-            dist.get_rank() : activation_filepath_limit : dist.get_world_size()
+            rank:activation_filepath_limit:world_size
         ]
 
         # start threadpool to load the files
@@ -428,13 +447,11 @@ class Activations:
                 for filepath in local_activation_filepaths
             )
             for future_idx in tqdm(
-                range(
-                    dist.get_rank(), activation_filepath_limit, dist.get_world_size()
-                ),
+                range(rank, activation_filepath_limit, world_size),
                 total=len(futures),
                 desc="Loading batch sizes",
                 leave=False,
-                position=dist.get_rank(),
+                position=rank,
             ):
                 future = futures.popleft()
                 data = future.result()
@@ -442,11 +459,13 @@ class Activations:
                 del data
                 del future
 
-        dist.all_reduce(all_batch_sizes, op=dist.ReduceOp.SUM)
+        if not cpu_only:
+            dist.all_reduce(all_batch_sizes, op=dist.ReduceOp.SUM)
 
         # maybe not the bestest practice but this is good enough lol
-        th.manual_seed(seed + dist.get_rank())
-        th.cuda.manual_seed_all(seed + dist.get_rank())
+        th.manual_seed(seed + rank)
+        if not cpu_only:
+            th.cuda.manual_seed_all(seed + rank)
 
         current_batch = defaultdict(list)
         current_batch_idx = 0
@@ -460,15 +479,15 @@ class Activations:
             )
         )
         local_activation_file_batches = activation_file_batches[
-            dist.get_rank() : activation_filepath_limit : dist.get_world_size()
+            rank:activation_filepath_limit:world_size
         ]
 
         for shuffle_batch_idx, shuffle_batch in tqdm(
             enumerate(local_activation_file_batches),
-            desc=f"Rank {dist.get_rank()}",
+            desc=f"Rank {rank}" if not cpu_only else "Processing batches",
             total=len(local_activation_file_batches),
             leave=False,
-            position=dist.get_rank() * 2,
+            position=rank * 2,
         ):
             filepaths, batch_sizes = zip(*shuffle_batch, strict=True)
 
@@ -492,7 +511,7 @@ class Activations:
                 desc=f"Shuffle batch {shuffle_batch_idx}",
                 total=total_size,
                 leave=False,
-                position=dist.get_rank() * 2 + 1,
+                position=rank * 2 + 1,
             ):
                 file_idx, local_idx = Activations._batch_idx_to_file_and_local_idx(
                     batch_size_ranges, batch_idx
@@ -533,7 +552,7 @@ class Activations:
 
                 if num_batch_tokens >= tokens_per_file_in_reshuffled:
                     output_filepath = os.path.join(
-                        output_dir, f"{dist.get_rank()}_{current_batch_idx}.pt-temp"
+                        output_dir, f"{rank}_{current_batch_idx}.pt-temp"
                     )
                     new_activation_filepaths.append(
                         cls._collate_and_save_batch(current_batch, output_filepath)
@@ -555,19 +574,24 @@ class Activations:
 
         total_tokens += num_batch_tokens
         total_tokens = th.tensor(total_tokens, dtype=th.int32)
-        dist.reduce(total_tokens, dst=0, op=dist.ReduceOp.SUM)
 
-        if dist.get_rank() == 0:
-            remaining_stacked_batches = [None] * dist.get_world_size()
+        if cpu_only:
+            remaining_stacked_batches = [cls._stack_batch_for_gather(current_batch)]
             logger.debug(f"Total tokens: {total_tokens.item()}")
         else:
-            remaining_stacked_batches = None
+            dist.reduce(total_tokens, dst=0, op=dist.ReduceOp.SUM)
 
-        # Stack lists of tensors before gathering to improve performance
-        stacked_current_batch = cls._stack_batch_for_gather(current_batch)
-        dist.gather_object(stacked_current_batch, remaining_stacked_batches, dst=0)
+            if rank == 0:
+                remaining_stacked_batches = [None] * world_size
+                logger.debug(f"Total tokens: {total_tokens.item()}")
+            else:
+                remaining_stacked_batches = None
 
-        if dist.get_rank() == 0:
+            # Stack lists of tensors before gathering to improve performance
+            stacked_current_batch = cls._stack_batch_for_gather(current_batch)
+            dist.gather_object(stacked_current_batch, remaining_stacked_batches, dst=0)
+
+        if rank == 0:
             assert remaining_stacked_batches is not None
             logger.debug(f"Gathered {len(remaining_stacked_batches)} batches")
 
@@ -611,7 +635,7 @@ class Activations:
 
                     output_filepath = os.path.join(
                         output_dir,
-                        f"{dist.get_rank()}_{current_batch_idx + extra_batch_idx}.pt-temp",
+                        f"{rank}_{current_batch_idx + extra_batch_idx}.pt-temp",
                     )
                     extra_activation_filepaths.append(
                         cls._collate_and_save_batch(extra_batch, output_filepath)
@@ -641,10 +665,11 @@ class Activations:
         else:
             renamed_activation_filepaths = []
 
-        renamed_activation_filepaths = broadcast_variable_length_list(
-            lambda: renamed_activation_filepaths,
-            src=0,
-        )
+        if not cpu_only:
+            renamed_activation_filepaths = broadcast_variable_length_list(
+                lambda: renamed_activation_filepaths,
+                src=0,
+            )
 
         return renamed_activation_filepaths
 

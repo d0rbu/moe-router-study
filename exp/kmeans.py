@@ -1,17 +1,20 @@
 import asyncio
 from asyncio import Barrier
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from functools import partial
 import gc
 from itertools import batched, islice
 import os
 import sys
-from typing import Any
+import time
+from typing import Any, TypeVar
 
 import arguably
 from loguru import logger
 import torch as th
 import torch.distributed as dist
+from torch.profiler import ProfilerActivity, profile, record_function
 from tqdm import tqdm
 import yaml
 
@@ -28,6 +31,68 @@ from exp.kmeans_validation import (
     validate_centroid_distribution,
 )
 from exp.training import get_experiment_name
+
+T = TypeVar("T")
+
+
+def check_worker_health(workers: dict[str, asyncio.Task], *, context: str = "") -> None:
+    """Check if any workers have failed and raise appropriate exceptions."""
+    for worker_name, worker in workers.items():
+        if worker.done():
+            exception = worker.exception()
+            context_str = f" [{context}]" if context else ""
+            if exception:
+                logger.error(f"{worker_name} worker failed{context_str}: {exception}")
+                raise RuntimeError(f"{worker_name} worker failed") from exception
+            else:
+                logger.error(
+                    f"{worker_name} worker completed unexpectedly{context_str}"
+                )
+                raise RuntimeError(f"{worker_name} worker completed unexpectedly")
+
+
+async def safe_await_with_worker_check[T](
+    awaitable: Awaitable[T],
+    *,
+    workers: dict[str, asyncio.Task] | None = None,
+    timeout: float = 30.0,
+    operation_name: str = "",
+) -> T:
+    """Safely await an operation with timeout and worker health checking on error."""
+    if workers is None:
+        workers = {}
+
+    try:
+        result = await asyncio.wait_for(awaitable, timeout=timeout)
+        if operation_name:
+            logger.trace(f"Successfully completed {operation_name}")
+        else:
+            logger.trace("Successfully completed")
+        return result
+    except TimeoutError:
+        if operation_name:
+            logger.error(f"Timeout during {operation_name} - workers may have failed!")
+        else:
+            logger.error("Operation timed out - workers may have failed!")
+        # Check if any workers have failed
+        for worker_name, worker in workers.items():
+            if worker.done():
+                exception = worker.exception()
+                if exception:
+                    logger.error(
+                        f"{worker_name} worker failed with exception: {exception}"
+                    )
+                else:
+                    logger.error(f"{worker_name} worker completed unexpectedly")
+            else:
+                logger.error(f"{worker_name} worker appears to be hanging")
+        raise
+    except Exception as e:
+        if operation_name:
+            logger.error(f"Unexpected error during {operation_name}: {e}")
+        else:
+            logger.error(f"Unexpected error: {e}")
+        raise
 
 
 @dataclass
@@ -147,9 +212,21 @@ async def compute_centroid_from_assignment(
     num_assigned = centroid_mask.sum()
 
     if num_assigned == 0:
+        logger.trace(
+            f"Centroid {centroid_idx} has no assigned points, returning zero vector"
+        )
         return th.zeros_like(data[0]), num_assigned
 
-    return data[centroid_mask].mean(dim=0), num_assigned
+    new_centroid = data[centroid_mask].mean(dim=0)
+
+    if th.isnan(new_centroid).any():
+        logger.error(f"NaN detected in centroid {centroid_idx} computation!")
+        logger.error(f"num_assigned: {num_assigned}, data shape: {data.shape}")
+        logger.error(
+            f"assigned data stats: min={data[centroid_mask].min()}, max={data[centroid_mask].max()}"
+        )
+
+    return new_centroid, num_assigned
 
 
 async def kmeans_step(
@@ -190,6 +267,14 @@ async def kmeans_step(
     new_centroids = th.stack(new_centroids_raw, dim=0)
     new_weights = th.tensor(new_weights_raw, dtype=th.int64, device=data.device)
 
+    # Log update statistics
+    update_norms = th.norm(new_centroids, dim=1)
+    zero_update_norms = (update_norms == 0).sum().item()
+    total_weight = new_weights.sum().item()
+    logger.debug(
+        f"📊 UPDATE: Computed updates - zero_norms={zero_update_norms}/{len(update_norms)}, norm_stats: min={update_norms.min():.6f}, max={update_norms.max():.6f}, mean={update_norms.mean():.6f}, total_weight={total_weight}"
+    )
+
     logger.trace(
         f"New centroids: {new_centroids.dtype} {new_centroids.device} {new_centroids.shape}"
     )
@@ -211,6 +296,23 @@ async def sync(
     rank = dist.get_rank()
     world_size = dist.get_world_size()
     gpu_data = all_gpu_data[gpu_idx]
+
+    logger.debug(f"🔄 SYNC: Starting sync for GPU {gpu_idx}, rank {rank}")
+
+    # Log dirty data state before sync
+    for k_idx, (centroids, weights) in enumerate(
+        zip(
+            gpu_data.dirty_data.centroid_sets,
+            gpu_data.dirty_data.weight_sets,
+            strict=True,
+        )
+    ):
+        centroid_norms = th.norm(centroids, dim=1)
+        zero_norms = (centroid_norms == 0).sum().item()
+        weight_sum = weights.sum().item()
+        logger.debug(
+            f"🔄 SYNC GPU {gpu_idx} k_idx={k_idx} BEFORE: Dirty centroids zero_norms={zero_norms}/{len(centroid_norms)}, norm_stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}, weight_sum={weight_sum:.2f}"
+        )
 
     # gather across nodes
     all_losses = (
@@ -251,11 +353,51 @@ async def sync(
 
         # (K)
         weights_total = all_weights.sum(dim=0)
-        # (N, K)
-        weights_proportion = all_weights / weights_total
+
+        empty_centroids = (weights_total == 0).sum().item()
+        if empty_centroids > 0:
+            logger.debug(
+                f"Found {empty_centroids} empty centroids out of {len(weights_total)}"
+            )
+
+        # (N, K) - handle division by zero for empty centroids
+        weights_proportion = th.where(
+            weights_total.unsqueeze(0) > 0,
+            all_weights / weights_total.unsqueeze(0),
+            th.zeros_like(all_weights),
+        )
+
+        if th.isnan(weights_proportion).any():
+            logger.error(
+                f"NaN values found in weights_proportion! weights_total: {weights_total}"
+            )
+            logger.error(f"all_weights: {all_weights}")
 
         # (K, D)
         new_centroids = (all_centroids * weights_proportion.unsqueeze(-1)).sum(dim=0)
+
+        nan_centroids = th.isnan(new_centroids).any(dim=1).sum().item()
+        if nan_centroids > 0:
+            logger.error(
+                f"Found {nan_centroids} centroids with NaN values after aggregation!"
+            )
+            logger.error(f"Centroid norms: {th.norm(new_centroids, dim=1)}")
+            logger.error(f"weights_total: {weights_total}")
+            logger.error(f"weights_proportion: {weights_proportion}")
+
+        centroid_norms = th.norm(new_centroids, dim=1)
+        zero_norm_centroids = (centroid_norms == 0).sum().item()
+        if zero_norm_centroids > 0:
+            logger.debug(f"Found {zero_norm_centroids} centroids with zero norm")
+            logger.debug(
+                f"Centroid norm stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}"
+            )
+
+        if not th.isfinite(new_centroids).all():
+            logger.error("Non-finite values detected in centroids!")
+            inf_centroids = th.isinf(new_centroids).any(dim=1).sum().item()
+            logger.error(f"Centroids with inf values: {inf_centroids}")
+            logger.error(f"Centroids with nan values: {nan_centroids}")
 
         # (K)
         loss_proportion = all_weights.sum(dim=1) / weights_total.sum()
@@ -265,6 +407,13 @@ async def sync(
         gpu_data.dirty_data.centroid_sets[losses_idx] = new_centroids
         gpu_data.dirty_data.weight_sets[losses_idx] = weights_total
         gpu_data.dirty_data.losses[losses_idx] = new_loss
+
+        # Log new centroids after aggregation
+        new_centroid_norms = th.norm(new_centroids, dim=1)
+        new_zero_norms = (new_centroid_norms == 0).sum().item()
+        logger.debug(
+            f"🔄 SYNC GPU {gpu_idx} k_idx={losses_idx} AFTER AGGREGATION: New centroids zero_norms={new_zero_norms}/{len(new_centroid_norms)}, norm_stats: min={new_centroid_norms.min():.6f}, max={new_centroid_norms.max():.6f}, mean={new_centroid_norms.mean():.6f}, weights_total_sum={weights_total.sum().item():.2f}"
+        )
 
         del (
             all_centroids,
@@ -297,8 +446,23 @@ async def sync(
     await barrier.wait()
 
     # reset dirty data now that it has been synced
+    logger.debug(f"🔄 SYNC GPU {gpu_idx}: Resetting dirty data to zero...")
     for weights in gpu_data.dirty_data.weight_sets:
         weights.zero_()
+
+    for centroids in gpu_data.dirty_data.centroid_sets:
+        centroids.zero_()
+
+    # Log synced data state after sync
+    logger.debug(
+        f"🔄 SYNC GPU {gpu_idx}: Sync completed, logging final synced state..."
+    )
+    for k_idx, centroids in enumerate(gpu_data.synced_data.centroid_sets):
+        centroid_norms = th.norm(centroids, dim=1)
+        zero_norms = (centroid_norms == 0).sum().item()
+        logger.debug(
+            f"🔄 SYNC GPU {gpu_idx} k_idx={k_idx} FINAL: Synced centroids zero_norms={zero_norms}/{len(centroid_norms)}, norm_stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}"
+        )
 
     if rank == 0 and gpu_idx == 0:
         losses_over_time.append(gpu_data.synced_data.losses.detach().cpu().clone())
@@ -331,8 +495,15 @@ async def gpu_worker(
     gpu_data = all_gpu_data[gpu_idx]
 
     while True:
-        queue_item = await gpu_data.queue.get()
-        logger.trace(f"GPU {gpu_idx} picked up item from queue")
+        logger.trace(f"GPU {gpu_idx} waiting for queue item...")
+        try:
+            queue_item = await asyncio.wait_for(gpu_data.queue.get(), timeout=60.0)
+            logger.trace(f"GPU {gpu_idx} picked up item from queue")
+        except TimeoutError:
+            logger.warning(
+                f"GPU {gpu_idx} timed out waiting for queue item - may indicate main loop hang"
+            )
+            continue
 
         if queue_item is None:
             logger.trace(f"GPU {gpu_idx} received stop signal")
@@ -340,7 +511,9 @@ async def gpu_worker(
 
         router_logits, should_sync, save_idx = queue_item
 
-        logger.trace(f"GPU {gpu_idx} received queue item")
+        logger.trace(
+            f"GPU {gpu_idx} received queue item (should_sync={should_sync}, save_idx={save_idx})"
+        )
 
         # assert that if save_idx is not None, then should_sync is also true
         if save_idx is not None:
@@ -404,11 +577,18 @@ async def gpu_worker(
         logger.trace(f"GPU {gpu_idx} updated synced data")
 
         if not should_sync:
+            logger.trace(f"GPU {gpu_idx} skipping sync, continuing to next item")
             continue
 
-        logger.trace(f"GPU {gpu_idx} syncing data")
+        logger.debug(f"GPU {gpu_idx} starting sync operation")
 
-        await sync(gpu_idx, all_gpu_data, losses_over_time, barrier, group)
+        await safe_await_with_worker_check(
+            sync(gpu_idx, all_gpu_data, losses_over_time, barrier, group),
+            timeout=300.0,
+            operation_name=f"sync operation for GPU {gpu_idx}",
+        )
+
+        logger.debug(f"GPU {gpu_idx} completed sync operation")
 
         # save checkpoint if save_idx is not None and we're on rank 0 gpu 0
         if (
@@ -643,12 +823,16 @@ async def kmeans_manhattan(
     )
 
     # Convert validation data to flat paths format (same as training data)
-    validation_data = convert_router_logits_to_paths(
-        validation_router_logits, top_k
-    ).to(dtype=th.float32, device="cpu")
-    init_activation_data = convert_router_logits_to_paths(
-        init_activation_logits, top_k
-    ).to(dtype=th.float32, device="cpu")
+    validation_data = (
+        convert_router_logits_to_paths(validation_router_logits, top_k)
+        .view(validation_router_logits.shape[0], -1)
+        .to(dtype=th.float32, device="cpu")
+    )
+    init_activation_data = (
+        convert_router_logits_to_paths(init_activation_logits, top_k)
+        .view(init_activation_logits.shape[0], -1)
+        .to(dtype=th.float32, device="cpu")
+    )
 
     logger.debug(
         f"Init activation data stats: "
@@ -671,8 +855,61 @@ async def kmeans_manhattan(
         f"Reserved {validation_size} data points for validation (shape: {validation_data.shape})"
     )
 
-    for centroid_set in all_gpu_data[0].dirty_data.centroid_sets:
-        _is_valid, _stats = validate_centroids(centroid_set.cpu())
+    logger.debug("🔍 VALIDATION: Checking centroids BEFORE initialization...")
+
+    for k_idx, centroid_set in enumerate(all_gpu_data[0].dirty_data.centroid_sets):
+        logger.debug(
+            f"⏱️ Starting validation for k_idx={k_idx} (k={k_values[k_idx]}) with {centroid_set.shape[0]} centroids..."
+        )
+        start_time = time.time()
+
+        # Profile each validation individually
+        with (
+            profile(
+                activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                record_shapes=True,
+                profile_memory=True,
+                with_stack=True,
+            ) as prof,
+            record_function(f"validate_centroids_k_idx_{k_idx}"),
+        ):
+            _is_valid, _stats = validate_centroids(centroid_set.cpu())
+
+        elapsed = time.time() - start_time
+
+        # Export profile immediately for this k_idx
+        profile_filename = f"validation_profile_pre_init_k{k_idx}.json"
+        prof.export_chrome_trace(profile_filename)
+
+        # Log timing and profile summary immediately
+        logger.debug(f"⏱️ validate_centroids k_idx={k_idx} took {elapsed:.2f}s")
+        logger.debug(
+            f"📊 PRE-INIT VALIDATION k_idx={k_idx}: Empty={_stats.num_empty_centroids}, Norms: min={_stats.min_norm:.6f}, max={_stats.max_norm:.6f}, mean={_stats.mean_norm:.6f}"
+        )
+        logger.debug(f"🔬 Profile saved to {profile_filename}")
+
+        # Log top CPU time consumers immediately
+        profile_table = prof.key_averages().table(
+            sort_by="cpu_time_total", row_limit=10
+        )
+        logger.debug(f"🔬 TOP CPU TIME CONSUMERS for k_idx={k_idx}:\n{profile_table}")
+
+        # Log memory usage
+        if prof.key_averages():
+            memory_events = [
+                event for event in prof.key_averages() if event.cpu_memory_usage > 0
+            ]
+            if memory_events:
+                top_memory = sorted(
+                    memory_events, key=lambda x: x.cpu_memory_usage, reverse=True
+                )[:5]
+                logger.debug(f"🧠 TOP MEMORY CONSUMERS for k_idx={k_idx}:")
+                for event in top_memory:
+                    logger.debug(
+                        f"  {event.key}: {event.cpu_memory_usage / 1024 / 1024:.2f} MB"
+                    )
+
+        logger.debug(f"✅ Completed validation for k_idx={k_idx}, moving to next...")
 
     for k_idx, k in enumerate(k_values):
         for _gpu_idx, gpu_data in enumerate(all_gpu_data):
@@ -690,8 +927,28 @@ async def kmeans_manhattan(
                 .to(device=current_device, dtype=current_dtype)
             )
 
-    for centroid_set in all_gpu_data[0].dirty_data.centroid_sets:
+            initialized_centroids = gpu_data.dirty_data.centroid_sets[k_idx]
+            if th.isnan(initialized_centroids).any():
+                logger.error(f"NaN values in initialized centroids for k={k}!")
+            if not th.isfinite(initialized_centroids).all():
+                logger.error(f"Non-finite values in initialized centroids for k={k}!")
+
+            centroid_norms = th.norm(initialized_centroids, dim=1)
+            zero_norm_count = (centroid_norms == 0).sum().item()
+            if zero_norm_count > 0:
+                logger.debug(
+                    f"Initialized centroids for k={k}: {zero_norm_count} have zero norm"
+                )
+                logger.debug(
+                    f"Centroid norm stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}"
+                )
+
+    logger.debug("🔍 VALIDATION: Checking centroids AFTER initialization...")
+    for k_idx, centroid_set in enumerate(all_gpu_data[0].dirty_data.centroid_sets):
         _is_valid, _stats = validate_centroids(centroid_set.cpu())
+        logger.debug(
+            f"📊 POST-INIT VALIDATION k_idx={k_idx}: Empty={_stats.num_empty_centroids}, Norms: min={_stats.min_norm:.6f}, max={_stats.max_norm:.6f}, mean={_stats.mean_norm:.6f}"
+        )
 
     logger.trace(f"Initialized centroids for {len(k_values)} clusters")
 
@@ -740,7 +997,6 @@ async def kmeans_manhattan(
         for gpu_idx in range(num_gpus)
     ]
 
-    # Add exception handling to all worker tasks
     for worker in workers:
         worker.add_done_callback(handle_exceptions)
 
@@ -749,7 +1005,32 @@ async def kmeans_manhattan(
     # distributed kmeans
     for iter_idx in iterator:
         # process data in batches, parallelized over devices and nodes
+        logger.debug(f"🚀 ITERATION {iter_idx}: Starting k-means iteration")
+
+        # Log centroid states at start of iteration
+        if iter_idx == 0 or iter_idx % 5 == 0:  # Log every 5 iterations
+            logger.debug(
+                f"🔍 ITERATION {iter_idx}: Checking centroid states at start..."
+            )
+            for k_idx, centroid_set in enumerate(
+                all_gpu_data[0].synced_data.centroid_sets
+            ):
+                centroid_norms = th.norm(centroid_set, dim=1)
+                zero_norms = (centroid_norms == 0).sum().item()
+                logger.debug(
+                    f"📊 ITER {iter_idx} START k_idx={k_idx}: Zero norms={zero_norms}/{len(centroid_norms)}, Norm stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}"
+                )
+
         logger.trace(f"Running iteration {iter_idx}")
+
+        # Check worker health at start of each iteration
+        workers_dict = {f"GPU {i}": worker for i, worker in enumerate(workers)}
+        check_worker_health(workers_dict, context=f"iteration {iter_idx}")
+
+        # Log queue states for observability
+        queue_sizes = [gpu_data.queue.qsize() for gpu_data in all_gpu_data]
+        logger.debug(f"Iteration {iter_idx} starting - Queue sizes: {queue_sizes}")
+
         # skip over the first validation_size data points for validation
         minibatch_iterator = activations(
             batch_size=minibatch_size, start_idx=validation_size
@@ -787,6 +1068,12 @@ async def kmeans_manhattan(
         ):
             logger.trace(f"Running distributed batch {distributed_batch_idx}")
 
+            # Periodic worker health check during long iterations
+            if distributed_batch_idx % 10 == 0:
+                check_worker_health(
+                    workers_dict, context=f"batch {distributed_batch_idx}"
+                )
+
             should_sync = (distributed_batch_idx % accumulation_size) == (
                 accumulation_size - 1
             )
@@ -801,19 +1088,23 @@ async def kmeans_manhattan(
             logger.trace(f"Effective step index: {effective_step_idx}")
             logger.trace(f"Save index: {save_idx}")
 
-            for gpu_data, gpu_minibatch in zip(
-                all_gpu_data, gpu_minibatches, strict=False
+            for gpu_idx, (gpu_data, gpu_minibatch) in enumerate(
+                zip(all_gpu_data, gpu_minibatches, strict=False)
             ):
                 logger.trace(
-                    f"Putting data on GPU with queue size {gpu_data.queue.qsize()}"
+                    f"Putting data on GPU {gpu_idx} with queue size {gpu_data.queue.qsize()}"
                 )
 
-                await gpu_data.queue.put(
-                    (
-                        gpu_minibatch[ActivationKeys.ROUTER_LOGITS],
-                        should_sync,
-                        save_idx,
-                    )
+                await safe_await_with_worker_check(
+                    gpu_data.queue.put(
+                        (
+                            gpu_minibatch[ActivationKeys.ROUTER_LOGITS],
+                            should_sync,
+                            save_idx,
+                        )
+                    ),
+                    workers={f"GPU {gpu_idx}": workers[gpu_idx]},
+                    operation_name=f"queue put for GPU {gpu_idx}",
                 )
 
         # intermittent validation during training
@@ -822,12 +1113,17 @@ async def kmeans_manhattan(
             and (iter_idx + 1) % validate_every == 0
             and rank == 0
         ):
-            logger.info(
-                f"Running intermittent validation at iteration {iter_idx + 1}..."
+            logger.debug(
+                f"🔍 VALIDATION: Running intermittent validation at iteration {iter_idx + 1}..."
             )
 
-            for centroid_set in all_gpu_data[0].synced_data.centroid_sets:
+            for k_idx, centroid_set in enumerate(
+                all_gpu_data[0].synced_data.centroid_sets
+            ):
                 _is_valid, _stats = validate_centroids(centroid_set.cpu())
+                logger.warning(
+                    f"🚨 ITER {iter_idx + 1} VALIDATION k_idx={k_idx}: Empty={_stats.num_empty_centroids}, Over-concentrated={_stats.num_over_concentrated_centroids}, Norms: min={_stats.min_norm:.6f}, max={_stats.max_norm:.6f}, mean={_stats.mean_norm:.6f}"
+                )
 
     for gpu_data in all_gpu_data:
         logger.trace(

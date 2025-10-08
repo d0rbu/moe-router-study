@@ -211,3 +211,9 @@ out_*
 
 datasets/
 models/
+
+# SLURM job output files
+*.err
+*.out
+*.[0-9]*
+slurm-*.out
