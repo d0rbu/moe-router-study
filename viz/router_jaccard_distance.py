@@ -195,7 +195,6 @@ async def _router_jaccard_distance_async(
             f"rel_error={expert_sum_rel_error:.2e}"
         )
 
-        # Use a more reasonable tolerance for floating-point operations
         assert expert_sum_rel_error < 1e-4, (
             f"Expert activation sum validation failed: "
             f"actual={actual_expert_sum:.1f}, expected={expected_expert_sum}, "
