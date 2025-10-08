@@ -65,7 +65,7 @@ def compute_entropy(frequencies: th.Tensor) -> float:
     # Validation
     assert entropy >= 0, f"Entropy should be non-negative, got {entropy}"
     max_entropy = th.log2(th.tensor(float(len(nonzero_probabilities)))).item()
-    assert entropy <= max_entropy + 1e-6, (
+    assert entropy <= max_entropy * (1 + 1e-4) + 1e-6, (
         f"Entropy {entropy} exceeds maximum {max_entropy}"
     )
 

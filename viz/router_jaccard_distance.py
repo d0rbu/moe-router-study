@@ -288,13 +288,15 @@ async def _router_jaccard_distance_async(
     expected_prob_sum = num_layers * top_k
     actual_prob_sum = expert_probabilities.sum()
 
-    logger.trace(
-        f"Probability sum validation: actual={actual_prob_sum.item():.8f}, "
-        f"expected={expected_prob_sum}"
-    )
-
-    # Use th.allclose with relative tolerance for floating-point operations
-    assert th.allclose(actual_prob_sum, th.tensor(expected_prob_sum), rtol=1e-4), (
+    assert th.allclose(
+        actual_prob_sum,
+        th.tensor(
+            expected_prob_sum,
+            dtype=actual_prob_sum.dtype,
+            device=actual_prob_sum.device,
+        ),
+        rtol=1e-4,
+    ), (
         f"Expert probabilities sum validation failed: "
         f"actual={actual_prob_sum.item():.8f}, expected={expected_prob_sum}"
     )
