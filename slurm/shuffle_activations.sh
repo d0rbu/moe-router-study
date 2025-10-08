@@ -21,5 +21,3 @@ echo "Seed: $SEED"
 
 # Run the activation shuffling
 uv run scripts/shuffle_activations.py --model-name $MODEL_NAME --dataset-name $DATASET_NAME --tokens-per-file $TOKENS_PER_FILE --context-length $CONTEXT_LENGTH --reshuffled-tokens-per-file $RESHUFFLED_TOKENS_PER_FILE --seed $SEED
-
-echo "Activation shuffling completed!"
