@@ -7,12 +7,14 @@ import gc
 from itertools import batched, islice
 import os
 import sys
+import time
 from typing import Any, TypeVar
 
 import arguably
 from loguru import logger
 import torch as th
 import torch.distributed as dist
+from torch.profiler import ProfilerActivity, profile, record_function
 from tqdm import tqdm
 import yaml
 
@@ -854,11 +856,60 @@ async def kmeans_manhattan(
     )
 
     logger.debug("🔍 VALIDATION: Checking centroids BEFORE initialization...")
+
     for k_idx, centroid_set in enumerate(all_gpu_data[0].dirty_data.centroid_sets):
-        _is_valid, _stats = validate_centroids(centroid_set.cpu())
+        logger.debug(
+            f"⏱️ Starting validation for k_idx={k_idx} (k={k_values[k_idx]}) with {centroid_set.shape[0]} centroids..."
+        )
+        start_time = time.time()
+
+        # Profile each validation individually
+        with (
+            profile(
+                activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                record_shapes=True,
+                profile_memory=True,
+                with_stack=True,
+            ) as prof,
+            record_function(f"validate_centroids_k_idx_{k_idx}"),
+        ):
+            _is_valid, _stats = validate_centroids(centroid_set.cpu())
+
+        elapsed = time.time() - start_time
+
+        # Export profile immediately for this k_idx
+        profile_filename = f"validation_profile_pre_init_k{k_idx}.json"
+        prof.export_chrome_trace(profile_filename)
+
+        # Log timing and profile summary immediately
+        logger.debug(f"⏱️ validate_centroids k_idx={k_idx} took {elapsed:.2f}s")
         logger.debug(
             f"📊 PRE-INIT VALIDATION k_idx={k_idx}: Empty={_stats.num_empty_centroids}, Norms: min={_stats.min_norm:.6f}, max={_stats.max_norm:.6f}, mean={_stats.mean_norm:.6f}"
         )
+        logger.debug(f"🔬 Profile saved to {profile_filename}")
+
+        # Log top CPU time consumers immediately
+        profile_table = prof.key_averages().table(
+            sort_by="cpu_time_total", row_limit=10
+        )
+        logger.debug(f"🔬 TOP CPU TIME CONSUMERS for k_idx={k_idx}:\n{profile_table}")
+
+        # Log memory usage
+        if prof.key_averages():
+            memory_events = [
+                event for event in prof.key_averages() if event.cpu_memory_usage > 0
+            ]
+            if memory_events:
+                top_memory = sorted(
+                    memory_events, key=lambda x: x.cpu_memory_usage, reverse=True
+                )[:5]
+                logger.debug(f"🧠 TOP MEMORY CONSUMERS for k_idx={k_idx}:")
+                for event in top_memory:
+                    logger.debug(
+                        f"  {event.key}: {event.cpu_memory_usage / 1024 / 1024:.2f} MB"
+                    )
+
+        logger.debug(f"✅ Completed validation for k_idx={k_idx}, moving to next...")
 
     for k_idx, k in enumerate(k_values):
         for _gpu_idx, gpu_data in enumerate(all_gpu_data):
