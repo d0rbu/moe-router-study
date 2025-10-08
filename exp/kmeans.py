@@ -294,9 +294,9 @@ async def sync(
     rank = dist.get_rank()
     world_size = dist.get_world_size()
     gpu_data = all_gpu_data[gpu_idx]
-
-    logger.info(f"🔄 SYNC: Starting sync for GPU {gpu_idx}, rank {rank}")
-
+    
+    logger.debug(f"🔄 SYNC: Starting sync for GPU {gpu_idx}, rank {rank}")
+    
     # Log dirty data state before sync
     for k_idx, (centroids, weights) in enumerate(
         zip(
@@ -452,13 +452,17 @@ async def sync(
         centroids.zero_()
 
     # Log synced data state after sync
-    logger.info(f"🔄 SYNC GPU {gpu_idx}: Sync completed, logging final synced state...")
+    logger.debug(f"🔄 SYNC GPU {gpu_idx}: Sync completed, logging final synced state...")
     for k_idx, centroids in enumerate(gpu_data.synced_data.centroid_sets):
         centroid_norms = th.norm(centroids, dim=1)
         zero_norms = (centroid_norms == 0).sum().item()
+<<<<<<< HEAD
         logger.info(
             f"🔄 SYNC GPU {gpu_idx} k_idx={k_idx} FINAL: Synced centroids zero_norms={zero_norms}/{len(centroid_norms)}, norm_stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}"
         )
+=======
+        logger.debug(f"🔄 SYNC GPU {gpu_idx} k_idx={k_idx} FINAL: Synced centroids zero_norms={zero_norms}/{len(centroid_norms)}, norm_stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}")
+>>>>>>> 4aca392 (Fix logging levels: change info to debug for observability)
 
     if rank == 0 and gpu_idx == 0:
         losses_over_time.append(gpu_data.synced_data.losses.detach().cpu().clone())
@@ -851,12 +855,16 @@ async def kmeans_manhattan(
         f"Reserved {validation_size} data points for validation (shape: {validation_data.shape})"
     )
 
-    logger.info("🔍 VALIDATION: Checking centroids BEFORE initialization...")
+    logger.debug("🔍 VALIDATION: Checking centroids BEFORE initialization...")
     for k_idx, centroid_set in enumerate(all_gpu_data[0].dirty_data.centroid_sets):
         _is_valid, _stats = validate_centroids(centroid_set.cpu())
+<<<<<<< HEAD
         logger.info(
             f"📊 PRE-INIT VALIDATION k_idx={k_idx}: Empty={_stats.num_empty_centroids}, Norms: min={_stats.min_norm:.6f}, max={_stats.max_norm:.6f}, mean={_stats.mean_norm:.6f}"
         )
+=======
+        logger.debug(f"📊 PRE-INIT VALIDATION k_idx={k_idx}: Empty={_stats.num_empty_centroids}, Norms: min={_stats.min_norm:.6f}, max={_stats.max_norm:.6f}, mean={_stats.mean_norm:.6f}")
+>>>>>>> 4aca392 (Fix logging levels: change info to debug for observability)
 
     for k_idx, k in enumerate(k_values):
         for _gpu_idx, gpu_data in enumerate(all_gpu_data):
@@ -890,12 +898,16 @@ async def kmeans_manhattan(
                     f"Centroid norm stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}"
                 )
 
-    logger.info("🔍 VALIDATION: Checking centroids AFTER initialization...")
+    logger.debug("🔍 VALIDATION: Checking centroids AFTER initialization...")
     for k_idx, centroid_set in enumerate(all_gpu_data[0].dirty_data.centroid_sets):
         _is_valid, _stats = validate_centroids(centroid_set.cpu())
+<<<<<<< HEAD
         logger.info(
             f"📊 POST-INIT VALIDATION k_idx={k_idx}: Empty={_stats.num_empty_centroids}, Norms: min={_stats.min_norm:.6f}, max={_stats.max_norm:.6f}, mean={_stats.mean_norm:.6f}"
         )
+=======
+        logger.debug(f"📊 POST-INIT VALIDATION k_idx={k_idx}: Empty={_stats.num_empty_centroids}, Norms: min={_stats.min_norm:.6f}, max={_stats.max_norm:.6f}, mean={_stats.mean_norm:.6f}")
+>>>>>>> 4aca392 (Fix logging levels: change info to debug for observability)
 
     logger.trace(f"Initialized centroids for {len(k_values)} clusters")
 
@@ -952,6 +964,7 @@ async def kmeans_manhattan(
     # distributed kmeans
     for iter_idx in iterator:
         # process data in batches, parallelized over devices and nodes
+<<<<<<< HEAD
         logger.info(f"🚀 ITERATION {iter_idx}: Starting k-means iteration")
 
         # Log centroid states at start of iteration
@@ -968,6 +981,18 @@ async def kmeans_manhattan(
                     f"📊 ITER {iter_idx} START k_idx={k_idx}: Zero norms={zero_norms}/{len(centroid_norms)}, Norm stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}"
                 )
 
+=======
+        logger.debug(f"🚀 ITERATION {iter_idx}: Starting k-means iteration")
+        
+        # Log centroid states at start of iteration
+        if iter_idx == 0 or iter_idx % 5 == 0:  # Log every 5 iterations
+            logger.debug(f"🔍 ITERATION {iter_idx}: Checking centroid states at start...")
+            for k_idx, centroid_set in enumerate(all_gpu_data[0].synced_data.centroid_sets):
+                centroid_norms = th.norm(centroid_set, dim=1)
+                zero_norms = (centroid_norms == 0).sum().item()
+                logger.debug(f"📊 ITER {iter_idx} START k_idx={k_idx}: Zero norms={zero_norms}/{len(centroid_norms)}, Norm stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}")
+        
+>>>>>>> 4aca392 (Fix logging levels: change info to debug for observability)
         logger.trace(f"Running iteration {iter_idx}")
 
         # Check worker health at start of each iteration
@@ -1060,7 +1085,7 @@ async def kmeans_manhattan(
             and (iter_idx + 1) % validate_every == 0
             and rank == 0
         ):
-            logger.info(
+            logger.debug(
                 f"🔍 VALIDATION: Running intermittent validation at iteration {iter_idx + 1}..."
             )
 
