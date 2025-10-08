@@ -31,4 +31,4 @@ module load GCCcore/13.3.0 Python/3.12.3
 cd $SCRATCH/moe-router-study
 
 # Run the distributed job
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/sae.py main --trainers-per-gpu 16 --expansion-factor 64 --k 64 --layer 7 --tokens-per-file 100000 --reshuffled-tokens-per-file 1000000
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/sae.py main --trainers-per-gpu 16 --expansion-factor 64 --k 64 --layer 7 --tokens-per-file 100000 --reshuffled-tokens-per-file 100000
