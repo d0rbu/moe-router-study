@@ -932,8 +932,6 @@ async def kmeans_manhattan(
                     f"Centroid norm stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}"
                 )
 
-
-
     logger.debug("🔍 VALIDATION: Checking centroids AFTER initialization...")
     for k_idx, centroid_set in enumerate(all_gpu_data[0].dirty_data.centroid_sets):
         _is_valid, _stats = validate_centroids(centroid_set.cpu())
@@ -999,9 +997,7 @@ async def kmeans_manhattan(
         logger.trace(f"🚀 Starting k-means iteration {iter_idx}")
 
         # Log centroid states at start of iteration
-        for k_idx, centroid_set in enumerate(
-            all_gpu_data[0].synced_data.centroid_sets
-        ):
+        for k_idx, centroid_set in enumerate(all_gpu_data[0].synced_data.centroid_sets):
             centroid_norms = th.norm(centroid_set, dim=1)
             zero_norms = (centroid_norms == 0).sum().item()
             logger.trace(
