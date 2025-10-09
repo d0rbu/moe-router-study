@@ -855,8 +855,6 @@ async def kmeans_manhattan(
         f"Reserved {validation_size} data points for validation (shape: {validation_data.shape})"
     )
 
-
-
     for k_idx, k in enumerate(k_values):
         for _gpu_idx, gpu_data in enumerate(all_gpu_data):
             current_device = gpu_data.dirty_data.centroid_sets[k_idx].device
