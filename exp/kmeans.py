@@ -996,13 +996,7 @@ async def kmeans_manhattan(
         # process data in batches, parallelized over devices and nodes
         logger.trace(f"🚀 Starting k-means iteration {iter_idx}")
 
-        # Log centroid states at start of iteration
-        for k_idx, centroid_set in enumerate(all_gpu_data[0].synced_data.centroid_sets):
-            centroid_norms = th.norm(centroid_set, dim=1)
-            zero_norms = (centroid_norms == 0).sum().item()
-            logger.trace(
-                f"📊 ITER {iter_idx} k_idx={k_idx}: Zero norms={zero_norms}/{len(centroid_norms)}, Norm stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}"
-            )
+
 
         logger.trace(f"Running iteration {iter_idx}")
 
