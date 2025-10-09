@@ -192,7 +192,6 @@ async def _router_path_entropy_async(
     else:
         logger.info("Processing all available samples")
 
-    # Iterate through activation batches with max_samples limit
     for batch in activations(batch_size=batch_size, max_samples=max_samples):
         batch_count += 1
         logger.trace(f"Processing batch {batch_count}")
