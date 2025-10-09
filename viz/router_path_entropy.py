@@ -13,11 +13,6 @@ from exp.activations import load_activations_and_init_dist
 from exp.get_activations import ActivationKeys
 from viz import FIGURE_DIR
 
-# Removed entropy calculation - focusing on frequency visualization only
-
-
-# Removed Gini coefficient calculation - focusing on frequency visualization only
-
 
 async def _router_path_entropy_async(
     model_name: str = "olmoe-i",
