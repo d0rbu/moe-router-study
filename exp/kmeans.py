@@ -159,6 +159,14 @@ class RunningKMeansData:
             base_weight_proportion = th.zeros_like(base_weights, dtype=th.float32)
             base_weight_proportion[mask] = base_weights[mask] / new_weights[mask]
             other_weight_proportion = 1 - base_weight_proportion
+            
+            # Debug: Check for problematic weight proportions
+            if th.isnan(base_weight_proportion).any() or th.isnan(other_weight_proportion).any():
+                logger.error(f"NaN in weight proportions! base_weights: {base_weights}, other_weights: {other_weights}, new_weights: {new_weights}")
+            
+            # Check if all weights are zero (which would cause issues)
+            if new_weights.sum() == 0:
+                logger.debug(f"All weights are zero in __add__ - this might cause centroid issues")
 
             logger.trace(
                 f"Base centroids {type(base_centroids)} {base_centroids.shape} {base_centroids.dtype} {base_centroids.device}"
@@ -173,10 +181,21 @@ class RunningKMeansData:
                 f"Other weight proportion {type(other_weight_proportion)} {other_weight_proportion.shape} {other_weight_proportion.dtype} {other_weight_proportion.device}"
             )
 
-            new_centroids.copy_(
-                base_weight_proportion.unsqueeze(-1) * base_centroids
-                + other_weight_proportion.unsqueeze(-1) * other_centroids
-            )
+            # Compute weighted average of centroids
+            base_contribution = base_weight_proportion.unsqueeze(-1) * base_centroids
+            other_contribution = other_weight_proportion.unsqueeze(-1) * other_centroids
+            new_centroid_values = base_contribution + other_contribution
+            
+            # Debug: Check for zero centroids after weighted averaging
+            new_centroid_norms = th.norm(new_centroid_values, dim=1)
+            zero_norms_after_add = (new_centroid_norms == 0).sum().item()
+            if zero_norms_after_add > 0:
+                logger.debug(f"__add__ produced {zero_norms_after_add} zero-norm centroids")
+                logger.debug(f"base_weight_proportion sum: {base_weight_proportion.sum():.6f}, other_weight_proportion sum: {other_weight_proportion.sum():.6f}")
+                logger.debug(f"base_centroids norms: min={th.norm(base_centroids, dim=1).min():.6f}, max={th.norm(base_centroids, dim=1).max():.6f}")
+                logger.debug(f"other_centroids norms: min={th.norm(other_centroids, dim=1).min():.6f}, max={th.norm(other_centroids, dim=1).max():.6f}")
+            
+            new_centroids.copy_(new_centroid_values)
 
             base_weights_sum = base_weights.sum()
             new_weights_sum = new_weights.sum()
@@ -265,14 +284,13 @@ async def kmeans_step(
     new_centroids = th.stack(new_centroids_raw, dim=0)
     new_weights = th.tensor(new_weights_raw, dtype=th.int64, device=data.device)
 
-    # Log update statistics (only if there are issues)
+    # Log update statistics
     update_norms = th.norm(new_centroids, dim=1)
     zero_update_norms = (update_norms == 0).sum().item()
     total_weight = new_weights.sum().item()
-    if zero_update_norms > 0:  # Only log if there are zero norm updates
-        logger.debug(
-            f"📊 UPDATE: Computed updates - zero_norms={zero_update_norms}/{len(update_norms)}, norm_stats: min={update_norms.min():.6f}, max={update_norms.max():.6f}, mean={update_norms.mean():.6f}, total_weight={total_weight}"
-        )
+    logger.debug(
+        f"📊 UPDATE: Computed updates - zero_norms={zero_update_norms}/{len(update_norms)}, norm_stats: min={update_norms.min():.6f}, max={update_norms.max():.6f}, mean={update_norms.mean():.6f}, total_weight={total_weight}"
+    )
 
     logger.trace(
         f"New centroids: {new_centroids.dtype} {new_centroids.device} {new_centroids.shape}"
@@ -428,22 +446,21 @@ async def sync(
     device = th.device(f"cuda:{gpu_idx}")
     empty_data = RunningKMeansData(
         centroid_sets=[
-            th.empty_like(centroids) for centroids in gpu_data.synced_data.centroid_sets
+            th.zeros_like(centroids) for centroids in gpu_data.synced_data.centroid_sets
         ],
         weight_sets=[
             th.zeros_like(weights) for weights in gpu_data.synced_data.weight_sets
         ],
-        losses=th.empty_like(gpu_data.synced_data.losses),
+        losses=th.zeros_like(gpu_data.synced_data.losses),
     )
 
     # Debug: Log synced data before update
     for k_idx, centroids in enumerate(gpu_data.synced_data.centroid_sets):
         centroid_norms = th.norm(centroids, dim=1)
         zero_norms = (centroid_norms == 0).sum().item()
-        if zero_norms > 0:
-            logger.debug(
-                f"🔄 SYNC GPU {gpu_idx} k_idx={k_idx} BEFORE GPU AGGREGATION: Synced centroids zero_norms={zero_norms}/{len(centroid_norms)}, norm_stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}"
-            )
+        logger.debug(
+            f"🔄 SYNC GPU {gpu_idx} k_idx={k_idx} BEFORE GPU AGGREGATION: Synced centroids zero_norms={zero_norms}/{len(centroid_norms)}, norm_stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}"
+        )
 
     gpu_data.synced_data += sum(
         (current_gpu_data.dirty_data.to(device) for current_gpu_data in all_gpu_data),
@@ -466,10 +483,9 @@ async def sync(
     for k_idx, centroids in enumerate(gpu_data.synced_data.centroid_sets):
         centroid_norms = th.norm(centroids, dim=1)
         zero_norms = (centroid_norms == 0).sum().item()
-        if zero_norms > 0:  # Only log if there are issues
-            logger.debug(
-                f"🔄 SYNC GPU {gpu_idx} k_idx={k_idx} FINAL: Synced centroids zero_norms={zero_norms}/{len(centroid_norms)}, norm_stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}"
-            )
+        logger.debug(
+            f"🔄 SYNC GPU {gpu_idx} k_idx={k_idx} FINAL: Synced centroids zero_norms={zero_norms}/{len(centroid_norms)}, norm_stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}"
+        )
 
     if rank == 0 and gpu_idx == 0:
         losses_over_time.append(gpu_data.synced_data.losses.detach().cpu().clone())
@@ -902,7 +918,6 @@ async def kmeans_manhattan(
                 )
 
     # Copy initialized centroids from dirty data to synced data
-    logger.debug("🔄 INIT: Copying initialized centroids from dirty to synced data...")
     for gpu_data in all_gpu_data:
         for k_idx in range(len(k_values)):
             gpu_data.synced_data.centroid_sets[k_idx].copy_(
@@ -910,9 +925,7 @@ async def kmeans_manhattan(
             )
 
     logger.debug("🔍 VALIDATION: Checking centroids AFTER initialization...")
-    for k_idx, centroid_set in enumerate(
-        all_gpu_data[0].synced_data.centroid_sets
-    ):  # Use synced_data now
+    for k_idx, centroid_set in enumerate(all_gpu_data[0].dirty_data.centroid_sets):
         _is_valid, _stats = validate_centroids(centroid_set.cpu())
         logger.debug(
             f"📊 POST-INIT VALIDATION k_idx={k_idx}: Empty={_stats.num_empty_centroids}, Norms: min={_stats.min_norm:.6f}, max={_stats.max_norm:.6f}, mean={_stats.mean_norm:.6f}"
