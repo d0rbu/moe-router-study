@@ -234,8 +234,8 @@ async def _router_path_entropy_async(
     os.makedirs(FIGURE_DIR, exist_ok=True)
     logger.debug(f"Ensured output directory exists: {FIGURE_DIR}")
 
-    # Plot 1a: Path frequency distribution (linear scales)
-    logger.debug("Creating path frequency distribution plot (linear scales)...")
+    # Plot 1a: Path frequency distribution (linear y-axis)
+    logger.debug("Creating path frequency distribution plot...")
     plt.figure()
     sorted_freq_numpy = sorted_frequencies.cpu().numpy()
     logger.trace(f"Plotting {len(sorted_freq_numpy)} sorted frequencies")
@@ -246,7 +246,7 @@ async def _router_path_entropy_async(
     plt.plot(sorted_freq_numpy)
     plt.xlabel("Path rank")
     plt.ylabel("Frequency")
-    plt.title("Path Frequency Distribution (Linear Scales)")
+    plt.title("Path Frequency Distribution")
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
 
@@ -263,7 +263,7 @@ async def _router_path_entropy_async(
     plt.plot(sorted_freq_numpy)
     plt.xlabel("Path rank")
     plt.ylabel("Frequency")
-    plt.title("Path Frequency Distribution (Log Y-axis)")
+    plt.title("Path Frequency Distribution")
     plt.yscale("log")
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
