@@ -996,8 +996,6 @@ async def kmeans_manhattan(
         # process data in batches, parallelized over devices and nodes
         logger.trace(f"🚀 Starting k-means iteration {iter_idx}")
 
-
-
         logger.trace(f"Running iteration {iter_idx}")
 
         # Check worker health at start of each iteration
