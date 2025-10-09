@@ -299,7 +299,6 @@ async def _router_path_entropy_async(
     plt.xlabel("Number of paths")
     plt.ylabel("Cumulative coverage")
     plt.title("Cumulative Path Coverage")
-    plt.xscale("log")
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
 
