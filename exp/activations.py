@@ -147,8 +147,13 @@ class Activations:
         cached_file_data.join()
 
     def __call__(
-        self, batch_size: int = 4096, start_idx: int = 0
+        self, batch_size: int = 4096, start_idx: int = 0, max_samples: int = 0
     ) -> Generator[dict, None, None]:
+        assert max_samples >= 0, f"max_samples must be non-negative, got {max_samples}"
+        
+        # Track samples processed for max_samples limit
+        samples_processed = 0
+        
         # cache of file data to come
         cached_file_data = mp.JoinableQueue(maxsize=self.max_cache_size)
 
@@ -273,7 +278,28 @@ class Activations:
                     assert len(current_batch) > 0, "Current batch is empty"
 
                     if skipped_start:
-                        yield current_batch
+                        # Check max_samples limit before yielding
+                        if max_samples > 0:
+                            batch_size_actual = current_batch[ActivationKeys.MLP_OUTPUT].shape[0]
+                            if samples_processed + batch_size_actual > max_samples:
+                                # Truncate the batch to fit within max_samples
+                                remaining_samples = max_samples - samples_processed
+                                if remaining_samples > 0:
+                                    truncated_batch = {}
+                                    for key, value in current_batch.items():
+                                        if isinstance(value, th.Tensor):
+                                            truncated_batch[key] = value[:remaining_samples]
+                                        else:
+                                            truncated_batch[key] = value
+                                    samples_processed += remaining_samples
+                                    yield truncated_batch
+                                # Stop processing after reaching max_samples
+                                break
+                            else:
+                                samples_processed += batch_size_actual
+                                yield current_batch
+                        else:
+                            yield current_batch
                     else:
                         skipped_start = True
 
