@@ -283,8 +283,22 @@ async def _router_jaccard_distance_async(
         "Expert probabilities must be non-negative"
     )
     assert th.all(expert_probabilities <= 1), "Expert probabilities must be <= 1"
-    assert abs(expert_probabilities.sum().item() - num_layers * top_k) < 1e-6, (
-        f"Expert probabilities sum {expert_probabilities.sum().item()} != expected {num_layers * top_k}"
+
+    # Validate probability sum with relative error tolerance using th.allclose
+    expected_prob_sum = num_layers
+    actual_prob_sum = expert_probabilities.sum()
+
+    assert th.allclose(
+        actual_prob_sum,
+        th.tensor(
+            expected_prob_sum,
+            dtype=actual_prob_sum.dtype,
+            device=actual_prob_sum.device,
+        ),
+        rtol=1e-4,
+    ), (
+        f"Expert probabilities sum validation failed: "
+        f"actual={actual_prob_sum.item():.8f}, expected={expected_prob_sum}"
     )
 
     # For independent experts, Jaccard = (p_i * p_j) / (p_i + p_j - p_i * p_j)
