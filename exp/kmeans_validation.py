@@ -173,17 +173,23 @@ def validate_centroid_distribution(
             del batch_data, batch_distances, batch_assignments
             if device.type == "cuda":
                 th.cuda.empty_cache()
-    
+
     except (RuntimeError, th.cuda.OutOfMemoryError) as e:
         error_msg = str(e)
         k = centroids.shape[0]
-        
+
         if "invalid configuration argument" in error_msg or "CUDA error" in error_msg:
             logger.error(f"❌ GPU validation failed for k={k}: {error_msg}")
-            logger.error(f"💡 This typically happens when k-value ({k}) exceeds GPU memory/configuration limits")
-            logger.error(f"🔧 Try reducing minibatch_size (current: {minibatch_size}) or using a smaller k-value")
-            logger.error(f"📊 Tested working limits: k≤16384 with minibatch_size=100000")
-            raise RuntimeError(f"GPU validation failed for k={k}. Try smaller minibatch_size or k-value. Original error: {error_msg}")
+            logger.error(
+                f"💡 This typically happens when k-value ({k}) exceeds GPU memory/configuration limits"
+            )
+            logger.error(
+                f"🔧 Try reducing minibatch_size (current: {minibatch_size}) or using a smaller k-value"
+            )
+            logger.error("📊 Tested working limits: k≤16384 with minibatch_size=100000")
+            raise RuntimeError(
+                f"GPU validation failed for k={k}. Try smaller minibatch_size or k-value. Original error: {error_msg}"
+            ) from None
         else:
             logger.error(f"❌ Unexpected GPU error during validation: {error_msg}")
             raise

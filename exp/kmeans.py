@@ -7,14 +7,12 @@ import gc
 from itertools import batched, islice
 import os
 import sys
-import time
 from typing import Any, TypeVar
 
 import arguably
 from loguru import logger
 import torch as th
 import torch.distributed as dist
-
 from tqdm import tqdm
 import yaml
 
@@ -863,9 +861,9 @@ async def kmeans_manhattan(
         logger.debug(
             f"⏱️ Starting validation for k_idx={k_idx} (k={k_values[k_idx]}) with {centroid_set.shape[0]} centroids..."
         )
-        
+
         _is_valid, _stats = validate_centroids(centroid_set.cpu())
-        
+
         logger.debug(
             f"📊 PRE-INIT VALIDATION k_idx={k_idx}: Empty={_stats.num_empty_centroids}, Norms: min={_stats.min_norm:.6f}, max={_stats.max_norm:.6f}, mean={_stats.mean_norm:.6f}"
         )
