@@ -626,6 +626,7 @@ async def kmeans_manhattan(
     effective_batch_size: int | None = None,
     max_iters: int = 128,
     minibatch_size: int | None = None,
+    centroid_minibatch_size: int = 16384,
     seed: int = 0,
     save_every: int | None = None,
     save_dir: str | None = None,
@@ -641,6 +642,7 @@ async def kmeans_manhattan(
         effective_batch_size: Batch size for k-means updates. If None, use the batch size of the activations.
         max_iters: Maximum number of iterations
         minibatch_size: Batch size for processing data. If None, process all data at once.
+        centroid_minibatch_size: Size of centroid chunks to avoid CUDA limits (defaults to 16384)
         seed: Random seed for initialization
         save_every: Save checkpoints every N iterations. If None, no checkpoints are saved.
         save_dir: Directory to save checkpoints. Required if save_every is specified.
@@ -848,7 +850,10 @@ async def kmeans_manhattan(
     )
 
     validate_centroids = partial(
-        validate_centroid_distribution, validation_data, minibatch_size=minibatch_size
+        validate_centroid_distribution,
+        validation_data,
+        minibatch_size=minibatch_size,
+        centroid_minibatch_size=centroid_minibatch_size,
     )
 
     logger.info(
@@ -1120,6 +1125,7 @@ async def cluster_paths_async(
     seed: int,
     tokens_per_file: int,
     minibatch_size: int,
+    centroid_minibatch_size: int = 16384,
     save_every: int | None = None,
     validate_every: int = 4,
     group: dist.ProcessGroup | None = None,
@@ -1145,6 +1151,7 @@ async def cluster_paths_async(
         k_values=k,
         max_iters=max_iters,
         minibatch_size=minibatch_size,
+        centroid_minibatch_size=centroid_minibatch_size,
         seed=seed,
         save_every=save_every,
         save_dir=save_dir,
@@ -1172,6 +1179,7 @@ async def cluster_paths_async(
             "seed": seed,
             "tokens_per_file": tokens_per_file,
             "minibatch_size": minibatch_size,
+            "centroid_minibatch_size": centroid_minibatch_size,
             "save_every": save_every,
             "type": KMEANS_TYPE,
             "kmeans_experiment_name": kmeans_experiment_name,
@@ -1194,6 +1202,7 @@ def cluster_paths(
     validate_every: int = 4,
     seed: int = 0,
     minibatch_size: int = 100_000,
+    centroid_minibatch_size: int = 16384,
     tokens_per_file: int = 5_000,
     reshuffled_tokens_per_file: int = 10_000,
     context_length: int = 2048,
@@ -1264,6 +1273,7 @@ def cluster_paths(
             seed=seed,
             tokens_per_file=reshuffled_tokens_per_file,
             minibatch_size=minibatch_size,
+            centroid_minibatch_size=centroid_minibatch_size,
             save_every=save_every,
             validate_every=validate_every,
             group=gpu_process_group,
@@ -1283,6 +1293,7 @@ def main(
     validate_every: int = 4,
     seed: int = 0,
     minibatch_size: int = 100_000,
+    centroid_minibatch_size: int = 16384,
     tokens_per_file: int = 5_000,
     reshuffled_tokens_per_file: int = 10_000,
     context_length: int = 2048,
@@ -1300,6 +1311,7 @@ def main(
         validate_every=validate_every,
         seed=seed,
         minibatch_size=minibatch_size,
+        centroid_minibatch_size=centroid_minibatch_size,
         tokens_per_file=tokens_per_file,
         reshuffled_tokens_per_file=reshuffled_tokens_per_file,
         context_length=context_length,
