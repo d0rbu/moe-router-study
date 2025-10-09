@@ -159,14 +159,21 @@ class RunningKMeansData:
             base_weight_proportion = th.zeros_like(base_weights, dtype=th.float32)
             base_weight_proportion[mask] = base_weights[mask] / new_weights[mask]
             other_weight_proportion = 1 - base_weight_proportion
-            
+
             # Debug: Check for problematic weight proportions
-            if th.isnan(base_weight_proportion).any() or th.isnan(other_weight_proportion).any():
-                logger.error(f"NaN in weight proportions! base_weights: {base_weights}, other_weights: {other_weights}, new_weights: {new_weights}")
-            
+            if (
+                th.isnan(base_weight_proportion).any()
+                or th.isnan(other_weight_proportion).any()
+            ):
+                logger.error(
+                    f"NaN in weight proportions! base_weights: {base_weights}, other_weights: {other_weights}, new_weights: {new_weights}"
+                )
+
             # Check if all weights are zero (which would cause issues)
             if new_weights.sum() == 0:
-                logger.debug(f"All weights are zero in __add__ - this might cause centroid issues")
+                logger.debug(
+                    "All weights are zero in __add__ - this might cause centroid issues"
+                )
 
             logger.trace(
                 f"Base centroids {type(base_centroids)} {base_centroids.shape} {base_centroids.dtype} {base_centroids.device}"
@@ -185,16 +192,24 @@ class RunningKMeansData:
             base_contribution = base_weight_proportion.unsqueeze(-1) * base_centroids
             other_contribution = other_weight_proportion.unsqueeze(-1) * other_centroids
             new_centroid_values = base_contribution + other_contribution
-            
+
             # Debug: Check for zero centroids after weighted averaging
             new_centroid_norms = th.norm(new_centroid_values, dim=1)
             zero_norms_after_add = (new_centroid_norms == 0).sum().item()
             if zero_norms_after_add > 0:
-                logger.debug(f"__add__ produced {zero_norms_after_add} zero-norm centroids")
-                logger.debug(f"base_weight_proportion sum: {base_weight_proportion.sum():.6f}, other_weight_proportion sum: {other_weight_proportion.sum():.6f}")
-                logger.debug(f"base_centroids norms: min={th.norm(base_centroids, dim=1).min():.6f}, max={th.norm(base_centroids, dim=1).max():.6f}")
-                logger.debug(f"other_centroids norms: min={th.norm(other_centroids, dim=1).min():.6f}, max={th.norm(other_centroids, dim=1).max():.6f}")
-            
+                logger.debug(
+                    f"__add__ produced {zero_norms_after_add} zero-norm centroids"
+                )
+                logger.debug(
+                    f"base_weight_proportion sum: {base_weight_proportion.sum():.6f}, other_weight_proportion sum: {other_weight_proportion.sum():.6f}"
+                )
+                logger.debug(
+                    f"base_centroids norms: min={th.norm(base_centroids, dim=1).min():.6f}, max={th.norm(base_centroids, dim=1).max():.6f}"
+                )
+                logger.debug(
+                    f"other_centroids norms: min={th.norm(other_centroids, dim=1).min():.6f}, max={th.norm(other_centroids, dim=1).max():.6f}"
+                )
+
             new_centroids.copy_(new_centroid_values)
 
             base_weights_sum = base_weights.sum()
