@@ -284,26 +284,17 @@ class Activations:
                                 ActivationKeys.ROUTER_LOGITS
                             ].shape[0]
                             if samples_processed + batch_size_actual > max_samples:
-                                # Set batch_size_actual to remaining samples for consistency
                                 batch_size_actual = max_samples - samples_processed
                                 if batch_size_actual > 0:
-                                    truncated_batch = {}
+                                    # Truncate current_batch in place
                                     for key, value in current_batch.items():
                                         if isinstance(value, th.Tensor):
-                                            truncated_batch[key] = value[
-                                                :batch_size_actual
-                                            ]
-                                        else:
-                                            truncated_batch[key] = value
-                                    samples_processed += batch_size_actual
-                                    yield truncated_batch
-                                if samples_processed >= max_samples:
-                                    break
-                            else:
-                                samples_processed += batch_size_actual
-                                yield current_batch
-                                if samples_processed >= max_samples:
-                                    break
+                                            current_batch[key] = value[:batch_size_actual]
+                            
+                            samples_processed += batch_size_actual
+                            yield current_batch
+                            if samples_processed >= max_samples:
+                                break
                         else:
                             yield current_batch
                     else:
