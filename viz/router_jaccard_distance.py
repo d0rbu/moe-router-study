@@ -66,7 +66,7 @@ async def _router_jaccard_distance_async(
     pairwise_coactivation_counts: th.Tensor | None = None
 
     logger.debug("Starting batch processing...")
-    
+
     # Calculate sample limits if max_samples is specified
     samples_to_process = None
     if max_samples != 0:
@@ -79,7 +79,7 @@ async def _router_jaccard_distance_async(
             logger.info(f"Processing all samples except last {abs(max_samples):,}")
     else:
         logger.info("Processing all available samples")
-    
+
     # Iterate through activation batches
     for batch in activations(batch_size=batch_size):
         batch_count += 1
@@ -131,17 +131,21 @@ async def _router_jaccard_distance_async(
             )
 
         current_batch_size = router_logits.shape[0]
-        
+
         # Determine how many samples to process in this batch
         samples_to_process_in_batch = current_batch_size
         if samples_to_process is not None and samples_to_process > 0:
             remaining_samples = samples_to_process - total_samples
             if remaining_samples <= 0:
-                logger.debug(f"Reached sample limit of {samples_to_process:,}, stopping")
+                logger.debug(
+                    f"Reached sample limit of {samples_to_process:,}, stopping"
+                )
                 break
             samples_to_process_in_batch = min(current_batch_size, remaining_samples)
-            logger.trace(f"Processing {samples_to_process_in_batch} of {current_batch_size} samples in batch (remaining: {remaining_samples})")
-        
+            logger.trace(
+                f"Processing {samples_to_process_in_batch} of {current_batch_size} samples in batch (remaining: {remaining_samples})"
+            )
+
         total_samples += samples_to_process_in_batch
         logger.trace(
             f"Current batch size: {samples_to_process_in_batch}, total samples: {total_samples}"
@@ -151,7 +155,9 @@ async def _router_jaccard_distance_async(
         logger.trace("Converting router logits to binary activations...")
         # Only process the limited number of samples
         router_logits_to_process = router_logits[:samples_to_process_in_batch]
-        activated_experts = convert_router_logits_to_paths(router_logits_to_process, top_k).bool()
+        activated_experts = convert_router_logits_to_paths(
+            router_logits_to_process, top_k
+        ).bool()
         logger.trace(
             f"Activated experts shape: {activated_experts.shape}, dtype: {activated_experts.dtype}"
         )
@@ -232,10 +238,16 @@ async def _router_jaccard_distance_async(
         logger.debug(
             f"Batch {batch_count} complete: {samples_to_process_in_batch} samples processed, {total_samples} total"
         )
-        
+
         # Check if we've reached our sample limit
-        if samples_to_process is not None and samples_to_process > 0 and total_samples >= samples_to_process:
-            logger.info(f"Reached sample limit of {samples_to_process:,}, stopping batch processing")
+        if (
+            samples_to_process is not None
+            and samples_to_process > 0
+            and total_samples >= samples_to_process
+        ):
+            logger.info(
+                f"Reached sample limit of {samples_to_process:,}, stopping batch processing"
+            )
             break
 
     if (

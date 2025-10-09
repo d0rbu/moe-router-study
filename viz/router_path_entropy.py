@@ -183,7 +183,7 @@ async def _router_path_entropy_async(
     batch_count = 0
 
     logger.debug("Starting batch processing...")
-    
+
     # Calculate sample limits if max_samples is specified
     samples_to_process = None
     if max_samples != 0:
@@ -196,7 +196,7 @@ async def _router_path_entropy_async(
             logger.info(f"Processing all samples except last {abs(max_samples):,}")
     else:
         logger.info("Processing all available samples")
-    
+
     # Iterate through activation batches
     for batch in activations(batch_size=batch_size):
         batch_count += 1
@@ -256,17 +256,21 @@ async def _router_path_entropy_async(
         # For each token in the batch, create a path tuple
         # Path is the concatenation of activated expert indices across all layers
         logger.trace(f"Processing {current_batch_size} tokens in batch...")
-        
+
         # Determine how many tokens to process in this batch
         tokens_to_process_in_batch = current_batch_size
         if samples_to_process is not None and samples_to_process > 0:
             remaining_samples = samples_to_process - total_tokens
             if remaining_samples <= 0:
-                logger.debug(f"Reached sample limit of {samples_to_process:,}, stopping")
+                logger.debug(
+                    f"Reached sample limit of {samples_to_process:,}, stopping"
+                )
                 break
             tokens_to_process_in_batch = min(current_batch_size, remaining_samples)
-            logger.trace(f"Processing {tokens_to_process_in_batch} of {current_batch_size} tokens in batch (remaining: {remaining_samples})")
-        
+            logger.trace(
+                f"Processing {tokens_to_process_in_batch} of {current_batch_size} tokens in batch (remaining: {remaining_samples})"
+            )
+
         for token_idx in range(tokens_to_process_in_batch):
             # Get activated experts for this token across all layers
             # Shape: (num_layers, top_k)
@@ -300,10 +304,16 @@ async def _router_path_entropy_async(
         logger.debug(
             f"Batch {batch_count} complete: {tokens_to_process_in_batch} tokens processed, {len(path_counter)} unique paths so far"
         )
-        
+
         # Check if we've reached our sample limit
-        if samples_to_process is not None and samples_to_process > 0 and total_tokens >= samples_to_process:
-            logger.info(f"Reached sample limit of {samples_to_process:,}, stopping batch processing")
+        if (
+            samples_to_process is not None
+            and samples_to_process > 0
+            and total_tokens >= samples_to_process
+        ):
+            logger.info(
+                f"Reached sample limit of {samples_to_process:,}, stopping batch processing"
+            )
             break
 
     if top_k is None:
