@@ -855,19 +855,6 @@ async def kmeans_manhattan(
         f"Reserved {validation_size} data points for validation (shape: {validation_data.shape})"
     )
 
-    logger.debug("🔍 VALIDATION: Checking centroids BEFORE initialization...")
-
-    for k_idx, centroid_set in enumerate(all_gpu_data[0].dirty_data.centroid_sets):
-        logger.debug(
-            f"⏱️ Starting validation for k_idx={k_idx} (k={k_values[k_idx]}) with {centroid_set.shape[0]} centroids..."
-        )
-
-        _is_valid, _stats = validate_centroids(centroid_set.cpu())
-
-        logger.debug(
-            f"📊 PRE-INIT VALIDATION k_idx={k_idx}: Empty={_stats.num_empty_centroids}, Norms: min={_stats.min_norm:.6f}, max={_stats.max_norm:.6f}, mean={_stats.mean_norm:.6f}"
-        )
-
     for k_idx, k in enumerate(k_values):
         for _gpu_idx, gpu_data in enumerate(all_gpu_data):
             current_device = gpu_data.dirty_data.centroid_sets[k_idx].device

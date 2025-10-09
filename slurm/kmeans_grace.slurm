@@ -20,6 +20,9 @@
 # Enable detailed logging
 set -x
 
+# Enable CUDA debugging for better error messages
+export CUDA_LAUNCH_BLOCKING=1
+
 export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
 export MASTER_PORT=$(expr 10000 + $(echo -n $SLURM_JOBID | tail -c 4))
 export RANK=$SLURM_PROCID
