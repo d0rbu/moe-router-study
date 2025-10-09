@@ -309,8 +309,6 @@ async def _router_path_entropy_async(
     plt.close()
     logger.trace("Coverage plot saved and closed")
 
-    # Removed histogram plot - it's redundant with path frequency plots
-
     logger.info(f"Figures saved to {FIGURE_DIR}/")
     logger.info("  - router_path_frequency_linear.png")
     logger.info("  - router_path_frequency_log.png")
