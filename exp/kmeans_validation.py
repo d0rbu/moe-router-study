@@ -107,7 +107,7 @@ def validate_centroid_distribution(
     min_assignment_ratio: float = 0.05,
     max_assignment_ratio: float = 20.0,
     minibatch_size: int = 100000,
-    centroid_minibatch_size: int = 2048,
+    centroid_minibatch_size: int = 16384,
 ) -> tuple[bool, CentroidValidationStats]:
     """
     Validate that centroids produce a reasonable distribution of assignments on validation data.
@@ -118,7 +118,7 @@ def validate_centroid_distribution(
         min_assignment_ratio: Minimum acceptable ratio (defaults to 0.05)
         max_assignment_ratio: Maximum acceptable ratio (defaults to 20.0)
         minibatch_size: Size of minibatches for GPU processing (defaults to 100000)
-        centroid_minibatch_size: Size of centroid chunks to avoid CUDA limits (defaults to 2048)
+        centroid_minibatch_size: Size of centroid chunks to avoid CUDA limits (defaults to 16384)
 
     Returns:
         Tuple of (is_valid, stats) where:
