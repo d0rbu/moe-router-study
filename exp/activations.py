@@ -280,7 +280,9 @@ class Activations:
                     if skipped_start:
                         # Check max_samples limit before yielding
                         if max_samples > 0:
-                            batch_size_actual = current_batch[ActivationKeys.ROUTER_LOGITS].shape[0]
+                            batch_size_actual = current_batch[
+                                ActivationKeys.ROUTER_LOGITS
+                            ].shape[0]
                             if samples_processed + batch_size_actual > max_samples:
                                 # Set batch_size_actual to remaining samples for consistency
                                 batch_size_actual = max_samples - samples_processed
@@ -288,7 +290,9 @@ class Activations:
                                     truncated_batch = {}
                                     for key, value in current_batch.items():
                                         if isinstance(value, th.Tensor):
-                                            truncated_batch[key] = value[:batch_size_actual]
+                                            truncated_batch[key] = value[
+                                                :batch_size_actual
+                                            ]
                                         else:
                                             truncated_batch[key] = value
                                     samples_processed += batch_size_actual
