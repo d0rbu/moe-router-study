@@ -1,4 +1,4 @@
-"""Analyze the entropy and distribution of routing paths in MoE models."""
+"""Analyze the frequency distribution of routing paths in MoE models."""
 
 import asyncio
 from collections import Counter
@@ -14,124 +14,10 @@ from exp.get_activations import ActivationKeys
 from viz import FIGURE_DIR
 
 
-def compute_entropy(frequencies: th.Tensor) -> float:
-    """Compute Shannon entropy of a probability distribution.
-
-    Args:
-        frequencies: Tensor of frequencies (will be normalized to probabilities).
-
-    Returns:
-        Shannon entropy in bits.
-    """
-    logger.debug(f"Computing entropy for {len(frequencies)} frequencies")
-    logger.trace(
-        f"Frequency tensor shape: {frequencies.shape}, dtype: {frequencies.dtype}"
-    )
-
-    assert frequencies.dim() == 1, f"Expected 1D tensor, got {frequencies.dim()}D"
-    assert len(frequencies) > 0, "Cannot compute entropy of empty tensor"
-    assert th.all(frequencies >= 0), "Frequencies must be non-negative"
-    assert th.any(frequencies > 0), "At least one frequency must be positive"
-
-    total_freq = frequencies.sum()
-    logger.trace(f"Total frequency sum: {total_freq.item()}")
-    assert total_freq > 0, "Total frequency must be positive"
-
-    # Normalize to probabilities
-    probabilities = frequencies / total_freq
-    logger.trace(f"Probability sum: {probabilities.sum().item():.10f} (should be ~1.0)")
-    assert th.allclose(probabilities.sum(), th.tensor(1.0)), (
-        f"Probabilities don't sum to 1: {probabilities.sum().item()}"
-    )
-
-    # Filter out zero probabilities to avoid log(0)
-    nonzero_mask = probabilities > 0
-    nonzero_probabilities = probabilities[nonzero_mask]
-    zero_count = len(probabilities) - len(nonzero_probabilities)
-
-    logger.debug(
-        f"Non-zero probabilities: {len(nonzero_probabilities)}/{len(probabilities)}"
-    )
-    logger.trace(f"Zero probability count: {zero_count}")
-
-    # Emit warning if we filtered out zero probabilities
-    if zero_count > 0:
-        logger.warning(f"Filtered out {zero_count} zero probabilities")
-
-    # Compute Shannon entropy
-    entropy = -th.sum(nonzero_probabilities * th.log2(nonzero_probabilities)).item()
-    logger.debug(f"Computed entropy: {entropy:.6f} bits")
-
-    # Validation
-    assert entropy >= 0, f"Entropy should be non-negative, got {entropy}"
-    max_entropy = th.log2(th.tensor(float(len(nonzero_probabilities)))).item()
-    assert entropy <= max_entropy * (1 + 1e-4), (
-        f"Entropy {entropy} exceeds maximum {max_entropy}"
-    )
-
-    return entropy
+# Removed entropy calculation - focusing on frequency visualization only
 
 
-def compute_gini_coefficient(frequencies: th.Tensor) -> float:
-    """Compute Gini coefficient of a distribution.
-
-    Args:
-        frequencies: Tensor of frequencies.
-
-    Returns:
-        Gini coefficient between 0 (perfect equality) and 1 (perfect inequality).
-    """
-    logger.debug(f"Computing Gini coefficient for {len(frequencies)} frequencies")
-    logger.trace(
-        f"Frequency tensor shape: {frequencies.shape}, dtype: {frequencies.dtype}"
-    )
-
-    # Input validation
-    assert frequencies.dim() == 1, f"Expected 1D tensor, got {frequencies.dim()}D"
-    assert len(frequencies) > 0, "Cannot compute Gini coefficient of empty tensor"
-    assert th.all(frequencies >= 0), "Frequencies must be non-negative"
-    assert th.any(frequencies > 0), "At least one frequency must be positive"
-
-    sorted_freqs = th.sort(frequencies).values
-    n = len(sorted_freqs)
-    logger.trace(
-        f"Sorted frequencies: min={sorted_freqs.min().item():.6f}, max={sorted_freqs.max().item():.6f}"
-    )
-
-    cumsum = th.cumsum(sorted_freqs, dim=0)
-    logger.trace(f"Cumulative sum: final={cumsum[-1].item():.6f}")
-
-    indices = th.arange(1, n + 1, dtype=sorted_freqs.dtype, device=sorted_freqs.device)
-    weighted_sum = th.sum(indices * sorted_freqs)
-    total_occurrences = cumsum[-1]
-    numerator = 2 * weighted_sum - (n + 1) * total_occurrences
-    denominator = n * total_occurrences
-
-    logger.trace(
-        f"Gini calculation: n={n}, weighted_sum={weighted_sum.item():.6f}, total={total_occurrences.item():.6f}"
-    )
-    logger.trace(
-        f"Numerator: {numerator.item():.6f}, Denominator: {denominator.item():.6f}"
-    )
-
-    # Add assertions for safety
-    assert denominator > 0, (
-        f"Denominator should be positive for valid frequencies, got {denominator.item()}"
-    )
-    assert numerator >= 0, (
-        f"Numerator should be non-negative for valid Gini calculation, got {numerator.item()}"
-    )
-    assert denominator > numerator, (
-        f"Denominator {denominator.item()} should be > numerator {numerator.item()}"
-    )
-
-    gini = (numerator / denominator).item()
-    logger.debug(f"Computed Gini coefficient: {gini:.6f}")
-
-    # Validation
-    assert 0 <= gini <= 1, f"Gini coefficient should be in [0,1], got {gini}"
-
-    return gini
+# Removed Gini coefficient calculation - focusing on frequency visualization only
 
 
 async def _router_path_entropy_async(
@@ -320,29 +206,8 @@ async def _router_path_entropy_async(
         "Frequency tensor length mismatch"
     )
 
-    # Compute metrics
-    logger.debug("Computing entropy metrics...")
-    entropy = compute_entropy(path_frequencies)
-    max_entropy = th.log2(
-        th.tensor(float(total_tokens))
-    ).item()  # Maximum possible entropy
-    normalized_entropy = entropy / max_entropy if max_entropy > 0 else 0
-    gini = compute_gini_coefficient(path_frequencies)
-
-    logger.info("Entropy metrics:")
-    logger.info(f"  Shannon entropy: {entropy:.2f} bits")
-    logger.info(f"  Maximum entropy: {max_entropy:.2f} bits")
-    logger.info(f"  Normalized entropy: {normalized_entropy:.4f}")
-    logger.info(f"  Gini coefficient: {gini:.4f}")
-
-    # Validate metrics
-    assert 0 <= entropy <= max_entropy, (
-        f"Entropy {entropy} not in valid range [0, {max_entropy}]"
-    )
-    assert 0 <= normalized_entropy <= 1, (
-        f"Normalized entropy {normalized_entropy} not in [0,1]"
-    )
-    assert 0 <= gini <= 1, f"Gini coefficient {gini} not in [0,1]"
+    # Skip entropy/Gini calculations - focusing on frequency visualization only
+    logger.info("Skipping entropy/Gini calculations - focusing on frequency visualization")
 
     # Compute top-k path coverage
     logger.debug("Computing path coverage statistics...")
@@ -373,7 +238,8 @@ async def _router_path_entropy_async(
     os.makedirs(FIGURE_DIR, exist_ok=True)
     logger.debug(f"Ensured output directory exists: {FIGURE_DIR}")
 
-    logger.debug("Creating path frequency distribution plot...")
+    # Plot 1a: Path frequency distribution (linear scales)
+    logger.debug("Creating path frequency distribution plot (linear scales)...")
     plt.figure()
     sorted_freq_numpy = sorted_frequencies.cpu().numpy()
     logger.trace(f"Plotting {len(sorted_freq_numpy)} sorted frequencies")
@@ -384,19 +250,33 @@ async def _router_path_entropy_async(
     plt.plot(sorted_freq_numpy)
     plt.xlabel("Path rank")
     plt.ylabel("Frequency")
-    plt.title(
-        f"Path Frequency Distribution\n(Entropy: {entropy:.2f} bits, Gini: {gini:.4f})"
-    )
-    plt.yscale("log")
-    plt.xscale("log")
+    plt.title("Path Frequency Distribution (Linear Scales)")
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
 
-    freq_plot_path = os.path.join(FIGURE_DIR, "router_path_frequency.png")
-    logger.debug(f"Saving frequency plot to: {freq_plot_path}")
-    plt.savefig(freq_plot_path)
+    freq_plot_linear_path = os.path.join(FIGURE_DIR, "router_path_frequency_linear.png")
+    logger.debug(f"Saving linear frequency plot to: {freq_plot_linear_path}")
+    plt.savefig(freq_plot_linear_path)
     plt.close()
-    logger.trace("Frequency plot saved and closed")
+    logger.trace("Linear frequency plot saved and closed")
+
+    # Plot 1b: Path frequency distribution (log y-axis)
+    logger.debug("Creating path frequency distribution plot (log y-axis)...")
+    plt.figure()
+
+    plt.plot(sorted_freq_numpy)
+    plt.xlabel("Path rank")
+    plt.ylabel("Frequency")
+    plt.title("Path Frequency Distribution (Log Y-axis)")
+    plt.yscale("log")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+
+    freq_plot_log_path = os.path.join(FIGURE_DIR, "router_path_frequency_log.png")
+    logger.debug(f"Saving log frequency plot to: {freq_plot_log_path}")
+    plt.savefig(freq_plot_log_path)
+    plt.close()
+    logger.trace("Log frequency plot saved and closed")
 
     # Plot 2: Cumulative path coverage
     logger.debug("Creating cumulative path coverage plot...")
@@ -433,43 +313,15 @@ async def _router_path_entropy_async(
     plt.close()
     logger.trace("Coverage plot saved and closed")
 
-    # Plot 3: Histogram of path frequencies
-    logger.debug("Creating path frequency histogram...")
-    plt.figure()
-    path_freq_numpy = path_frequencies.cpu().numpy()
-    logger.trace(f"Creating histogram for {len(path_freq_numpy)} frequencies")
-    logger.trace(
-        f"Frequency range: min={path_freq_numpy.min():.2f}, max={path_freq_numpy.max():.2f}"
-    )
-
-    bins = th.logspace(0, th.log10(path_frequencies.max()), 50).cpu().numpy()
-    logger.trace(f"Using {len(bins)} bins for histogram")
-
-    hist_counts, hist_bins, _ = plt.hist(
-        path_freq_numpy, bins=bins, edgecolor="black", alpha=0.7
-    )
-    logger.trace(f"Histogram: {len(hist_counts)} bins with counts {hist_counts}")
-
-    plt.xlabel("Path frequency")
-    plt.ylabel("Number of paths")
-    plt.title("Distribution of Path Frequencies")
-    plt.xscale("log")
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-
-    hist_plot_path = os.path.join(FIGURE_DIR, "router_path_histogram.png")
-    logger.debug(f"Saving histogram plot to: {hist_plot_path}")
-    plt.savefig(hist_plot_path)
-    plt.close()
-    logger.trace("Histogram plot saved and closed")
+    # Removed histogram plot - it's redundant with path frequency plots
 
     logger.info(f"Figures saved to {FIGURE_DIR}/")
-    logger.info("  - router_path_frequency.png")
+    logger.info("  - router_path_frequency_linear.png")
+    logger.info("  - router_path_frequency_log.png")
     logger.info("  - router_path_coverage.png")
-    logger.info("  - router_path_histogram.png")
 
     # Validate all files were created
-    for plot_path in [freq_plot_path, coverage_plot_path, hist_plot_path]:
+    for plot_path in [freq_plot_linear_path, freq_plot_log_path, coverage_plot_path]:
         assert os.path.exists(plot_path), f"Plot file not created: {plot_path}"
         file_size = os.path.getsize(plot_path)
         assert file_size > 0, f"Plot file is empty: {plot_path}"
@@ -489,13 +341,13 @@ def router_path_entropy(
     debug: bool = False,
     max_samples: int = 0,
 ) -> None:
-    """Analyze routing path entropy and distribution for an experiment.
+    """Analyze routing path frequency distribution for an experiment.
 
     This script:
     1. Loads router activations using load_activations_and_init_dist
     2. Converts router logits to binary activations via top-k
     3. Hashes the complete routing path for each token across all layers
-    4. Measures the entropy and non-uniformity of the path distribution
+    4. Visualizes the frequency distribution of routing paths
 
     Args:
         model_name: Name of the model (e.g., "olmoe-i").
