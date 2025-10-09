@@ -855,7 +855,7 @@ async def kmeans_manhattan(
         f"Reserved {validation_size} data points for validation (shape: {validation_data.shape})"
     )
 
-    # Skip validation of zero-initialized centroids - they're meaningless before initialization
+
 
     for k_idx, k in enumerate(k_values):
         for _gpu_idx, gpu_data in enumerate(all_gpu_data):
