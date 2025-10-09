@@ -169,17 +169,21 @@ def validate_centroid_distribution(
             batch_distances = th.cdist(batch_data, centroids_gpu, p=1)
         else:
             # Chunk centroids to avoid CUDA configuration limits
-            all_distances = []
             n_centroids = centroids_gpu.shape[0]
+            n_chunks = (
+                n_centroids + centroid_minibatch_size - 1
+            ) // centroid_minibatch_size
 
-            for c_start in range(0, n_centroids, centroid_minibatch_size):
-                c_end = min(c_start + centroid_minibatch_size, n_centroids)
-                centroid_chunk = centroids_gpu[c_start:c_end]
-                chunk_distances = th.cdist(batch_data, centroid_chunk, p=1)
-                all_distances.append(chunk_distances)
+            # Split centroids into chunks
+            centroid_chunks = th.tensor_split(centroids_gpu, n_chunks, dim=0)
+
+            # Compute distances for each chunk
+            chunk_distances = [
+                th.cdist(batch_data, chunk, p=1) for chunk in centroid_chunks
+            ]
 
             # Concatenate along centroid dimension
-            batch_distances = th.cat(all_distances, dim=1)
+            batch_distances = th.cat(chunk_distances, dim=1)
 
         batch_assignments = th.argmin(batch_distances, dim=1)
 
