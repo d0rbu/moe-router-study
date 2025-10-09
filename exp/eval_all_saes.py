@@ -581,8 +581,8 @@ def main(
 def eval_all_saes(
     *,
     model_name: str = "olmoe-i",
-    run_saebench: bool = False,
-    run_intruder: bool = False,
+    run_saebench: bool = True,
+    run_intruder: bool = True,
     saebench_eval_types: list[str] | None = None,
     saebench_batchsize: int = 512,
     intruder_n_tokens: int = 10_000_000,
