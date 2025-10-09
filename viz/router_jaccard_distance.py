@@ -272,21 +272,28 @@ async def _router_jaccard_distance_async(
 
     # Compute independent baseline using marginal probabilities
     logger.debug("Computing independent baseline...")
-    expert_probabilities = expert_activation_counts / total_samples
+    # Independent marginal probability that each expert gets activated across all samples
+    # This is NOT the router's output probabilities, but the frequency of activation
+    independent_expert_probabilities = expert_activation_counts / total_samples
     logger.trace(
-        f"Expert probabilities range: min={expert_probabilities.min().item():.6f}, max={expert_probabilities.max().item():.6f}"
+        f"Independent expert probabilities range: min={independent_expert_probabilities.min().item():.6f}, max={independent_expert_probabilities.max().item():.6f}"
     )
-    logger.trace(f"Expert probabilities sum: {expert_probabilities.sum().item():.6f}")
+    logger.trace(
+        f"Independent expert probabilities sum: {independent_expert_probabilities.sum().item():.6f}"
+    )
 
     # Validate probabilities
-    assert th.all(expert_probabilities >= 0), (
-        "Expert probabilities must be non-negative"
+    assert th.all(independent_expert_probabilities >= 0), (
+        "Independent expert probabilities must be non-negative"
     )
-    assert th.all(expert_probabilities <= 1), "Expert probabilities must be <= 1"
+    assert th.all(independent_expert_probabilities <= 1), (
+        "Independent expert probabilities must be <= 1"
+    )
 
     # Validate probability sum with relative error tolerance using th.allclose
+    # Expected sum = num_layers * top_k because top_k experts are selected per layer
     expected_prob_sum = num_layers * top_k
-    actual_prob_sum = expert_probabilities.sum()
+    actual_prob_sum = independent_expert_probabilities.sum()
 
     assert th.allclose(
         actual_prob_sum,
@@ -297,13 +304,13 @@ async def _router_jaccard_distance_async(
         ),
         rtol=1e-4,
     ), (
-        f"Expert probabilities sum validation failed: "
+        f"Independent expert probabilities sum validation failed: "
         f"actual={actual_prob_sum.item():.8f}, expected={expected_prob_sum}"
     )
 
     # For independent experts, Jaccard = (p_i * p_j) / (p_i + p_j - p_i * p_j)
-    p_i = expert_probabilities.unsqueeze(1)  # Shape: (num_experts, 1)
-    p_j = expert_probabilities.unsqueeze(0)  # Shape: (1, num_experts)
+    p_i = independent_expert_probabilities.unsqueeze(1)  # Shape: (num_experts, 1)
+    p_j = independent_expert_probabilities.unsqueeze(0)  # Shape: (1, num_experts)
     logger.trace(f"p_i shape: {p_i.shape}, p_j shape: {p_j.shape}")
 
     # Independent coactivation probability: p_i * p_j
