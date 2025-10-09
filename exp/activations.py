@@ -289,8 +289,10 @@ class Activations:
                                     # Truncate current_batch in place
                                     for key, value in current_batch.items():
                                         if isinstance(value, th.Tensor):
-                                            current_batch[key] = value[:batch_size_actual]
-                            
+                                            current_batch[key] = value[
+                                                :batch_size_actual
+                                            ]
+
                             samples_processed += batch_size_actual
                             yield current_batch
                             if samples_processed >= max_samples:
