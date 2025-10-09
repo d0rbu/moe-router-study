@@ -6,16 +6,8 @@ This script:
 2. Evaluates each SAE using both sae_eval_saebench and eval_intruder
 3. Aggregates results and generates rankings
 4. Creates visualizations for the results
-
-Requirements:
-    pip install pandas seaborn
-
-Or add to pyproject.toml:
-    dependencies = [..., "pandas>=2.0.0", "seaborn>=0.12.0"]
 """
 
-import argparse
-import asyncio
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
@@ -23,23 +15,25 @@ import subprocess
 import sys
 from typing import Any
 
+import arguably
 from loguru import logger
 import matplotlib.pyplot as plt
 import numpy as np
+import orjson
+import pandas as pd
+import seaborn as sns
 from tqdm import tqdm
 
-try:
-    import pandas as pd
-    import seaborn as sns
-
-    HAS_VIZ_DEPS = True
-except ImportError:
-    HAS_VIZ_DEPS = False
-    logger.warning(
-        "pandas and/or seaborn not installed. Install with: pip install pandas seaborn"
-    )
-
 from exp import OUTPUT_DIR
+
+
+@dataclass
+class SAEInfo:
+    """Represents a single SAE configuration."""
+
+    sae_dir: Path
+    config_path: Path
+    ae_path: Path
 
 
 @dataclass
@@ -47,9 +41,7 @@ class SAEExperiment:
     """Represents a single SAE experiment directory."""
 
     experiment_name: str
-    sae_dirs: list[Path]
-    config_paths: list[Path]
-    ae_paths: list[Path]
+    saes: list[SAEInfo]
 
 
 @dataclass
@@ -76,9 +68,7 @@ def discover_sae_experiments(output_dir: Path) -> list[SAEExperiment]:
             continue
 
         # Check if this directory contains subdirectories with config.json
-        sae_dirs = []
-        config_paths = []
-        ae_paths = []
+        saes = []
 
         for sub_dir in exp_dir.iterdir():
             if not sub_dir.is_dir():
@@ -89,17 +79,19 @@ def discover_sae_experiments(output_dir: Path) -> list[SAEExperiment]:
             ae_pt_files = list(sub_dir.glob("ae*.pt"))
 
             if config_path.exists() and ae_pt_files:
-                sae_dirs.append(sub_dir)
-                config_paths.append(config_path)
-                ae_paths.append(ae_pt_files[0])  # Use first ae.pt file found
+                saes.append(
+                    SAEInfo(
+                        sae_dir=sub_dir,
+                        config_path=config_path,
+                        ae_path=ae_pt_files[0],  # Use first ae.pt file found
+                    )
+                )
 
-        if sae_dirs:
+        if saes:
             experiments.append(
                 SAEExperiment(
                     experiment_name=exp_dir.name,
-                    sae_dirs=sae_dirs,
-                    config_paths=config_paths,
-                    ae_paths=ae_paths,
+                    saes=saes,
                 )
             )
 
@@ -234,8 +226,6 @@ def load_intruder_results(experiment_dir: Path) -> dict[str, Any]:
     for score_file in scores_dir.glob("*.txt"):
         try:
             with open(score_file, "rb") as f:
-                import orjson
-
                 score_data = orjson.loads(f.read())
                 results[score_file.stem] = score_data
         except Exception as e:
@@ -253,9 +243,9 @@ def aggregate_results(
     for exp in tqdm(experiments, desc="Aggregating results"):
         exp_dir = Path(OUTPUT_DIR) / exp.experiment_name
 
-        for sae_dir, config_path in zip(exp.sae_dirs, exp.config_paths, strict=False):
+        for sae_info in exp.saes:
             # Load config
-            with open(config_path) as f:
+            with open(sae_info.config_path) as f:
                 config = json.load(f)
 
             # Load evaluation results
@@ -264,7 +254,7 @@ def aggregate_results(
 
             result = EvaluationResults(
                 experiment_name=exp.experiment_name,
-                sae_id=sae_dir.name,
+                sae_id=sae_info.sae_dir.name,
                 saebench_results=saebench_results,
                 intruder_results=intruder_results,
                 config=config,
@@ -275,14 +265,8 @@ def aggregate_results(
     return all_results
 
 
-def extract_metrics(results: list[EvaluationResults]):
+def extract_metrics(results: list[EvaluationResults]) -> pd.DataFrame:
     """Extract key metrics from results into a DataFrame."""
-    if not HAS_VIZ_DEPS:
-        logger.error(
-            "pandas is required for metric extraction. Install with: pip install pandas"
-        )
-        return None
-
     rows = []
 
     for result in results:
@@ -328,12 +312,8 @@ def extract_metrics(results: list[EvaluationResults]):
     return pd.DataFrame(rows)
 
 
-def compute_rankings(df):
+def compute_rankings(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     """Compute rankings for each metric."""
-    if not HAS_VIZ_DEPS or df is None:
-        logger.error("pandas is required for computing rankings")
-        return {}
-
     rankings = {}
 
     # Get all metric columns
@@ -366,17 +346,11 @@ def compute_rankings(df):
 
 
 def create_visualizations(
-    df,
-    rankings: dict,
+    df: pd.DataFrame,
+    rankings: dict[str, pd.DataFrame],
     output_dir: Path,
 ) -> None:
     """Create visualizations for the evaluation results."""
-    if not HAS_VIZ_DEPS or df is None:
-        logger.warning(
-            "pandas and seaborn are required for visualizations. Skipping..."
-        )
-        return
-
     viz_dir = output_dir / "visualizations"
     viz_dir.mkdir(exist_ok=True, parents=True)
 
@@ -511,15 +485,11 @@ def create_visualizations(
 
 
 def save_results(
-    df,
-    rankings: dict,
+    df: pd.DataFrame,
+    rankings: dict[str, pd.DataFrame],
     output_dir: Path,
 ) -> None:
     """Save aggregated results and rankings to files."""
-    if not HAS_VIZ_DEPS or df is None:
-        logger.warning("pandas is required for saving results. Skipping...")
-        return
-
     results_dir = output_dir / "evaluation_results"
     results_dir.mkdir(exist_ok=True, parents=True)
 
@@ -535,7 +505,7 @@ def save_results(
     logger.info(f"Results saved to {results_dir}")
 
 
-async def main(
+def main(
     model_name: str,
     run_saebench: bool,
     run_intruder: bool,
@@ -557,9 +527,7 @@ async def main(
     logger.info(f"Found {len(experiments)} experiments")
 
     for exp in experiments:
-        logger.info(
-            f"  - {exp.experiment_name}: {len(exp.sae_dirs)} SAE configurations"
-        )
+        logger.info(f"  - {exp.experiment_name}: {len(exp.saes)} SAE configurations")
 
     if not skip_evaluation:
         # Run evaluations
@@ -609,100 +577,42 @@ async def main(
     logger.info("✅ Evaluation complete!")
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Evaluate all SAE experiments and generate rankings"
-    )
-    parser.add_argument(
-        "--model-name",
-        type=str,
-        default="olmoe-i",
-        help="Model name for evaluation",
-    )
-    parser.add_argument(
-        "--run-saebench",
-        action="store_true",
-        help="Run SAEBench evaluation",
-    )
-    parser.add_argument(
-        "--run-intruder",
-        action="store_true",
-        help="Run intruder evaluation",
-    )
-    parser.add_argument(
-        "--saebench-eval-types",
-        type=str,
-        nargs="+",
-        default=None,
-        help="SAEBench evaluation types to run",
-    )
-    parser.add_argument(
-        "--saebench-batchsize",
-        type=int,
-        default=512,
-        help="Batch size for SAEBench evaluation",
-    )
-    parser.add_argument(
-        "--intruder-n-tokens",
-        type=int,
-        default=10_000_000,
-        help="Number of tokens for intruder evaluation",
-    )
-    parser.add_argument(
-        "--intruder-batchsize",
-        type=int,
-        default=8,
-        help="Batch size for intruder evaluation",
-    )
-    parser.add_argument(
-        "--intruder-n-latents",
-        type=int,
-        default=1000,
-        help="Number of latents for intruder evaluation",
-    )
-    parser.add_argument(
-        "--dtype",
-        type=str,
-        default="bf16",
-        help="Data type for evaluation",
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=0,
-        help="Random seed",
-    )
-    parser.add_argument(
-        "--skip-evaluation",
-        action="store_true",
-        help="Skip running evaluations and only aggregate existing results",
-    )
-    parser.add_argument(
-        "--log-level",
-        type=str,
-        default="INFO",
-        help="Logging level",
-    )
-
-    args = parser.parse_args()
-
+@arguably.command()
+def eval_all_saes(
+    *,
+    model_name: str = "olmoe-i",
+    run_saebench: bool = False,
+    run_intruder: bool = False,
+    saebench_eval_types: list[str] | None = None,
+    saebench_batchsize: int = 512,
+    intruder_n_tokens: int = 10_000_000,
+    intruder_batchsize: int = 8,
+    intruder_n_latents: int = 1000,
+    dtype: str = "bf16",
+    seed: int = 0,
+    skip_evaluation: bool = False,
+    log_level: str = "INFO",
+) -> None:
+    """Evaluate all SAE experiments and generate rankings."""
     # Setup logging
     logger.remove()
-    logger.add(sys.stderr, level=args.log_level)
+    logger.add(sys.stderr, level=log_level)
 
     # Run main
-    asyncio.run(
-        main(
-            model_name=args.model_name,
-            run_saebench=args.run_saebench,
-            run_intruder=args.run_intruder,
-            saebench_eval_types=args.saebench_eval_types,
-            saebench_batchsize=args.saebench_batchsize,
-            intruder_n_tokens=args.intruder_n_tokens,
-            intruder_batchsize=args.intruder_batchsize,
-            intruder_n_latents=args.intruder_n_latents,
-            dtype=args.dtype,
-            seed=args.seed,
-            skip_evaluation=args.skip_evaluation,
-        )
+    main(
+        model_name=model_name,
+        run_saebench=run_saebench,
+        run_intruder=run_intruder,
+        saebench_eval_types=saebench_eval_types,
+        saebench_batchsize=saebench_batchsize,
+        intruder_n_tokens=intruder_n_tokens,
+        intruder_batchsize=intruder_batchsize,
+        intruder_n_latents=intruder_n_latents,
+        dtype=dtype,
+        seed=seed,
+        skip_evaluation=skip_evaluation,
     )
+
+
+if __name__ == "__main__":
+    arguably.run()
