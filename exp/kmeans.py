@@ -160,6 +160,21 @@ class RunningKMeansData:
             base_weight_proportion[mask] = base_weights[mask] / new_weights[mask]
             other_weight_proportion = 1 - base_weight_proportion
 
+            # Debug: Check for problematic weight proportions
+            if (
+                th.isnan(base_weight_proportion).any()
+                or th.isnan(other_weight_proportion).any()
+            ):
+                logger.warning(
+                    f"NaN in weight proportions! base_weights: {base_weights}, other_weights: {other_weights}, new_weights: {new_weights}"
+                )
+
+            # Check if all weights are zero (which would cause issues)
+            if new_weights.sum() == 0:
+                logger.warning(
+                    "All weights are zero in __add__ - this might cause centroid issues"
+                )
+
             logger.trace(
                 f"Base centroids {type(base_centroids)} {base_centroids.shape} {base_centroids.dtype} {base_centroids.device}"
             )
@@ -173,10 +188,29 @@ class RunningKMeansData:
                 f"Other weight proportion {type(other_weight_proportion)} {other_weight_proportion.shape} {other_weight_proportion.dtype} {other_weight_proportion.device}"
             )
 
-            new_centroids.copy_(
-                base_weight_proportion.unsqueeze(-1) * base_centroids
-                + other_weight_proportion.unsqueeze(-1) * other_centroids
-            )
+            # Compute weighted average of centroids
+            base_contribution = base_weight_proportion.unsqueeze(-1) * base_centroids
+            other_contribution = other_weight_proportion.unsqueeze(-1) * other_centroids
+            new_centroid_values = base_contribution + other_contribution
+
+            # Debug: Check for zero centroids after weighted averaging
+            new_centroid_norms = th.norm(new_centroid_values, dim=1)
+            zero_norms_after_add = (new_centroid_norms == 0).sum().item()
+            if zero_norms_after_add > 0:
+                logger.warning(
+                    f"__add__ produced {zero_norms_after_add} zero-norm centroids"
+                )
+                logger.warning(
+                    f"base_weight_proportion sum: {base_weight_proportion.sum():.6f}, other_weight_proportion sum: {other_weight_proportion.sum():.6f}"
+                )
+                logger.warning(
+                    f"base_centroids norms: min={th.norm(base_centroids, dim=1).min():.6f}, max={th.norm(base_centroids, dim=1).max():.6f}"
+                )
+                logger.warning(
+                    f"other_centroids norms: min={th.norm(other_centroids, dim=1).min():.6f}, max={th.norm(other_centroids, dim=1).max():.6f}"
+                )
+
+            new_centroids.copy_(new_centroid_values)
 
             base_weights_sum = base_weights.sum()
             new_weights_sum = new_weights.sum()
@@ -427,13 +461,22 @@ async def sync(
     device = th.device(f"cuda:{gpu_idx}")
     empty_data = RunningKMeansData(
         centroid_sets=[
-            th.empty_like(centroids) for centroids in gpu_data.synced_data.centroid_sets
+            th.zeros_like(centroids) for centroids in gpu_data.synced_data.centroid_sets
         ],
         weight_sets=[
             th.zeros_like(weights) for weights in gpu_data.synced_data.weight_sets
         ],
-        losses=th.empty_like(gpu_data.synced_data.losses),
+        losses=th.zeros_like(gpu_data.synced_data.losses),
     )
+
+    # Debug: Log synced data before update
+    for k_idx, centroids in enumerate(gpu_data.synced_data.centroid_sets):
+        centroid_norms = th.norm(centroids, dim=1)
+        zero_norms = (centroid_norms == 0).sum().item()
+        logger.debug(
+            f"🔄 SYNC GPU {gpu_idx} k_idx={k_idx} BEFORE GPU AGGREGATION: Synced centroids zero_norms={zero_norms}/{len(centroid_norms)}, norm_stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}"
+        )
+
     gpu_data.synced_data += sum(
         (current_gpu_data.dirty_data.to(device) for current_gpu_data in all_gpu_data),
         start=empty_data,
@@ -452,9 +495,6 @@ async def sync(
         centroids.zero_()
 
     # Log synced data state after sync
-    logger.debug(
-        f"🔄 SYNC GPU {gpu_idx}: Sync completed, logging final synced state..."
-    )
     for k_idx, centroids in enumerate(gpu_data.synced_data.centroid_sets):
         centroid_norms = th.norm(centroids, dim=1)
         zero_norms = (centroid_norms == 0).sum().item()
@@ -578,7 +618,7 @@ async def gpu_worker(
             logger.trace(f"GPU {gpu_idx} skipping sync, continuing to next item")
             continue
 
-        logger.debug(f"GPU {gpu_idx} starting sync operation")
+        logger.trace(f"GPU {gpu_idx} starting sync operation")
 
         await safe_await_with_worker_check(
             sync(gpu_idx, all_gpu_data, losses_over_time, barrier, group),
@@ -586,7 +626,7 @@ async def gpu_worker(
             operation_name=f"sync operation for GPU {gpu_idx}",
         )
 
-        logger.debug(f"GPU {gpu_idx} completed sync operation")
+        logger.trace(f"GPU {gpu_idx} completed sync operation")
 
         # save checkpoint if save_idx is not None and we're on rank 0 gpu 0
         if (
@@ -954,21 +994,7 @@ async def kmeans_manhattan(
     # distributed kmeans
     for iter_idx in iterator:
         # process data in batches, parallelized over devices and nodes
-        logger.debug(f"🚀 ITERATION {iter_idx}: Starting k-means iteration")
-
-        # Log centroid states at start of iteration
-        if iter_idx == 0 or iter_idx % 5 == 0:  # Log every 5 iterations
-            logger.debug(
-                f"🔍 ITERATION {iter_idx}: Checking centroid states at start..."
-            )
-            for k_idx, centroid_set in enumerate(
-                all_gpu_data[0].synced_data.centroid_sets
-            ):
-                centroid_norms = th.norm(centroid_set, dim=1)
-                zero_norms = (centroid_norms == 0).sum().item()
-                logger.debug(
-                    f"📊 ITER {iter_idx} START k_idx={k_idx}: Zero norms={zero_norms}/{len(centroid_norms)}, Norm stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}"
-                )
+        logger.trace(f"🚀 Starting k-means iteration {iter_idx}")
 
         logger.trace(f"Running iteration {iter_idx}")
 
@@ -978,7 +1004,7 @@ async def kmeans_manhattan(
 
         # Log queue states for observability
         queue_sizes = [gpu_data.queue.qsize() for gpu_data in all_gpu_data]
-        logger.debug(f"Iteration {iter_idx} starting - Queue sizes: {queue_sizes}")
+        logger.trace(f"Iteration {iter_idx} - Queue sizes: {queue_sizes}")
 
         # skip over the first validation_size data points for validation
         minibatch_iterator = activations(
