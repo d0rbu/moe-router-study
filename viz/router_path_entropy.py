@@ -13,7 +13,6 @@ from exp.activations import load_activations_and_init_dist
 from exp.get_activations import ActivationKeys
 from viz import FIGURE_DIR
 
-
 # Removed entropy calculation - focusing on frequency visualization only
 
 
@@ -207,7 +206,9 @@ async def _router_path_entropy_async(
     )
 
     # Skip entropy/Gini calculations - focusing on frequency visualization only
-    logger.info("Skipping entropy/Gini calculations - focusing on frequency visualization")
+    logger.info(
+        "Skipping entropy/Gini calculations - focusing on frequency visualization"
+    )
 
     # Compute top-k path coverage
     logger.debug("Computing path coverage statistics...")
