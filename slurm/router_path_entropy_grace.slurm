@@ -29,4 +29,5 @@ export WORLD_SIZE=$SLURM_NTASKS
 cd $SCRATCH/moe-router-study
 
 # Run the router path entropy analysis
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run viz/router_path_entropy.py router-path-entropy --model-name olmoe-i --dataset-name lmsys --context-length 2048 --tokens-per-file 100000 --batch-size 100000
+# Using max-samples for faster testing - remove or increase for full analysis
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run viz/router_path_entropy.py router-path-entropy --model-name olmoe-i --dataset-name lmsys --context-length 2048 --tokens-per-file 100000 --batch-size 100000 --max-samples 100000

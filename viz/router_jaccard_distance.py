@@ -23,6 +23,7 @@ async def _router_jaccard_distance_async(
     reshuffled_tokens_per_file: int = 100000,
     num_workers: int = 8,
     debug: bool = False,
+    max_samples: int = 0,
 ) -> None:
     """Async implementation of Jaccard similarity analysis."""
     logger.info(f"Loading activations for model: {model_name}, dataset: {dataset_name}")
@@ -65,6 +66,20 @@ async def _router_jaccard_distance_async(
     pairwise_coactivation_counts: th.Tensor | None = None
 
     logger.debug("Starting batch processing...")
+    
+    # Calculate sample limits if max_samples is specified
+    samples_to_process = None
+    if max_samples != 0:
+        if max_samples > 0:
+            samples_to_process = max_samples
+            logger.info(f"Processing first {samples_to_process:,} samples")
+        else:
+            # For negative values, we need to know total samples first
+            # This is a limitation - we'll process all and then truncate
+            logger.info(f"Processing all samples except last {abs(max_samples):,}")
+    else:
+        logger.info("Processing all available samples")
+    
     # Iterate through activation batches
     for batch in activations(batch_size=batch_size):
         batch_count += 1
@@ -116,21 +131,34 @@ async def _router_jaccard_distance_async(
             )
 
         current_batch_size = router_logits.shape[0]
-        total_samples += current_batch_size
+        
+        # Determine how many samples to process in this batch
+        samples_to_process_in_batch = current_batch_size
+        if samples_to_process is not None and samples_to_process > 0:
+            remaining_samples = samples_to_process - total_samples
+            if remaining_samples <= 0:
+                logger.debug(f"Reached sample limit of {samples_to_process:,}, stopping")
+                break
+            samples_to_process_in_batch = min(current_batch_size, remaining_samples)
+            logger.trace(f"Processing {samples_to_process_in_batch} of {current_batch_size} samples in batch (remaining: {remaining_samples})")
+        
+        total_samples += samples_to_process_in_batch
         logger.trace(
-            f"Current batch size: {current_batch_size}, total samples: {total_samples}"
+            f"Current batch size: {samples_to_process_in_batch}, total samples: {total_samples}"
         )
 
         # Convert to binary activations (top-k selection)
         logger.trace("Converting router logits to binary activations...")
-        activated_experts = convert_router_logits_to_paths(router_logits, top_k).bool()
+        # Only process the limited number of samples
+        router_logits_to_process = router_logits[:samples_to_process_in_batch]
+        activated_experts = convert_router_logits_to_paths(router_logits_to_process, top_k).bool()
         logger.trace(
             f"Activated experts shape: {activated_experts.shape}, dtype: {activated_experts.dtype}"
         )
 
         # Validate activated experts
         assert activated_experts.shape == (
-            current_batch_size,
+            samples_to_process_in_batch,
             num_layers,
             num_experts,
         ), f"Unexpected activated experts shape: {activated_experts.shape}"
@@ -202,8 +230,13 @@ async def _router_jaccard_distance_async(
         )
 
         logger.debug(
-            f"Batch {batch_count} complete: {current_batch_size} samples processed, {total_samples} total"
+            f"Batch {batch_count} complete: {samples_to_process_in_batch} samples processed, {total_samples} total"
         )
+        
+        # Check if we've reached our sample limit
+        if samples_to_process is not None and samples_to_process > 0 and total_samples >= samples_to_process:
+            logger.info(f"Reached sample limit of {samples_to_process:,}, stopping batch processing")
+            break
 
     if (
         top_k is None
@@ -619,6 +652,7 @@ def router_jaccard_distance(
     reshuffled_tokens_per_file: int = 100000,
     num_workers: int = 8,
     debug: bool = False,
+    max_samples: int = 0,
 ) -> None:
     """Compute Jaccard similarity between expert activations.
 
@@ -637,6 +671,7 @@ def router_jaccard_distance(
         reshuffled_tokens_per_file: Number of tokens per reshuffled file (default: 100000).
         num_workers: Number of worker processes for data loading (default: 8).
         debug: Enable debug logging (default: False).
+        max_samples: Maximum number of samples to process. 0 = all samples, >0 = first N samples, <0 = all but last N samples (default: 0).
     """
     asyncio.run(
         _router_jaccard_distance_async(
@@ -648,6 +683,7 @@ def router_jaccard_distance(
             reshuffled_tokens_per_file=reshuffled_tokens_per_file,
             num_workers=num_workers,
             debug=debug,
+            max_samples=max_samples,
         )
     )
 
