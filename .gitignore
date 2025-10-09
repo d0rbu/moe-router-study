@@ -217,4 +217,3 @@ models/
 *.out
 *.[0-9]*
 slurm-*.out
-# Force GitHub PR refresh
