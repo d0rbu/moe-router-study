@@ -156,7 +156,7 @@ class RunningKMeansData:
 
             # Avoid division by zero when weights are zero
             mask = new_weights > 0
-            base_weight_proportion = th.zeros_like(base_weights, dtype=th.float32)
+            base_weight_proportion = th.ones_like(base_weights, dtype=th.float32)
             base_weight_proportion[mask] = base_weights[mask] / new_weights[mask]
             other_weight_proportion = 1 - base_weight_proportion
 
