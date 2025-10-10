@@ -1169,7 +1169,6 @@ async def kmeans_manhattan(
 
     logger.trace(f"Initialized centroids for {len(k_values)} clusters")
 
-    # NEW: Copy initialized centroids from dirty_data to synced_data
     logger.debug("🔄 Copying initialized centroids to synced_data...")
     for gpu_data in all_gpu_data:
         for k_idx in range(len(k_values)):
