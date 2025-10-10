@@ -2,8 +2,8 @@
 
 ##NECESSARY JOB SPECIFICATIONS
 #SBATCH --job-name=kmeans               # Set the job name to "kmeans"
-#SBATCH --time=12:00:00                 # Set the wall clock limit to 24 hours
-#SBATCH --ntasks=2                      # Total number of tasks (processes) across all nodes
+#SBATCH --time=24:00:00                 # Set the wall clock limit to 24 hours
+#SBATCH --ntasks=1                      # Total number of tasks (processes) across all nodes
 #SBATCH --ntasks-per-node=1             # Number of tasks per node
 #SBATCH --cpus-per-task=16              # Number of CPUs per task
 #SBATCH --mem=256G                      # Request 256GB per node
@@ -32,4 +32,4 @@ export WORLD_SIZE=$SLURM_NTASKS
 cd $SCRATCH/moe-router-study
 
 # Run the distributed job
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/kmeans.py main --expansion-factor 1,2,4,8,16,32,64 --tokens-per-file 100000 --reshuffled-tokens-per-file 100000 --minibatch-size 20000 --log-level DEBUG
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/kmeans.py main --log-level DEBUG --expansion-factor 1,2,4,8,16,32,64 --tokens-per-file 100000 --reshuffled-tokens-per-file 100000 --minibatch-size 20000
