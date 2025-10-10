@@ -328,7 +328,7 @@ def aggregate_results(
 
             # Check if we still have no evaluation results after trying both locations
             if not saebench_results and not intruder_results:
-                logger.error(
+                logger.critical(
                     f"    ❌ No evaluation results found for SAE {sae_id} in either experiment or SAE directory"
                 )
                 # Continue anyway to preserve metadata, but log the issue
