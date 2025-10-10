@@ -220,43 +220,73 @@ def run_intruder_eval(
         return False
 
 
-def load_saebench_results(experiment_dir: Path) -> dict[str, Any]:
+def load_saebench_results(
+    experiment_dir: Path, sae_id: str | None = None
+) -> dict[str, Any]:
     """Load SAEBench evaluation results."""
     results = {}
+    logger.debug(
+        f"Loading SAEBench results from {experiment_dir}"
+        + (f" for SAE {sae_id}" if sae_id else "")
+    )
 
     # SAEBench saves results in the experiment directory
     # Look for result files
     result_files = list(experiment_dir.glob("**/results*.json"))
+    logger.debug(
+        f"Found {len(result_files)} potential SAEBench result files: {[f.name for f in result_files]}"
+    )
 
     for result_file in result_files:
         try:
             with open(result_file) as f:
                 result_data = json.load(f)
                 results[result_file.stem] = result_data
+                logger.debug(f"  ✅ Loaded SAEBench results from {result_file.name}")
         except Exception as e:
             logger.warning(f"Failed to load {result_file}: {e}")
+
+    if not results:
+        logger.debug(f"  ❌ No SAEBench results found in {experiment_dir}")
 
     return results
 
 
-def load_intruder_results(experiment_dir: Path) -> dict[str, Any]:
+def load_intruder_results(
+    experiment_dir: Path, sae_id: str | None = None
+) -> dict[str, Any]:
     """Load intruder evaluation results."""
     results = {}
+    logger.debug(
+        f"Loading intruder results from {experiment_dir}"
+        + (f" for SAE {sae_id}" if sae_id else "")
+    )
 
     # Intruder results are saved in delphi/scores/
     scores_dir = experiment_dir / "delphi" / "scores"
+    logger.debug(f"Looking for intruder results in {scores_dir}")
 
     if not scores_dir.exists():
+        logger.debug(f"  ❌ Intruder scores directory does not exist: {scores_dir}")
         return results
 
     # Load all score files
-    for score_file in scores_dir.glob("*.txt"):
+    score_files = list(scores_dir.glob("*.txt"))
+    logger.debug(
+        f"Found {len(score_files)} potential intruder score files: {[f.name for f in score_files]}"
+    )
+
+    for score_file in score_files:
         try:
             with open(score_file, "rb") as f:
                 score_data = orjson.loads(f.read())
                 results[score_file.stem] = score_data
+                logger.debug(f"  ✅ Loaded intruder results from {score_file.name}")
         except Exception as e:
             logger.warning(f"Failed to load {score_file}: {e}")
+
+    if not results:
+        logger.debug(f"  ❌ No intruder results found in {scores_dir}")
 
     return results
 
@@ -266,22 +296,38 @@ def aggregate_results(
 ) -> list[EvaluationResults]:
     """Aggregate all evaluation results."""
     all_results = []
+    logger.info(f"Aggregating results from {len(experiments)} experiments")
 
     for exp in tqdm(experiments, desc="Aggregating results"):
         exp_dir = Path(OUTPUT_DIR) / exp.experiment_name
+        logger.debug(
+            f"Processing experiment: {exp.experiment_name} ({len(exp.saes)} SAEs)"
+        )
 
         for sae_info in exp.saes:
+            sae_id = sae_info.sae_dir.name
+            logger.debug(f"  Processing SAE {sae_id}")
+
             # Load config
             with open(sae_info.config_path) as f:
                 config = json.load(f)
 
-            # Load evaluation results
-            saebench_results = load_saebench_results(exp_dir)
-            intruder_results = load_intruder_results(exp_dir)
+            # Load evaluation results - try both experiment level and SAE level
+            # First try at experiment level (for backward compatibility)
+            saebench_results = load_saebench_results(exp_dir, sae_id)
+            intruder_results = load_intruder_results(exp_dir, sae_id)
+
+            # If no results at experiment level, try at SAE level
+            if not saebench_results and not intruder_results:
+                logger.debug(
+                    f"    No results at experiment level, trying SAE directory: {sae_info.sae_dir}"
+                )
+                saebench_results = load_saebench_results(sae_info.sae_dir, sae_id)
+                intruder_results = load_intruder_results(sae_info.sae_dir, sae_id)
 
             result = EvaluationResults(
                 experiment_name=exp.experiment_name,
-                sae_id=sae_info.sae_dir.name,
+                sae_id=sae_id,
                 saebench_results=saebench_results,
                 intruder_results=intruder_results,
                 config=config,
@@ -289,6 +335,14 @@ def aggregate_results(
 
             all_results.append(result)
 
+            # Log what we found
+            saebench_count = len(saebench_results)
+            intruder_count = len(intruder_results)
+            logger.debug(
+                f"    Results: {saebench_count} SAEBench, {intruder_count} intruder"
+            )
+
+    logger.info(f"Aggregation complete: {len(all_results)} SAE results collected")
     return all_results
 
 
