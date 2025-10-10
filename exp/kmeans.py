@@ -423,6 +423,7 @@ def validate_gpu_centroid_synchronization(
 async def kmeans_step(
     data: th.Tensor,  # (B, L * E)
     centroids: th.Tensor,  # (K, L * E)
+    centroid_minibatch_size: int = 65536,
 ) -> tuple[th.Tensor, th.Tensor, th.Tensor]:
     logger.trace(
         f"Running kmeans step with {data.shape[0]} data points and {centroids.shape[0]} centroids"
@@ -430,8 +431,31 @@ async def kmeans_step(
     logger.trace(f"Data: {data.dtype} {data.device} {data.shape}")
     logger.trace(f"Centroids: {centroids.dtype} {centroids.device} {centroids.shape}")
 
-    # (B, K)
-    distances = th.cdist(data.to(th.float32), centroids.to(th.float32), p=1)
+    # (B, K) - Compute distances with centroid batching to avoid CUDA limits
+    data_float = data.to(th.float32)
+    centroids_float = centroids.to(th.float32)
+
+    if centroids_float.shape[0] <= centroid_minibatch_size:
+        # Small enough to compute in one go
+        distances = th.cdist(data_float, centroids_float, p=1)
+    else:
+        # Chunk centroids to avoid CUDA configuration limits
+        n_centroids = centroids_float.shape[0]
+        n_chunks = (
+            n_centroids + centroid_minibatch_size - 1
+        ) // centroid_minibatch_size
+
+        # Split centroids into chunks
+        centroid_chunks = th.tensor_split(centroids_float, n_chunks, dim=0)
+
+        # Compute distances for each chunk
+        chunk_distances = [
+            th.cdist(data_float, chunk, p=1) for chunk in centroid_chunks
+        ]
+
+        # Concatenate along centroid dimension
+        distances = th.cat(chunk_distances, dim=1)
+
     logger.trace(f"Computed distances with shape {distances.shape}")
 
     # (B)
@@ -688,6 +712,7 @@ async def gpu_worker(
     group: dist.ProcessGroup | None = None,
     save_dir: str | None = None,
     validate_every: int = 1,
+    centroid_minibatch_size: int = 65536,
 ) -> None:
     """
     GPU worker for distributed k-means clustering.
@@ -701,6 +726,7 @@ async def gpu_worker(
         group: Distributed process group for communication
         save_dir: Directory to save checkpoints (if any)
         validate_every: Validate centroid synchronization every N sync operations (default: 1)
+        centroid_minibatch_size: Size of centroid chunks to avoid CUDA limits (default: 65536)
     """
     logger.info(f"Starting GPU worker {gpu_idx}")
     gpu_data = all_gpu_data[gpu_idx]
@@ -763,6 +789,7 @@ async def gpu_worker(
                 kmeans_step(
                     flat_data,
                     centroids,
+                    centroid_minibatch_size,
                 )
                 for centroids in gpu_data.synced_data.centroid_sets
             ]
@@ -1142,6 +1169,29 @@ async def kmeans_manhattan(
 
     logger.trace(f"Initialized centroids for {len(k_values)} clusters")
 
+    # NEW: Copy initialized centroids from dirty_data to synced_data
+    logger.debug("🔄 Copying initialized centroids to synced_data...")
+    for gpu_data in all_gpu_data:
+        for k_idx in range(len(k_values)):
+            gpu_data.synced_data.centroid_sets[k_idx].copy_(
+                gpu_data.dirty_data.centroid_sets[k_idx]
+            )
+
+    # Reset dirty_data to zero after copying (ready to accumulate updates)
+    for gpu_data in all_gpu_data:
+        for weights in gpu_data.dirty_data.weight_sets:
+            weights.zero_()  # Already zero, but explicit
+        for centroids in gpu_data.dirty_data.centroid_sets:
+            centroids.zero_()
+
+    # Validate that synced_data now has proper centroids
+    logger.debug("🔍 VALIDATION: Checking synced_data after initial sync...")
+    for k_idx, centroid_set in enumerate(all_gpu_data[0].synced_data.centroid_sets):
+        _is_valid, _stats = validate_centroids(centroid_set.cpu())
+        logger.debug(
+            f"📊 POST-SYNC VALIDATION k_idx={k_idx}: Empty={_stats.num_empty_centroids}, Norms: min={_stats.min_norm:.6f}, max={_stats.max_norm:.6f}, mean={_stats.mean_norm:.6f}"
+        )
+
     # clean up the background workers and queue
     th.cuda.empty_cache()
     gc.collect()
@@ -1182,6 +1232,7 @@ async def kmeans_manhattan(
                 group,
                 save_dir,
                 validate_every,
+                centroid_minibatch_size,
             ),
             name=str(gpu_idx),
         )
