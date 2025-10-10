@@ -159,17 +159,37 @@ def run_saebench_eval(
         for eval_type in eval_types:
             cmd.extend(["--eval-types", eval_type])
 
+    logger.info(f"🔧 Running command: {' '.join(cmd)}")
     try:
-        subprocess.run(
+        result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
             check=True,
+            timeout=3600,  # 1 hour timeout
         )
-        logger.debug(f"SAEBench evaluation completed for {experiment_name}")
+        logger.info(f"✅ SAEBench evaluation completed for {experiment_name}")
+        if result.stdout:
+            logger.debug(f"SAEBench stdout: {result.stdout}")
         return True
+    except subprocess.TimeoutExpired:
+        logger.error(
+            f"❌ SAEBench evaluation timed out for {experiment_name} (1 hour limit)"
+        )
+        return False
     except subprocess.CalledProcessError as e:
-        logger.error(f"SAEBench evaluation failed for {experiment_name}: {e.stderr}")
+        logger.error(f"❌ SAEBench evaluation failed for {experiment_name}")
+        logger.error(f"Command: {' '.join(cmd)}")
+        logger.error(f"Return code: {e.returncode}")
+        if e.stdout:
+            logger.error(f"Stdout: {e.stdout}")
+        if e.stderr:
+            logger.error(f"Stderr: {e.stderr}")
+        return False
+    except Exception as e:
+        logger.error(
+            f"❌ Unexpected error in SAEBench evaluation for {experiment_name}: {e}"
+        )
         return False
 
 
@@ -207,17 +227,37 @@ def run_intruder_eval(
         str(seed),
     ]
 
+    logger.info(f"🔧 Running command: {' '.join(cmd)}")
     try:
-        subprocess.run(
+        result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
             check=True,
+            timeout=3600,  # 1 hour timeout
         )
-        logger.debug(f"Intruder evaluation completed for {experiment_name}")
+        logger.info(f"✅ Intruder evaluation completed for {experiment_name}")
+        if result.stdout:
+            logger.debug(f"Intruder stdout: {result.stdout}")
         return True
+    except subprocess.TimeoutExpired:
+        logger.error(
+            f"❌ Intruder evaluation timed out for {experiment_name} (1 hour limit)"
+        )
+        return False
     except subprocess.CalledProcessError as e:
-        logger.error(f"Intruder evaluation failed for {experiment_name}: {e.stderr}")
+        logger.error(f"❌ Intruder evaluation failed for {experiment_name}")
+        logger.error(f"Command: {' '.join(cmd)}")
+        logger.error(f"Return code: {e.returncode}")
+        if e.stdout:
+            logger.error(f"Stdout: {e.stdout}")
+        if e.stderr:
+            logger.error(f"Stderr: {e.stderr}")
+        return False
+    except Exception as e:
+        logger.error(
+            f"❌ Unexpected error in intruder evaluation for {experiment_name}: {e}"
+        )
         return False
 
 
@@ -667,11 +707,21 @@ def main(
     for exp in experiments:
         logger.info(f"  - {exp.experiment_name}: {len(exp.saes)} SAE configurations")
 
+    logger.info(
+        f"Evaluation parameters: skip_evaluation={skip_evaluation}, run_saebench={run_saebench}, run_intruder={run_intruder}"
+    )
+
     if not skip_evaluation:
+        logger.info("🚀 Starting evaluation phase...")
         # Run evaluations
-        for exp in tqdm(experiments, desc="Evaluating experiments"):
+        for i, exp in enumerate(tqdm(experiments, desc="Evaluating experiments")):
+            logger.info(
+                f"📊 Processing experiment {i + 1}/{len(experiments)}: {exp.experiment_name}"
+            )
+
             if run_saebench:
-                run_saebench_eval(
+                logger.info(f"🔍 Running SAEBench evaluation for {exp.experiment_name}")
+                success = run_saebench_eval(
                     exp.experiment_name,
                     model_name,
                     saebench_eval_types or [],
@@ -679,9 +729,13 @@ def main(
                     dtype,
                     seed,
                 )
+                logger.info(
+                    f"✅ SAEBench evaluation {'succeeded' if success else 'failed'} for {exp.experiment_name}"
+                )
 
             if run_intruder:
-                run_intruder_eval(
+                logger.info(f"🔍 Running intruder evaluation for {exp.experiment_name}")
+                success = run_intruder_eval(
                     exp.experiment_name,
                     model_name,
                     dtype,
@@ -690,6 +744,13 @@ def main(
                     intruder_n_latents,
                     seed,
                 )
+                logger.info(
+                    f"✅ Intruder evaluation {'succeeded' if success else 'failed'} for {exp.experiment_name}"
+                )
+
+        logger.info("🏁 Evaluation phase complete!")
+    else:
+        logger.warning("⚠️ Evaluation skipped due to --skip-evaluation flag")
 
     # Aggregate results
     logger.info("Aggregating results...")
