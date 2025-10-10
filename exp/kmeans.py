@@ -316,7 +316,7 @@ def validate_gpu_centroid_synchronization(
                 norm_diff = th.abs(ref_norms - gpu_norms)
                 max_norm_diff = norm_diff.max().item()
 
-                logger.error(
+                logger.critical(
                     f"🚨 SYNC MISMATCH{context_str} k_idx={k_idx} (k={k}): "
                     f"GPU 0 vs GPU {gpu_idx} - "
                     f"Max diff: {max_diff:.8f}, Mean diff: {mean_diff:.8f}, "
@@ -324,18 +324,25 @@ def validate_gpu_centroid_synchronization(
                 )
 
                 # Log centroid statistics
-                logger.error(
+                logger.critical(
                     f"GPU 0 centroids - Norms: min={ref_norms.min():.6f}, max={ref_norms.max():.6f}, mean={ref_norms.mean():.6f}"
                 )
-                logger.error(
+                logger.critical(
                     f"GPU {gpu_idx} centroids - Norms: min={gpu_norms.min():.6f}, max={gpu_norms.max():.6f}, mean={gpu_norms.mean():.6f}"
                 )
 
                 # Count zero-norm centroids
                 ref_zeros = (ref_norms == 0).sum().item()
                 gpu_zeros = (gpu_norms == 0).sum().item()
-                logger.error(
+                logger.critical(
                     f"Zero-norm centroids - GPU 0: {ref_zeros}/{len(ref_norms)}, GPU {gpu_idx}: {gpu_zeros}/{len(gpu_norms)}"
+                )
+
+                # Raise an error to stop execution
+                raise RuntimeError(
+                    f"GPU centroid synchronization failed{context_str}: "
+                    f"k_idx={k_idx} (k={k}), GPU 0 vs GPU {gpu_idx}, "
+                    f"max_diff={max_diff:.8f}, max_norm_diff={max_norm_diff:.8f}"
                 )
             else:
                 logger.trace(
@@ -347,7 +354,7 @@ def validate_gpu_centroid_synchronization(
             f"✅ SYNC VALIDATION{context_str}: All centroids synchronized across GPUs"
         )
     else:
-        logger.error(
+        logger.critical(
             f"🚨 SYNC VALIDATION{context_str}: Centroid synchronization FAILED!"
         )
 
@@ -721,6 +728,18 @@ async def gpu_worker(
 
         logger.trace(f"GPU {gpu_idx} completed sync operation")
 
+        # Validate GPU synchronization after sync (only on GPU 0 to avoid redundant checks)
+        if gpu_idx == 0 and len(all_gpu_data) > 1:
+            # We need k_values, but it's not available in this scope
+            # For now, we'll infer it from the number of centroid sets
+            k_values = tuple(
+                centroid_set.shape[0]
+                for centroid_set in all_gpu_data[0].synced_data.centroid_sets
+            )
+            validate_gpu_centroid_synchronization(
+                all_gpu_data, k_values, context=f"after sync on GPU {gpu_idx}"
+            )
+
         # save checkpoint if save_idx is not None and we're on rank 0 gpu 0
         if (
             save_idx is not None
@@ -1034,30 +1053,6 @@ async def kmeans_manhattan(
 
     logger.trace(f"Initialized centroids for {len(k_values)} clusters")
 
-    # Copy initialized centroids from dirty_data to synced_data for initial synchronization
-    logger.debug("🔄 INIT: Copying initialized centroids to synced_data...")
-    for gpu_data in all_gpu_data:
-        for k_idx in range(len(k_values)):
-            gpu_data.synced_data.centroid_sets[k_idx].copy_(
-                gpu_data.dirty_data.centroid_sets[k_idx]
-            )
-            gpu_data.synced_data.weight_sets[k_idx].copy_(
-                gpu_data.dirty_data.weight_sets[k_idx]
-            )
-        gpu_data.synced_data.losses.copy_(gpu_data.dirty_data.losses)
-
-    # Validate that centroids are synchronized across all GPUs after initialization
-    logger.debug(
-        "🔍 VALIDATION: Checking GPU centroid synchronization after initialization..."
-    )
-    sync_ok = validate_gpu_centroid_synchronization(
-        all_gpu_data, k_values, context="after initialization"
-    )
-    if not sync_ok:
-        logger.error(
-            "🚨 CRITICAL: Centroids are not synchronized after initialization! This will cause training issues."
-        )
-
     # clean up the background workers and queue
     th.cuda.empty_cache()
     gc.collect()
@@ -1208,15 +1203,6 @@ async def kmeans_manhattan(
             logger.debug(
                 f"🔍 VALIDATION: Running intermittent validation at iteration {iter_idx + 1}..."
             )
-
-            # Validate GPU synchronization
-            sync_ok = validate_gpu_centroid_synchronization(
-                all_gpu_data, k_values, context=f"iteration {iter_idx + 1}"
-            )
-            if not sync_ok:
-                logger.error(
-                    f"🚨 CRITICAL: Centroids are not synchronized at iteration {iter_idx + 1}!"
-                )
 
             for k_idx, centroid_set in enumerate(
                 all_gpu_data[0].synced_data.centroid_sets
