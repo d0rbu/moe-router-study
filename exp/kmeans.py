@@ -1333,8 +1333,6 @@ async def kmeans_manhattan(
                     operation_name=f"queue put for GPU {gpu_idx}",
                 )
 
-
-
     for gpu_data in all_gpu_data:
         logger.trace(
             f"Putting stop signal on GPU with queue size {gpu_data.queue.qsize()}"
