@@ -2,14 +2,14 @@
 
 ##NECESSARY JOB SPECIFICATIONS
 #SBATCH --job-name=eval_all_saes         # Set the job name to "eval_all_saes"
-#SBATCH --time=48:00:00                  # Set the wall clock limit to 48 hours
+#SBATCH --time=24:00:00                  # Set the wall clock limit to 24 hours
 #SBATCH --ntasks=1                       # Total number of tasks (processes) across all nodes
 #SBATCH --ntasks-per-node=1              # Number of tasks per node
-#SBATCH --cpus-per-task=32               # Number of CPUs per task
-#SBATCH --mem=512G                       # Request 512GB per node
+#SBATCH --cpus-per-task=16               # Number of CPUs per task
+#SBATCH --mem=256G                       # Request 256GB per node
 #SBATCH --output=eval_all_saes.%j        # Send stdout/err to "eval_all_saes.[jobID]"
 #SBATCH --error=eval_all_saes.%j.err     # Send stderr to separate file
-#SBATCH --gres=gpu:h100:4                # Request 4 H100 GPUs per node
+#SBATCH --gres=gpu:h100:1                # Request 1 H100 GPU per node
 #SBATCH --partition=gpu                  # Request the GPU partition/queue
 
 ##OPTIONAL JOB SPECIFICATIONS
@@ -34,4 +34,4 @@ module load GCCcore/13.3.0 Python/3.12.3
 cd $SCRATCH/moe-router-study
 
 # Run the evaluation pipeline
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run python -m exp.eval_all_saes --model-name olmoe-i --saebench-batchsize 1024 --intruder-n-tokens 10000000 --log-level DEBUG
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run python -m exp.eval_all_saes --saebench-batchsize 1024 --intruder-n-tokens 10000000 --log-level DEBUG

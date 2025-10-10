@@ -160,6 +160,21 @@ class RunningKMeansData:
             base_weight_proportion[mask] = base_weights[mask] / new_weights[mask]
             other_weight_proportion = 1 - base_weight_proportion
 
+            # Debug: Check for problematic weight proportions
+            if (
+                th.isnan(base_weight_proportion).any()
+                or th.isnan(other_weight_proportion).any()
+            ):
+                logger.warning(
+                    f"NaN in weight proportions! base_weights: {base_weights}, other_weights: {other_weights}, new_weights: {new_weights}"
+                )
+
+            # Check if all weights are zero (which would cause issues)
+            if new_weights.sum() == 0:
+                logger.warning(
+                    "All weights are zero in __add__ - this might cause centroid issues"
+                )
+
             logger.trace(
                 f"Base centroids {type(base_centroids)} {base_centroids.shape} {base_centroids.dtype} {base_centroids.device}"
             )
@@ -173,10 +188,29 @@ class RunningKMeansData:
                 f"Other weight proportion {type(other_weight_proportion)} {other_weight_proportion.shape} {other_weight_proportion.dtype} {other_weight_proportion.device}"
             )
 
-            new_centroids.copy_(
-                base_weight_proportion.unsqueeze(-1) * base_centroids
-                + other_weight_proportion.unsqueeze(-1) * other_centroids
-            )
+            # Compute weighted average of centroids
+            base_contribution = base_weight_proportion.unsqueeze(-1) * base_centroids
+            other_contribution = other_weight_proportion.unsqueeze(-1) * other_centroids
+            new_centroid_values = base_contribution + other_contribution
+
+            # Debug: Check for zero centroids after weighted averaging
+            new_centroid_norms = th.norm(new_centroid_values, dim=1)
+            zero_norms_after_add = (new_centroid_norms == 0).sum().item()
+            if zero_norms_after_add > 0:
+                logger.warning(
+                    f"__add__ produced {zero_norms_after_add} zero-norm centroids"
+                )
+                logger.warning(
+                    f"base_weight_proportion sum: {base_weight_proportion.sum():.6f}, other_weight_proportion sum: {other_weight_proportion.sum():.6f}"
+                )
+                logger.warning(
+                    f"base_centroids norms: min={th.norm(base_centroids, dim=1).min():.6f}, max={th.norm(base_centroids, dim=1).max():.6f}"
+                )
+                logger.warning(
+                    f"other_centroids norms: min={th.norm(other_centroids, dim=1).min():.6f}, max={th.norm(other_centroids, dim=1).max():.6f}"
+                )
+
+            new_centroids.copy_(new_centroid_values)
 
             base_weights_sum = base_weights.sum()
             new_weights_sum = new_weights.sum()
@@ -225,6 +259,165 @@ async def compute_centroid_from_assignment(
         )
 
     return new_centroid, num_assigned
+
+
+def validate_gpu_centroid_synchronization(
+    all_gpu_data: list[GPUData],
+    k_values: tuple[int, ...],
+    context: str = "",
+    rtol: float = 1e-5,
+    atol: float = 1e-8,
+) -> bool:
+    """
+    Validate that centroids are synchronized across all GPUs and all ranks.
+
+    Args:
+        all_gpu_data: List of GPU data containing centroids
+        k_values: List of k values for different centroid sets
+        context: Context string for logging (e.g., "after initialization")
+        rtol: Relative tolerance for allclose comparison
+        atol: Absolute tolerance for allclose comparison
+
+    Returns:
+        True if all centroids are synchronized, False otherwise
+    """
+    if len(all_gpu_data) <= 1 and dist.get_world_size() <= 1:
+        logger.trace(
+            f"Only {len(all_gpu_data)} GPU(s) and {dist.get_world_size()} rank(s), skipping synchronization validation"
+        )
+        return True
+
+    context_str = f" {context}" if context else ""
+    logger.debug(
+        f"🔍 SYNC VALIDATION{context_str}: Checking centroid synchronization across {len(all_gpu_data)} GPUs and {dist.get_world_size()} ranks"
+    )
+
+    all_synchronized = True
+
+    # First check within-rank GPU synchronization (existing logic)
+    if len(all_gpu_data) > 1:
+        for k_idx, k in enumerate(k_values):
+            # Get reference centroids from GPU 0
+            ref_centroids = all_gpu_data[0].synced_data.centroid_sets[k_idx].cpu()
+
+            for gpu_idx in range(1, len(all_gpu_data)):
+                gpu_centroids = (
+                    all_gpu_data[gpu_idx].synced_data.centroid_sets[k_idx].cpu()
+                )
+
+                # Check if centroids are synchronized
+                if not th.allclose(ref_centroids, gpu_centroids, rtol=rtol, atol=atol):
+                    all_synchronized = False
+
+                    # Calculate differences for detailed logging
+                    diff = th.abs(ref_centroids - gpu_centroids)
+                    max_diff = diff.max().item()
+                    mean_diff = diff.mean().item()
+
+                    # Check norms
+                    ref_norms = th.norm(ref_centroids, dim=1)
+                    gpu_norms = th.norm(gpu_centroids, dim=1)
+                    norm_diff = th.abs(ref_norms - gpu_norms)
+                    max_norm_diff = norm_diff.max().item()
+
+                    logger.error(
+                        f"🚨 SYNC MISMATCH{context_str} k_idx={k_idx} (k={k}): "
+                        f"GPU 0 vs GPU {gpu_idx} - "
+                        f"Max diff: {max_diff:.8f}, Mean diff: {mean_diff:.8f}, "
+                        f"Max norm diff: {max_norm_diff:.8f}"
+                    )
+
+                    # Log centroid statistics
+                    logger.error(
+                        f"GPU 0 centroids - Norms: min={ref_norms.min():.6f}, max={ref_norms.max():.6f}, mean={ref_norms.mean():.6f}"
+                    )
+                    logger.error(
+                        f"GPU {gpu_idx} centroids - Norms: min={gpu_norms.min():.6f}, max={gpu_norms.max():.6f}, mean={gpu_norms.mean():.6f}"
+                    )
+
+                    # Count zero-norm centroids
+                    ref_zeros = (ref_norms == 0).sum().item()
+                    gpu_zeros = (gpu_norms == 0).sum().item()
+                    logger.error(
+                        f"Zero-norm centroids - GPU 0: {ref_zeros}/{len(ref_norms)}, GPU {gpu_idx}: {gpu_zeros}/{len(gpu_norms)}"
+                    )
+                else:
+                    logger.trace(
+                        f"✅ SYNC OK{context_str} k_idx={k_idx} (k={k}): GPU 0 and GPU {gpu_idx} centroids match"
+                    )
+
+    # Now check across-rank synchronization using allgather
+    if dist.get_world_size() > 1:
+        world_size = dist.get_world_size()
+
+        for k_idx, k in enumerate(k_values):
+            # Get centroids from GPU 0 on this rank and move to CPU
+            local_centroids = all_gpu_data[0].synced_data.centroid_sets[k_idx].cpu()
+
+            # Prepare list to gather centroids from all ranks
+            gathered_centroids = [
+                th.zeros_like(local_centroids) for _ in range(world_size)
+            ]
+
+            # Allgather centroids from all ranks
+            dist.all_gather(gathered_centroids, local_centroids)
+
+            # Compare centroids across ranks (use rank 0 as reference)
+            ref_centroids = gathered_centroids[0]
+
+            for rank_idx in range(1, world_size):
+                rank_centroids = gathered_centroids[rank_idx]
+
+                if not th.allclose(ref_centroids, rank_centroids, rtol=rtol, atol=atol):
+                    all_synchronized = False
+
+                    # Calculate differences for detailed logging
+                    diff = th.abs(ref_centroids - rank_centroids)
+                    max_diff = diff.max().item()
+                    mean_diff = diff.mean().item()
+
+                    # Check norms
+                    ref_norms = th.norm(ref_centroids, dim=1)
+                    rank_norms = th.norm(rank_centroids, dim=1)
+                    norm_diff = th.abs(ref_norms - rank_norms)
+                    max_norm_diff = norm_diff.max().item()
+
+                    logger.error(
+                        f"🚨 RANK SYNC MISMATCH{context_str} k_idx={k_idx} (k={k}): "
+                        f"Rank 0 vs Rank {rank_idx} - "
+                        f"Max diff: {max_diff:.8f}, Mean diff: {mean_diff:.8f}, "
+                        f"Max norm diff: {max_norm_diff:.8f}"
+                    )
+
+                    # Log centroid statistics
+                    logger.error(
+                        f"Rank 0 centroids - Norms: min={ref_norms.min():.6f}, max={ref_norms.max():.6f}, mean={ref_norms.mean():.6f}"
+                    )
+                    logger.error(
+                        f"Rank {rank_idx} centroids - Norms: min={rank_norms.min():.6f}, max={rank_norms.max():.6f}, mean={rank_norms.mean():.6f}"
+                    )
+
+                    # Count zero-norm centroids
+                    ref_zeros = (ref_norms == 0).sum().item()
+                    rank_zeros = (rank_norms == 0).sum().item()
+                    logger.error(
+                        f"Zero-norm centroids - Rank 0: {ref_zeros}/{len(ref_norms)}, Rank {rank_idx}: {rank_zeros}/{len(rank_norms)}"
+                    )
+                else:
+                    logger.trace(
+                        f"✅ RANK SYNC OK{context_str} k_idx={k_idx} (k={k}): Rank 0 and Rank {rank_idx} centroids match"
+                    )
+
+    if all_synchronized:
+        logger.debug(
+            f"✅ SYNC VALIDATION{context_str}: All centroids synchronized across GPUs and ranks"
+        )
+    else:
+        logger.error(
+            f"🚨 SYNC VALIDATION{context_str}: Centroid synchronization FAILED!"
+        )
+
+    return all_synchronized
 
 
 async def kmeans_step(
@@ -427,13 +620,22 @@ async def sync(
     device = th.device(f"cuda:{gpu_idx}")
     empty_data = RunningKMeansData(
         centroid_sets=[
-            th.empty_like(centroids) for centroids in gpu_data.synced_data.centroid_sets
+            th.zeros_like(centroids) for centroids in gpu_data.synced_data.centroid_sets
         ],
         weight_sets=[
             th.zeros_like(weights) for weights in gpu_data.synced_data.weight_sets
         ],
-        losses=th.empty_like(gpu_data.synced_data.losses),
+        losses=th.zeros_like(gpu_data.synced_data.losses),
     )
+
+    # Debug: Log synced data before update
+    for k_idx, centroids in enumerate(gpu_data.synced_data.centroid_sets):
+        centroid_norms = th.norm(centroids, dim=1)
+        zero_norms = (centroid_norms == 0).sum().item()
+        logger.debug(
+            f"🔄 SYNC GPU {gpu_idx} k_idx={k_idx} BEFORE GPU AGGREGATION: Synced centroids zero_norms={zero_norms}/{len(centroid_norms)}, norm_stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}"
+        )
+
     gpu_data.synced_data += sum(
         (current_gpu_data.dirty_data.to(device) for current_gpu_data in all_gpu_data),
         start=empty_data,
@@ -452,9 +654,6 @@ async def sync(
         centroids.zero_()
 
     # Log synced data state after sync
-    logger.debug(
-        f"🔄 SYNC GPU {gpu_idx}: Sync completed, logging final synced state..."
-    )
     for k_idx, centroids in enumerate(gpu_data.synced_data.centroid_sets):
         centroid_norms = th.norm(centroids, dim=1)
         zero_norms = (centroid_norms == 0).sum().item()
@@ -488,9 +687,24 @@ async def gpu_worker(
     barrier: Barrier,
     group: dist.ProcessGroup | None = None,
     save_dir: str | None = None,
+    validate_every: int = 1,
 ) -> None:
+    """
+    GPU worker for distributed k-means clustering.
+
+    Args:
+        gpu_idx: Index of the GPU this worker is responsible for
+        all_gpu_data: List of GPU data objects for all GPUs
+        top_k: Number of top experts to consider
+        losses_over_time: Shared list to store losses over time
+        barrier: Synchronization barrier for coordinating workers
+        group: Distributed process group for communication
+        save_dir: Directory to save checkpoints (if any)
+        validate_every: Validate centroid synchronization every N sync operations (default: 1)
+    """
     logger.info(f"Starting GPU worker {gpu_idx}")
     gpu_data = all_gpu_data[gpu_idx]
+    sync_iteration = 0
 
     while True:
         logger.trace(f"GPU {gpu_idx} waiting for queue item...")
@@ -578,7 +792,7 @@ async def gpu_worker(
             logger.trace(f"GPU {gpu_idx} skipping sync, continuing to next item")
             continue
 
-        logger.debug(f"GPU {gpu_idx} starting sync operation")
+        logger.trace(f"GPU {gpu_idx} starting sync operation")
 
         await safe_await_with_worker_check(
             sync(gpu_idx, all_gpu_data, losses_over_time, barrier, group),
@@ -586,7 +800,34 @@ async def gpu_worker(
             operation_name=f"sync operation for GPU {gpu_idx}",
         )
 
-        logger.debug(f"GPU {gpu_idx} completed sync operation")
+        logger.trace(f"GPU {gpu_idx} completed sync operation")
+
+        # Increment sync iteration counter
+        sync_iteration += 1
+
+        # Validate GPU synchronization after sync (only on GPU 0 to avoid redundant checks)
+        # Only validate every validate_every iterations
+        if (
+            gpu_idx == 0
+            and (len(all_gpu_data) > 1 or dist.get_world_size() > 1)
+            and sync_iteration % validate_every == 0
+        ):
+            # We need k_values, but it's not available in this scope
+            # For now, we'll infer it from the number of centroid sets
+            k_values = tuple(
+                centroid_set.shape[0]
+                for centroid_set in all_gpu_data[0].synced_data.centroid_sets
+            )
+            sync_ok = validate_gpu_centroid_synchronization(
+                all_gpu_data,
+                k_values,
+                context=f"after sync on GPU {gpu_idx} (iteration {sync_iteration})",
+            )
+            if not sync_ok:
+                raise RuntimeError(
+                    f"GPU centroid synchronization failed after sync on GPU {gpu_idx} at iteration {sync_iteration}. "
+                    f"Check logs for detailed mismatch information."
+                )
 
         # save checkpoint if save_idx is not None and we're on rank 0 gpu 0
         if (
@@ -626,10 +867,11 @@ async def kmeans_manhattan(
     effective_batch_size: int | None = None,
     max_iters: int = 128,
     minibatch_size: int | None = None,
+    centroid_minibatch_size: int = 16384,
     seed: int = 0,
     save_every: int | None = None,
     save_dir: str | None = None,
-    validate_every: int = 4,
+    validate_every: int = 1,
     group: dist.ProcessGroup | None = None,
 ) -> tuple[list[th.Tensor], int, th.Tensor]:
     """
@@ -641,6 +883,7 @@ async def kmeans_manhattan(
         effective_batch_size: Batch size for k-means updates. If None, use the batch size of the activations.
         max_iters: Maximum number of iterations
         minibatch_size: Batch size for processing data. If None, process all data at once.
+        centroid_minibatch_size: Size of centroid chunks to avoid CUDA limits (defaults to 16384)
         seed: Random seed for initialization
         save_every: Save checkpoints every N iterations. If None, no checkpoints are saved.
         save_dir: Directory to save checkpoints. Required if save_every is specified.
@@ -848,7 +1091,10 @@ async def kmeans_manhattan(
     )
 
     validate_centroids = partial(
-        validate_centroid_distribution, validation_data, minibatch_size=minibatch_size
+        validate_centroid_distribution,
+        validation_data,
+        minibatch_size=minibatch_size,
+        centroid_minibatch_size=centroid_minibatch_size,
     )
 
     logger.info(
@@ -935,6 +1181,7 @@ async def kmeans_manhattan(
                 synchronization_barrier,
                 group,
                 save_dir,
+                validate_every,
             ),
             name=str(gpu_idx),
         )
@@ -949,21 +1196,7 @@ async def kmeans_manhattan(
     # distributed kmeans
     for iter_idx in iterator:
         # process data in batches, parallelized over devices and nodes
-        logger.debug(f"🚀 ITERATION {iter_idx}: Starting k-means iteration")
-
-        # Log centroid states at start of iteration
-        if iter_idx == 0 or iter_idx % 5 == 0:  # Log every 5 iterations
-            logger.debug(
-                f"🔍 ITERATION {iter_idx}: Checking centroid states at start..."
-            )
-            for k_idx, centroid_set in enumerate(
-                all_gpu_data[0].synced_data.centroid_sets
-            ):
-                centroid_norms = th.norm(centroid_set, dim=1)
-                zero_norms = (centroid_norms == 0).sum().item()
-                logger.debug(
-                    f"📊 ITER {iter_idx} START k_idx={k_idx}: Zero norms={zero_norms}/{len(centroid_norms)}, Norm stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}"
-                )
+        logger.trace(f"🚀 Starting k-means iteration {iter_idx}")
 
         logger.trace(f"Running iteration {iter_idx}")
 
@@ -973,7 +1206,7 @@ async def kmeans_manhattan(
 
         # Log queue states for observability
         queue_sizes = [gpu_data.queue.qsize() for gpu_data in all_gpu_data]
-        logger.debug(f"Iteration {iter_idx} starting - Queue sizes: {queue_sizes}")
+        logger.trace(f"Iteration {iter_idx} - Queue sizes: {queue_sizes}")
 
         # skip over the first validation_size data points for validation
         minibatch_iterator = activations(
@@ -1120,8 +1353,9 @@ async def cluster_paths_async(
     seed: int,
     tokens_per_file: int,
     minibatch_size: int,
+    centroid_minibatch_size: int = 16384,
     save_every: int | None = None,
-    validate_every: int = 4,
+    validate_every: int = 1,
     group: dist.ProcessGroup | None = None,
 ) -> None:
     kmeans_experiment_name = get_experiment_name(
@@ -1145,6 +1379,7 @@ async def cluster_paths_async(
         k_values=k,
         max_iters=max_iters,
         minibatch_size=minibatch_size,
+        centroid_minibatch_size=centroid_minibatch_size,
         seed=seed,
         save_every=save_every,
         save_dir=save_dir,
@@ -1172,6 +1407,7 @@ async def cluster_paths_async(
             "seed": seed,
             "tokens_per_file": tokens_per_file,
             "minibatch_size": minibatch_size,
+            "centroid_minibatch_size": centroid_minibatch_size,
             "save_every": save_every,
             "type": KMEANS_TYPE,
             "kmeans_experiment_name": kmeans_experiment_name,
@@ -1191,9 +1427,10 @@ def cluster_paths(
     expansion_factor: tuple[int, ...] | int | None = None,
     max_iters: int = 128,
     save_every: int | None = None,
-    validate_every: int = 4,
+    validate_every: int = 1,
     seed: int = 0,
     minibatch_size: int = 100_000,
+    centroid_minibatch_size: int = 16384,
     tokens_per_file: int = 5_000,
     reshuffled_tokens_per_file: int = 10_000,
     context_length: int = 2048,
@@ -1264,6 +1501,7 @@ def cluster_paths(
             seed=seed,
             tokens_per_file=reshuffled_tokens_per_file,
             minibatch_size=minibatch_size,
+            centroid_minibatch_size=centroid_minibatch_size,
             save_every=save_every,
             validate_every=validate_every,
             group=gpu_process_group,
@@ -1280,9 +1518,10 @@ def main(
     expansion_factor: tuple[int, ...] | None = None,
     max_iters: int = 128,
     save_every: int | None = None,
-    validate_every: int = 4,
+    validate_every: int = 1,
     seed: int = 0,
     minibatch_size: int = 100_000,
+    centroid_minibatch_size: int = 16384,
     tokens_per_file: int = 5_000,
     reshuffled_tokens_per_file: int = 10_000,
     context_length: int = 2048,
@@ -1300,6 +1539,7 @@ def main(
         validate_every=validate_every,
         seed=seed,
         minibatch_size=minibatch_size,
+        centroid_minibatch_size=centroid_minibatch_size,
         tokens_per_file=tokens_per_file,
         reshuffled_tokens_per_file=reshuffled_tokens_per_file,
         context_length=context_length,

@@ -25,6 +25,7 @@ import seaborn as sns
 from tqdm import tqdm
 
 from exp import OUTPUT_DIR
+from viz import FIGURE_DIR
 
 
 @dataclass
@@ -486,10 +487,9 @@ def compute_rankings(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
 def create_visualizations(
     df: pd.DataFrame,
     rankings: dict[str, pd.DataFrame],
-    output_dir: Path,
 ) -> None:
     """Create visualizations for the evaluation results."""
-    viz_dir = output_dir / "visualizations"
+    viz_dir = FIGURE_DIR / "eval_all_saes"
     viz_dir.mkdir(exist_ok=True, parents=True)
 
     # Set style
@@ -710,7 +710,7 @@ def main(
 
     # Create visualizations
     logger.info("Creating visualizations...")
-    create_visualizations(df, rankings, output_path)
+    create_visualizations(df, rankings)
 
     logger.info("✅ Evaluation complete!")
 

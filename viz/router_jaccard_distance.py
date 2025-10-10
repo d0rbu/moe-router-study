@@ -23,6 +23,7 @@ async def _router_jaccard_distance_async(
     reshuffled_tokens_per_file: int = 100000,
     num_workers: int = 8,
     debug: bool = False,
+    max_samples: int = 0,
 ) -> None:
     """Async implementation of Jaccard similarity analysis."""
     logger.info(f"Loading activations for model: {model_name}, dataset: {dataset_name}")
@@ -65,8 +66,16 @@ async def _router_jaccard_distance_async(
     pairwise_coactivation_counts: th.Tensor | None = None
 
     logger.debug("Starting batch processing...")
-    # Iterate through activation batches
-    for batch in activations(batch_size=batch_size):
+
+    # Add assertion for non-negative max_samples
+    assert max_samples >= 0, f"max_samples must be non-negative, got {max_samples}"
+
+    if max_samples > 0:
+        logger.info(f"Processing first {max_samples:,} samples")
+    else:
+        logger.info("Processing all available samples")
+
+    for batch in activations(batch_size=batch_size, max_samples=max_samples):
         batch_count += 1
         logger.trace(f"Processing batch {batch_count}")
 
@@ -619,6 +628,7 @@ def router_jaccard_distance(
     reshuffled_tokens_per_file: int = 100000,
     num_workers: int = 8,
     debug: bool = False,
+    max_samples: int = 0,
 ) -> None:
     """Compute Jaccard similarity between expert activations.
 
@@ -637,6 +647,7 @@ def router_jaccard_distance(
         reshuffled_tokens_per_file: Number of tokens per reshuffled file (default: 100000).
         num_workers: Number of worker processes for data loading (default: 8).
         debug: Enable debug logging (default: False).
+        max_samples: Maximum number of samples to process. 0 = all samples, >0 = first N samples, <0 = all but last N samples (default: 0).
     """
     asyncio.run(
         _router_jaccard_distance_async(
@@ -648,6 +659,7 @@ def router_jaccard_distance(
             reshuffled_tokens_per_file=reshuffled_tokens_per_file,
             num_workers=num_workers,
             debug=debug,
+            max_samples=max_samples,
         )
     )
 
