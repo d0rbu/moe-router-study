@@ -489,7 +489,7 @@ def create_visualizations(
     rankings: dict[str, pd.DataFrame],
 ) -> None:
     """Create visualizations for the evaluation results."""
-    viz_dir = FIGURE_DIR / "eval_all_saes"
+    viz_dir = Path(FIGURE_DIR) / "eval_all_saes"
     viz_dir.mkdir(exist_ok=True, parents=True)
 
     # Set style
