@@ -104,8 +104,8 @@ def check_monotonic_increasing_window(
 def validate_centroid_distribution(
     validation_data: th.Tensor,
     centroids: th.Tensor,
-    min_assignment_ratio: float = 0.05,
-    max_assignment_ratio: float = 20.0,
+    min_assignment_ratio: float = 0.25,
+    max_assignment_ratio: float = 4.0,
     minibatch_size: int = 100000,
     centroid_minibatch_size: int = 65536,
 ) -> tuple[bool, CentroidValidationStats]:
