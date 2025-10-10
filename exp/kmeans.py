@@ -1176,12 +1176,7 @@ async def kmeans_manhattan(
                 gpu_data.dirty_data.centroid_sets[k_idx]
             )
 
-    # Reset dirty_data to zero after copying (ready to accumulate updates)
-    for gpu_data in all_gpu_data:
-        for weights in gpu_data.dirty_data.weight_sets:
-            weights.zero_()  # Already zero, but explicit
-        for centroids in gpu_data.dirty_data.centroid_sets:
-            centroids.zero_()
+
 
     # Validate that synced_data now has proper centroids
     logger.debug("🔍 VALIDATION: Checking synced_data after initial sync...")
