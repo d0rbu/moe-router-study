@@ -687,9 +687,24 @@ async def gpu_worker(
     barrier: Barrier,
     group: dist.ProcessGroup | None = None,
     save_dir: str | None = None,
+    validate_every: int = 1,
 ) -> None:
+    """
+    GPU worker for distributed k-means clustering.
+
+    Args:
+        gpu_idx: Index of the GPU this worker is responsible for
+        all_gpu_data: List of GPU data objects for all GPUs
+        top_k: Number of top experts to consider
+        losses_over_time: Shared list to store losses over time
+        barrier: Synchronization barrier for coordinating workers
+        group: Distributed process group for communication
+        save_dir: Directory to save checkpoints (if any)
+        validate_every: Validate centroid synchronization every N sync operations (default: 1)
+    """
     logger.info(f"Starting GPU worker {gpu_idx}")
     gpu_data = all_gpu_data[gpu_idx]
+    sync_iteration = 0
 
     while True:
         logger.trace(f"GPU {gpu_idx} waiting for queue item...")
@@ -787,8 +802,16 @@ async def gpu_worker(
 
         logger.trace(f"GPU {gpu_idx} completed sync operation")
 
+        # Increment sync iteration counter
+        sync_iteration += 1
+
         # Validate GPU synchronization after sync (only on GPU 0 to avoid redundant checks)
-        if gpu_idx == 0 and (len(all_gpu_data) > 1 or dist.get_world_size() > 1):
+        # Only validate every validate_every iterations
+        if (
+            gpu_idx == 0
+            and (len(all_gpu_data) > 1 or dist.get_world_size() > 1)
+            and sync_iteration % validate_every == 0
+        ):
             # We need k_values, but it's not available in this scope
             # For now, we'll infer it from the number of centroid sets
             k_values = tuple(
@@ -796,11 +819,13 @@ async def gpu_worker(
                 for centroid_set in all_gpu_data[0].synced_data.centroid_sets
             )
             sync_ok = validate_gpu_centroid_synchronization(
-                all_gpu_data, k_values, context=f"after sync on GPU {gpu_idx}"
+                all_gpu_data,
+                k_values,
+                context=f"after sync on GPU {gpu_idx} (iteration {sync_iteration})",
             )
             if not sync_ok:
                 raise RuntimeError(
-                    f"GPU centroid synchronization failed after sync on GPU {gpu_idx}. "
+                    f"GPU centroid synchronization failed after sync on GPU {gpu_idx} at iteration {sync_iteration}. "
                     f"Check logs for detailed mismatch information."
                 )
 
@@ -1156,6 +1181,7 @@ async def kmeans_manhattan(
                 synchronization_barrier,
                 group,
                 save_dir,
+                validate_every,
             ),
             name=str(gpu_idx),
         )
