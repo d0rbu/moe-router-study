@@ -1333,23 +1333,7 @@ async def kmeans_manhattan(
                     operation_name=f"queue put for GPU {gpu_idx}",
                 )
 
-        # intermittent validation during training
-        if (
-            validate_every is not None
-            and (iter_idx + 1) % validate_every == 0
-            and rank == 0
-        ):
-            logger.debug(
-                f"🔍 VALIDATION: Running intermittent validation at iteration {iter_idx + 1}..."
-            )
 
-            for k_idx, centroid_set in enumerate(
-                all_gpu_data[0].synced_data.centroid_sets
-            ):
-                _is_valid, _stats = validate_centroids(centroid_set.cpu())
-                logger.warning(
-                    f"🚨 ITER {iter_idx + 1} VALIDATION k_idx={k_idx}: Empty={_stats.num_empty_centroids}, Over-concentrated={_stats.num_over_concentrated_centroids}, Norms: min={_stats.min_norm:.6f}, max={_stats.max_norm:.6f}, mean={_stats.mean_norm:.6f}"
-                )
 
     for gpu_data in all_gpu_data:
         logger.trace(
