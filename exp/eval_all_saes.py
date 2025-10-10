@@ -720,7 +720,7 @@ def main(
             )
 
             if run_saebench:
-                success = run_saebench_eval(
+                saebench_success = run_saebench_eval(
                     exp.experiment_name,
                     model_name,
                     saebench_eval_types or [],
@@ -728,9 +728,12 @@ def main(
                     dtype,
                     seed,
                 )
+                logger.debug(
+                    f"📊 SAEBench evaluation {'✅ succeeded' if saebench_success else '❌ failed'} for {exp.experiment_name}"
+                )
 
             if run_intruder:
-                success = run_intruder_eval(
+                intruder_success = run_intruder_eval(
                     exp.experiment_name,
                     model_name,
                     dtype,
@@ -738,6 +741,9 @@ def main(
                     intruder_batchsize,
                     intruder_n_latents,
                     seed,
+                )
+                logger.debug(
+                    f"🔍 Intruder evaluation {'✅ succeeded' if intruder_success else '❌ failed'} for {exp.experiment_name}"
                 )
 
         logger.debug("🏁 Evaluation phase complete!")
