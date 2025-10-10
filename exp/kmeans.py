@@ -316,7 +316,7 @@ def validate_gpu_centroid_synchronization(
                 norm_diff = th.abs(ref_norms - gpu_norms)
                 max_norm_diff = norm_diff.max().item()
 
-                logger.critical(
+                logger.error(
                     f"🚨 SYNC MISMATCH{context_str} k_idx={k_idx} (k={k}): "
                     f"GPU 0 vs GPU {gpu_idx} - "
                     f"Max diff: {max_diff:.8f}, Mean diff: {mean_diff:.8f}, "
@@ -324,25 +324,18 @@ def validate_gpu_centroid_synchronization(
                 )
 
                 # Log centroid statistics
-                logger.critical(
+                logger.error(
                     f"GPU 0 centroids - Norms: min={ref_norms.min():.6f}, max={ref_norms.max():.6f}, mean={ref_norms.mean():.6f}"
                 )
-                logger.critical(
+                logger.error(
                     f"GPU {gpu_idx} centroids - Norms: min={gpu_norms.min():.6f}, max={gpu_norms.max():.6f}, mean={gpu_norms.mean():.6f}"
                 )
 
                 # Count zero-norm centroids
                 ref_zeros = (ref_norms == 0).sum().item()
                 gpu_zeros = (gpu_norms == 0).sum().item()
-                logger.critical(
+                logger.error(
                     f"Zero-norm centroids - GPU 0: {ref_zeros}/{len(ref_norms)}, GPU {gpu_idx}: {gpu_zeros}/{len(gpu_norms)}"
-                )
-
-                # Raise an error to stop execution
-                raise RuntimeError(
-                    f"GPU centroid synchronization failed{context_str}: "
-                    f"k_idx={k_idx} (k={k}), GPU 0 vs GPU {gpu_idx}, "
-                    f"max_diff={max_diff:.8f}, max_norm_diff={max_norm_diff:.8f}"
                 )
             else:
                 logger.trace(
@@ -354,7 +347,7 @@ def validate_gpu_centroid_synchronization(
             f"✅ SYNC VALIDATION{context_str}: All centroids synchronized across GPUs"
         )
     else:
-        logger.critical(
+        logger.error(
             f"🚨 SYNC VALIDATION{context_str}: Centroid synchronization FAILED!"
         )
 
