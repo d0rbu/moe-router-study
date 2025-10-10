@@ -1176,8 +1176,6 @@ async def kmeans_manhattan(
                 gpu_data.dirty_data.centroid_sets[k_idx]
             )
 
-
-
     # Validate that synced_data now has proper centroids
     logger.debug("🔍 VALIDATION: Checking synced_data after initial sync...")
     for k_idx, centroid_set in enumerate(all_gpu_data[0].synced_data.centroid_sets):
