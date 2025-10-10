@@ -159,7 +159,7 @@ def run_saebench_eval(
         for eval_type in eval_types:
             cmd.extend(["--eval-types", eval_type])
 
-    logger.info(f"🔧 Running command: {' '.join(cmd)}")
+    logger.debug(f"🔧 Running command: {' '.join(cmd)}")
     try:
         result = subprocess.run(
             cmd,
@@ -168,7 +168,7 @@ def run_saebench_eval(
             check=True,
             timeout=3600,  # 1 hour timeout
         )
-        logger.info(f"✅ SAEBench evaluation completed for {experiment_name}")
+        logger.debug(f"✅ SAEBench evaluation completed for {experiment_name}")
         if result.stdout:
             logger.debug(f"SAEBench stdout: {result.stdout}")
         return True
@@ -227,7 +227,7 @@ def run_intruder_eval(
         str(seed),
     ]
 
-    logger.info(f"🔧 Running command: {' '.join(cmd)}")
+    logger.debug(f"🔧 Running command: {' '.join(cmd)}")
     try:
         result = subprocess.run(
             cmd,
@@ -236,7 +236,7 @@ def run_intruder_eval(
             check=True,
             timeout=3600,  # 1 hour timeout
         )
-        logger.info(f"✅ Intruder evaluation completed for {experiment_name}")
+        logger.debug(f"✅ Intruder evaluation completed for {experiment_name}")
         if result.stdout:
             logger.debug(f"Intruder stdout: {result.stdout}")
         return True
@@ -707,20 +707,19 @@ def main(
     for exp in experiments:
         logger.info(f"  - {exp.experiment_name}: {len(exp.saes)} SAE configurations")
 
-    logger.info(
+    logger.debug(
         f"Evaluation parameters: skip_evaluation={skip_evaluation}, run_saebench={run_saebench}, run_intruder={run_intruder}"
     )
 
     if not skip_evaluation:
-        logger.info("🚀 Starting evaluation phase...")
+        logger.debug("🚀 Starting evaluation phase...")
         # Run evaluations
         for i, exp in enumerate(tqdm(experiments, desc="Evaluating experiments")):
-            logger.info(
+            logger.debug(
                 f"📊 Processing experiment {i + 1}/{len(experiments)}: {exp.experiment_name}"
             )
 
             if run_saebench:
-                logger.info(f"🔍 Running SAEBench evaluation for {exp.experiment_name}")
                 success = run_saebench_eval(
                     exp.experiment_name,
                     model_name,
@@ -729,12 +728,11 @@ def main(
                     dtype,
                     seed,
                 )
-                logger.info(
+                logger.debug(
                     f"✅ SAEBench evaluation {'succeeded' if success else 'failed'} for {exp.experiment_name}"
                 )
 
             if run_intruder:
-                logger.info(f"🔍 Running intruder evaluation for {exp.experiment_name}")
                 success = run_intruder_eval(
                     exp.experiment_name,
                     model_name,
@@ -744,11 +742,11 @@ def main(
                     intruder_n_latents,
                     seed,
                 )
-                logger.info(
+                logger.debug(
                     f"✅ Intruder evaluation {'succeeded' if success else 'failed'} for {exp.experiment_name}"
                 )
 
-        logger.info("🏁 Evaluation phase complete!")
+        logger.debug("🏁 Evaluation phase complete!")
     else:
         logger.warning("⚠️ Evaluation skipped due to --skip-evaluation flag")
 
