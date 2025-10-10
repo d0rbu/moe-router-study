@@ -63,23 +63,42 @@ def discover_sae_experiments(output_dir: Path) -> list[SAEExperiment]:
     An experiment directory contains subdirectories with config.json and ae.pt files.
     """
     experiments = []
+    logger.info(f"Scanning output directory: {output_dir}")
 
-    for exp_dir in output_dir.iterdir():
+    if not output_dir.exists():
+        logger.error(f"Output directory does not exist: {output_dir}")
+        return experiments
+
+    all_dirs = list(output_dir.iterdir())
+    logger.info(f"Found {len(all_dirs)} items in output directory")
+
+    for exp_dir in all_dirs:
         if not exp_dir.is_dir():
+            logger.debug(f"Skipping non-directory: {exp_dir.name}")
             continue
+
+        logger.info(f"Examining experiment directory: {exp_dir.name}")
 
         # Check if this directory contains subdirectories with config.json
         saes = []
+        sub_dirs = list(exp_dir.iterdir())
+        logger.info(f"  Found {len(sub_dirs)} items in {exp_dir.name}")
 
-        for sub_dir in exp_dir.iterdir():
+        for sub_dir in sub_dirs:
             if not sub_dir.is_dir():
+                logger.debug(f"  Skipping non-directory: {sub_dir.name}")
                 continue
 
             config_path = sub_dir / "config.json"
             # Look for ae.pt or ae_*.pt files
             ae_pt_files = list(sub_dir.glob("ae*.pt"))
 
+            logger.debug(
+                f"  Checking {sub_dir.name}: config={config_path.exists()}, ae_files={len(ae_pt_files)}"
+            )
+
             if config_path.exists() and ae_pt_files:
+                logger.debug(f"    ✅ Valid SAE found: {sub_dir.name}")
                 saes.append(
                     SAEInfo(
                         sae_dir=sub_dir,
@@ -87,15 +106,23 @@ def discover_sae_experiments(output_dir: Path) -> list[SAEExperiment]:
                         ae_path=ae_pt_files[0],  # Use first ae.pt file found
                     )
                 )
+            else:
+                logger.debug(
+                    f"    ❌ Invalid SAE: {sub_dir.name} (missing config or ae.pt)"
+                )
 
         if saes:
+            logger.info(f"  ✅ Experiment {exp_dir.name}: {len(saes)} SAEs")
             experiments.append(
                 SAEExperiment(
                     experiment_name=exp_dir.name,
                     saes=saes,
                 )
             )
+        else:
+            logger.warning(f"  ❌ No valid SAEs found in {exp_dir.name}")
 
+    logger.info(f"Discovery complete: {len(experiments)} experiments found")
     return experiments
 
 
@@ -194,43 +221,73 @@ def run_intruder_eval(
         return False
 
 
-def load_saebench_results(experiment_dir: Path) -> dict[str, Any]:
+def load_saebench_results(
+    experiment_dir: Path, sae_id: str | None = None
+) -> dict[str, Any]:
     """Load SAEBench evaluation results."""
     results = {}
+    logger.debug(
+        f"Loading SAEBench results from {experiment_dir}"
+        + (f" for SAE {sae_id}" if sae_id else "")
+    )
 
     # SAEBench saves results in the experiment directory
     # Look for result files
     result_files = list(experiment_dir.glob("**/results*.json"))
+    logger.debug(f"Found {len(result_files)} potential SAEBench result files")
+    if result_files:
+        logger.trace(f"SAEBench result files: {[f.name for f in result_files]}")
 
     for result_file in result_files:
         try:
             with open(result_file) as f:
                 result_data = json.load(f)
                 results[result_file.stem] = result_data
+                logger.debug(f"  ✅ Loaded SAEBench results from {result_file.name}")
         except Exception as e:
             logger.warning(f"Failed to load {result_file}: {e}")
+
+    if not results:
+        logger.debug(f"  ❌ No SAEBench results found in {experiment_dir}")
 
     return results
 
 
-def load_intruder_results(experiment_dir: Path) -> dict[str, Any]:
+def load_intruder_results(
+    experiment_dir: Path, sae_id: str | None = None
+) -> dict[str, Any]:
     """Load intruder evaluation results."""
     results = {}
+    logger.debug(
+        f"Loading intruder results from {experiment_dir}"
+        + (f" for SAE {sae_id}" if sae_id else "")
+    )
 
     # Intruder results are saved in delphi/scores/
     scores_dir = experiment_dir / "delphi" / "scores"
+    logger.debug(f"Looking for intruder results in {scores_dir}")
 
     if not scores_dir.exists():
+        logger.error(f"  ❌ Intruder scores directory does not exist: {scores_dir}")
         return results
 
     # Load all score files
-    for score_file in scores_dir.glob("*.txt"):
+    score_files = list(scores_dir.glob("*.txt"))
+    logger.debug(f"Found {len(score_files)} potential intruder score files")
+    if score_files:
+        logger.trace(f"Intruder score files: {[f.name for f in score_files]}")
+
+    for score_file in score_files:
         try:
             with open(score_file, "rb") as f:
                 score_data = orjson.loads(f.read())
                 results[score_file.stem] = score_data
+                logger.debug(f"  ✅ Loaded intruder results from {score_file.name}")
         except Exception as e:
             logger.warning(f"Failed to load {score_file}: {e}")
+
+    if not results:
+        logger.error(f"  ❌ No intruder results found in {scores_dir}")
 
     return results
 
@@ -240,22 +297,45 @@ def aggregate_results(
 ) -> list[EvaluationResults]:
     """Aggregate all evaluation results."""
     all_results = []
+    logger.info(f"Aggregating results from {len(experiments)} experiments")
 
     for exp in tqdm(experiments, desc="Aggregating results"):
         exp_dir = Path(OUTPUT_DIR) / exp.experiment_name
+        logger.debug(
+            f"Processing experiment: {exp.experiment_name} ({len(exp.saes)} SAEs)"
+        )
 
         for sae_info in exp.saes:
+            sae_id = sae_info.sae_dir.name
+            logger.debug(f"  Processing SAE {sae_id}")
+
             # Load config
             with open(sae_info.config_path) as f:
                 config = json.load(f)
 
-            # Load evaluation results
-            saebench_results = load_saebench_results(exp_dir)
-            intruder_results = load_intruder_results(exp_dir)
+            # Load evaluation results - try both experiment level and SAE level
+            # First try at experiment level (for backward compatibility)
+            saebench_results = load_saebench_results(exp_dir, sae_id)
+            intruder_results = load_intruder_results(exp_dir, sae_id)
+
+            # If no results at experiment level, try at SAE level
+            if not saebench_results and not intruder_results:
+                logger.debug(
+                    f"    No results at experiment level, trying SAE directory: {sae_info.sae_dir}"
+                )
+                saebench_results = load_saebench_results(sae_info.sae_dir, sae_id)
+                intruder_results = load_intruder_results(sae_info.sae_dir, sae_id)
+
+            # Check if we still have no evaluation results after trying both locations
+            if not saebench_results and not intruder_results:
+                logger.critical(
+                    f"    ❌ No evaluation results found for SAE {sae_id} in either experiment or SAE directory"
+                )
+                # Continue anyway to preserve metadata, but log the issue
 
             result = EvaluationResults(
                 experiment_name=exp.experiment_name,
-                sae_id=sae_info.sae_dir.name,
+                sae_id=sae_id,
                 saebench_results=saebench_results,
                 intruder_results=intruder_results,
                 config=config,
@@ -263,14 +343,27 @@ def aggregate_results(
 
             all_results.append(result)
 
+            # Log what we found
+            saebench_count = len(saebench_results)
+            intruder_count = len(intruder_results)
+            logger.debug(
+                f"    Results: {saebench_count} SAEBench, {intruder_count} intruder"
+            )
+
+    logger.info(f"Aggregation complete: {len(all_results)} SAE results collected")
     return all_results
 
 
 def extract_metrics(results: list[EvaluationResults]) -> pd.DataFrame:
     """Extract key metrics from results into a DataFrame."""
     rows = []
+    logger.info(f"Extracting metrics from {len(results)} evaluation results")
 
-    for result in results:
+    for i, result in enumerate(results):
+        logger.debug(
+            f"Processing result {i + 1}/{len(results)}: {result.experiment_name}/{result.sae_id}"
+        )
+
         row = {
             "experiment": result.experiment_name,
             "sae_id": result.sae_id,
@@ -289,13 +382,19 @@ def extract_metrics(results: list[EvaluationResults]) -> pd.DataFrame:
                     "seed": trainer_config.get("seed", 0),
                 }
             )
+            logger.debug(
+                f"  Config extracted: expansion_factor={row.get('expansion_factor')}, k={row.get('k')}"
+            )
 
         # Extract SAEBench metrics
+        saebench_metrics_count = 0
         for eval_name, eval_data in result.saebench_results.items():
             if isinstance(eval_data, dict):
                 for metric_name, metric_value in eval_data.items():
                     if isinstance(metric_value, int | float):
                         row[f"saebench_{eval_name}_{metric_name}"] = metric_value
+                        saebench_metrics_count += 1
+        logger.debug(f"  SAEBench metrics extracted: {saebench_metrics_count}")
 
         # Extract intruder metrics (average score)
         if result.intruder_results:
@@ -307,15 +406,31 @@ def extract_metrics(results: list[EvaluationResults]) -> pd.DataFrame:
             if scores:
                 row["intruder_avg_score"] = np.mean(scores)
                 row["intruder_std_score"] = np.std(scores)
+                logger.debug(
+                    f"  Intruder metrics extracted: avg={row['intruder_avg_score']:.4f}, std={row['intruder_std_score']:.4f}"
+                )
+            else:
+                logger.debug("  No valid intruder scores found")
+        else:
+            logger.debug("  No intruder results found")
 
         rows.append(row)
 
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    logger.info(
+        f"Metrics extraction complete: {len(df)} rows, {len(df.columns)} columns"
+    )
+    logger.info(f"Columns: {list(df.columns)}")
+    return df
 
 
 def compute_rankings(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     """Compute rankings for each metric."""
     rankings = {}
+    logger.info(
+        f"Computing rankings for DataFrame with {len(df)} rows and {len(df.columns)} columns"
+    )
+    logger.info(f"DataFrame columns: {list(df.columns)}")
 
     # Get all metric columns
     metric_cols = [
@@ -323,26 +438,49 @@ def compute_rankings(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
         for col in df.columns
         if col.startswith("saebench_") or col.startswith("intruder_")
     ]
+    logger.info(f"Found {len(metric_cols)} metric columns: {metric_cols}")
+
+    if not metric_cols:
+        logger.warning("No metric columns found! Cannot compute rankings.")
+        return rankings
 
     for metric in metric_cols:
         if metric in df.columns:
-            # Rank by metric (higher is better for most metrics)
-            ranked = df.sort_values(metric, ascending=False).copy()
-            ranked[f"{metric}_rank"] = range(1, len(ranked) + 1)
-            rankings[metric] = ranked[
-                ["experiment", "sae_id", metric, f"{metric}_rank"]
-            ]
+            # Check for non-null values
+            non_null_count = df[metric].notna().sum()
+            logger.info(f"Metric {metric}: {non_null_count}/{len(df)} non-null values")
+
+            if non_null_count > 0:
+                # Rank by metric (higher is better for most metrics)
+                ranked = df.sort_values(metric, ascending=False).copy()
+                ranked[f"{metric}_rank"] = range(1, len(ranked) + 1)
+                rankings[metric] = ranked[
+                    ["experiment", "sae_id", metric, f"{metric}_rank"]
+                ]
+                logger.info(f"  ✅ Created ranking for {metric}")
+            else:
+                logger.warning(f"  ❌ Skipping {metric} - no valid values")
 
     # Compute overall ranking (average of all ranks)
     if metric_cols:
         rank_cols = [col for col in df.columns if col.endswith("_rank")]
+        logger.info(f"Found {len(rank_cols)} rank columns: {rank_cols}")
+
         if rank_cols:
             df["overall_rank"] = df[rank_cols].mean(axis=1)
             overall_ranking = df.sort_values("overall_rank").copy()
             rankings["overall"] = overall_ranking[
                 ["experiment", "sae_id", "overall_rank", *metric_cols]
             ]
+            logger.info("  ✅ Created overall ranking")
+        else:
+            logger.warning("  ❌ No rank columns found for overall ranking")
+    else:
+        logger.warning("No metric columns found for ranking computation")
 
+    logger.info(
+        f"Rankings computation complete: {len(rankings)} ranking tables created"
+    )
     return rankings
 
 
@@ -351,7 +489,7 @@ def create_visualizations(
     rankings: dict[str, pd.DataFrame],
 ) -> None:
     """Create visualizations for the evaluation results."""
-    viz_dir = FIGURE_DIR / "eval_all_saes"
+    viz_dir = Path(FIGURE_DIR) / "eval_all_saes"
     viz_dir.mkdir(exist_ok=True, parents=True)
 
     # Set style
