@@ -233,9 +233,9 @@ def load_saebench_results(
     # SAEBench saves results in the experiment directory
     # Look for result files
     result_files = list(experiment_dir.glob("**/results*.json"))
-    logger.debug(
-        f"Found {len(result_files)} potential SAEBench result files: {[f.name for f in result_files]}"
-    )
+    logger.debug(f"Found {len(result_files)} potential SAEBench result files")
+    if result_files:
+        logger.trace(f"SAEBench result files: {[f.name for f in result_files]}")
 
     for result_file in result_files:
         try:
@@ -267,14 +267,14 @@ def load_intruder_results(
     logger.debug(f"Looking for intruder results in {scores_dir}")
 
     if not scores_dir.exists():
-        logger.debug(f"  ❌ Intruder scores directory does not exist: {scores_dir}")
+        logger.error(f"  ❌ Intruder scores directory does not exist: {scores_dir}")
         return results
 
     # Load all score files
     score_files = list(scores_dir.glob("*.txt"))
-    logger.debug(
-        f"Found {len(score_files)} potential intruder score files: {[f.name for f in score_files]}"
-    )
+    logger.debug(f"Found {len(score_files)} potential intruder score files")
+    if score_files:
+        logger.trace(f"Intruder score files: {[f.name for f in score_files]}")
 
     for score_file in score_files:
         try:
@@ -286,7 +286,7 @@ def load_intruder_results(
             logger.warning(f"Failed to load {score_file}: {e}")
 
     if not results:
-        logger.debug(f"  ❌ No intruder results found in {scores_dir}")
+        logger.error(f"  ❌ No intruder results found in {scores_dir}")
 
     return results
 
@@ -324,6 +324,13 @@ def aggregate_results(
                 )
                 saebench_results = load_saebench_results(sae_info.sae_dir, sae_id)
                 intruder_results = load_intruder_results(sae_info.sae_dir, sae_id)
+
+            # Check if we still have no evaluation results after trying both locations
+            if not saebench_results and not intruder_results:
+                logger.error(
+                    f"    ❌ No evaluation results found for SAE {sae_id} in either experiment or SAE directory"
+                )
+                # Continue anyway to preserve metadata, but log the issue
 
             result = EvaluationResults(
                 experiment_name=exp.experiment_name,
