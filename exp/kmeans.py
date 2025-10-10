@@ -569,17 +569,23 @@ async def sync(
         # (K)
         weights_total = all_weights.sum(dim=0)
 
-        empty_centroids = (weights_total == 0).sum().item()
-        if empty_centroids > 0:
-            logger.debug(
-                f"Found {empty_centroids} empty centroids out of {len(weights_total)}"
+        # make sure that any centroids with zero weights are all equal
+        empty_centroids_mask = weights_total == 0
+        num_empty_centroids = empty_centroids_mask.sum().item()
+        if num_empty_centroids > 0:
+            logger.debug(f"Found {num_empty_centroids} centroids with zero weights")
+
+            empty_centroids = all_centroids[:, empty_centroids_mask]
+            empty_centroids_rolled = empty_centroids.roll(1, dims=0)
+            assert th.allclose(empty_centroids, empty_centroids_rolled), (
+                f"Empty centroids are not equal: {empty_centroids} != {empty_centroids_rolled}"
             )
 
         # (N, K) - handle division by zero for empty centroids
         weights_proportion = th.where(
             weights_total.unsqueeze(0) > 0,
             all_weights / weights_total.unsqueeze(0),
-            th.zeros_like(all_weights),
+            th.full_like(all_weights, fill_value=1 / world_size),
         )
 
         if th.isnan(weights_proportion).any():
