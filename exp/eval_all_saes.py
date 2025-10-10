@@ -728,9 +728,6 @@ def main(
                     dtype,
                     seed,
                 )
-                logger.debug(
-                    f"✅ SAEBench evaluation {'succeeded' if success else 'failed'} for {exp.experiment_name}"
-                )
 
             if run_intruder:
                 success = run_intruder_eval(
@@ -741,9 +738,6 @@ def main(
                     intruder_batchsize,
                     intruder_n_latents,
                     seed,
-                )
-                logger.debug(
-                    f"✅ Intruder evaluation {'succeeded' if success else 'failed'} for {exp.experiment_name}"
                 )
 
         logger.debug("🏁 Evaluation phase complete!")
