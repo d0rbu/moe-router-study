@@ -728,9 +728,10 @@ def main(
                     dtype,
                     seed,
                 )
-                logger.debug(
-                    f"📊 SAEBench evaluation {'✅ succeeded' if saebench_success else '❌ failed'} for {exp.experiment_name}"
-                )
+                if not saebench_success:
+                    raise RuntimeError(
+                        f"SAEBench evaluation failed for {exp.experiment_name}"
+                    )
 
             if run_intruder:
                 intruder_success = run_intruder_eval(
@@ -742,9 +743,10 @@ def main(
                     intruder_n_latents,
                     seed,
                 )
-                logger.debug(
-                    f"🔍 Intruder evaluation {'✅ succeeded' if intruder_success else '❌ failed'} for {exp.experiment_name}"
-                )
+                if not intruder_success:
+                    raise RuntimeError(
+                        f"Intruder evaluation failed for {exp.experiment_name}"
+                    )
 
         logger.debug("🏁 Evaluation phase complete!")
     else:
