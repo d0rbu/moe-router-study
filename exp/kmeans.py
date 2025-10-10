@@ -269,7 +269,7 @@ def validate_gpu_centroid_synchronization(
     atol: float = 1e-8,
 ) -> bool:
     """
-    Validate that centroids are synchronized across all GPUs.
+    Validate that centroids are synchronized across all GPUs and all ranks.
 
     Args:
         all_gpu_data: List of GPU data containing centroids
@@ -281,70 +281,136 @@ def validate_gpu_centroid_synchronization(
     Returns:
         True if all centroids are synchronized, False otherwise
     """
-    if len(all_gpu_data) <= 1:
+    if len(all_gpu_data) <= 1 and dist.get_world_size() <= 1:
         logger.trace(
-            f"Only {len(all_gpu_data)} GPU(s), skipping synchronization validation"
+            f"Only {len(all_gpu_data)} GPU(s) and {dist.get_world_size()} rank(s), skipping synchronization validation"
         )
         return True
 
     context_str = f" {context}" if context else ""
     logger.debug(
-        f"🔍 SYNC VALIDATION{context_str}: Checking centroid synchronization across {len(all_gpu_data)} GPUs"
+        f"🔍 SYNC VALIDATION{context_str}: Checking centroid synchronization across {len(all_gpu_data)} GPUs and {dist.get_world_size()} ranks"
     )
 
     all_synchronized = True
 
-    for k_idx, k in enumerate(k_values):
-        # Get reference centroids from GPU 0
-        ref_centroids = all_gpu_data[0].synced_data.centroid_sets[k_idx].cpu()
+    # First check within-rank GPU synchronization (existing logic)
+    if len(all_gpu_data) > 1:
+        for k_idx, k in enumerate(k_values):
+            # Get reference centroids from GPU 0
+            ref_centroids = all_gpu_data[0].synced_data.centroid_sets[k_idx].cpu()
 
-        for gpu_idx in range(1, len(all_gpu_data)):
-            gpu_centroids = all_gpu_data[gpu_idx].synced_data.centroid_sets[k_idx].cpu()
-
-            # Check if centroids are synchronized
-            if not th.allclose(ref_centroids, gpu_centroids, rtol=rtol, atol=atol):
-                all_synchronized = False
-
-                # Calculate differences for detailed logging
-                diff = th.abs(ref_centroids - gpu_centroids)
-                max_diff = diff.max().item()
-                mean_diff = diff.mean().item()
-
-                # Check norms
-                ref_norms = th.norm(ref_centroids, dim=1)
-                gpu_norms = th.norm(gpu_centroids, dim=1)
-                norm_diff = th.abs(ref_norms - gpu_norms)
-                max_norm_diff = norm_diff.max().item()
-
-                logger.error(
-                    f"🚨 SYNC MISMATCH{context_str} k_idx={k_idx} (k={k}): "
-                    f"GPU 0 vs GPU {gpu_idx} - "
-                    f"Max diff: {max_diff:.8f}, Mean diff: {mean_diff:.8f}, "
-                    f"Max norm diff: {max_norm_diff:.8f}"
+            for gpu_idx in range(1, len(all_gpu_data)):
+                gpu_centroids = (
+                    all_gpu_data[gpu_idx].synced_data.centroid_sets[k_idx].cpu()
                 )
 
-                # Log centroid statistics
-                logger.error(
-                    f"GPU 0 centroids - Norms: min={ref_norms.min():.6f}, max={ref_norms.max():.6f}, mean={ref_norms.mean():.6f}"
-                )
-                logger.error(
-                    f"GPU {gpu_idx} centroids - Norms: min={gpu_norms.min():.6f}, max={gpu_norms.max():.6f}, mean={gpu_norms.mean():.6f}"
-                )
+                # Check if centroids are synchronized
+                if not th.allclose(ref_centroids, gpu_centroids, rtol=rtol, atol=atol):
+                    all_synchronized = False
 
-                # Count zero-norm centroids
-                ref_zeros = (ref_norms == 0).sum().item()
-                gpu_zeros = (gpu_norms == 0).sum().item()
-                logger.error(
-                    f"Zero-norm centroids - GPU 0: {ref_zeros}/{len(ref_norms)}, GPU {gpu_idx}: {gpu_zeros}/{len(gpu_norms)}"
-                )
-            else:
-                logger.trace(
-                    f"✅ SYNC OK{context_str} k_idx={k_idx} (k={k}): GPU 0 and GPU {gpu_idx} centroids match"
-                )
+                    # Calculate differences for detailed logging
+                    diff = th.abs(ref_centroids - gpu_centroids)
+                    max_diff = diff.max().item()
+                    mean_diff = diff.mean().item()
+
+                    # Check norms
+                    ref_norms = th.norm(ref_centroids, dim=1)
+                    gpu_norms = th.norm(gpu_centroids, dim=1)
+                    norm_diff = th.abs(ref_norms - gpu_norms)
+                    max_norm_diff = norm_diff.max().item()
+
+                    logger.error(
+                        f"🚨 SYNC MISMATCH{context_str} k_idx={k_idx} (k={k}): "
+                        f"GPU 0 vs GPU {gpu_idx} - "
+                        f"Max diff: {max_diff:.8f}, Mean diff: {mean_diff:.8f}, "
+                        f"Max norm diff: {max_norm_diff:.8f}"
+                    )
+
+                    # Log centroid statistics
+                    logger.error(
+                        f"GPU 0 centroids - Norms: min={ref_norms.min():.6f}, max={ref_norms.max():.6f}, mean={ref_norms.mean():.6f}"
+                    )
+                    logger.error(
+                        f"GPU {gpu_idx} centroids - Norms: min={gpu_norms.min():.6f}, max={gpu_norms.max():.6f}, mean={gpu_norms.mean():.6f}"
+                    )
+
+                    # Count zero-norm centroids
+                    ref_zeros = (ref_norms == 0).sum().item()
+                    gpu_zeros = (gpu_norms == 0).sum().item()
+                    logger.error(
+                        f"Zero-norm centroids - GPU 0: {ref_zeros}/{len(ref_norms)}, GPU {gpu_idx}: {gpu_zeros}/{len(gpu_norms)}"
+                    )
+                else:
+                    logger.trace(
+                        f"✅ SYNC OK{context_str} k_idx={k_idx} (k={k}): GPU 0 and GPU {gpu_idx} centroids match"
+                    )
+
+    # Now check across-rank synchronization using allgather
+    if dist.get_world_size() > 1:
+        world_size = dist.get_world_size()
+
+        for k_idx, k in enumerate(k_values):
+            # Get centroids from GPU 0 on this rank and move to CPU
+            local_centroids = all_gpu_data[0].synced_data.centroid_sets[k_idx].cpu()
+
+            # Prepare list to gather centroids from all ranks
+            gathered_centroids = [
+                th.zeros_like(local_centroids) for _ in range(world_size)
+            ]
+
+            # Allgather centroids from all ranks
+            dist.all_gather(gathered_centroids, local_centroids)
+
+            # Compare centroids across ranks (use rank 0 as reference)
+            ref_centroids = gathered_centroids[0]
+
+            for rank_idx in range(1, world_size):
+                rank_centroids = gathered_centroids[rank_idx]
+
+                if not th.allclose(ref_centroids, rank_centroids, rtol=rtol, atol=atol):
+                    all_synchronized = False
+
+                    # Calculate differences for detailed logging
+                    diff = th.abs(ref_centroids - rank_centroids)
+                    max_diff = diff.max().item()
+                    mean_diff = diff.mean().item()
+
+                    # Check norms
+                    ref_norms = th.norm(ref_centroids, dim=1)
+                    rank_norms = th.norm(rank_centroids, dim=1)
+                    norm_diff = th.abs(ref_norms - rank_norms)
+                    max_norm_diff = norm_diff.max().item()
+
+                    logger.error(
+                        f"🚨 RANK SYNC MISMATCH{context_str} k_idx={k_idx} (k={k}): "
+                        f"Rank 0 vs Rank {rank_idx} - "
+                        f"Max diff: {max_diff:.8f}, Mean diff: {mean_diff:.8f}, "
+                        f"Max norm diff: {max_norm_diff:.8f}"
+                    )
+
+                    # Log centroid statistics
+                    logger.error(
+                        f"Rank 0 centroids - Norms: min={ref_norms.min():.6f}, max={ref_norms.max():.6f}, mean={ref_norms.mean():.6f}"
+                    )
+                    logger.error(
+                        f"Rank {rank_idx} centroids - Norms: min={rank_norms.min():.6f}, max={rank_norms.max():.6f}, mean={rank_norms.mean():.6f}"
+                    )
+
+                    # Count zero-norm centroids
+                    ref_zeros = (ref_norms == 0).sum().item()
+                    rank_zeros = (rank_norms == 0).sum().item()
+                    logger.error(
+                        f"Zero-norm centroids - Rank 0: {ref_zeros}/{len(ref_norms)}, Rank {rank_idx}: {rank_zeros}/{len(rank_norms)}"
+                    )
+                else:
+                    logger.trace(
+                        f"✅ RANK SYNC OK{context_str} k_idx={k_idx} (k={k}): Rank 0 and Rank {rank_idx} centroids match"
+                    )
 
     if all_synchronized:
         logger.debug(
-            f"✅ SYNC VALIDATION{context_str}: All centroids synchronized across GPUs"
+            f"✅ SYNC VALIDATION{context_str}: All centroids synchronized across GPUs and ranks"
         )
     else:
         logger.error(
@@ -722,16 +788,21 @@ async def gpu_worker(
         logger.trace(f"GPU {gpu_idx} completed sync operation")
 
         # Validate GPU synchronization after sync (only on GPU 0 to avoid redundant checks)
-        if gpu_idx == 0 and len(all_gpu_data) > 1:
+        if gpu_idx == 0 and (len(all_gpu_data) > 1 or dist.get_world_size() > 1):
             # We need k_values, but it's not available in this scope
             # For now, we'll infer it from the number of centroid sets
             k_values = tuple(
                 centroid_set.shape[0]
                 for centroid_set in all_gpu_data[0].synced_data.centroid_sets
             )
-            validate_gpu_centroid_synchronization(
+            sync_ok = validate_gpu_centroid_synchronization(
                 all_gpu_data, k_values, context=f"after sync on GPU {gpu_idx}"
             )
+            if not sync_ok:
+                raise RuntimeError(
+                    f"GPU centroid synchronization failed after sync on GPU {gpu_idx}. "
+                    f"Check logs for detailed mismatch information."
+                )
 
         # save checkpoint if save_idx is not None and we're on rank 0 gpu 0
         if (
