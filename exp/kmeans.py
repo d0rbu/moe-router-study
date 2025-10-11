@@ -1330,6 +1330,7 @@ async def kmeans_manhattan(
                         )
                     ),
                     workers={f"GPU {gpu_idx}": workers[gpu_idx]},
+                    timeout=3600.0,
                     operation_name=f"queue put for GPU {gpu_idx}",
                 )
 
