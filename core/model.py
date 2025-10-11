@@ -2,9 +2,7 @@ from dataclasses import dataclass, field
 import re
 
 import huggingface_hub
-from loguru import (
-    logger,  # import module so tests can patch huggingface_hub.list_repo_refs
-)
+from loguru import logger
 
 
 @dataclass
@@ -18,11 +16,11 @@ class Checkpoint:
         if self.revision is not None:
             return self.revision
 
-        # Fail explicitly if revision_format is None
         if self.model_config.revision_format is None:
             raise ValueError(
                 "ModelConfig.revision_format is required for string representation"
             )
+
         return self.model_config.revision_format.format(self.step, self.num_tokens)
 
     def __hash__(self):
