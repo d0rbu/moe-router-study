@@ -1552,7 +1552,7 @@ def main(
     save_every: int | None = None,
     validate_every: int = 1,
     seed: int = 0,
-    minibatch_size: int = 100_000,
+    minibatch_size: int = 10_000,
     centroid_minibatch_size: int = 16384,
     tokens_per_file: int = 5_000,
     reshuffled_tokens_per_file: int = 10_000,
