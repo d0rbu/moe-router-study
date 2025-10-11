@@ -140,9 +140,11 @@ class Activations:
     def _get_file_data(self, cached_file_data: mp.JoinableQueue):
         for activation_filepath in self.activation_filepaths:
             file_data = th.load(activation_filepath, weights_only=False)
+
             logger.debug(f"Loaded file {activation_filepath}")
             logger.debug(f"File data keys: {file_data.keys()}")
             cached_file_data.put(file_data, block=True)
+
         cached_file_data.put(None, block=True)
         cached_file_data.join()
 
