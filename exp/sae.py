@@ -439,8 +439,9 @@ async def run_sae_training(
                 OUTPUT_DIR, sae_experiment_name, str(hparam_idx)
             )
             config_filepath = os.path.join(trainer_results_dir, "config.json")
+            sae_filepath = os.path.join(trainer_results_dir, "ae.pt")
 
-            if os.path.exists(config_filepath):
+            if os.path.exists(config_filepath) and os.path.exists(sae_filepath):
                 logger.debug(
                     f"Skipping trainer {hparam_idx} - results already exist at {config_filepath}"
                 )
