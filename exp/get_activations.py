@@ -60,7 +60,7 @@ def verify_config(config: dict, experiment_dir: str) -> None:
         return
 
     with open(config_path) as f:
-        saved_config = yaml.safe_load(f)
+        saved_config = yaml.load(f, Loader=yaml.FullLoader)
 
     # Check for mismatches
     mismatches = {}
