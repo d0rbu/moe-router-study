@@ -6,11 +6,15 @@ This script:
 2. Much simpler than eval_all_saes since k-means stores multiple centroids in a single file
 """
 
-import subprocess
+from multiprocessing import cpu_count
 import sys
 
 import arguably
 from loguru import logger
+import torch as th
+
+from exp.eval_intruder import eval_intruder
+from exp.path_eval_saebench import path_eval_saebench
 
 
 def run_path_eval_saebench(
@@ -19,47 +23,23 @@ def run_path_eval_saebench(
     batchsize: int,
     dtype: str,
     seed: int,
+    log_level: str = "INFO",
 ) -> bool:
     """Run SAEBench evaluation on a k-means path experiment."""
     logger.info(f"Running SAEBench evaluation on {experiment_name}")
 
-    cmd = [
-        "uv",
-        "run",
-        "python",
-        "-m",
-        "exp.path_eval_saebench",
-        "--experiment-dir",
-        experiment_name,
-        "--model-name",
-        model_name,
-        "--batchsize",
-        str(batchsize),
-        "--dtype",
-        dtype,
-        "--seed",
-        str(seed),
-    ]
-
-    logger.debug(f"🔧 Running command: {' '.join(cmd)}")
     try:
-        subprocess.run(
-            cmd,
-            check=True,
-            timeout=3600,  # 1 hour timeout
+        path_eval_saebench(
+            experiment_dir=experiment_name,
+            model_name=model_name,
+            batchsize=batchsize,
+            dtype=dtype,
+            seed=seed,
+            logs_path=None,
+            log_level=log_level,
         )
         logger.debug(f"✅ SAEBench evaluation completed for {experiment_name}")
         return True
-    except subprocess.TimeoutExpired:
-        logger.error(
-            f"❌ SAEBench evaluation timed out for {experiment_name} (1 hour limit)"
-        )
-        return False
-    except subprocess.CalledProcessError as e:
-        logger.error(f"❌ SAEBench evaluation failed for {experiment_name}")
-        logger.error(f"Command: {' '.join(cmd)}")
-        logger.error(f"Return code: {e.returncode}")
-        return False
     except Exception as e:
         logger.error(
             f"❌ Unexpected error in SAEBench evaluation for {experiment_name}: {e}"
@@ -75,51 +55,41 @@ def run_intruder_eval(
     batchsize: int,
     n_latents: int,
     seed: int,
+    log_level: str = "INFO",
 ) -> bool:
     """Run intruder evaluation on a k-means path experiment."""
     logger.info(f"Running intruder evaluation on {experiment_name}")
 
-    cmd = [
-        "uv",
-        "run",
-        "python",
-        "-m",
-        "exp.eval_intruder",
-        "--experiment-dir",
-        experiment_name,
-        "--model-name",
-        model_name,
-        "--model-dtype",
-        model_dtype,
-        "--n-tokens",
-        str(n_tokens),
-        "--batchsize",
-        str(batchsize),
-        "--n-latents",
-        str(n_latents),
-        "--seed",
-        str(seed),
-    ]
-
-    logger.debug(f"🔧 Running command: {' '.join(cmd)}")
     try:
-        subprocess.run(
-            cmd,
-            check=True,
-            timeout=3600,  # 1 hour timeout
+        eval_intruder(
+            experiment_dir=experiment_name,
+            model_name=model_name,
+            model_step_ckpt=None,
+            model_dtype=model_dtype,
+            ctxlen=256,
+            load_in_8bit=False,
+            n_tokens=n_tokens,
+            batchsize=batchsize,
+            n_latents=n_latents,
+            example_ctx_len=32,
+            min_examples=200,
+            num_non_activating=50,
+            num_examples=50,
+            n_quantiles=10,
+            explainer_model="hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4",
+            explainer_model_max_len=5120,
+            explainer_provider="offline",
+            explainer="default",
+            filter_bos=False,
+            pipeline_num_proc=cpu_count() // 2,
+            num_gpus=th.cuda.device_count(),
+            verbose=True,
+            seed=seed,
+            hf_token="",
+            log_level=log_level,
         )
         logger.debug(f"✅ Intruder evaluation completed for {experiment_name}")
         return True
-    except subprocess.TimeoutExpired:
-        logger.error(
-            f"❌ Intruder evaluation timed out for {experiment_name} (1 hour limit)"
-        )
-        return False
-    except subprocess.CalledProcessError as e:
-        logger.error(f"❌ Intruder evaluation failed for {experiment_name}")
-        logger.error(f"Command: {' '.join(cmd)}")
-        logger.error(f"Return code: {e.returncode}")
-        return False
     except Exception as e:
         logger.error(
             f"❌ Unexpected error in intruder evaluation for {experiment_name}: {e}"
@@ -177,6 +147,7 @@ def eval_all_paths(
             saebench_batchsize,
             dtype,
             seed,
+            log_level,
         )
         if not saebench_success:
             logger.error("SAEBench evaluation failed!")
@@ -194,6 +165,7 @@ def eval_all_paths(
             intruder_batchsize,
             intruder_n_latents,
             seed,
+            log_level,
         )
         if not intruder_success:
             logger.error("Intruder evaluation failed!")
