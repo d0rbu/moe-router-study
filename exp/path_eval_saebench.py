@@ -79,24 +79,46 @@ def path_eval_saebench(
     kmeans_data = th.load(kmeans_data_path)
 
     # list of tensors of shape (num_centroids, num_layers * num_experts)
-    centroid_sets = kmeans_data["centroids"].to(dtype=th_dtype, device=device)
+    centroids_list = kmeans_data["centroids"]
     top_k = kmeans_data["top_k"]
     losses = kmeans_data["losses"].tolist()
 
-    paths = Paths(
-        data=centroid_sets,
-        top_k=top_k,
-        name=f"paths_{centroid_sets.shape[0]}",
-        metadata={
-            "num_paths": centroid_sets.shape[0],
-            "top_k": top_k,
-            "losses": losses,
-        },
-    )
-    paths_set.append(paths)
-    logger.trace(
-        f"Added paths to paths set: len={len(paths.data)} top_k={top_k} name={paths.name} metadata={paths.metadata}"
-    )
+    if isinstance(centroids_list, list):
+        # Handle list of centroid tensors - create a Paths object for each
+        for i, centroids in enumerate(centroids_list):
+            centroid_sets = centroids.to(dtype=th_dtype, device=device)
+            paths = Paths(
+                data=centroid_sets,
+                top_k=top_k,
+                name=f"paths_{centroid_sets.shape[0]}_set_{i}",
+                metadata={
+                    "num_paths": centroid_sets.shape[0],
+                    "top_k": top_k,
+                    "losses": losses,
+                    "centroid_set_index": i,
+                },
+            )
+            paths_set.append(paths)
+            logger.trace(
+                f"Added paths to paths set: len={len(paths.data)} top_k={top_k} name={paths.name} metadata={paths.metadata}"
+            )
+    else:
+        # Handle case where it's already a single tensor
+        centroid_sets = centroids_list.to(dtype=th_dtype, device=device)
+        paths = Paths(
+            data=centroid_sets,
+            top_k=top_k,
+            name=f"paths_{centroid_sets.shape[0]}",
+            metadata={
+                "num_paths": centroid_sets.shape[0],
+                "top_k": top_k,
+                "losses": losses,
+            },
+        )
+        paths_set.append(paths)
+        logger.trace(
+            f"Added paths to paths set: len={len(paths.data)} top_k={top_k} name={paths.name} metadata={paths.metadata}"
+        )
 
     logger.trace(f"Using paths set: len={len(paths_set)}")
 
