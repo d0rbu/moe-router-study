@@ -526,6 +526,7 @@ def run_eval(
     model: StandardizedTransformer = StandardizedTransformer(
         path,
         check_attn_probs_with_trace=False,
+        check_renaming=False,
         device_map=device,
         dtype=llm_dtype,
     )
