@@ -2,7 +2,7 @@
 
 ##NECESSARY JOB SPECIFICATIONS
 #SBATCH --job-name=eval_all_saes         # Set the job name to "eval_all_saes"
-#SBATCH --time=24:00:00                  # Set the wall clock limit to 24 hours
+#SBATCH --time=06:00:00                  # Set the wall clock limit to 24 hours
 #SBATCH --ntasks=1                       # Total number of tasks (processes) across all nodes
 #SBATCH --ntasks-per-node=1              # Number of tasks per node
 #SBATCH --cpus-per-task=16               # Number of CPUs per task
@@ -34,4 +34,4 @@ module load GCCcore/13.3.0 Python/3.12.3
 cd $SCRATCH/moe-router-study
 
 # Run the evaluation pipeline
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run python -m exp.eval_all_saes --saebench-batchsize 1024 --intruder-n-tokens 10000000 --log-level DEBUG
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run python -m exp.eval_all_saes --saebench-batchsize 64 --intruder-batchsize 16 --intruder-n-tokens 10000000 --log-level DEBUG
