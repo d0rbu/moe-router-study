@@ -1194,7 +1194,7 @@ requires-dist = [
     { name = "simple-parsing" },
     { name = "torch" },
     { name = "transformers", git = "https://github.com/huggingface/transformers.git" },
-    { name = "vllm" },
+    { name = "vllm", specifier = ">=0.10.2" },
 ]
 provides-extras = ["dev", "visualize"]
 
