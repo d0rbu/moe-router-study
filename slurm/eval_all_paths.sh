@@ -10,4 +10,4 @@ if [ -z "$1" ]; then
     exit 1
 fi
 
-uv run python -m exp.eval_all_paths --experiment-dir "$1" --saebench-batchsize 16 --intruder-batchsize 4 --intruder-n-tokens 1000000 --log-level DEBUG
+uv run python -m exp.eval_all_paths eval-all-paths --experiment-dir "$1" --saebench-batchsize 16 --intruder-batchsize 4 --intruder-n-tokens 1000000 --log-level DEBUG
