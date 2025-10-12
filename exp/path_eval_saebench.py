@@ -76,28 +76,27 @@ def path_eval_saebench(
     logger.trace(f"Using config: {config}")
 
     paths_set = []
-    with open(kmeans_data_path, "rb") as f:
-        kmeans_data = th.load(f)
+    kmeans_data = th.load(kmeans_data_path)
 
-        # list of tensors of shape (num_centroids, num_layers * num_experts)
-        centroid_sets = kmeans_data["centroids"].to(dtype=th_dtype, device=device)
-        top_k = kmeans_data["top_k"]
-        losses = kmeans_data["losses"].tolist()
+    # list of tensors of shape (num_centroids, num_layers * num_experts)
+    centroid_sets = kmeans_data["centroids"].to(dtype=th_dtype, device=device)
+    top_k = kmeans_data["top_k"]
+    losses = kmeans_data["losses"].tolist()
 
-        paths = Paths(
-            data=centroid_sets,
-            top_k=top_k,
-            name=f"paths_{centroid_sets.shape[0]}",
-            metadata={
-                "num_paths": centroid_sets.shape[0],
-                "top_k": top_k,
-                "losses": losses,
-            },
-        )
-        paths_set.append(paths)
-        logger.trace(
-            f"Added paths to paths set: len={len(paths.data)} top_k={top_k} name={paths.name} metadata={paths.metadata}"
-        )
+    paths = Paths(
+        data=centroid_sets,
+        top_k=top_k,
+        name=f"paths_{centroid_sets.shape[0]}",
+        metadata={
+            "num_paths": centroid_sets.shape[0],
+            "top_k": top_k,
+            "losses": losses,
+        },
+    )
+    paths_set.append(paths)
+    logger.trace(
+        f"Added paths to paths set: len={len(paths.data)} top_k={top_k} name={paths.name} metadata={paths.metadata}"
+    )
 
     logger.trace(f"Using paths set: len={len(paths_set)}")
 
