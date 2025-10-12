@@ -76,7 +76,7 @@ def path_eval_saebench(
     logger.trace(f"Using config: {config}")
 
     paths_set = []
-    with open(kmeans_data_path) as f:
+    with open(kmeans_data_path, "rb") as f:
         kmeans_data = th.load(f)
 
         # list of tensors of shape (num_centroids, num_layers * num_experts)
