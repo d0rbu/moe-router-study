@@ -65,7 +65,7 @@ def path_eval_saebench(
         logger.trace(f"Using kmeans data file: {kmeans_data_path}")
 
     with open(config_path) as f:
-        config = yaml.safe_load(f)
+        config = yaml.load(f, Loader=yaml.FullLoader)
 
     assert config["type"] == KMEANS_TYPE, (
         f"Experiment is not a kmeans experiment, type={config['type']}"
