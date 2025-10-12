@@ -1430,11 +1430,14 @@ async def cluster_paths_async(
         out_path = os.path.join(save_dir, KMEANS_FILENAME)
         th.save(out, out_path)
 
+        # Convert tuples to lists for YAML serialization compatibility
+        k_serializable = list(k) if isinstance(k, tuple) else k
+
         out_metadata = {
             "model_name": model_name,
             "dataset_name": dataset_name,
             "activation_dim": activation_dim,
-            "k": k,
+            "k": k_serializable,
             "max_iters": max_iters,
             "seed": seed,
             "tokens_per_file": tokens_per_file,
