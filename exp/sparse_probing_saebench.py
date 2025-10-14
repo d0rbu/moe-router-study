@@ -38,7 +38,7 @@ from sae_bench.sae_bench_utils.dataset_utils import (
 )
 import torch as th
 from tqdm import tqdm
-from transformers import PreTrainedTokenizer
+from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from core.model import get_model_config
 from core.type import assert_type
@@ -147,7 +147,9 @@ def get_dataset_activations(
     train_data = filter_dataset(train_data, chosen_classes)
     test_data = filter_dataset(test_data, chosen_classes)
 
-    tokenizer = assert_type(model.tokenizer, PreTrainedTokenizer)
+    tokenizer = assert_type(
+        model.tokenizer, PreTrainedTokenizer | PreTrainedTokenizerFast
+    )
     train_data = tokenize_data_dictionary(
         train_data,
         tokenizer,
