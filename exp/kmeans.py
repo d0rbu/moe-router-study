@@ -717,7 +717,7 @@ async def gpu_worker(
     barrier: Barrier,
     group: dist.ProcessGroup | None = None,
     save_dir: str | None = None,
-    validate_every: int = 1,
+    validate_every: int = 64,
     centroid_minibatch_size: int = 65536,
 ) -> None:
     """
@@ -904,7 +904,7 @@ async def kmeans_manhattan(
     seed: int = 0,
     save_every: int | None = None,
     save_dir: str | None = None,
-    validate_every: int = 1,
+    validate_every: int = 64,
     group: dist.ProcessGroup | None = None,
 ) -> tuple[list[th.Tensor], int, th.Tensor]:
     """
@@ -1387,7 +1387,7 @@ async def cluster_paths_async(
     minibatch_size: int,
     centroid_minibatch_size: int = 16384,
     save_every: int | None = None,
-    validate_every: int = 1,
+    validate_every: int = 64,
     group: dist.ProcessGroup | None = None,
 ) -> None:
     kmeans_experiment_name = get_experiment_name(
@@ -1459,7 +1459,7 @@ def cluster_paths(
     expansion_factor: tuple[int, ...] | int | None = None,
     max_iters: int = 128,
     save_every: int | None = None,
-    validate_every: int = 1,
+    validate_every: int = 64,
     seed: int = 0,
     minibatch_size: int = 100_000,
     centroid_minibatch_size: int = 16384,
@@ -1550,7 +1550,7 @@ def main(
     expansion_factor: tuple[int, ...] | None = None,
     max_iters: int = 128,
     save_every: int | None = None,
-    validate_every: int = 1,
+    validate_every: int = 64,
     seed: int = 0,
     minibatch_size: int = 10_000,
     centroid_minibatch_size: int = 16384,
