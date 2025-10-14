@@ -8,6 +8,7 @@ This script:
 
 from multiprocessing import cpu_count
 import sys
+import traceback
 
 import arguably
 from loguru import logger
@@ -40,9 +41,12 @@ def run_path_eval_saebench(
         )
         logger.debug(f"✅ SAEBench evaluation completed for {experiment_name}")
         return True
-    except Exception as e:
-        logger.error(
-            f"❌ Unexpected error in SAEBench evaluation for {experiment_name}: {e}"
+    except Exception as exception:
+        traceback_lines = traceback.format_tb(exception.__traceback__)
+        traceback_str = "".join(traceback_lines)
+        exception_str = str(exception)
+        logger.exception(
+            f"❌ Unexpected error in SAEBench evaluation for {experiment_name}:\n{traceback_str}{exception_str}"
         )
         return False
 
@@ -107,9 +111,12 @@ def run_intruder_eval(
         )
         logger.debug(f"✅ Intruder evaluation completed for {experiment_name}")
         return True
-    except Exception as e:
+    except Exception as exception:
+        traceback_lines = traceback.format_tb(exception.__traceback__)
+        traceback_str = "".join(traceback_lines)
+        exception_str = str(exception)
         logger.error(
-            f"❌ Unexpected error in intruder evaluation for {experiment_name}: {e}"
+            f"❌ Unexpected error in intruder evaluation for {experiment_name}:\n{traceback_str}{exception_str}"
         )
         return False
 

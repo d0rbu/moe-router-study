@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import traceback
 from typing import Any
 
 import arguably
@@ -173,14 +174,20 @@ def run_saebench_eval(
             f"❌ SAEBench evaluation timed out for {experiment_name} (1 hour limit)"
         )
         return False
-    except subprocess.CalledProcessError as e:
+    except subprocess.CalledProcessError as exception:
+        traceback_lines = traceback.format_tb(exception.__traceback__)
+        traceback_str = "".join(traceback_lines)
+        exception_str = str(exception)
         logger.error(f"❌ SAEBench evaluation failed for {experiment_name}")
         logger.error(f"Command: {' '.join(cmd)}")
-        logger.error(f"Return code: {e.returncode}")
+        logger.error(f"Return code: {exception.returncode}")
         return False
-    except Exception as e:
+    except Exception as exception:
+        traceback_lines = traceback.format_tb(exception.__traceback__)
+        traceback_str = "".join(traceback_lines)
+        exception_str = str(exception)
         logger.error(
-            f"❌ Unexpected error in SAEBench evaluation for {experiment_name}: {e}"
+            f"❌ Unexpected error in SAEBench evaluation for {experiment_name}:\n{traceback_str}{exception_str}"
         )
         return False
 
@@ -233,14 +240,20 @@ def run_intruder_eval(
             f"❌ Intruder evaluation timed out for {experiment_name} (1 hour limit)"
         )
         return False
-    except subprocess.CalledProcessError as e:
+    except subprocess.CalledProcessError as exception:
+        traceback_lines = traceback.format_tb(exception.__traceback__)
+        traceback_str = "".join(traceback_lines)
+        exception_str = str(exception)
         logger.error(f"❌ Intruder evaluation failed for {experiment_name}")
         logger.error(f"Command: {' '.join(cmd)}")
-        logger.error(f"Return code: {e.returncode}")
+        logger.error(f"Return code: {exception.returncode}")
         return False
-    except Exception as e:
+    except Exception as exception:
+        traceback_lines = traceback.format_tb(exception.__traceback__)
+        traceback_str = "".join(traceback_lines)
+        exception_str = str(exception)
         logger.error(
-            f"❌ Unexpected error in intruder evaluation for {experiment_name}: {e}"
+            f"❌ Unexpected error in intruder evaluation for {experiment_name}:\n{traceback_str}{exception_str}"
         )
         return False
 
@@ -268,8 +281,13 @@ def load_saebench_results(
                 result_data = json.load(f)
                 results[result_file.stem] = result_data
                 logger.debug(f"  ✅ Loaded SAEBench results from {result_file.name}")
-        except Exception as e:
-            logger.warning(f"Failed to load {result_file}: {e}")
+        except Exception as exception:
+            traceback_lines = traceback.format_tb(exception.__traceback__)
+            traceback_str = "".join(traceback_lines)
+            exception_str = str(exception)
+            logger.warning(
+                f"Failed to load {result_file}:\n{traceback_str}{exception_str}"
+            )
 
     if not results:
         logger.debug(f"  ❌ No SAEBench results found in {experiment_dir}")
@@ -307,8 +325,13 @@ def load_intruder_results(
                 score_data = orjson.loads(f.read())
                 results[score_file.stem] = score_data
                 logger.debug(f"  ✅ Loaded intruder results from {score_file.name}")
-        except Exception as e:
-            logger.warning(f"Failed to load {score_file}: {e}")
+        except Exception as exception:
+            traceback_lines = traceback.format_tb(exception.__traceback__)
+            traceback_str = "".join(traceback_lines)
+            exception_str = str(exception)
+            logger.warning(
+                f"Failed to load {score_file}:\n{traceback_str}{exception_str}"
+            )
 
     if not results:
         logger.error(f"  ❌ No intruder results found in {scores_dir}")

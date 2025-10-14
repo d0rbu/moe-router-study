@@ -1,7 +1,6 @@
 from dataclasses import asdict
 from datetime import datetime
 import gc
-from itertools import batched
 import os
 import random
 import shutil
@@ -62,7 +61,7 @@ def get_llm_activations(
     all_acts_BTP = []
 
     for batch_idx, tokens_BT in tqdm(
-        enumerate(batched(tokens, batch_size)),
+        enumerate(th.split(tokens, batch_size, dim=0)),
         total=tokens.shape[0] // batch_size,
         desc="Collecting activations",
         disable=not show_progress,
@@ -195,7 +194,7 @@ def get_paths_meaned_activations(
     for class_name, all_acts_BTP in all_llm_activations_BTP.items():
         all_acts_BF = []
 
-        for _batch_idx, acts_BTP in enumerate(batched(all_acts_BTP, batch_size)):
+        for acts_BTP in th.split(all_acts_BTP, batch_size, dim=0):
             acts_BTF = acts_BTP @ paths.T
 
             acts_BT = th.sum(acts_BTF, dim=-2)
@@ -445,7 +444,8 @@ def run_eval(
         path,
         check_attn_probs_with_trace=False,
         device_map=device,
-    ).to(dtype=llm_dtype)
+        torch_dtype=llm_dtype,
+    )
 
     for paths_with_metadata in tqdm(
         selected_paths_set,

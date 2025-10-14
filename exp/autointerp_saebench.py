@@ -2,7 +2,6 @@ import asyncio
 from dataclasses import asdict, dataclass
 from datetime import datetime
 import gc
-from itertools import batched
 import os
 import random
 import sys
@@ -86,7 +85,7 @@ def collect_path_activations(
     path_acts = []
 
     for batch_idx, tokens_BT in tqdm(
-        enumerate(batched(tokenized_dataset, llm_batch_size)),
+        enumerate(th.split(tokenized_dataset, llm_batch_size, dim=0)),
         total=tokenized_dataset.shape[0] // llm_batch_size,
         desc="Collecting path activations",
         leave=False,
@@ -170,7 +169,7 @@ def get_feature_activation_sparsity(
     total_tokens = 0
 
     for batch_idx, tokens_BT in tqdm(
-        enumerate(batched(tokens, batch_size)),
+        enumerate(th.split(tokens, batch_size, dim=0)),
         total=tokens.shape[0] // batch_size,
         desc="Getting path activation sparsity",
         leave=False,
@@ -212,9 +211,9 @@ def get_feature_activation_sparsity(
 
         # one-hot encode the closest path to each token
         # (B, T, L * E) . (F, L * E) -> (B, T, F)
-        distances = th.cdist(router_paths_BTP, paths.data, p=1)
-        # (B, T, F) -> (B, T)
-        closest_paths = th.argmin(distances, dim=-1)
+        distances = th.cdist(router_paths_BTP.float(), paths.float(), p=1)
+        # (B, T, F) -> (B, T, 1)
+        closest_paths = th.argmin(distances, dim=-1, keepdim=True)
         router_paths_BTF = th.zeros_like(distances)
         router_paths_BTF.scatter_(-1, closest_paths, 1)
 
@@ -528,7 +527,8 @@ def run_eval(
         check_attn_probs_with_trace=False,
         check_renaming=False,
         device_map=device,
-    ).to(dtype=llm_dtype)
+        torch_dtype=llm_dtype,
+    )
 
     for paths_with_metadata in tqdm(
         selected_paths_set,
