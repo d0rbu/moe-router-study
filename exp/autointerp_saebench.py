@@ -528,8 +528,7 @@ def run_eval(
         check_attn_probs_with_trace=False,
         check_renaming=False,
         device_map=device,
-        dtype=llm_dtype,
-    )
+    ).to(dtype=llm_dtype)
 
     for paths_with_metadata in tqdm(
         selected_paths_set,
