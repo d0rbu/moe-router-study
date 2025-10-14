@@ -142,7 +142,7 @@ async def gpu_worker(
         batch = assert_type(batch, GPUBatch)
 
         logger.debug(f"[worker {device_idx}]: Got batch {worker_batch_idx}")
-        trainSAE(
+        await trainSAE(
             data=data_iterator(batch.submodule_name),
             trainer_configs=batch.trainer_cfgs,
             steps=steps * num_epochs,
