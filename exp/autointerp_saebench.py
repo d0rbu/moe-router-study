@@ -234,6 +234,28 @@ def get_feature_activation_sparsity(
     return running_sum_F / total_tokens
 
 
+class Example(autointerp.Example):
+    def __init__(
+        self,
+        toks: list[int],
+        str_toks: list[str],
+        acts: list[float],
+        act_threshold: float,
+    ):
+        assert len(toks) == len(str_toks) and len(toks) == len(acts), (
+            f"Lengths of toks, str_toks, and acts must match: {len(toks)}, {len(str_toks)}, {len(acts)}"
+        )
+
+        self.toks = toks
+        self.str_toks = str_toks
+        self.acts = acts
+        self.act_threshold = act_threshold
+        self.toks_are_active = [act > act_threshold for act in self.acts]
+        self.is_active = any(
+            self.toks_are_active
+        )  # this is what we predict in the scoring phase
+
+
 class PathAutoInterp(autointerp.AutoInterp):
     """
     This is a start-to-end class for generating explanations and optionally scores. It's easiest to implement it as a
@@ -380,11 +402,13 @@ class PathAutoInterp(autointerp.AutoInterp):
                 # Use 0.0 as default threshold if None provided
                 threshold = act_threshold if act_threshold is not None else 0.0
                 return [
-                    autointerp.Example(
+                    Example(
                         toks=toks,
+                        str_toks=self.model.tokenizer.batch_decode(
+                            toks, clean_up_tokenization_spaces=False
+                        ),
                         acts=acts,
                         act_threshold=threshold,
-                        model=self.model,
                     )
                     for (toks, acts) in zip(
                         all_toks.tolist(), all_acts.tolist(), strict=False
