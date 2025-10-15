@@ -171,14 +171,14 @@ def load_hookpoints_and_saes(
 
 def load_hookpoints(
     root_dir: Path,
-) -> dict[str, Callable[[th.Tensor], th.Tensor]]:
+) -> tuple[dict[str, Callable[[th.Tensor], th.Tensor]], int | None]:
     """
     Loads the hookpoints from the config file.
     """
     sae_config_path = root_dir / "config.yaml"
     if sae_config_path.is_file():
         # this is a sae experiment, not paths
-        return load_hookpoints_and_saes(root_dir)
+        return load_hookpoints_and_saes(root_dir), None
 
     paths_path = root_dir / KMEANS_FILENAME
     if not paths_path.is_file():
@@ -188,7 +188,7 @@ def load_hookpoints(
         data = th.load(f)
 
     centroid_sets: list[th.Tensor] = data["centroids"]
-    _top_k: int = data["top_k"]
+    top_k: int = data["top_k"]
 
     hookpoints_to_sparse_encode = {}
     for centroids_idx, centroids in enumerate(centroid_sets):
@@ -198,7 +198,7 @@ def load_hookpoints(
         path_projection.weight.data.copy_(centroids)
         hookpoints_to_sparse_encode[f"paths_{centroids_idx}"] = path_projection
 
-    return hookpoints_to_sparse_encode
+    return hookpoints_to_sparse_encode, top_k
 
 
 class LatentPathsCache(LatentCache):
@@ -226,13 +226,14 @@ class LatentPathsCache(LatentCache):
 
         self.log_path = log_path
 
-    def run(self, n_tokens: int, tokens: th.Tensor):
+    def run(self, n_tokens: int, tokens: th.Tensor, top_k: int):
         """
         Run the latent caching process.
 
         Args:
             n_tokens: Total number of tokens to process.
             tokens: Input tokens.
+            top_k: Top k paths to cache.
         """
         token_batches = self.load_token_batches(n_tokens, tokens)
 
@@ -272,13 +273,15 @@ class LatentPathsCache(LatentCache):
                     router_paths.append(logits)
 
             router_paths = th.stack(router_paths, dim=-2)  # (B, T, L, E)
-            sparse_paths = th.topk(router_paths, k=self.top_k, dim=-1).indices
+            path_indices = th.topk(router_paths, k=top_k, dim=-1).indices
 
-            router_paths.zero_()
-            router_paths.scatter_(-1, sparse_paths, 1)
-            del sparse_paths
+            sparse_paths = th.zeros(
+                router_paths.shape, device=router_paths.device, dtype=th.float32
+            )
+            sparse_paths.scatter_(-1, path_indices, 1)
+            del path_indices, router_paths
 
-            router_paths_BTP = router_paths.view(*batch.shape, -1)  # (B, T, L * E)
+            router_paths_BTP = sparse_paths.view(*batch.shape, -1)  # (B, T, L * E)
 
             for hookpoint, sparse_encode in self.hookpoint_to_sparse_encode.items():
                 sae_latents = sparse_encode(router_paths_BTP)
@@ -297,14 +300,17 @@ def populate_cache(
     root_dir: Path,
     latents_path: Path,
     tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast,
+    top_k: int,
 ) -> None:
     """
     Populates an on-disk cache in `latents_path` with latent activations.
     """
-    path_config_path = root_dir / "config.yaml"
-    if not path_config_path.is_file():
+    sae_config_path = root_dir / "config.yaml"
+    if sae_config_path.is_file():
         # this is a sae experiment, not paths
-        logger.debug("Running SAE populate cache")
+        logger.debug(
+            f"Running SAE populate cache on {root_dir} with hookpoints {hookpoint_to_sparse_encode.keys()}"
+        )
 
         return sae_populate_cache(
             run_cfg,
@@ -315,7 +321,9 @@ def populate_cache(
             transcode=False,
         )
 
-    logger.debug("Running paths populate cache")
+    logger.debug(
+        f"Running paths populate cache on {root_dir} with hookpoints {hookpoint_to_sparse_encode.keys()}"
+    )
 
     latents_path.mkdir(parents=True, exist_ok=True)
 
@@ -360,7 +368,7 @@ def populate_cache(
         batch_size=cache_cfg.batch_size,
         log_path=log_path,
     )
-    cache.run(cache_cfg.n_tokens, tokens)
+    cache.run(cache_cfg.n_tokens, tokens, top_k=top_k)
 
     if run_cfg.verbose:
         cache.generate_statistics_cache()
@@ -441,7 +449,7 @@ def eval_intruder(
 
     logger.trace("Model and tokenizer initialized")
 
-    hookpoint_to_sparse_encode = load_hookpoints(root_dir)
+    hookpoint_to_sparse_encode, top_k = load_hookpoints(root_dir)
     hookpoints = list(hookpoint_to_sparse_encode.keys())
 
     latent_range = th.arange(n_latents) if n_latents else None
@@ -497,6 +505,7 @@ def eval_intruder(
             root_dir,
             latents_path,
             tokenizer,
+            top_k=top_k,
         )
     else:
         logger.debug("No non-redundant hookpoints found, skipping cache population")
