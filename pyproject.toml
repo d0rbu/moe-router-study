@@ -50,7 +50,6 @@ dependencies = [
     "sae-bench",
     "sae-lens>=6.12.1",
     "transformer-lens",
-    "eai-delphi",
     "docstring-parser>=0.16",
     "seaborn>=0.13.2",
     "pandas>=2.3.1",
@@ -196,18 +195,15 @@ nnterp = { git = "https://github.com/d0rbu/nnterp.git" }
 dictionary-learning = { git = "https://github.com/d0rbu/dictionary_learning" }
 sae-bench = { git = "https://github.com/d0rbu/SAEBench" }
 transformer-lens = { git = "https://github.com/d0rbu/TransformerLens", branch = "OLMo" }
-eai-delphi = { workspace = true }
 arguably = { git = "https://github.com/d0rbu/arguably.git" }
 
 [tool.uv.extra-build-dependencies]
 dictionary-learning = ["poetry"]
 nnterp = ["setuptools"]
 moe-router-study = ["hatchling", "editables"]
-eai-delphi = ["setuptools"]
 sae-bench = ["poetry"]
 
 [tool.uv.workspace]
 members = [
     "saebench_env",
-    "delphi",
 ]

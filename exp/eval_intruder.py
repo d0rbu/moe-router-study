@@ -23,22 +23,50 @@ from transformers import (
 from core.dtype import get_dtype
 from core.model import get_model_config
 from core.type import assert_type
-from delphi.__main__ import non_redundant_hookpoints  # type: ignore
-from delphi.__main__ import populate_cache as sae_populate_cache  # type: ignore
-from delphi.clients import Offline  # type: ignore
-from delphi.config import (  # type: ignore
-    CacheConfig,
-    ConstructorConfig,
-    RunConfig,
-    SamplerConfig,
-)
-from delphi.latents import LatentDataset, LatentRecord  # type: ignore
-from delphi.latents.cache import InMemoryCache, LatentCache  # type: ignore
-from delphi.log.result_analysis import log_results  # type: ignore
-from delphi.pipeline import Pipe, Pipeline  # type: ignore
-from delphi.scorers.classifier.intruder import IntruderScorer  # type: ignore
-from delphi.scorers.scorer import ScorerResult  # type: ignore
-from delphi.utils import load_tokenized_data  # type: ignore
+
+# Delphi imports - commented out due to submodule issues
+# from delphi.__main__ import non_redundant_hookpoints  # type: ignore
+# from delphi.__main__ import populate_cache as sae_populate_cache  # type: ignore
+# from delphi.clients import Offline  # type: ignore
+# from delphi.config import (  # type: ignore
+#     CacheConfig,
+#     ConstructorConfig,
+#     RunConfig,
+#     SamplerConfig,
+# )
+# from delphi.latents import LatentDataset, LatentRecord  # type: ignore
+# from delphi.latents.cache import InMemoryCache, LatentCache  # type: ignore
+# from delphi.log.result_analysis import log_results  # type: ignore
+# from delphi.pipeline import Pipe, Pipeline  # type: ignore
+# from delphi.scorers.classifier.intruder import IntruderScorer  # type: ignore
+# from delphi.scorers.scorer import ScorerResult  # type: ignore
+# from delphi.utils import load_tokenized_data  # type: ignore
+
+# Try to import delphi at runtime
+try:
+    from delphi.__main__ import non_redundant_hookpoints  # type: ignore
+    from delphi.__main__ import populate_cache as sae_populate_cache  # type: ignore
+    from delphi.clients import Offline  # type: ignore
+    from delphi.config import (  # type: ignore
+        CacheConfig,
+        ConstructorConfig,
+        RunConfig,
+        SamplerConfig,
+    )
+    from delphi.latents import LatentDataset, LatentRecord  # type: ignore
+    from delphi.latents.cache import InMemoryCache, LatentCache  # type: ignore
+    from delphi.log.result_analysis import log_results  # type: ignore
+    from delphi.pipeline import Pipe, Pipeline  # type: ignore
+    from delphi.scorers.classifier.intruder import IntruderScorer  # type: ignore
+    from delphi.scorers.scorer import ScorerResult  # type: ignore
+    from delphi.utils import load_tokenized_data  # type: ignore
+
+    DELPHI_AVAILABLE = True
+except ImportError:
+    DELPHI_AVAILABLE = False
+    # Define dummy types for type checking
+    LatentRecord = dict  # type: ignore
+    ScorerResult = dict  # type: ignore
 from exp import OUTPUT_DIR
 from exp.get_activations import ActivationKeys
 from exp.kmeans import KMEANS_FILENAME
@@ -404,6 +432,10 @@ def eval_intruder(
     hf_token: str = "",
     log_level: str = "INFO",
 ) -> None:
+    if not DELPHI_AVAILABLE:
+        logger.error("Delphi is not available. Skipping intruder evaluation.")
+        return
+
     logger.remove()
     logger.add(sys.stderr, level=log_level)
 
