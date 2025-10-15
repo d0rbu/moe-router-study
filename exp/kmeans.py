@@ -968,12 +968,9 @@ async def kmeans_manhattan(
     # Ensure batch_size is compatible with accumulation_size and minibatch_size
     # We need batch_size to be a multiple of (accumulation_size * minibatch_size)
     required_batch_size_multiple = accumulation_size * minibatch_size
-    if batch_size % required_batch_size_multiple != 0:
-        # Adjust batch_size down to the nearest compatible value
-        adjusted_batch_size = (
-            batch_size // required_batch_size_multiple
-        ) * required_batch_size_multiple
-        leftover_per_gpu = batch_size - adjusted_batch_size
+    leftover_per_gpu = batch_size % required_batch_size_multiple
+    if leftover_per_gpu > 0:
+        adjusted_batch_size = batch_size - leftover_per_gpu
         total_leftover = leftover_per_gpu * total_gpus
 
         logger.warning(
@@ -984,11 +981,11 @@ async def kmeans_manhattan(
 
         batch_size = adjusted_batch_size
         effective_batch_size = batch_size * total_gpus
+    else:
+        total_leftover = 0
 
     # Calculate final discarded datapoints
-    num_discarded_datapoints = (
-        leftover_batch_size if "leftover_batch_size" in locals() else 0
-    ) + (total_leftover if "total_leftover" in locals() else 0)
+    num_discarded_datapoints = leftover_batch_size + total_leftover
     if num_discarded_datapoints > 0:
         logger.warning(f"{num_discarded_datapoints} data points discarded")
 
@@ -1407,7 +1404,7 @@ async def cluster_paths_async(
     seed: int,
     tokens_per_file: int,
     minibatch_size: int,
-    accumulation_size: int,
+    accumulation_size: int = 4,
     centroid_minibatch_size: int = 16384,
     save_every: int | None = None,
     validate_every: int = 64,
