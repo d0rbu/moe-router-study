@@ -532,6 +532,8 @@ def run_eval(
 
     results_dict = {}
 
+    logger.trace(f"Using config: {config}")
+
     llm_dtype = general_utils.str_to_dtype(config.llm_dtype)
 
     logger.remove()

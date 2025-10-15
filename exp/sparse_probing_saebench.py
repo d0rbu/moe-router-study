@@ -58,6 +58,16 @@ def get_llm_activations(
     VERY IMPORTANT NOTE: If mask_bos_pad_eos_tokens is True, we zero out activations for BOS, PAD, and EOS tokens.
     Later, we ignore zeroed activations."""
 
+    logger.trace(f"Collecting activations for model: {model}")
+    logger.trace(f"Batch size: {batch_size}")
+    logger.trace(f"Top k: {top_k}")
+    logger.trace(f"Mask bos pad eos tokens: {mask_bos_pad_eos_tokens}")
+    logger.trace(f"Show progress: {show_progress}")
+    logger.trace(f"Tokens shape: {tokens.shape}")
+    logger.trace(f"Tokens dtype: {tokens.dtype}")
+    logger.trace(f"Tokens device: {tokens.device}")
+    logger.trace(f"Layers with routers: {model.layers_with_routers}")
+
     all_acts_BTP = []
 
     for batch_idx, tokens_BT in tqdm(
@@ -66,16 +76,29 @@ def get_llm_activations(
         desc="Collecting activations",
         disable=not show_progress,
     ):
+        acts_BTLE: list[th.Tensor] = []
         with model.trace(tokens_BT):
-            acts_BTLE = [
-                model.routers_output[layer_idx].save()
-                for layer_idx in tqdm(
-                    model.layers_with_routers,
-                    desc=f"Batch {batch_idx}",
-                    total=len(model.layers_with_routers),
-                    leave=False,
-                )
-            ]
+            for layer_idx in tqdm(
+                model.layers_with_routers,
+                desc=f"Batch {batch_idx}",
+                total=len(model.layers_with_routers),
+                leave=False,
+            ):
+                router_output = model.routers_output[layer_idx]
+
+                # Handle different router output formats
+                if isinstance(router_output, tuple):
+                    if len(router_output) == 2:
+                        router_scores, _router_indices = router_output
+                    else:
+                        raise ValueError(
+                            f"Found tuple of length {len(router_output)} for router output at layer {layer_idx}"
+                        )
+                else:
+                    router_scores = router_output
+                logits = router_scores.save()
+
+                acts_BTLE.append(logits)
 
         acts_BTLE = th.stack(acts_BTLE, dim=-2)
         sparse_paths = th.topk(acts_BTLE, k=top_k, dim=-1).indices
@@ -427,6 +450,8 @@ def run_eval(
     artifacts_folder = None
     results_dict = {}
 
+    logger.trace(f"Using config: {config}")
+
     llm_dtype = general_utils.str_to_dtype(config.llm_dtype)
 
     logger.remove()
@@ -443,6 +468,7 @@ def run_eval(
     model: StandardizedTransformer = StandardizedTransformer(
         path,
         check_attn_probs_with_trace=False,
+        check_renaming=False,
         device_map=device,
         torch_dtype=llm_dtype,
     )

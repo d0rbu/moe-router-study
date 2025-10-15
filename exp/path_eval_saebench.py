@@ -143,6 +143,7 @@ def path_eval_saebench(
             config=SparseProbingEvalConfig(
                 model_name=model_name,
                 random_seed=seed,
+                llm_dtype=str_dtype,
             ),
             selected_paths_set=paths_set,
             device=device,
