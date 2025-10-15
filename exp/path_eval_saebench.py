@@ -34,6 +34,8 @@ def path_eval_saebench(
     seed: int = 0,
     logs_path: str | None = None,
     log_level: str = "INFO",
+    skip_autointerp: bool = False,
+    skip_sparse_probing: bool = False,
 ) -> None:
     """
     Evaluate the paths on the given model.
@@ -73,6 +75,9 @@ def path_eval_saebench(
     assert config["model_name"] == model_name, (
         f"Model name mismatch: {model_name} != {config['model_name']}"
     )
+    assert not skip_autointerp or not skip_sparse_probing, (
+        "Cannot skip both autointerp and sparse probing"
+    )
     logger.trace(f"Using config: {config}")
 
     paths_set = []
@@ -107,45 +112,47 @@ def path_eval_saebench(
     logger.trace(f"Using paths set: len={len(paths_set)}")
 
     # run autointerp
-    autointerp_eval_dir = EVAL_DIRS["autointerp"]
-    autointerp_eval_dir = os.path.join(OUTPUT_DIR, autointerp_eval_dir)
-    logger.trace(f"Running autointerp evaluation in {autointerp_eval_dir}")
-    run_autointerp_eval(
-        config=AutoInterpEvalConfig(
-            model_name=model_name,
-            random_seed=seed,
-            llm_batch_size=batchsize,
-            llm_dtype=str_dtype,
-        ),
-        selected_paths_set=paths_set,
-        device=device,
-        api_key=OPENAI_API_KEY,
-        output_path=autointerp_eval_dir,
-        force_rerun=False,
-        save_logs_path=logs_path,
-        artifacts_path=os.path.join(experiment_path, "artifacts"),
-        log_level=log_level,
-    )
+    if not skip_autointerp:
+        autointerp_eval_dir = EVAL_DIRS["autointerp"]
+        autointerp_eval_dir = os.path.join(OUTPUT_DIR, autointerp_eval_dir)
+        logger.trace(f"Running autointerp evaluation in {autointerp_eval_dir}")
+        run_autointerp_eval(
+            config=AutoInterpEvalConfig(
+                model_name=model_name,
+                random_seed=seed,
+                llm_batch_size=batchsize,
+                llm_dtype=str_dtype,
+            ),
+            selected_paths_set=paths_set,
+            device=device,
+            api_key=OPENAI_API_KEY,
+            output_path=autointerp_eval_dir,
+            force_rerun=False,
+            save_logs_path=logs_path,
+            artifacts_path=os.path.join(experiment_path, "artifacts"),
+            log_level=log_level,
+        )
 
-    logger.info("Autointerp evaluation complete, running sparse probing")
+        logger.info("Autointerp evaluation complete")
 
-    sparse_probing_eval_dir = EVAL_DIRS["sparse_probing"]
-    sparse_probing_eval_dir = os.path.join(OUTPUT_DIR, sparse_probing_eval_dir)
-    logger.trace(f"Running sparse probing evaluation in {sparse_probing_eval_dir}")
-    run_sparse_probing_eval(
-        config=SparseProbingEvalConfig(
-            model_name=model_name,
-            random_seed=seed,
-        ),
-        selected_paths_set=paths_set,
-        device=device,
-        output_path=sparse_probing_eval_dir,
-        force_rerun=False,
-        clean_up_activations=False,
-        save_activations=True,
-        artifacts_path=os.path.join(experiment_path, "artifacts"),
-        log_level=log_level,
-    )
+    if not skip_sparse_probing:
+        sparse_probing_eval_dir = EVAL_DIRS["sparse_probing"]
+        sparse_probing_eval_dir = os.path.join(OUTPUT_DIR, sparse_probing_eval_dir)
+        logger.trace(f"Running sparse probing evaluation in {sparse_probing_eval_dir}")
+        run_sparse_probing_eval(
+            config=SparseProbingEvalConfig(
+                model_name=model_name,
+                random_seed=seed,
+            ),
+            selected_paths_set=paths_set,
+            device=device,
+            output_path=sparse_probing_eval_dir,
+            force_rerun=False,
+            clean_up_activations=False,
+            save_activations=True,
+            artifacts_path=os.path.join(experiment_path, "artifacts"),
+            log_level=log_level,
+        )
 
     logger.success("done :)")
 

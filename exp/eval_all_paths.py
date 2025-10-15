@@ -25,6 +25,8 @@ def run_path_eval_saebench(
     dtype: str,
     seed: int,
     log_level: str = "INFO",
+    skip_autointerp: bool = False,
+    skip_sparse_probing: bool = False,
 ) -> bool:
     """Run SAEBench evaluation on a k-means path experiment."""
     logger.info(f"Running SAEBench evaluation on {experiment_name}")
@@ -38,6 +40,8 @@ def run_path_eval_saebench(
             seed=seed,
             logs_path=None,
             log_level=log_level,
+            skip_autointerp=skip_autointerp,
+            skip_sparse_probing=skip_sparse_probing,
         )
         logger.debug(f"✅ SAEBench evaluation completed for {experiment_name}")
         return True
@@ -127,6 +131,8 @@ def eval_all_paths(
     experiment_dir: str,
     model_name: str = "olmoe-i",
     run_saebench: bool = True,
+    skip_autointerp: bool = False,
+    skip_sparse_probing: bool = False,
     run_intruder: bool = True,
     saebench_batchsize: int = 512,
     intruder_model_step_ckpt: int | None = None,
@@ -192,7 +198,7 @@ def eval_all_paths(
 
     logger.info(f"Running evaluation for k-means experiment: {experiment_dir}")
     logger.info(
-        f"Configuration: run_saebench={run_saebench}, run_intruder={run_intruder}"
+        f"Configuration: run_saebench={run_saebench}, run_intruder={run_intruder}, skip_autointerp={skip_autointerp}, skip_sparse_probing={skip_sparse_probing}"
     )
 
     success = True
@@ -206,12 +212,18 @@ def eval_all_paths(
             dtype,
             seed,
             log_level,
+            skip_autointerp,
+            skip_sparse_probing,
         )
         if not saebench_success:
             logger.error("SAEBench evaluation failed!")
             success = False
         else:
             logger.success("✅ SAEBench evaluation completed successfully")
+    else:
+        assert not skip_autointerp and not skip_sparse_probing, (
+            "Cannot skip autointerp or sparse probing if SAEBench is not run"
+        )
 
     if run_intruder:
         logger.info("Starting intruder evaluation...")
