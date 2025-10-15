@@ -230,7 +230,7 @@ class TestModelConfig:
             eager_fetch=False,
         )
 
-        with pytest.raises(AssertionError, match="total_steps.*is less than"):
+        with pytest.raises(AssertionError, match=r"total_steps.*is less than"):
             config.fetch_checkpoints()
 
     @patch("core.model.huggingface_hub.list_repo_refs")
@@ -411,7 +411,7 @@ class TestModelConfig:
         config = ModelConfig(hf_name="test/model", eager_fetch=False)
         config.checkpoints = [Checkpoint(1000, 5000, config)]
 
-        with pytest.raises(ValueError, match="Checkpoint for step 9999.*not found"):
+        with pytest.raises(ValueError, match=r"Checkpoint for step 9999.*not found"):
             config.get_checkpoint_strict(step=9999)
 
 
