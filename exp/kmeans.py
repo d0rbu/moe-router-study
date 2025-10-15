@@ -900,7 +900,7 @@ async def kmeans_manhattan(
     effective_batch_size: int | None = None,
     max_iters: int = 128,
     minibatch_size: int | None = None,
-    kmeans_sync_size: int | None = None,
+    accum_size: int | None = None,
     centroid_minibatch_size: int = 16384,
     seed: int = 0,
     save_every: int | None = None,
@@ -917,7 +917,7 @@ async def kmeans_manhattan(
         effective_batch_size: Batch size for k-means updates. If None, use the batch size of the activations.
         max_iters: Maximum number of iterations
         minibatch_size: Batch size for processing data. If None, process all data at once.
-        kmeans_sync_size: Number of samples to process before syncing centroids. Must be a multiple of minibatch_size. If None, defaults to minibatch_size.
+        accum_size: Number of minibatches to accumulate before syncing centroids. If None, defaults to batch_size // minibatch_size.
         centroid_minibatch_size: Size of centroid chunks to avoid CUDA limits (defaults to 16384)
         seed: Random seed for initialization
         save_every: Save checkpoints every N iterations. If None, no checkpoints are saved.
@@ -960,13 +960,6 @@ async def kmeans_manhattan(
     if minibatch_size is None:
         minibatch_size = batch_size
 
-    if kmeans_sync_size is None:
-        kmeans_sync_size = minibatch_size
-
-    assert kmeans_sync_size % minibatch_size == 0, (
-        f"kmeans_sync_size {kmeans_sync_size} must be a multiple of minibatch_size {minibatch_size}"
-    )
-
     if (leftover_minibatch_size := (batch_size % minibatch_size)) > 0:
         total_leftover_minibatch_size = leftover_minibatch_size * total_gpus
         logger.warning(
@@ -997,7 +990,10 @@ async def kmeans_manhattan(
         f"batch_size {batch_size} must be a multiple of minibatch_size {minibatch_size}"
     )
 
-    accumulation_size = kmeans_sync_size // minibatch_size
+    if accum_size is None:
+        accumulation_size = batch_size // minibatch_size
+    else:
+        accumulation_size = accum_size
 
     num_gpu_minibatches = len(activations) // minibatch_size
 
@@ -1394,7 +1390,7 @@ async def cluster_paths_async(
     seed: int,
     tokens_per_file: int,
     minibatch_size: int,
-    kmeans_sync_size: int,
+    accum_size: int,
     centroid_minibatch_size: int = 16384,
     save_every: int | None = None,
     validate_every: int = 64,
@@ -1421,7 +1417,7 @@ async def cluster_paths_async(
         k_values=k,
         max_iters=max_iters,
         minibatch_size=minibatch_size,
-        kmeans_sync_size=kmeans_sync_size,
+        accum_size=accum_size,
         centroid_minibatch_size=centroid_minibatch_size,
         seed=seed,
         save_every=save_every,
@@ -1473,7 +1469,7 @@ def cluster_paths(
     validate_every: int = 64,
     seed: int = 0,
     minibatch_size: int = 100_000,
-    kmeans_sync_size: int = 100_000,
+    accum_size: int = 4,
     centroid_minibatch_size: int = 16384,
     tokens_per_file: int = 5_000,
     reshuffled_tokens_per_file: int = 10_000,
@@ -1545,7 +1541,7 @@ def cluster_paths(
             seed=seed,
             tokens_per_file=reshuffled_tokens_per_file,
             minibatch_size=minibatch_size,
-            kmeans_sync_size=kmeans_sync_size,
+            accum_size=accum_size,
             centroid_minibatch_size=centroid_minibatch_size,
             save_every=save_every,
             validate_every=validate_every,
@@ -1566,7 +1562,7 @@ def main(
     validate_every: int = 64,
     seed: int = 0,
     minibatch_size: int = 10_000,
-    kmeans_sync_size: int = 100_000,
+    accum_size: int = 4,
     centroid_minibatch_size: int = 16384,
     tokens_per_file: int = 5_000,
     reshuffled_tokens_per_file: int = 10_000,
@@ -1585,7 +1581,7 @@ def main(
         validate_every=validate_every,
         seed=seed,
         minibatch_size=minibatch_size,
-        kmeans_sync_size=kmeans_sync_size,
+        accum_size=accum_size,
         centroid_minibatch_size=centroid_minibatch_size,
         tokens_per_file=tokens_per_file,
         reshuffled_tokens_per_file=reshuffled_tokens_per_file,
