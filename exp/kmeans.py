@@ -900,7 +900,7 @@ async def kmeans_manhattan(
     effective_batch_size: int | None = None,
     max_iters: int = 128,
     minibatch_size: int | None = None,
-    accum_size: int | None = None,
+    accumulation_size: int | None = None,
     centroid_minibatch_size: int = 16384,
     seed: int = 0,
     save_every: int | None = None,
@@ -917,7 +917,7 @@ async def kmeans_manhattan(
         effective_batch_size: Batch size for k-means updates. If None, use the batch size of the activations.
         max_iters: Maximum number of iterations
         minibatch_size: Batch size for processing data. If None, process all data at once.
-        accum_size: Number of minibatches to accumulate before syncing centroids. If None, defaults to batch_size // minibatch_size.
+        accumulation_size: Number of minibatches to accumulate before syncing centroids. If None, defaults to batch_size // minibatch_size.
         centroid_minibatch_size: Size of centroid chunks to avoid CUDA limits (defaults to 16384)
         seed: Random seed for initialization
         save_every: Save checkpoints every N iterations. If None, no checkpoints are saved.
@@ -960,26 +960,41 @@ async def kmeans_manhattan(
     if minibatch_size is None:
         minibatch_size = batch_size
 
-    if (leftover_minibatch_size := (batch_size % minibatch_size)) > 0:
-        total_leftover_minibatch_size = leftover_minibatch_size * total_gpus
-        logger.warning(
-            f"Per-GPU batch size {batch_size} is not divisible by GPU minibatch size "
-            f"{minibatch_size}; {leftover_minibatch_size} left over per GPU, "
-            f"{total_leftover_minibatch_size} left over total"
-        )
-        batch_size -= leftover_minibatch_size
-        effective_batch_size -= total_leftover_minibatch_size
+    # Set default accumulation_size if not provided
+    if accumulation_size is None:
+        accumulation_size = batch_size // minibatch_size
 
+    # Ensure batch_size is compatible with accumulation_size and minibatch_size
+    # We need batch_size to be a multiple of (accumulation_size * minibatch_size)
+    required_batch_size_multiple = accumulation_size * minibatch_size
+    if batch_size % required_batch_size_multiple != 0:
+        # Adjust batch_size down to the nearest compatible value
+        adjusted_batch_size = (
+            batch_size // required_batch_size_multiple
+        ) * required_batch_size_multiple
+        leftover_per_gpu = batch_size - adjusted_batch_size
+        total_leftover = leftover_per_gpu * total_gpus
+
+        logger.warning(
+            f"Per-GPU batch size {batch_size} is not compatible with accumulation_size {accumulation_size} "
+            f"and minibatch_size {minibatch_size}; adjusting to {adjusted_batch_size}, "
+            f"{leftover_per_gpu} left over per GPU, {total_leftover} left over total"
+        )
+
+        batch_size = adjusted_batch_size
+        effective_batch_size = batch_size * total_gpus
+
+    # Calculate final discarded datapoints
     num_discarded_datapoints = (
-        leftover_minibatch_size * total_gpus + leftover_batch_size
-    )
+        leftover_batch_size if "leftover_batch_size" in locals() else 0
+    ) + (total_leftover if "total_leftover" in locals() else 0)
     if num_discarded_datapoints > 0:
-        logger.warning(
-            f"{leftover_minibatch_size * total_gpus + leftover_batch_size} data points discarded"
-        )
+        logger.warning(f"{num_discarded_datapoints} data points discarded")
 
+    # Validate final values
     assert minibatch_size > 0, "minibatch_size must be positive"
     assert batch_size > 0, "batch_size must be positive"
+    assert accumulation_size > 0, "accumulation_size must be positive"
     assert effective_batch_size % total_gpus == 0, (
         f"effective_batch_size {effective_batch_size} must be a multiple of total_gpus {total_gpus}"
     )
@@ -990,10 +1005,11 @@ async def kmeans_manhattan(
         f"batch_size {batch_size} must be a multiple of minibatch_size {minibatch_size}"
     )
 
-    if accum_size is None:
-        accumulation_size = batch_size // minibatch_size
-    else:
-        accumulation_size = accum_size
+    # Ensure num_batches_per_gpu is divisible by accumulation_size
+    num_batches_per_gpu = batch_size // minibatch_size
+    assert num_batches_per_gpu % accumulation_size == 0, (
+        f"num_batches_per_gpu {num_batches_per_gpu} must be divisible by accumulation_size {accumulation_size}"
+    )
 
     num_gpu_minibatches = len(activations) // minibatch_size
 
@@ -1390,7 +1406,7 @@ async def cluster_paths_async(
     seed: int,
     tokens_per_file: int,
     minibatch_size: int,
-    accum_size: int,
+    accumulation_size: int,
     centroid_minibatch_size: int = 16384,
     save_every: int | None = None,
     validate_every: int = 64,
@@ -1417,7 +1433,7 @@ async def cluster_paths_async(
         k_values=k,
         max_iters=max_iters,
         minibatch_size=minibatch_size,
-        accum_size=accum_size,
+        accumulation_size=accumulation_size,
         centroid_minibatch_size=centroid_minibatch_size,
         seed=seed,
         save_every=save_every,
@@ -1469,7 +1485,7 @@ def cluster_paths(
     validate_every: int = 64,
     seed: int = 0,
     minibatch_size: int = 100_000,
-    accum_size: int = 4,
+    accumulation_size: int = 4,
     centroid_minibatch_size: int = 16384,
     tokens_per_file: int = 5_000,
     reshuffled_tokens_per_file: int = 10_000,
@@ -1541,7 +1557,7 @@ def cluster_paths(
             seed=seed,
             tokens_per_file=reshuffled_tokens_per_file,
             minibatch_size=minibatch_size,
-            accum_size=accum_size,
+            accumulation_size=accumulation_size,
             centroid_minibatch_size=centroid_minibatch_size,
             save_every=save_every,
             validate_every=validate_every,
@@ -1562,7 +1578,7 @@ def main(
     validate_every: int = 64,
     seed: int = 0,
     minibatch_size: int = 10_000,
-    accum_size: int = 4,
+    accumulation_size: int = 4,
     centroid_minibatch_size: int = 16384,
     tokens_per_file: int = 5_000,
     reshuffled_tokens_per_file: int = 10_000,
@@ -1581,7 +1597,7 @@ def main(
         validate_every=validate_every,
         seed=seed,
         minibatch_size=minibatch_size,
-        accum_size=accum_size,
+        accumulation_size=accumulation_size,
         centroid_minibatch_size=centroid_minibatch_size,
         tokens_per_file=tokens_per_file,
         reshuffled_tokens_per_file=reshuffled_tokens_per_file,
