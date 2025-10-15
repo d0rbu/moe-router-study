@@ -175,8 +175,8 @@ def load_hookpoints(
     """
     Loads the hookpoints from the config file.
     """
-    path_config_path = root_dir / "config.yaml"
-    if not path_config_path.is_file():
+    sae_config_path = root_dir / "config.yaml"
+    if sae_config_path.is_file():
         # this is a sae experiment, not paths
         return load_hookpoints_and_saes(root_dir)
 
