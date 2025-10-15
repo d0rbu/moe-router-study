@@ -216,11 +216,15 @@ def get_paths_meaned_activations(
     all_sae_activations_BF = {}
     for class_name, all_acts_BTP in all_llm_activations_BTP.items():
         all_acts_BF = []
+        logger.trace(f"Processing class {class_name} with shape {all_acts_BTP.shape}")
 
         for acts_BTP in th.split(all_acts_BTP, batch_size, dim=0):
             acts_BTF = acts_BTP @ paths.T
+            logger.trace(
+                f"Acts BTP shape: {acts_BTP.shape}, Paths shape: {paths.shape}, Acts BTF shape: {acts_BTF.shape}"
+            )
 
-            acts_BT = th.sum(acts_BTF, dim=-2)
+            acts_BT = th.sum(acts_BTF, dim=-1)
             nonzero_acts_BT = (acts_BT != 0.0).to(dtype=dtype)
             nonzero_acts_B = th.sum(nonzero_acts_BT, dim=-1)
 
