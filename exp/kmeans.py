@@ -972,7 +972,7 @@ async def kmeans_manhattan(
             f"Per-GPU batch size {batch_size} is not divisible by minibatch_size * accumulation_size "
             f"({minibatch_size} * {accumulation_size} = {required_divisor}); "
             f"{leftover_minibatch_size} left over per GPU, "
-            f"{total_leftover_minibatch_size} left over total"
+            f"{total_leftover_minibatch_size} tokens left over total"
         )
         batch_size -= leftover_minibatch_size
         effective_batch_size -= total_leftover_minibatch_size
