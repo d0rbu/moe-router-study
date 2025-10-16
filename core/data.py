@@ -1,7 +1,6 @@
 from collections.abc import Callable, Iterable
 import os
 from typing import Any
-from unittest.mock import MagicMock
 
 from datasets import Dataset, load_dataset
 from tqdm import tqdm
@@ -104,8 +103,8 @@ def lmsys_chat_1m_text(
 
     def _iter():
         if streaming:
-            # Handle both real IterableDataset and test mocks (dict/MagicMock)
-            if isinstance(ds, dict | MagicMock):
+            # Handle both real IterableDataset and test mocks (dict/mock objects)
+            if isinstance(ds, dict) or hasattr(ds, "_mock_name"):
                 conversations = ds["conversation"]  # type: ignore[index]
             else:
                 conversations = (sample["conversation"] for sample in ds)
