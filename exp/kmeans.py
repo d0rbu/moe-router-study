@@ -959,15 +959,24 @@ async def kmeans_manhattan(
     if minibatch_size is None:
         minibatch_size = batch_size
 
-    if (leftover_minibatch_size := (batch_size % minibatch_size)) > 0:
+    # Compute accumulation size (default is all batches per GPU)
+    num_batches_per_gpu = batch_size // minibatch_size
+    if accumulation_size is None:
+        accumulation_size = num_batches_per_gpu
+
+    # Ensure batch_size is divisible by minibatch_size * accumulation_size
+    required_divisor = minibatch_size * accumulation_size
+    if (leftover_minibatch_size := (batch_size % required_divisor)) > 0:
         total_leftover_minibatch_size = leftover_minibatch_size * total_gpus
         logger.warning(
-            f"Per-GPU batch size {batch_size} is not divisible by GPU minibatch size "
-            f"{minibatch_size}; {leftover_minibatch_size} left over per GPU, "
+            f"Per-GPU batch size {batch_size} is not divisible by minibatch_size * accumulation_size "
+            f"({minibatch_size} * {accumulation_size} = {required_divisor}); "
+            f"{leftover_minibatch_size} left over per GPU, "
             f"{total_leftover_minibatch_size} left over total"
         )
         batch_size -= leftover_minibatch_size
         effective_batch_size -= total_leftover_minibatch_size
+        num_batches_per_gpu = batch_size // minibatch_size
 
     num_discarded_datapoints = (
         leftover_minibatch_size * total_gpus + leftover_batch_size
@@ -985,25 +994,6 @@ async def kmeans_manhattan(
     assert effective_batch_size / batch_size == total_gpus, (
         f"effective_batch_size {effective_batch_size} must be batch_size {batch_size} times total_gpus {total_gpus}"
     )
-    # Compute accumulation size (default is all batches per GPU)
-    num_batches_per_gpu = batch_size // minibatch_size
-    if accumulation_size is None:
-        accumulation_size = num_batches_per_gpu
-
-    # Ensure batch_size is divisible by minibatch_size * accumulation_size
-    required_divisor = minibatch_size * accumulation_size
-    if batch_size % required_divisor != 0:
-        new_batch_size = (batch_size // required_divisor) * required_divisor
-        discarded_tokens = batch_size - new_batch_size
-        batch_size = new_batch_size
-        effective_batch_size = batch_size * total_gpus
-        num_batches_per_gpu = batch_size // minibatch_size
-        logger.warning(
-            f"batch_size was not divisible by minibatch_size * accumulation_size "
-            f"({minibatch_size} * {accumulation_size} = {required_divisor}); "
-            f"adjusted batch_size from {batch_size + discarded_tokens} to {batch_size}, "
-            f"discarding {discarded_tokens * total_gpus} tokens total"
-        )
 
     assert batch_size % minibatch_size == 0, (
         f"batch_size {batch_size} must be a multiple of minibatch_size {minibatch_size}"
