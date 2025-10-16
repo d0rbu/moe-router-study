@@ -976,7 +976,6 @@ async def kmeans_manhattan(
         )
         batch_size -= leftover_minibatch_size
         effective_batch_size -= total_leftover_minibatch_size
-        num_batches_per_gpu = batch_size // minibatch_size
 
     num_discarded_datapoints = (
         leftover_minibatch_size * total_gpus + leftover_batch_size
