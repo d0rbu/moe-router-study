@@ -76,7 +76,7 @@ def get_llm_activations(
         desc="Collecting activations",
         disable=not show_progress,
     ):
-        acts_BTLE: list[th.Tensor] = []
+        acts_list: list[th.Tensor] = []
         with model.trace(tokens_BT):
             for layer_idx in tqdm(
                 model.layers_with_routers,
@@ -98,9 +98,9 @@ def get_llm_activations(
                     router_scores = router_output
                 logits = router_scores.save()
 
-                acts_BTLE.append(logits)
+                acts_list.append(logits)
 
-        acts_BTLE = th.stack(acts_BTLE, dim=-2)
+        acts_BTLE = th.stack(acts_list, dim=-2)
         sparse_paths = th.topk(acts_BTLE, k=top_k, dim=-1).indices
         acts_BTLE.zero_()
         acts_BTLE.scatter_(-1, sparse_paths, 1)
