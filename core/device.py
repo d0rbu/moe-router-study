@@ -45,6 +45,26 @@ def get_backend(device_type: DeviceType) -> Any:
         raise ValueError(f"Unsupported device_type: {device_type}")
 
 
+def get_device_type_from_backend(backend: Any) -> DeviceType:
+    """Get the device type from a backend object.
+
+    Args:
+        backend: The backend module (th.cuda or th.xpu)
+
+    Returns:
+        The device type ("cuda" or "xpu")
+
+    Raises:
+        ValueError: If the backend is not recognized
+    """
+    if backend is th.cuda:
+        return "cuda"
+    elif backend is th.xpu:
+        return "xpu"
+    else:
+        raise ValueError(f"Unrecognized backend: {backend}")
+
+
 def get_device(device_type: DeviceType, device_idx: int) -> th.device:
     """Create a torch device object for the specified device type and index.
 
@@ -55,4 +75,18 @@ def get_device(device_type: DeviceType, device_idx: int) -> th.device:
     Returns:
         A torch.device object
     """
+    return th.device(f"{device_type}:{device_idx}")
+
+
+def get_device_from_backend(backend: Any, device_idx: int) -> th.device:
+    """Create a torch device object from a backend and device index.
+
+    Args:
+        backend: The backend module (th.cuda or th.xpu)
+        device_idx: The device index
+
+    Returns:
+        A torch.device object
+    """
+    device_type = get_device_type_from_backend(backend)
     return th.device(f"{device_type}:{device_idx}")

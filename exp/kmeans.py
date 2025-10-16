@@ -17,7 +17,7 @@ from tqdm import tqdm
 import yaml
 
 from core.async_utils import handle_exceptions
-from core.device import DeviceType, assert_device_type, get_backend, get_device
+from core.device import DeviceType, assert_device_type, get_backend, get_device, get_device_type_from_backend, get_device_from_backend
 from core.moe import convert_router_logits_to_paths
 from core.training import exponential_to_linear_save_steps
 from exp import OUTPUT_DIR
@@ -508,11 +508,10 @@ async def sync(
     losses_over_time: list[th.Tensor],
     barrier: Barrier,
     group: dist.ProcessGroup | None = None,
-    device_type: DeviceType = "cuda",
     backend: Any | None = None,
 ) -> None:
     if backend is None:
-        backend = get_backend(device_type)
+        raise ValueError("backend parameter is required")
 
     rank = dist.get_rank()
     world_size = dist.get_world_size()
@@ -653,7 +652,7 @@ async def sync(
         )
 
     # now do an all-gather along gpus (among entries in all_gpu_data)
-    device = get_device(device_type, gpu_idx)
+    device = get_device_from_backend(backend, gpu_idx)
     empty_data = RunningKMeansData(
         centroid_sets=[
             th.zeros_like(centroids) for centroids in gpu_data.synced_data.centroid_sets
@@ -725,7 +724,6 @@ async def gpu_worker(
     save_dir: str | None = None,
     validate_every: int = 64,
     centroid_minibatch_size: int = 65536,
-    device_type: DeviceType = "cuda",
     backend: Any | None = None,
 ) -> None:
     """
@@ -741,11 +739,10 @@ async def gpu_worker(
         save_dir: Directory to save checkpoints (if any)
         validate_every: Validate centroid synchronization every N sync operations (default: 1)
         centroid_minibatch_size: Size of centroid chunks to avoid device limits (default: 65536)
-        device_type: Device type to use for computation ("cuda" or "xpu", defaults to "cuda")
-        backend: Device backend object (if None, will be obtained from device_type)
+        backend: Device backend object (required)
     """
     if backend is None:
-        backend = get_backend(device_type)
+        raise ValueError("backend parameter is required")
 
     logger.info(f"Starting GPU worker {gpu_idx}")
     gpu_data = all_gpu_data[gpu_idx]
@@ -779,7 +776,7 @@ async def gpu_worker(
         logger.trace(f"GPU {gpu_idx} converting router logits to paths")
 
         # (B, L, E)
-        device = get_device(device_type, gpu_idx)
+        device = get_device_from_backend(backend, gpu_idx)
         router_logits = router_logits.to(device)
 
         # convert from logits to paths
@@ -847,7 +844,6 @@ async def gpu_worker(
                 losses_over_time,
                 barrier,
                 group,
-                device_type,
                 backend,
             ),
             timeout=300.0,
@@ -966,7 +962,7 @@ async def kmeans_manhattan(
     logger.trace(f"Total number of devices: {total_gpus}")
 
     assert backend.is_available() and num_gpus > 0, (
-        f"CPU-only not supported yet :( Device {device_type} not available."
+        f"CPU-only not supported yet :( Device {get_device_type_from_backend(backend)} not available."
     )
 
     if effective_batch_size is None:
@@ -1260,7 +1256,6 @@ async def kmeans_manhattan(
                 save_dir,
                 validate_every,
                 centroid_minibatch_size,
-                device_type,
                 backend,
             ),
             name=str(gpu_idx),
@@ -1420,11 +1415,10 @@ async def cluster_paths_async(
     save_every: int | None = None,
     validate_every: int = 64,
     group: dist.ProcessGroup | None = None,
-    device_type: DeviceType = "cuda",
     backend: Any | None = None,
 ) -> None:
     if backend is None:
-        backend = get_backend(device_type)
+        raise ValueError("backend parameter is required")
 
     kmeans_experiment_name = get_experiment_name(
         model_name=model_name,
@@ -1582,7 +1576,6 @@ def cluster_paths(
             save_every=save_every,
             validate_every=validate_every,
             group=gpu_process_group,
-            device_type=device_type,
             backend=backend,
         )
     )
