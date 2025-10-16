@@ -17,7 +17,15 @@ from tqdm import tqdm
 import yaml
 
 from core.async_utils import handle_exceptions
-from core.device import DeviceType, assert_device_type, device_count, empty_cache, get_device, is_available, manual_seed
+from core.device import (
+    DeviceType,
+    assert_device_type,
+    device_count,
+    empty_cache,
+    get_device,
+    is_available,
+    manual_seed,
+)
 from core.moe import convert_router_logits_to_paths
 from core.training import exponential_to_linear_save_steps
 from exp import OUTPUT_DIR
@@ -945,7 +953,9 @@ async def kmeans_manhattan(
     logger.trace(f"Number of nodes: {num_nodes}")
     logger.trace(f"Total number of devices: {total_gpus}")
 
-    assert is_available(device_type) and num_gpus > 0, f"CPU-only not supported yet :( Device {device_type} not available."
+    assert is_available(device_type) and num_gpus > 0, (
+        f"CPU-only not supported yet :( Device {device_type} not available."
+    )
 
     if effective_batch_size is None:
         effective_batch_size = (len(activations) // total_gpus) * total_gpus
@@ -1532,7 +1542,7 @@ def cluster_paths(
 
     # At this point, k is guaranteed to be a tuple[int, ...]
     assert isinstance(k, tuple), "k must be a tuple after processing"
-    
+
     # Validate device type
     assert_device_type(device_type)
 
