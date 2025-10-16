@@ -38,9 +38,6 @@ from exp.training import get_experiment_name
 
 T = TypeVar("T")
 
-# Type alias for PyTorch device backends
-# Note: Using DeviceType from core.device instead of backend objects
-
 
 def check_worker_health(workers: dict[str, asyncio.Task], *, context: str = "") -> None:
     """Check if any workers have failed and raise appropriate exceptions."""
