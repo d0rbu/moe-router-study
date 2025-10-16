@@ -906,6 +906,7 @@ async def kmeans_manhattan(
     save_dir: str | None = None,
     validate_every: int = 64,
     group: dist.ProcessGroup | None = None,
+    accumulation_size: int | None = None,
 ) -> tuple[list[th.Tensor], int, th.Tensor]:
     """
     Perform k-means clustering with Manhattan distance.
@@ -958,12 +959,20 @@ async def kmeans_manhattan(
     if minibatch_size is None:
         minibatch_size = batch_size
 
-    if (leftover_minibatch_size := (batch_size % minibatch_size)) > 0:
+    # Compute accumulation size (default is all batches per GPU)
+    num_batches_per_gpu = batch_size // minibatch_size
+    if accumulation_size is None:
+        accumulation_size = num_batches_per_gpu
+
+    # Ensure batch_size is divisible by minibatch_size * accumulation_size
+    required_divisor = minibatch_size * accumulation_size
+    if (leftover_minibatch_size := (batch_size % required_divisor)) > 0:
         total_leftover_minibatch_size = leftover_minibatch_size * total_gpus
         logger.warning(
-            f"Per-GPU batch size {batch_size} is not divisible by GPU minibatch size "
-            f"{minibatch_size}; {leftover_minibatch_size} left over per GPU, "
-            f"{total_leftover_minibatch_size} left over total"
+            f"Per-GPU batch size {batch_size} is not divisible by minibatch_size * accumulation_size "
+            f"({minibatch_size} * {accumulation_size} = {required_divisor}); "
+            f"{leftover_minibatch_size} left over per GPU, "
+            f"{total_leftover_minibatch_size} tokens left over total"
         )
         batch_size -= leftover_minibatch_size
         effective_batch_size -= total_leftover_minibatch_size
@@ -984,15 +993,18 @@ async def kmeans_manhattan(
     assert effective_batch_size / batch_size == total_gpus, (
         f"effective_batch_size {effective_batch_size} must be batch_size {batch_size} times total_gpus {total_gpus}"
     )
+
     assert batch_size % minibatch_size == 0, (
         f"batch_size {batch_size} must be a multiple of minibatch_size {minibatch_size}"
     )
-
-    accumulation_size = batch_size // minibatch_size
+    assert num_batches_per_gpu % accumulation_size == 0, (
+        f"num_batches_per_gpu {num_batches_per_gpu} must be divisible by accumulation_size {accumulation_size}"
+    )
 
     num_gpu_minibatches = len(activations) // minibatch_size
 
     logger.trace(f"Accumulation size: {accumulation_size}")
+    logger.trace(f"Number of batches per GPU: {num_batches_per_gpu}")
     logger.trace(f"Number of GPU minibatches: {num_gpu_minibatches}")
 
     all_gpu_data = [
@@ -1389,6 +1401,7 @@ async def cluster_paths_async(
     save_every: int | None = None,
     validate_every: int = 64,
     group: dist.ProcessGroup | None = None,
+    accumulation_size: int | None = None,
 ) -> None:
     kmeans_experiment_name = get_experiment_name(
         model_name=model_name,
@@ -1417,6 +1430,7 @@ async def cluster_paths_async(
         save_dir=save_dir,
         validate_every=validate_every,
         group=group,
+        accumulation_size=accumulation_size,
     )
 
     if dist.get_rank() == 0:
@@ -1441,6 +1455,7 @@ async def cluster_paths_async(
             "minibatch_size": minibatch_size,
             "centroid_minibatch_size": centroid_minibatch_size,
             "save_every": save_every,
+            "accumulation_size": accumulation_size,
             "type": KMEANS_TYPE,
             "kmeans_experiment_name": kmeans_experiment_name,
         }
@@ -1468,6 +1483,7 @@ def cluster_paths(
     context_length: int = 2048,
     log_level: str = "INFO",
     num_workers: int = 64,
+    accumulation_size: int | None = None,
 ) -> None:
     print(f"Running with log level: {log_level}")
 
@@ -1537,6 +1553,7 @@ def cluster_paths(
             save_every=save_every,
             validate_every=validate_every,
             group=gpu_process_group,
+            accumulation_size=accumulation_size,
         )
     )
 
@@ -1559,6 +1576,7 @@ def main(
     context_length: int = 2048,
     log_level: str = "INFO",
     num_workers: int = 64,
+    accumulation_size: int | None = None,
 ) -> None:
     cluster_paths(
         model_name,
@@ -1577,6 +1595,7 @@ def main(
         context_length=context_length,
         log_level=log_level,
         num_workers=num_workers,
+        accumulation_size=accumulation_size,
     )
 
 

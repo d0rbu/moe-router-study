@@ -40,7 +40,7 @@ async def _router_jaccard_distance_async(
     logger.debug("Loading activations and initializing distributed...")
     (
         activations,
-        activation_dims,
+        _activation_dims,
         _gpu_process_group,
     ) = await load_activations_and_init_dist(
         model_name=model_name,
