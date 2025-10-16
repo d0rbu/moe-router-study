@@ -27,13 +27,13 @@ def assert_device_type(device_type: str) -> DeviceType:
 
 def get_backend(device_type: DeviceType) -> Any:
     """Get the backend module for the specified device type.
-    
+
     Args:
         device_type: The device type ("cuda" or "xpu")
-        
+
     Returns:
         The appropriate backend module (th.cuda or th.xpu)
-        
+
     Raises:
         ValueError: If the device type is not supported
     """

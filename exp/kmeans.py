@@ -945,7 +945,9 @@ async def kmeans_manhattan(
     logger.trace(f"Number of nodes: {num_nodes}")
     logger.trace(f"Total number of devices: {total_gpus}")
 
-    assert get_backend(device_type).is_available() and num_gpus > 0, f"CPU-only not supported yet :( Device {device_type} not available."
+    assert get_backend(device_type).is_available() and num_gpus > 0, (
+        f"CPU-only not supported yet :( Device {device_type} not available."
+    )
 
     if effective_batch_size is None:
         effective_batch_size = (len(activations) // total_gpus) * total_gpus
