@@ -103,8 +103,8 @@ def lmsys_chat_1m_text(
 
     def _iter():
         if streaming:
-            # Handle both real IterableDataset and test mocks (dict/mock objects)
-            if isinstance(ds, dict) or hasattr(ds, "_mock_name"):
+            # Handle objects that support subscripting (dict, mocks, etc.)
+            if hasattr(ds, "__getitem__"):
                 conversations = ds["conversation"]  # type: ignore[index]
             else:
                 conversations = (sample["conversation"] for sample in ds)
