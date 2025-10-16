@@ -655,7 +655,8 @@ async def sync(
         )
 
     # now do an all-gather along gpus (among entries in all_gpu_data)
-    device = backend.get_device(gpu_idx)
+    device_type = get_device_type_from_backend(backend)
+    device = get_device(device_type, gpu_idx)
     empty_data = RunningKMeansData(
         centroid_sets=[
             th.zeros_like(centroids) for centroids in gpu_data.synced_data.centroid_sets
@@ -779,7 +780,8 @@ async def gpu_worker(
         logger.trace(f"GPU {gpu_idx} converting router logits to paths")
 
         # (B, L, E)
-        device = backend.get_device(gpu_idx)
+        device_type = get_device_type_from_backend(backend)
+        device = get_device(device_type, gpu_idx)
         router_logits = router_logits.to(device)
 
         # convert from logits to paths
