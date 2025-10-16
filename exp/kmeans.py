@@ -17,15 +17,7 @@ from tqdm import tqdm
 import yaml
 
 from core.async_utils import handle_exceptions
-from core.device import (
-    DeviceType,
-    assert_device_type,
-    device_count,
-    empty_cache,
-    get_device,
-    is_available,
-    manual_seed,
-)
+from core.device import DeviceType, assert_device_type, get_backend, get_device
 from core.moe import convert_router_logits_to_paths
 from core.training import exponential_to_linear_save_steps
 from exp import OUTPUT_DIR
@@ -681,7 +673,7 @@ async def sync(
         start=empty_data,
     )
 
-    empty_cache(device_type)
+    get_backend(device_type).empty_cache()
 
     await barrier.wait()
 
@@ -796,7 +788,7 @@ async def gpu_worker(
 
         logger.trace(f"GPU {gpu_idx} emptied cache")
 
-        empty_cache(device_type)
+        get_backend(device_type).empty_cache()
 
         logger.trace(
             f"GPU {gpu_idx} running kmeans step with {len(gpu_data.synced_data.centroid_sets)} centroids"
@@ -942,9 +934,9 @@ async def kmeans_manhattan(
         losses: Losses for each iteration, shape (num_K, T)
     """
     th.manual_seed(seed)
-    manual_seed(device_type, seed)
+    get_backend(device_type).manual_seed(seed)
 
-    num_gpus = device_count(device_type)
+    num_gpus = get_backend(device_type).device_count()
     rank = dist.get_rank()
     num_nodes = dist.get_world_size()
     total_gpus = num_gpus * num_nodes
@@ -953,9 +945,7 @@ async def kmeans_manhattan(
     logger.trace(f"Number of nodes: {num_nodes}")
     logger.trace(f"Total number of devices: {total_gpus}")
 
-    assert is_available(device_type) and num_gpus > 0, (
-        f"CPU-only not supported yet :( Device {device_type} not available."
-    )
+    assert get_backend(device_type).is_available() and num_gpus > 0, f"CPU-only not supported yet :( Device {device_type} not available."
 
     if effective_batch_size is None:
         effective_batch_size = (len(activations) // total_gpus) * total_gpus

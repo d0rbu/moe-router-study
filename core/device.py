@@ -1,6 +1,6 @@
 """Device abstraction layer for CUDA and Intel XPU support."""
 
-from typing import Literal
+from typing import Any, Literal
 
 import torch as th
 
@@ -25,80 +25,22 @@ def assert_device_type(device_type: str) -> DeviceType:
     return device_type  # type: ignore[return-value]
 
 
-def is_available(device_type: DeviceType) -> bool:
-    """Check if the specified device type is available.
-
+def get_backend(device_type: DeviceType) -> Any:
+    """Get the backend module for the specified device type.
+    
     Args:
-        device_type: The device type to check ("cuda" or "xpu")
-
+        device_type: The device type ("cuda" or "xpu")
+        
     Returns:
-        True if the device type is available, False otherwise
+        The appropriate backend module (th.cuda or th.xpu)
+        
+    Raises:
+        ValueError: If the device type is not supported
     """
     if device_type == "cuda":
-        return th.cuda.is_available()
+        return th.cuda
     elif device_type == "xpu":
-        return th.xpu.is_available()
-    else:
-        raise ValueError(f"Unsupported device_type: {device_type}")
-
-
-def device_count(device_type: DeviceType) -> int:
-    """Get the number of devices available for the specified device type.
-
-    Args:
-        device_type: The device type to check ("cuda" or "xpu")
-
-    Returns:
-        The number of available devices
-    """
-    if device_type == "cuda":
-        return th.cuda.device_count()
-    elif device_type == "xpu":
-        return th.xpu.device_count()
-    else:
-        raise ValueError(f"Unsupported device_type: {device_type}")
-
-
-def empty_cache(device_type: DeviceType) -> None:
-    """Release all unoccupied cached memory for the specified device type.
-
-    Args:
-        device_type: The device type to clear cache for ("cuda" or "xpu")
-    """
-    if device_type == "cuda":
-        th.cuda.empty_cache()
-    elif device_type == "xpu":
-        th.xpu.empty_cache()
-    else:
-        raise ValueError(f"Unsupported device_type: {device_type}")
-
-
-def manual_seed(device_type: DeviceType, seed: int) -> None:
-    """Set the random seed for the specified device type.
-
-    Args:
-        device_type: The device type to set seed for ("cuda" or "xpu")
-        seed: The random seed value
-    """
-    if device_type == "cuda":
-        th.cuda.manual_seed(seed)
-    elif device_type == "xpu":
-        th.xpu.manual_seed(seed)
-    else:
-        raise ValueError(f"Unsupported device_type: {device_type}")
-
-
-def manual_seed_all(device_type: DeviceType, seed: int) -> None:
-    """Set the random seed for all devices of the specified device type.
-
-    Args:
-        device_type: The device type to set seed for ("cuda" or "xpu")
-        seed: The random seed value
-    """
-    if device_type == "cuda":
-        th.cuda.manual_seed_all(seed)
-    elif device_type == "xpu":
-        th.xpu.manual_seed_all(seed)
+        return th.xpu
     else:
         raise ValueError(f"Unsupported device_type: {device_type}")
 
