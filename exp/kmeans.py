@@ -33,6 +33,9 @@ from exp.training import get_experiment_name
 
 T = TypeVar("T")
 
+# Type alias for PyTorch device backends
+DeviceBackend = th.cuda | th.xpu
+
 
 def check_worker_health(workers: dict[str, asyncio.Task], *, context: str = "") -> None:
     """Check if any workers have failed and raise appropriate exceptions."""
@@ -508,7 +511,7 @@ async def sync(
     losses_over_time: list[th.Tensor],
     barrier: Barrier,
     group: dist.ProcessGroup | None = None,
-    backend: Any | None = None,
+    backend: DeviceBackend | None = None,
 ) -> None:
     if backend is None:
         raise ValueError("backend parameter is required")
@@ -724,7 +727,7 @@ async def gpu_worker(
     save_dir: str | None = None,
     validate_every: int = 64,
     centroid_minibatch_size: int = 65536,
-    backend: Any | None = None,
+    backend: DeviceBackend | None = None,
 ) -> None:
     """
     GPU worker for distributed k-means clustering.
@@ -923,7 +926,7 @@ async def kmeans_manhattan(
     save_dir: str | None = None,
     validate_every: int = 64,
     group: dist.ProcessGroup | None = None,
-    backend: Any | None = None,
+    backend: DeviceBackend | None = None,
 ) -> tuple[list[th.Tensor], int, th.Tensor]:
     """
     Perform k-means clustering with Manhattan distance.
@@ -1416,7 +1419,7 @@ async def cluster_paths_async(
     save_every: int | None = None,
     validate_every: int = 64,
     group: dist.ProcessGroup | None = None,
-    backend: Any | None = None,
+    backend: DeviceBackend | None = None,
 ) -> None:
     if backend is None:
         raise ValueError("backend parameter is required")
