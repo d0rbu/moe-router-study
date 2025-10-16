@@ -509,7 +509,11 @@ async def sync(
     barrier: Barrier,
     group: dist.ProcessGroup | None = None,
     device_type: DeviceType = "cuda",
+    backend: Any | None = None,
 ) -> None:
+    if backend is None:
+        backend = get_backend(device_type)
+    
     rank = dist.get_rank()
     world_size = dist.get_world_size()
     gpu_data = all_gpu_data[gpu_idx]
@@ -673,7 +677,7 @@ async def sync(
         start=empty_data,
     )
 
-    get_backend(device_type).empty_cache()
+    backend.empty_cache()
 
     await barrier.wait()
 
@@ -722,6 +726,7 @@ async def gpu_worker(
     validate_every: int = 64,
     centroid_minibatch_size: int = 65536,
     device_type: DeviceType = "cuda",
+    backend: Any | None = None,
 ) -> None:
     """
     GPU worker for distributed k-means clustering.
@@ -737,7 +742,11 @@ async def gpu_worker(
         validate_every: Validate centroid synchronization every N sync operations (default: 1)
         centroid_minibatch_size: Size of centroid chunks to avoid device limits (default: 65536)
         device_type: Device type to use for computation ("cuda" or "xpu", defaults to "cuda")
+        backend: Device backend object (if None, will be obtained from device_type)
     """
+    if backend is None:
+        backend = get_backend(device_type)
+    
     logger.info(f"Starting GPU worker {gpu_idx}")
     gpu_data = all_gpu_data[gpu_idx]
     sync_iteration = 0
@@ -788,7 +797,7 @@ async def gpu_worker(
 
         logger.trace(f"GPU {gpu_idx} emptied cache")
 
-        get_backend(device_type).empty_cache()
+        backend.empty_cache()
 
         logger.trace(
             f"GPU {gpu_idx} running kmeans step with {len(gpu_data.synced_data.centroid_sets)} centroids"
@@ -832,7 +841,7 @@ async def gpu_worker(
         logger.trace(f"GPU {gpu_idx} starting sync operation")
 
         await safe_await_with_worker_check(
-            sync(gpu_idx, all_gpu_data, losses_over_time, barrier, group, device_type),
+            sync(gpu_idx, all_gpu_data, losses_over_time, barrier, group, device_type, backend),
             timeout=300.0,
             operation_name=f"sync operation for GPU {gpu_idx}",
         )
@@ -933,10 +942,13 @@ async def kmeans_manhattan(
         top_k: Topk value of the model used to generate the activations
         losses: Losses for each iteration, shape (num_K, T)
     """
-    th.manual_seed(seed)
-    get_backend(device_type).manual_seed(seed)
+    # Get backend once and reuse throughout the function
+    backend = get_backend(device_type)
 
-    num_gpus = get_backend(device_type).device_count()
+    th.manual_seed(seed)
+    backend.manual_seed(seed)
+
+    num_gpus = backend.device_count()
     rank = dist.get_rank()
     num_nodes = dist.get_world_size()
     total_gpus = num_gpus * num_nodes
@@ -945,7 +957,7 @@ async def kmeans_manhattan(
     logger.trace(f"Number of nodes: {num_nodes}")
     logger.trace(f"Total number of devices: {total_gpus}")
 
-    assert get_backend(device_type).is_available() and num_gpus > 0, (
+    assert backend.is_available() and num_gpus > 0, (
         f"CPU-only not supported yet :( Device {device_type} not available."
     )
 
@@ -1241,6 +1253,7 @@ async def kmeans_manhattan(
                 validate_every,
                 centroid_minibatch_size,
                 device_type,
+                backend,
             ),
             name=str(gpu_idx),
         )
@@ -1400,7 +1413,11 @@ async def cluster_paths_async(
     validate_every: int = 64,
     group: dist.ProcessGroup | None = None,
     device_type: DeviceType = "cuda",
+    backend: Any | None = None,
 ) -> None:
+    if backend is None:
+        backend = get_backend(device_type)
+    
     kmeans_experiment_name = get_experiment_name(
         model_name=model_name,
         dataset_name=dataset_name,
@@ -1429,6 +1446,7 @@ async def cluster_paths_async(
         validate_every=validate_every,
         group=group,
         device_type=device_type,
+        backend=backend,
     )
 
     if dist.get_rank() == 0:
@@ -1537,6 +1555,9 @@ def cluster_paths(
 
     # Validate device type
     assert_device_type(device_type)
+    
+    # Get backend once for the entire operation
+    backend = get_backend(device_type)
 
     asyncio.run(
         cluster_paths_async(
@@ -1554,6 +1575,7 @@ def cluster_paths(
             validate_every=validate_every,
             group=gpu_process_group,
             device_type=device_type,
+            backend=backend,
         )
     )
 
