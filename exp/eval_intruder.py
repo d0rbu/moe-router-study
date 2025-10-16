@@ -118,6 +118,7 @@ ACTIVATION_KEYS_TO_HOOKPOINT = {
 
 def load_hookpoints_and_saes(
     sae_base_path: Path,
+    dtype: th.dtype,
 ) -> dict[str, Callable[[th.Tensor], th.Tensor]]:
     hookpoints_to_saes = {}
 
@@ -133,6 +134,7 @@ def load_hookpoints_and_saes(
             config = json.load(f)
 
         ae, _ = load_dictionary(sae_dirpath, device="cuda")
+        ae = ae.to(dtype)
         trainer_config = config.get("trainer")
         if trainer_config is None:
             logger.trace(config)
@@ -171,6 +173,7 @@ def load_hookpoints_and_saes(
 
 def load_hookpoints(
     root_dir: Path,
+    dtype: th.dtype,
 ) -> tuple[dict[str, Callable[[th.Tensor], th.Tensor]], int | None]:
     """
     Loads the hookpoints from the config file.
@@ -178,7 +181,7 @@ def load_hookpoints(
     sae_config_path = root_dir / "config.yaml"
     if sae_config_path.is_file():
         # this is a sae experiment, not paths
-        return load_hookpoints_and_saes(root_dir), None
+        return load_hookpoints_and_saes(root_dir, dtype=dtype), None
 
     paths_path = root_dir / KMEANS_FILENAME
     if not paths_path.is_file():
@@ -193,7 +196,11 @@ def load_hookpoints(
     hookpoints_to_sparse_encode = {}
     for centroids_idx, centroids in enumerate(centroid_sets):
         path_projection = nn.Linear(
-            centroids.shape[1], centroids.shape[0], bias=False, device="cuda"
+            centroids.shape[1],
+            centroids.shape[0],
+            bias=False,
+            device="cuda",
+            dtype=dtype,
         )
         path_projection.weight.data.copy_(centroids)
         hookpoints_to_sparse_encode[f"paths_{centroids_idx}"] = path_projection
@@ -226,7 +233,7 @@ class LatentPathsCache(LatentCache):
 
         self.log_path = log_path
 
-    def run(self, n_tokens: int, tokens: th.Tensor, top_k: int):
+    def run(self, n_tokens: int, tokens: th.Tensor, top_k: int, dtype: th.dtype):
         """
         Run the latent caching process.
 
@@ -234,6 +241,7 @@ class LatentPathsCache(LatentCache):
             n_tokens: Total number of tokens to process.
             tokens: Input tokens.
             top_k: Top k paths to cache.
+            dtype: Data type to use for the sparse paths.
         """
         token_batches = self.load_token_batches(n_tokens, tokens)
 
@@ -276,7 +284,7 @@ class LatentPathsCache(LatentCache):
             path_indices = th.topk(router_paths, k=top_k, dim=-1).indices
 
             sparse_paths = th.zeros(
-                router_paths.shape, device=router_paths.device, dtype=th.float32
+                router_paths.shape, device=router_paths.device, dtype=dtype
             )
             sparse_paths.scatter_(-1, path_indices, 1)
             del path_indices, router_paths
@@ -301,6 +309,7 @@ def populate_cache(
     latents_path: Path,
     tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast,
     top_k: int,
+    dtype: th.dtype,
 ) -> None:
     """
     Populates an on-disk cache in `latents_path` with latent activations.
@@ -368,7 +377,7 @@ def populate_cache(
         batch_size=cache_cfg.batch_size,
         log_path=log_path,
     )
-    cache.run(cache_cfg.n_tokens, tokens, top_k=top_k)
+    cache.run(cache_cfg.n_tokens, tokens, top_k=top_k, dtype=dtype)
 
     if run_cfg.verbose:
         cache.generate_statistics_cache()
@@ -390,6 +399,7 @@ def eval_intruder(
     model_name: str = "olmoe-i",
     model_step_ckpt: int | None = None,
     model_dtype: str = "bf16",
+    dtype: str = "bf16",
     ctxlen: int = 256,
     load_in_8bit: bool = False,
     n_tokens: int = 10_000_000,
@@ -419,7 +429,8 @@ def eval_intruder(
 
     model_config = get_model_config(model_name)
     model_ckpt = model_config.get_checkpoint_strict(step=model_step_ckpt)
-    dtype = get_dtype(model_dtype)
+    model_dtype = get_dtype(model_dtype)
+    dtype = get_dtype(dtype)
 
     quantization_config = None
     if load_in_8bit:
@@ -442,14 +453,14 @@ def eval_intruder(
         revision=str(model_ckpt),
         device_map={"": "cuda"},
         quantization_config=quantization_config,
-        torch_dtype=dtype,
+        torch_dtype=model_dtype,
         token=hf_token,
     )
     tokenizer = model.tokenizer
 
     logger.trace("Model and tokenizer initialized")
 
-    hookpoint_to_sparse_encode, top_k = load_hookpoints(root_dir)
+    hookpoint_to_sparse_encode, top_k = load_hookpoints(root_dir, dtype=dtype)
     hookpoints = list(hookpoint_to_sparse_encode.keys())
 
     latent_range = th.arange(n_latents) if n_latents else None
@@ -506,6 +517,7 @@ def eval_intruder(
             latents_path,
             tokenizer,
             top_k=top_k,
+            dtype=dtype,
         )
     else:
         logger.debug("No non-redundant hookpoints found, skipping cache population")
