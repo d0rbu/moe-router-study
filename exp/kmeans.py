@@ -17,7 +17,13 @@ from tqdm import tqdm
 import yaml
 
 from core.async_utils import handle_exceptions
-from core.device import DeviceType, assert_device_type, get_backend, get_device, get_device_type_from_backend, get_device_from_backend
+from core.device import (
+    DeviceType,
+    assert_device_type,
+    get_backend,
+    get_device,
+    get_device_type_from_backend,
+)
 from core.moe import convert_router_logits_to_paths
 from core.training import exponential_to_linear_save_steps
 from exp import OUTPUT_DIR
@@ -34,7 +40,7 @@ from exp.training import get_experiment_name
 T = TypeVar("T")
 
 # Type alias for PyTorch device backends
-DeviceBackend = th.cuda | th.xpu
+# Note: Using DeviceType from core.device instead of backend objects
 
 
 def check_worker_health(workers: dict[str, asyncio.Task], *, context: str = "") -> None:
@@ -511,10 +517,12 @@ async def sync(
     losses_over_time: list[th.Tensor],
     barrier: Barrier,
     group: dist.ProcessGroup | None = None,
-    backend: DeviceBackend | None = None,
+    device_type: DeviceType | None = None,
 ) -> None:
-    if backend is None:
-        raise ValueError("backend parameter is required")
+    if device_type is None:
+        raise ValueError("device_type parameter is required")
+
+    backend = get_backend(device_type)
 
     rank = dist.get_rank()
     world_size = dist.get_world_size()
@@ -728,7 +736,7 @@ async def gpu_worker(
     save_dir: str | None = None,
     validate_every: int = 64,
     centroid_minibatch_size: int = 65536,
-    backend: DeviceBackend | None = None,
+    device_type: DeviceType | None = None,
 ) -> None:
     """
     GPU worker for distributed k-means clustering.
@@ -743,10 +751,12 @@ async def gpu_worker(
         save_dir: Directory to save checkpoints (if any)
         validate_every: Validate centroid synchronization every N sync operations (default: 1)
         centroid_minibatch_size: Size of centroid chunks to avoid device limits (default: 65536)
-        backend: Device backend object (required)
+        device_type: Device type ("cuda" or "xpu", required)
     """
-    if backend is None:
-        raise ValueError("backend parameter is required")
+    if device_type is None:
+        raise ValueError("device_type parameter is required")
+
+    backend = get_backend(device_type)
 
     logger.info(f"Starting GPU worker {gpu_idx}")
     gpu_data = all_gpu_data[gpu_idx]
@@ -849,7 +859,7 @@ async def gpu_worker(
                 losses_over_time,
                 barrier,
                 group,
-                backend,
+                device_type,
             ),
             timeout=300.0,
             operation_name=f"sync operation for GPU {gpu_idx}",
@@ -928,7 +938,7 @@ async def kmeans_manhattan(
     save_dir: str | None = None,
     validate_every: int = 64,
     group: dist.ProcessGroup | None = None,
-    backend: DeviceBackend | None = None,
+    device_type: DeviceType | None = None,
 ) -> tuple[list[th.Tensor], int, th.Tensor]:
     """
     Perform k-means clustering with Manhattan distance.
@@ -944,7 +954,7 @@ async def kmeans_manhattan(
         save_every: Save checkpoints every N iterations. If None, no checkpoints are saved.
         save_dir: Directory to save checkpoints. Required if save_every is specified.
         validate_every: Run centroid validation every N iterations. If None, only validate at the end.
-        backend: Device backend object (if None, defaults to CUDA backend)
+        device_type: Device type ("cuda" or "xpu", if None defaults to "cuda")
 
     Returns:
         centroid_sets: List of cluster centroids, each element of shape (K, D)
@@ -952,8 +962,10 @@ async def kmeans_manhattan(
         losses: Losses for each iteration, shape (num_K, T)
     """
     # Get backend once and reuse throughout the function
-    if backend is None:
-        backend = get_backend("cuda")  # Default to CUDA for backward compatibility
+    if device_type is None:
+        device_type = "cuda"  # Default to CUDA for backward compatibility
+
+    backend = get_backend(device_type)
 
     th.manual_seed(seed)
     backend.manual_seed(seed)
@@ -1262,7 +1274,7 @@ async def kmeans_manhattan(
                 save_dir,
                 validate_every,
                 centroid_minibatch_size,
-                backend,
+                device_type,
             ),
             name=str(gpu_idx),
         )
@@ -1421,10 +1433,10 @@ async def cluster_paths_async(
     save_every: int | None = None,
     validate_every: int = 64,
     group: dist.ProcessGroup | None = None,
-    backend: DeviceBackend | None = None,
+    device_type: DeviceType | None = None,
 ) -> None:
-    if backend is None:
-        raise ValueError("backend parameter is required")
+    if device_type is None:
+        raise ValueError("device_type parameter is required")
 
     kmeans_experiment_name = get_experiment_name(
         model_name=model_name,
@@ -1453,7 +1465,7 @@ async def cluster_paths_async(
         save_dir=save_dir,
         validate_every=validate_every,
         group=group,
-        backend=backend,
+        device_type=device_type,
     )
 
     if dist.get_rank() == 0:
@@ -1563,9 +1575,6 @@ def cluster_paths(
     # Validate device type
     assert_device_type(device_type)
 
-    # Get backend once for the entire operation
-    backend = get_backend(device_type)
-
     asyncio.run(
         cluster_paths_async(
             model_name=model_name,
@@ -1581,7 +1590,7 @@ def cluster_paths(
             save_every=save_every,
             validate_every=validate_every,
             group=gpu_process_group,
-            backend=backend,
+            device_type=device_type,
         )
     )
 
