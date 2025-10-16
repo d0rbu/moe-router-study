@@ -429,8 +429,8 @@ def eval_intruder(
 
     model_config = get_model_config(model_name)
     model_ckpt = model_config.get_checkpoint_strict(step=model_step_ckpt)
-    model_dtype = get_dtype(model_dtype)
-    dtype = get_dtype(dtype)
+    model_dtype_torch = get_dtype(model_dtype)
+    dtype_torch = get_dtype(dtype)
 
     quantization_config = None
     if load_in_8bit:
@@ -453,14 +453,14 @@ def eval_intruder(
         revision=str(model_ckpt),
         device_map={"": "cuda"},
         quantization_config=quantization_config,
-        torch_dtype=model_dtype,
+        torch_dtype=model_dtype_torch,
         token=hf_token,
     )
     tokenizer = model.tokenizer
 
     logger.trace("Model and tokenizer initialized")
 
-    hookpoint_to_sparse_encode, top_k = load_hookpoints(root_dir, dtype=dtype)
+    hookpoint_to_sparse_encode, top_k = load_hookpoints(root_dir, dtype=dtype_torch)
     hookpoints = list(hookpoint_to_sparse_encode.keys())
 
     latent_range = th.arange(n_latents) if n_latents else None
@@ -509,6 +509,8 @@ def eval_intruder(
     )
     if nrh:
         logger.info(f"Populating cache with {len(nrh)} hookpoints")
+        if top_k is None:
+            raise ValueError("top_k cannot be None when populating cache")
         populate_cache(
             run_cfg,
             model,
@@ -517,7 +519,7 @@ def eval_intruder(
             latents_path,
             tokenizer,
             top_k=top_k,
-            dtype=dtype,
+            dtype=dtype_torch,
         )
     else:
         logger.debug("No non-redundant hookpoints found, skipping cache population")

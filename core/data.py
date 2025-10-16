@@ -17,7 +17,11 @@ def fineweb_10bt_text(
         "HuggingFaceFW/fineweb", name="sample-10BT", split="train", streaming=True
     )
 
-    return fineweb["text"]
+    # Handle both real IterableDataset and test mocks (dict)
+    if isinstance(fineweb, dict):
+        return fineweb["text"]
+    else:
+        return (sample["text"] for sample in fineweb)
 
 
 def toy_text(
@@ -39,7 +43,12 @@ def smollm2_small(
 ) -> Iterable[str]:
     smollm2_135m_10b = load_dataset("EleutherAI/SmolLM2-135M-10B", split="train[:1%]")
 
-    return smollm2_135m_10b["text"]
+    # Handle both real Dataset and test mocks (dict)
+    if isinstance(smollm2_135m_10b, dict):
+        return smollm2_135m_10b["text"]
+    else:
+        dataset = assert_type(smollm2_135m_10b, Dataset)
+        return dataset["text"]
 
 
 def lmsys_chat_1m_text(
@@ -94,7 +103,11 @@ def lmsys_chat_1m_text(
 
     def _iter():
         if streaming:
-            conversations = ds["conversation"]
+            # Handle objects that support subscripting (dict, mocks, etc.)
+            if hasattr(ds, "__getitem__"):
+                conversations = ds["conversation"]  # type: ignore[index]
+            else:
+                conversations = (sample["conversation"] for sample in ds)
             iterator = tqdm(conversations, desc="Formatting conversations")
         else:
             subset_ds = dataset.select(range(start_idx, stop_idx))
