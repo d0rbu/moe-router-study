@@ -17,6 +17,12 @@ from tqdm import tqdm
 import yaml
 
 from core.async_utils import handle_exceptions
+from core.device import (
+    DeviceType,
+    assert_device_type,
+    get_backend,
+    get_device,
+)
 from core.moe import convert_router_logits_to_paths
 from core.training import exponential_to_linear_save_steps
 from exp import OUTPUT_DIR
@@ -507,7 +513,10 @@ async def sync(
     losses_over_time: list[th.Tensor],
     barrier: Barrier,
     group: dist.ProcessGroup | None = None,
+    device_type: DeviceType = "cuda",
 ) -> None:
+    backend = get_backend(device_type)
+
     rank = dist.get_rank()
     world_size = dist.get_world_size()
     gpu_data = all_gpu_data[gpu_idx]
@@ -647,7 +656,7 @@ async def sync(
         )
 
     # now do an all-gather along gpus (among entries in all_gpu_data)
-    device = th.device(f"cuda:{gpu_idx}")
+    device = get_device(device_type, gpu_idx)
     empty_data = RunningKMeansData(
         centroid_sets=[
             th.zeros_like(centroids) for centroids in gpu_data.synced_data.centroid_sets
@@ -671,7 +680,7 @@ async def sync(
         start=empty_data,
     )
 
-    th.cuda.empty_cache()
+    backend.empty_cache()
 
     await barrier.wait()
 
@@ -719,21 +728,25 @@ async def gpu_worker(
     save_dir: str | None = None,
     validate_every: int = 64,
     centroid_minibatch_size: int = 65536,
+    device_type: DeviceType = "cuda",
 ) -> None:
     """
     GPU worker for distributed k-means clustering.
 
     Args:
-        gpu_idx: Index of the GPU this worker is responsible for
-        all_gpu_data: List of GPU data objects for all GPUs
+        gpu_idx: Index of the device this worker is responsible for
+        all_gpu_data: List of GPU data objects for all devices
         top_k: Number of top experts to consider
         losses_over_time: Shared list to store losses over time
         barrier: Synchronization barrier for coordinating workers
         group: Distributed process group for communication
         save_dir: Directory to save checkpoints (if any)
         validate_every: Validate centroid synchronization every N sync operations (default: 1)
-        centroid_minibatch_size: Size of centroid chunks to avoid CUDA limits (default: 65536)
+        centroid_minibatch_size: Size of centroid chunks to avoid device limits (default: 65536)
+        device_type: Device type ("cuda" or "xpu", defaults to "cuda")
     """
+    backend = get_backend(device_type)
+
     logger.info(f"Starting GPU worker {gpu_idx}")
     gpu_data = all_gpu_data[gpu_idx]
     sync_iteration = 0
@@ -766,7 +779,7 @@ async def gpu_worker(
         logger.trace(f"GPU {gpu_idx} converting router logits to paths")
 
         # (B, L, E)
-        device = th.device(f"cuda:{gpu_idx}")
+        device = get_device(device_type, gpu_idx)
         router_logits = router_logits.to(device)
 
         # convert from logits to paths
@@ -784,7 +797,7 @@ async def gpu_worker(
 
         logger.trace(f"GPU {gpu_idx} emptied cache")
 
-        th.cuda.empty_cache()
+        backend.empty_cache()
 
         logger.trace(
             f"GPU {gpu_idx} running kmeans step with {len(gpu_data.synced_data.centroid_sets)} centroids"
@@ -828,7 +841,14 @@ async def gpu_worker(
         logger.trace(f"GPU {gpu_idx} starting sync operation")
 
         await safe_await_with_worker_check(
-            sync(gpu_idx, all_gpu_data, losses_over_time, barrier, group),
+            sync(
+                gpu_idx,
+                all_gpu_data,
+                losses_over_time,
+                barrier,
+                group,
+                device_type,
+            ),
             timeout=300.0,
             operation_name=f"sync operation for GPU {gpu_idx}",
         )
@@ -906,6 +926,7 @@ async def kmeans_manhattan(
     save_dir: str | None = None,
     validate_every: int = 64,
     group: dist.ProcessGroup | None = None,
+    device_type: DeviceType = "cuda",
 ) -> tuple[list[th.Tensor], int, th.Tensor]:
     """
     Perform k-means clustering with Manhattan distance.
@@ -916,30 +937,36 @@ async def kmeans_manhattan(
         effective_batch_size: Batch size for k-means updates. If None, use the batch size of the activations.
         max_iters: Maximum number of iterations
         minibatch_size: Batch size for processing data. If None, process all data at once.
-        centroid_minibatch_size: Size of centroid chunks to avoid CUDA limits (defaults to 16384)
+        centroid_minibatch_size: Size of centroid chunks to avoid device limits (defaults to 16384)
         seed: Random seed for initialization
         save_every: Save checkpoints every N iterations. If None, no checkpoints are saved.
         save_dir: Directory to save checkpoints. Required if save_every is specified.
         validate_every: Run centroid validation every N iterations. If None, only validate at the end.
+        device_type: Device type ("cuda" or "xpu", defaults to "cuda")
 
     Returns:
         centroid_sets: List of cluster centroids, each element of shape (K, D)
         top_k: Topk value of the model used to generate the activations
         losses: Losses for each iteration, shape (num_K, T)
     """
-    th.manual_seed(seed)
-    th.cuda.manual_seed(seed)
+    # Get backend once and reuse throughout the function
+    backend = get_backend(device_type)
 
-    num_gpus = th.cuda.device_count()
+    th.manual_seed(seed)
+    backend.manual_seed(seed)
+
+    num_gpus = backend.device_count()
     rank = dist.get_rank()
     num_nodes = dist.get_world_size()
     total_gpus = num_gpus * num_nodes
 
-    logger.trace(f"Number of GPUs: {num_gpus}")
+    logger.trace(f"Number of devices: {num_gpus}")
     logger.trace(f"Number of nodes: {num_nodes}")
-    logger.trace(f"Total number of GPUs: {total_gpus}")
+    logger.trace(f"Total number of devices: {total_gpus}")
 
-    assert th.cuda.is_available() and num_gpus > 0, "CPU-only not supported yet :("
+    assert backend.is_available() and num_gpus > 0, (
+        f"CPU-only not supported yet :( Device {device_type} not available."
+    )
 
     if effective_batch_size is None:
         effective_batch_size = (len(activations) // total_gpus) * total_gpus
@@ -1232,6 +1259,7 @@ async def kmeans_manhattan(
                 save_dir,
                 validate_every,
                 centroid_minibatch_size,
+                device_type,
             ),
             name=str(gpu_idx),
         )
@@ -1390,6 +1418,7 @@ async def cluster_paths_async(
     save_every: int | None = None,
     validate_every: int = 64,
     group: dist.ProcessGroup | None = None,
+    device_type: DeviceType = "cuda",
 ) -> None:
     kmeans_experiment_name = get_experiment_name(
         model_name=model_name,
@@ -1418,6 +1447,7 @@ async def cluster_paths_async(
         save_dir=save_dir,
         validate_every=validate_every,
         group=group,
+        device_type=device_type,
     )
 
     if dist.get_rank() == 0:
@@ -1469,6 +1499,7 @@ def cluster_paths(
     context_length: int = 2048,
     log_level: str = "INFO",
     num_workers: int = 64,
+    device_type: DeviceType = "cuda",
 ) -> None:
     print(f"Running with log level: {log_level}")
 
@@ -1523,6 +1554,9 @@ def cluster_paths(
     # At this point, k is guaranteed to be a tuple[int, ...]
     assert isinstance(k, tuple), "k must be a tuple after processing"
 
+    # Validate device type
+    assert_device_type(device_type)
+
     asyncio.run(
         cluster_paths_async(
             model_name=model_name,
@@ -1538,6 +1572,7 @@ def cluster_paths(
             save_every=save_every,
             validate_every=validate_every,
             group=gpu_process_group,
+            device_type=device_type,
         )
     )
 
@@ -1560,6 +1595,7 @@ def main(
     context_length: int = 2048,
     log_level: str = "INFO",
     num_workers: int = 64,
+    device_type: DeviceType = "cuda",
 ) -> None:
     cluster_paths(
         model_name,
@@ -1578,6 +1614,7 @@ def main(
         context_length=context_length,
         log_level=log_level,
         num_workers=num_workers,
+        device_type=device_type,
     )
 
 
