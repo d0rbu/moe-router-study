@@ -22,7 +22,6 @@ from core.device import (
     assert_device_type,
     get_backend,
     get_device,
-    get_device_type_from_backend,
 )
 from core.moe import convert_router_logits_to_paths
 from core.training import exponential_to_linear_save_steps
@@ -517,11 +516,8 @@ async def sync(
     losses_over_time: list[th.Tensor],
     barrier: Barrier,
     group: dist.ProcessGroup | None = None,
-    device_type: DeviceType | None = None,
+    device_type: DeviceType = "cuda",
 ) -> None:
-    if device_type is None:
-        raise ValueError("device_type parameter is required")
-
     backend = get_backend(device_type)
 
     rank = dist.get_rank()
@@ -663,7 +659,6 @@ async def sync(
         )
 
     # now do an all-gather along gpus (among entries in all_gpu_data)
-    device_type = get_device_type_from_backend(backend)
     device = get_device(device_type, gpu_idx)
     empty_data = RunningKMeansData(
         centroid_sets=[
@@ -736,7 +731,7 @@ async def gpu_worker(
     save_dir: str | None = None,
     validate_every: int = 64,
     centroid_minibatch_size: int = 65536,
-    device_type: DeviceType | None = None,
+    device_type: DeviceType = "cuda",
 ) -> None:
     """
     GPU worker for distributed k-means clustering.
@@ -751,11 +746,8 @@ async def gpu_worker(
         save_dir: Directory to save checkpoints (if any)
         validate_every: Validate centroid synchronization every N sync operations (default: 1)
         centroid_minibatch_size: Size of centroid chunks to avoid device limits (default: 65536)
-        device_type: Device type ("cuda" or "xpu", required)
+        device_type: Device type ("cuda" or "xpu", defaults to "cuda")
     """
-    if device_type is None:
-        raise ValueError("device_type parameter is required")
-
     backend = get_backend(device_type)
 
     logger.info(f"Starting GPU worker {gpu_idx}")
@@ -790,7 +782,6 @@ async def gpu_worker(
         logger.trace(f"GPU {gpu_idx} converting router logits to paths")
 
         # (B, L, E)
-        device_type = get_device_type_from_backend(backend)
         device = get_device(device_type, gpu_idx)
         router_logits = router_logits.to(device)
 
@@ -938,7 +929,7 @@ async def kmeans_manhattan(
     save_dir: str | None = None,
     validate_every: int = 64,
     group: dist.ProcessGroup | None = None,
-    device_type: DeviceType | None = None,
+    device_type: DeviceType = "cuda",
 ) -> tuple[list[th.Tensor], int, th.Tensor]:
     """
     Perform k-means clustering with Manhattan distance.
@@ -954,7 +945,7 @@ async def kmeans_manhattan(
         save_every: Save checkpoints every N iterations. If None, no checkpoints are saved.
         save_dir: Directory to save checkpoints. Required if save_every is specified.
         validate_every: Run centroid validation every N iterations. If None, only validate at the end.
-        device_type: Device type ("cuda" or "xpu", if None defaults to "cuda")
+        device_type: Device type ("cuda" or "xpu", defaults to "cuda")
 
     Returns:
         centroid_sets: List of cluster centroids, each element of shape (K, D)
@@ -962,9 +953,6 @@ async def kmeans_manhattan(
         losses: Losses for each iteration, shape (num_K, T)
     """
     # Get backend once and reuse throughout the function
-    if device_type is None:
-        device_type = "cuda"  # Default to CUDA for backward compatibility
-
     backend = get_backend(device_type)
 
     th.manual_seed(seed)
@@ -980,7 +968,7 @@ async def kmeans_manhattan(
     logger.trace(f"Total number of devices: {total_gpus}")
 
     assert backend.is_available() and num_gpus > 0, (
-        f"CPU-only not supported yet :( Device {get_device_type_from_backend(backend)} not available."
+        f"CPU-only not supported yet :( Device {device_type} not available."
     )
 
     if effective_batch_size is None:
@@ -1433,11 +1421,8 @@ async def cluster_paths_async(
     save_every: int | None = None,
     validate_every: int = 64,
     group: dist.ProcessGroup | None = None,
-    device_type: DeviceType | None = None,
+    device_type: DeviceType = "cuda",
 ) -> None:
-    if device_type is None:
-        raise ValueError("device_type parameter is required")
-
     kmeans_experiment_name = get_experiment_name(
         model_name=model_name,
         dataset_name=dataset_name,
