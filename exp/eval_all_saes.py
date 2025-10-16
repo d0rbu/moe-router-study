@@ -134,9 +134,31 @@ def run_saebench_eval(
     batchsize: int,
     dtype: str,
     seed: int,
+    skip_autointerp: bool = False,
+    skip_sparse_probing: bool = False,
 ) -> bool:
     """Run SAEBench evaluation on an experiment."""
     logger.info(f"Running SAEBench evaluation on {experiment_name}")
+
+    # Filter eval_types based on skip flags
+    filtered_eval_types = eval_types.copy() if eval_types else []
+    if skip_autointerp and "autointerp" in filtered_eval_types:
+        filtered_eval_types.remove("autointerp")
+        logger.info("Skipping autointerp evaluation")
+    if skip_sparse_probing and "sparse_probing" in filtered_eval_types:
+        filtered_eval_types.remove("sparse_probing")
+        logger.info("Skipping sparse_probing evaluation")
+
+    # Validate that we're not skipping everything
+    if skip_autointerp and skip_sparse_probing:
+        # Check if we would be left with no evaluations
+        remaining_evals = [
+            t for t in filtered_eval_types if t not in ["autointerp", "sparse_probing"]
+        ]
+        if not remaining_evals:
+            logger.warning(
+                "Cannot skip both autointerp and sparse_probing when no other evaluations are specified"
+            )
 
     cmd = [
         "uv",
@@ -156,8 +178,8 @@ def run_saebench_eval(
         str(seed),
     ]
 
-    if eval_types:
-        for eval_type in eval_types:
+    if filtered_eval_types:
+        for eval_type in filtered_eval_types:
             cmd.extend(["--eval-types", eval_type])
 
     logger.debug(f"🔧 Running command: {' '.join(cmd)}")
@@ -702,6 +724,8 @@ def main(
     dtype: str,
     seed: int,
     skip_evaluation: bool,
+    skip_autointerp: bool = False,
+    skip_sparse_probing: bool = False,
 ) -> None:
     """Main evaluation pipeline."""
     output_path = Path(OUTPUT_DIR)
@@ -714,9 +738,15 @@ def main(
     for exp in experiments:
         logger.info(f"  - {exp.experiment_name}: {len(exp.saes)} SAE configurations")
 
-    logger.debug(
-        f"Evaluation parameters: skip_evaluation={skip_evaluation}, run_saebench={run_saebench}, run_intruder={run_intruder}"
+    logger.info(
+        f"Configuration: run_saebench={run_saebench}, run_intruder={run_intruder}, skip_autointerp={skip_autointerp}, skip_sparse_probing={skip_sparse_probing}"
     )
+
+    # Validation similar to eval_all_paths.py
+    if not run_saebench and (skip_autointerp or skip_sparse_probing):
+        logger.warning(
+            "Cannot skip autointerp or sparse probing if SAEBench is not run"
+        )
 
     if not skip_evaluation:
         logger.debug("🚀 Starting evaluation phase...")
@@ -734,6 +764,8 @@ def main(
                     saebench_batchsize,
                     dtype,
                     seed,
+                    skip_autointerp,
+                    skip_sparse_probing,
                 )
                 if not saebench_success:
                     raise RuntimeError(
@@ -789,6 +821,8 @@ def eval_all_saes(
     model_name: str = "olmoe-i",
     run_saebench: bool = True,
     run_intruder: bool = True,
+    skip_autointerp: bool = False,
+    skip_sparse_probing: bool = False,
     saebench_eval_types: list[str] | None = None,
     saebench_batchsize: int = 512,
     intruder_n_tokens: int = 10_000_000,
@@ -799,7 +833,25 @@ def eval_all_saes(
     skip_evaluation: bool = False,
     log_level: str = "INFO",
 ) -> None:
-    """Evaluate all SAE experiments and generate rankings."""
+    """
+    Evaluate all SAE experiments and generate rankings.
+
+    Args:
+        model_name: Model name to evaluate on
+        run_saebench: Whether to run SAEBench evaluation
+        run_intruder: Whether to run intruder evaluation
+        skip_autointerp: Whether to skip autointerp evaluation (only applies if run_saebench=True)
+        skip_sparse_probing: Whether to skip sparse_probing evaluation (only applies if run_saebench=True)
+        saebench_eval_types: List of evaluation types for SAEBench (if None, uses default set)
+        saebench_batchsize: Batch size for SAEBench evaluation
+        intruder_n_tokens: Number of tokens for intruder evaluation
+        intruder_batchsize: Batch size for intruder evaluation
+        intruder_n_latents: Number of latents for intruder evaluation
+        dtype: Data type for evaluation
+        seed: Random seed
+        skip_evaluation: Whether to skip evaluation and only aggregate existing results
+        log_level: Logging level
+    """
     # Setup logging
     logger.remove()
     logger.add(sys.stderr, level=log_level)
@@ -817,6 +869,8 @@ def eval_all_saes(
         dtype=dtype,
         seed=seed,
         skip_evaluation=skip_evaluation,
+        skip_autointerp=skip_autointerp,
+        skip_sparse_probing=skip_sparse_probing,
     )
 
 
