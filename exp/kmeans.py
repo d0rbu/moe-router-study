@@ -652,7 +652,7 @@ async def sync(
         )
 
     # now do an all-gather along gpus (among entries in all_gpu_data)
-    device = get_device_from_backend(backend, gpu_idx)
+    device = backend.get_device(gpu_idx)
     empty_data = RunningKMeansData(
         centroid_sets=[
             th.zeros_like(centroids) for centroids in gpu_data.synced_data.centroid_sets
@@ -776,7 +776,7 @@ async def gpu_worker(
         logger.trace(f"GPU {gpu_idx} converting router logits to paths")
 
         # (B, L, E)
-        device = get_device_from_backend(backend, gpu_idx)
+        device = backend.get_device(gpu_idx)
         router_logits = router_logits.to(device)
 
         # convert from logits to paths
@@ -923,7 +923,7 @@ async def kmeans_manhattan(
     save_dir: str | None = None,
     validate_every: int = 64,
     group: dist.ProcessGroup | None = None,
-    device_type: DeviceType = "cuda",
+    backend: Any | None = None,
 ) -> tuple[list[th.Tensor], int, th.Tensor]:
     """
     Perform k-means clustering with Manhattan distance.
@@ -939,7 +939,7 @@ async def kmeans_manhattan(
         save_every: Save checkpoints every N iterations. If None, no checkpoints are saved.
         save_dir: Directory to save checkpoints. Required if save_every is specified.
         validate_every: Run centroid validation every N iterations. If None, only validate at the end.
-        device_type: Device type to use for computation ("cuda" or "xpu", defaults to "cuda")
+        backend: Device backend object (if None, defaults to CUDA backend)
 
     Returns:
         centroid_sets: List of cluster centroids, each element of shape (K, D)
@@ -947,7 +947,8 @@ async def kmeans_manhattan(
         losses: Losses for each iteration, shape (num_K, T)
     """
     # Get backend once and reuse throughout the function
-    backend = get_backend(device_type)
+    if backend is None:
+        backend = get_backend("cuda")  # Default to CUDA for backward compatibility
 
     th.manual_seed(seed)
     backend.manual_seed(seed)
@@ -1447,7 +1448,6 @@ async def cluster_paths_async(
         save_dir=save_dir,
         validate_every=validate_every,
         group=group,
-        device_type=device_type,
         backend=backend,
     )
 
