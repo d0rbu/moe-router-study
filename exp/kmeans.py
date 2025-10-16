@@ -513,7 +513,7 @@ async def sync(
 ) -> None:
     if backend is None:
         backend = get_backend(device_type)
-    
+
     rank = dist.get_rank()
     world_size = dist.get_world_size()
     gpu_data = all_gpu_data[gpu_idx]
@@ -746,7 +746,7 @@ async def gpu_worker(
     """
     if backend is None:
         backend = get_backend(device_type)
-    
+
     logger.info(f"Starting GPU worker {gpu_idx}")
     gpu_data = all_gpu_data[gpu_idx]
     sync_iteration = 0
@@ -841,7 +841,15 @@ async def gpu_worker(
         logger.trace(f"GPU {gpu_idx} starting sync operation")
 
         await safe_await_with_worker_check(
-            sync(gpu_idx, all_gpu_data, losses_over_time, barrier, group, device_type, backend),
+            sync(
+                gpu_idx,
+                all_gpu_data,
+                losses_over_time,
+                barrier,
+                group,
+                device_type,
+                backend,
+            ),
             timeout=300.0,
             operation_name=f"sync operation for GPU {gpu_idx}",
         )
@@ -1417,7 +1425,7 @@ async def cluster_paths_async(
 ) -> None:
     if backend is None:
         backend = get_backend(device_type)
-    
+
     kmeans_experiment_name = get_experiment_name(
         model_name=model_name,
         dataset_name=dataset_name,
@@ -1555,7 +1563,7 @@ def cluster_paths(
 
     # Validate device type
     assert_device_type(device_type)
-    
+
     # Get backend once for the entire operation
     backend = get_backend(device_type)
 
