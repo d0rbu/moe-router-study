@@ -769,7 +769,7 @@ def get_router_activations(
     layers_to_store: list[int] | None = None,
     dtype: str = "bf16",
     log_level: str = "INFO",
-    device_type: DeviceType = "cuda",
+    device_type: str = "cuda",
 ) -> None:
     """
     Extract router activations from a model using multiple devices.
@@ -789,9 +789,9 @@ def get_router_activations(
     """
     print(f"Running with log level: {log_level}")
 
-    # Validate device type
-    assert_device_type(device_type)
-    backend = get_backend(device_type)
+    # Validate device type and convert to DeviceType
+    validated_device_type = assert_device_type(device_type)
+    backend = get_backend(validated_device_type)
 
     torch_dtype = get_dtype(dtype)
 
@@ -815,7 +815,7 @@ def get_router_activations(
 
     num_gpus = len(cuda_device_ids)
     if num_gpus == 0:
-        logger.warning(f"No {device_type} devices found")
+        logger.warning(f"No {validated_device_type} devices found")
 
     num_gpu_workers = num_gpus // gpus_per_worker
 
@@ -861,7 +861,7 @@ def get_router_activations(
     if not gpu_available:
         logger.info("Using CPU only")
     else:
-        logger.info(f"Using {num_gpus} {device_type} devices: {device_ids}")
+        logger.info(f"Using {num_gpus} {validated_device_type} devices: {device_ids}")
 
     # Create experiment configuration
     config = {
@@ -1001,7 +1001,7 @@ def get_router_activations(
             logger.info(f"Starting CPU worker {rank}")
         else:
             logger.info(
-                f"Starting {device_type} worker {rank} on {', '.join(f'{device_type}:{device_id}' for device_id in device_ids)}"
+                f"Starting {validated_device_type} worker {rank} on {', '.join(f'{validated_device_type}:{device_id}' for device_id in device_ids)}"
             )
 
         logger.debug(f"Storing activations: {activations_to_store}")
@@ -1024,7 +1024,7 @@ def get_router_activations(
                 layers_to_store_set,
                 torch_dtype,
                 log_level,
-                device_type,
+                validated_device_type,
             ),
         )
         gpu_proc.start()
