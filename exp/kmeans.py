@@ -1219,7 +1219,7 @@ async def kmeans_manhattan(
         )
 
     # clean up the background workers and queue
-    th.cuda.empty_cache()
+    backend.empty_cache()
     gc.collect()
     ### end
 
