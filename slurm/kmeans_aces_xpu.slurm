@@ -25,6 +25,10 @@ export MASTER_PORT=$(expr 10000 + $(echo -n $SLURM_JOBID | tail -c 4))
 export RANK=$SLURM_PROCID
 export WORLD_SIZE=$SLURM_NTASKS
 
+module purge
+module load WebProxy
+module load AI-Tools-GPU/20240816
+module load intel/2024a
 module load GCCcore/13.3.0 Python/3.12.3
 
 # Change to the project directory
