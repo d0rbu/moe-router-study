@@ -24,6 +24,7 @@ import trackio as wandb
 import yaml
 
 from core.data import get_dataset_fn
+from core.device import DeviceType, assert_device_type, get_backend
 from core.dtype import get_dtype
 from core.model import get_model_config
 from core.type import assert_type
@@ -99,6 +100,7 @@ def process_batch(
     router_layers: set[int],
     layers_to_store: set[int],
     activations_to_store: frozenset[str] = ACTIVATION_KEYS,
+    device_type: DeviceType = "cuda",
 ) -> dict[str, th.Tensor]:
     """Process a batch of texts through the model and extract router logits.
 
@@ -106,15 +108,18 @@ def process_batch(
         encoded_batch: Encoded batch from tokenizer with padding.
         batch_idx: Index of the batch.
         model: Model to process the batch.
-        rank: Rank of the GPU.
-        minibatch_size: Size of the minibatch to process on each GPU.
+        rank: Rank of the device.
+        minibatch_size: Size of the minibatch to process on each device.
         router_layers: Set of router layer indices to extract.
         layers_to_store: Set of layer indices to store.
         stored_activations: Activations to score
+        device_type: Device type ("cuda" or "xpu", defaults to "cuda")
 
     Returns:
         Dictionary of activations. These are lists of lists of tensors, so they need to be cleaned up by the caller.
     """
+    backend = get_backend(device_type)
+
     logger.debug(
         f"Processing batch {batch_idx} with activations to store: {activations_to_store} layers to store: {layers_to_store}"
     )
@@ -143,7 +148,7 @@ def process_batch(
         leave=False,
         position=rank * 2,
     ):
-        th.cuda.empty_cache()
+        backend.empty_cache()
         gc.collect()
 
         minibatch_start = minibatch_idx * minibatch_size
@@ -468,8 +473,9 @@ def gpu_worker(
     layers_to_store: set[int] | None = None,
     dtype: th.dtype = th.bfloat16,
     log_level: str = "INFO",
+    device_type: DeviceType = "cuda",
 ) -> None:
-    """Worker process for processing batches on a specific GPU."""
+    """Worker process for processing batches on a specific device."""
     logger.debug(
         f"Processing batch with activations to store: {activations_to_store} layers to store: {layers_to_store}"
     )
@@ -582,6 +588,7 @@ def gpu_worker(
                 layers_with_routers,
                 layers_to_store,
                 activations_to_store=current_activations_to_store,
+                device_type=device_type,
             )
 
         logger.debug(f"Rank {rank} processed batch {batch_idx}")
@@ -762,23 +769,29 @@ def get_router_activations(
     layers_to_store: list[int] | None = None,
     dtype: str = "bf16",
     log_level: str = "INFO",
+    device_type: str = "cuda",
 ) -> None:
     """
-    Extract router activations from a model using multiple GPUs.
+    Extract router activations from a model using multiple devices.
 
     Args:
         model_name: Name of the model to use
         dataset_name: Name of the dataset to use
         context_length: Context length for processing
-        minibatch_size: Batch size for processing on each GPU
-        gpus_per_worker: Number of GPUs to shard the model across
-        cuda_devices: Comma-separated list of CUDA devices to use. If empty, defaults to CUDA_VISIBLE_DEVICES environment variable or CPU if it's not set.
+        minibatch_size: Batch size for processing on each device
+        gpus_per_worker: Number of devices to shard the model across
+        cuda_devices: Comma-separated list of device indices to use. If empty, defaults to CUDA_VISIBLE_DEVICES environment variable or CPU if it's not set.
         tokens_per_file: Target number of tokens per output file
         num_tokens: Number of tokens to process
         resume: Whether to resume from a previous run
         name: Custom name for the experiment
+        device_type: Device type ("cuda" or "xpu", defaults to "cuda")
     """
     print(f"Running with log level: {log_level}")
+
+    # Validate device type and convert to DeviceType
+    validated_device_type = assert_device_type(device_type)
+    backend = get_backend(validated_device_type)
 
     torch_dtype = get_dtype(dtype)
 
@@ -789,20 +802,20 @@ def get_router_activations(
 
     cuda_devices_raw = cuda_devices or os.environ.get("CUDA_VISIBLE_DEVICES", "")
 
-    # make sure CUDA_VISIBLE_DEVICES is of the form "0,1,...,n"
+    # make sure device list is of the form "0,1,...,n"
     if not CUDA_VISIBLE_DEVICES_REGEX.match(cuda_devices_raw):
         raise ValueError(
-            f"CUDA_VISIBLE_DEVICES must be of the form '0,1,...,n' or empty: \"{cuda_devices_raw}\""
+            f"Device list must be of the form '0,1,...,n' or empty: \"{cuda_devices_raw}\""
         )
 
     if cuda_devices_raw == "":
-        cuda_device_ids = list(range(th.cuda.device_count()))
+        cuda_device_ids = list(range(backend.device_count()))
     else:
         cuda_device_ids = [int(i) for i in cuda_devices_raw.split(",")]
 
     num_gpus = len(cuda_device_ids)
     if num_gpus == 0:
-        logger.warning("No GPUs found")
+        logger.warning(f"No {validated_device_type} devices found")
 
     num_gpu_workers = num_gpus // gpus_per_worker
 
@@ -848,7 +861,7 @@ def get_router_activations(
     if not gpu_available:
         logger.info("Using CPU only")
     else:
-        logger.info(f"Using {num_gpus} GPUs: {device_ids}")
+        logger.info(f"Using {num_gpus} {validated_device_type} devices: {device_ids}")
 
     # Create experiment configuration
     config = {
@@ -982,13 +995,13 @@ def get_router_activations(
     disk_proc.start()
     processes.append(disk_proc)
 
-    # Start GPU workers
+    # Start device workers
     for rank, device_ids in worker_device_map.items():
         if not gpu_available:
             logger.info(f"Starting CPU worker {rank}")
         else:
             logger.info(
-                f"Starting GPU worker {rank} on {', '.join(f'cuda:{device_id}' for device_id in device_ids)}"
+                f"Starting {validated_device_type} worker {rank} on {', '.join(f'{validated_device_type}:{device_id}' for device_id in device_ids)}"
             )
 
         logger.debug(f"Storing activations: {activations_to_store}")
@@ -1011,6 +1024,7 @@ def get_router_activations(
                 layers_to_store_set,
                 torch_dtype,
                 log_level,
+                validated_device_type,
             ),
         )
         gpu_proc.start()
