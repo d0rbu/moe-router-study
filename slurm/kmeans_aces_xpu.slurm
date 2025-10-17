@@ -34,7 +34,5 @@ module load GCCcore/13.3.0 Python/3.12.3
 # Change to the project directory
 cd $SCRATCH/moe-router-study
 
-# Run the distributed job with XPU device type and adjusted memory parameters
-# PVC has 48GB VRAM vs H100's 80GB, so we reduce batch size proportionally (48/80 = 0.6)
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/kmeans.py main --device-type xpu --expansion-factor 1,2,4,8,16,32,64 --tokens-per-file 100000 --reshuffled-tokens-per-file 100000 --minibatch-size 12000 --centroid-minibatch-size 10000 --validate-every 4000
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/kmeans.py main --device-type xpu --expansion-factor 1,2,4,8,16,32,64 --tokens-per-file 100000 --reshuffled-tokens-per-file 100000 --minibatch-size 10000 --centroid-minibatch-size 16384 --batch-size 40000 --validate-every 4000
 
