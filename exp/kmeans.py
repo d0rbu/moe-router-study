@@ -1614,7 +1614,7 @@ def main(
         context_length=context_length,
         log_level=log_level,
         num_workers=num_workers,
-        device_type=device_type,
+        device_type=assert_device_type(device_type),
     )
 
 
