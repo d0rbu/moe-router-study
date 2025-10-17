@@ -1595,7 +1595,7 @@ def main(
     context_length: int = 2048,
     log_level: str = "INFO",
     num_workers: int = 64,
-    device_type: DeviceType = "cuda",
+    device_type: str = "cuda",
 ) -> None:
     cluster_paths(
         model_name,
