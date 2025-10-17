@@ -65,11 +65,11 @@ def get_distributed_backend(device_type: DeviceType) -> str:
         device_type: The device type ("cuda" or "xpu")
 
     Returns:
-        The appropriate distributed backend name ("nccl" for CUDA, "ccl" for XPU)
+        The appropriate distributed backend name ("nccl" for CUDA, "xccl" for XPU)
     """
     if device_type == "cuda":
         return "nccl"
     elif device_type == "xpu":
-        return "ccl"
+        return "xccl"
     else:
         raise ValueError(f"Unsupported device_type: {device_type}")
