@@ -56,3 +56,20 @@ def get_device(device_type: DeviceType, device_idx: int = 0) -> th.device:
         A torch.device object
     """
     return th.device(f"{device_type}:{device_idx}")
+
+
+def get_distributed_backend(device_type: DeviceType) -> str:
+    """Get the distributed backend name for the specified device type.
+
+    Args:
+        device_type: The device type ("cuda" or "xpu")
+
+    Returns:
+        The appropriate distributed backend name ("nccl" for CUDA, "xccl" for XPU)
+    """
+    if device_type == "cuda":
+        return "nccl"
+    elif device_type == "xpu":
+        return "xccl"
+    else:
+        raise ValueError(f"Unsupported device_type: {device_type}")

@@ -75,6 +75,7 @@ async def shuffle_activations(
         debug=debug,
         num_workers=num_workers,
         cpu_only=True,
+        device_type="cuda",  # Default to cuda for backward compatibility
     )
 
     logger.success(

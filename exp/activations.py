@@ -12,6 +12,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from tqdm import tqdm
 
+from core.device import DeviceType, get_backend, get_distributed_backend
 from core.logging import init_distributed_logging
 from core.memory import clear_memory
 from core.type import assert_type
@@ -84,6 +85,7 @@ class Activations:
         max_cache_size: int = 2,
         num_workers: int = 8,
         debug: bool = False,
+        device_type: DeviceType = "cuda",
     ) -> "Activations":
         if not (dist.is_available() and dist.is_initialized()):
             raise RuntimeError(
@@ -107,6 +109,7 @@ class Activations:
             shuffle_batch_size=shuffle_batch_size,
             debug=debug,
             num_workers=num_workers,
+            device_type=device_type,
         )
 
         return cls(
@@ -333,6 +336,7 @@ class Activations:
         shuffle_batch_size: int = 10,
         debug: bool = False,
         num_workers: int = 8,
+        device_type: DeviceType = "cuda",
     ) -> list[str]:
         shuffle_dirname = (
             f"reshuffled-seed={seed}-tokens_per_file={tokens_per_file_in_reshuffled}"
@@ -363,6 +367,7 @@ class Activations:
             shuffle_batch_size=shuffle_batch_size,
             debug=debug,
             num_workers=num_workers,
+            device_type=device_type,
         )
 
         return new_activation_filepaths
@@ -435,7 +440,11 @@ class Activations:
         debug: bool = False,
         num_workers: int = 8,
         cpu_only: bool = False,
+        device_type: DeviceType = "cuda",
     ) -> list[str]:
+        # Get backend for device operations
+        backend = get_backend(device_type)
+
         # Set rank and world_size based on cpu_only mode
         if cpu_only:
             rank = 0
@@ -518,7 +527,7 @@ class Activations:
             )
             th.manual_seed(current_seed)
             if not cpu_only:
-                th.cuda.manual_seed_all(current_seed)
+                backend.manual_seed_all(current_seed)
 
             filepaths, batch_sizes = zip(*shuffle_batch, strict=True)
 
@@ -774,6 +783,7 @@ async def load_activations_and_init_dist(
     seed: int = 0,
     num_workers: int = 8,
     debug: bool = False,
+    device_type: DeviceType = "cuda",
 ) -> tuple[Activations, dict[str, int], dist.ProcessGroup | None]:
     """
     Load activations and initialize the distributed process group.
@@ -799,14 +809,16 @@ async def load_activations_and_init_dist(
 
     logger.info(f"Rank {rank} initialized gloo group")
 
-    if th.cuda.is_available():
+    backend = get_backend(device_type)
+    if backend.is_available():
         nccl_port = gloo_port + 1
         os.environ["MASTER_PORT"] = str(nccl_port)
 
+        backend_name = get_distributed_backend(device_type)
         gpu_process_group = dist.new_group(
-            ranks=list(range(world_size)), backend="nccl"
+            ranks=list(range(world_size)), backend=backend_name
         )
-        logger.info(f"Rank {rank} initialized nccl group")
+        logger.info(f"Rank {rank} initialized {backend_name} group")
     else:
         gpu_process_group = None
 
@@ -819,6 +831,7 @@ async def load_activations_and_init_dist(
         seed=seed,
         num_workers=num_workers,
         debug=debug,
+        device_type=device_type,
     )
 
     # load a batch of activations to get the dimension
