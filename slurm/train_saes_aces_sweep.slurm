@@ -9,7 +9,7 @@
 #SBATCH --mem=256G                      # Request 256GB per node
 #SBATCH --output=train_saes_sweep.%j    # Send stdout/err to "train_saes_sweep.[jobID]"
 #SBATCH --error=train_saes_sweep.%j.err # Send stderr to separate file
-#SBATCH --gres=gpu:h100:12              # Request 12 H100 GPUs per node
+#SBATCH --gres=gpu:h100:6               # Request 6 H100 GPUs per node
 #SBATCH --partition=gpu                 # Request the GPU partition/queue
 
 ##OPTIONAL JOB SPECIFICATIONS
