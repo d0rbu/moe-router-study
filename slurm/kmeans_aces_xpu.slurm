@@ -10,7 +10,7 @@
 #SBATCH --output=kmeans_xpu.%j          # Send stdout/err to "kmeans_xpu.[jobID]"
 #SBATCH --error=kmeans_xpu.%j.err       # Send stderr to separate file
 #SBATCH --gres=gpu:pvc:4                # Request 4 Intel PVC XPUs per node
-#SBATCH --partition=xpu                 # Request the XPU partition/queue
+#SBATCH --partition=pvc                 # Request the XPU partition/queue
 
 ##OPTIONAL JOB SPECIFICATIONS
 ##SBATCH --account=123456               # Set billing account to 123456
