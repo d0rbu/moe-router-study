@@ -45,12 +45,12 @@ def get_backend(device_type: DeviceType) -> Any:
         raise ValueError(f"Unsupported device_type: {device_type}")
 
 
-def get_device(device_type: DeviceType, device_idx: int) -> th.device:
+def get_device(device_type: DeviceType, device_idx: int = 0) -> th.device:
     """Create a torch device object for the specified device type and index.
 
     Args:
         device_type: The device type ("cuda" or "xpu")
-        device_idx: The device index
+        device_idx: The device index (defaults to 0)
 
     Returns:
         A torch.device object
