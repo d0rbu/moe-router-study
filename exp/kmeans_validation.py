@@ -12,6 +12,8 @@ from loguru import logger
 import torch as th
 from tqdm import tqdm
 
+from core.device import DeviceType, get_backend, get_device
+
 WARNING_WINDOW_SIZE = 10
 VALIDATION_SIZE_K_PROPORTION = 10
 
@@ -108,6 +110,7 @@ def validate_centroid_distribution(
     max_assignment_ratio: float = 4.0,
     minibatch_size: int = 100000,
     centroid_minibatch_size: int = 65536,
+    device_type: DeviceType = "cuda",
 ) -> tuple[bool, CentroidValidationStats]:
     """
     Validate that centroids produce a reasonable distribution of assignments on validation data.
@@ -115,10 +118,11 @@ def validate_centroid_distribution(
     Args:
         validation_data: Tensor of shape (N, D) containing validation datapoints
         centroids: Tensor of shape (K, D) containing cluster centroids
-        min_assignment_ratio: Minimum acceptable ratio (defaults to 0.05)
-        max_assignment_ratio: Maximum acceptable ratio (defaults to 20.0)
-        minibatch_size: Size of minibatches for GPU processing (defaults to 100000)
-        centroid_minibatch_size: Size of centroid chunks to avoid CUDA limits (defaults to 16384)
+        min_assignment_ratio: Minimum acceptable ratio (defaults to 0.25)
+        max_assignment_ratio: Maximum acceptable ratio (defaults to 4.0)
+        minibatch_size: Size of minibatches for device processing (defaults to 100000)
+        centroid_minibatch_size: Size of centroid chunks to avoid device limits (defaults to 65536)
+        device_type: Device type to use ("cuda" or "xpu", defaults to "cuda")
 
     Returns:
         Tuple of (is_valid, stats) where:
@@ -143,8 +147,9 @@ def validate_centroid_distribution(
             std_norm=0.0,
         )
 
-    # Use GPU if available, otherwise CPU
-    device = th.device("cuda" if th.cuda.is_available() else "cpu")
+    # Get backend and device based on device_type
+    backend = get_backend(device_type)
+    device = get_device(device_type) if backend.is_available() else th.device("cpu")
 
     # Move centroids to device
     centroids_gpu = centroids.to(device).to(th.float32)
@@ -154,7 +159,7 @@ def validate_centroid_distribution(
     n_samples = validation_data.shape[0]
 
     logger.debug(
-        f"🚀 GPU validation: Processing {n_samples} samples in batches of {minibatch_size}, centroids in chunks of {centroid_minibatch_size}"
+        f"🚀 {device_type.upper()} validation: Processing {n_samples} samples in batches of {minibatch_size}, centroids in chunks of {centroid_minibatch_size}"
     )
 
     for start_idx in tqdm(
@@ -168,7 +173,7 @@ def validate_centroid_distribution(
             # Small enough to compute in one go
             batch_distances = th.cdist(batch_data, centroids_gpu, p=1)
         else:
-            # Chunk centroids to avoid CUDA configuration limits
+            # Chunk centroids to avoid device configuration limits
             n_centroids = centroids_gpu.shape[0]
             n_chunks = (
                 n_centroids + centroid_minibatch_size - 1
@@ -187,18 +192,18 @@ def validate_centroid_distribution(
 
         batch_assignments = th.argmin(batch_distances, dim=1)
 
-        # Move back to CPU to save GPU memory
+        # Move back to CPU to save device memory
         all_assignments.append(batch_assignments.cpu())
 
-        # Clear GPU cache
+        # Clear device cache
         del batch_data, batch_distances, batch_assignments
-        if device.type == "cuda":
-            th.cuda.empty_cache()
+        if device.type != "cpu":
+            backend.empty_cache()
 
     # Concatenate all assignments
     assignments = th.cat(all_assignments, dim=0)
 
-    logger.debug("✅ GPU validation completed successfully")
+    logger.debug(f"✅ {device_type.upper()} validation completed successfully")
 
     # Count assignments per centroid
     k = centroids.shape[0]
