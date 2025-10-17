@@ -149,7 +149,7 @@ def validate_centroid_distribution(
 
     # Get backend and device based on device_type
     backend = get_backend(device_type)
-    device = get_device(device_type, 0) if backend.is_available() else th.device("cpu")
+    device = get_device(device_type) if backend.is_available() else th.device("cpu")
 
     # Move centroids to device
     centroids_gpu = centroids.to(device).to(th.float32)
@@ -197,7 +197,7 @@ def validate_centroid_distribution(
 
         # Clear device cache
         del batch_data, batch_distances, batch_assignments
-        if device.type in ("cuda", "xpu"):
+        if device.type != "cpu":
             backend.empty_cache()
 
     # Concatenate all assignments
