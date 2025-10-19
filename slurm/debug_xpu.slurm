@@ -34,8 +34,8 @@ echo "ZE_ENABLE_PCI_ID_DEVICE_ORDER: $ZE_ENABLE_PCI_ID_DEVICE_ORDER"
 echo "SYCL_DEVICE_FILTER: $SYCL_DEVICE_FILTER"
 echo ""
 
-# Change to the repository root directory
-cd "$(dirname "$0")/.."
+# Change to the repository root directory (where the job was submitted from)
+cd "$SLURM_SUBMIT_DIR"
 
 echo "📁 Current directory: $(pwd)"
 echo ""
