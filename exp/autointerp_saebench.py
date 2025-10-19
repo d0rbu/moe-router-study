@@ -29,6 +29,7 @@ import torch as th
 from tqdm import tqdm
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
+from core.memory import clear_memory
 from core.model import get_model_config
 from core.type import assert_type
 from exp import MODEL_DIRNAME
@@ -631,6 +632,6 @@ def run_eval(
         eval_output.to_json_file(sae_result_path, indent=2)
 
         gc.collect()
-        th.cuda.empty_cache()
+        clear_memory()
 
     return results_dict
