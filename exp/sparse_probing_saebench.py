@@ -7,7 +7,6 @@ import shutil
 import sys
 from typing import Any
 
-from core.memory import clear_memory
 from loguru import logger
 from nnterp import StandardizedTransformer
 from sae_bench.evals.sparse_probing.eval_config import SparseProbingEvalConfig
@@ -40,6 +39,7 @@ import torch as th
 from tqdm import tqdm
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
+from core.memory import clear_memory
 from core.model import get_model_config
 from core.type import assert_type
 from exp import MODEL_DIRNAME
