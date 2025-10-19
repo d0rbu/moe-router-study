@@ -8,10 +8,10 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=8G
 
-# Uncomment and modify these lines based on your cluster's XPU partition/constraints
-# #SBATCH --partition=xpu
-# #SBATCH --gres=xpu:1
-# #SBATCH --constraint=xpu
+# ACES cluster specific configuration for Intel XPU nodes
+#SBATCH --partition=gpu
+#SBATCH --gres=gpu:1
+#SBATCH --constraint=intel
 
 echo "🚀 Starting XPU Debug Job"
 echo "========================="
@@ -20,10 +20,10 @@ echo "Node: $SLURMD_NODENAME"
 echo "Date: $(date)"
 echo ""
 
-# Load any necessary modules (uncomment and modify as needed for your cluster)
-# module load intel/oneapi
-# module load pytorch
-# module load intel-extension-for-pytorch
+# Load necessary modules for ACES cluster
+module load intel/oneapi/2024.0
+module load python/3.11
+module load pytorch/2.1.0
 
 # Set up environment variables that might be needed for Intel XPU
 export ZE_ENABLE_PCI_ID_DEVICE_ORDER=1
@@ -79,4 +79,3 @@ echo "Memory info: $(free -h | grep 'Mem:')"
 echo "Disk usage: $(df -h . | tail -1)"
 
 exit 0
-
