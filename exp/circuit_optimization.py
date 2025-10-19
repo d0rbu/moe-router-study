@@ -10,6 +10,7 @@ import torch as th
 from tqdm import tqdm
 import trackio as wandb
 
+from core.device import DeviceType, get_backend, get_device
 from exp import OUTPUT_DIR
 from exp.circuit_loss import circuit_loss
 
@@ -127,7 +128,7 @@ def gradient_descent(
     batch_size: int = 0,
     grad_accumulation_steps: int = 1,
     seed: int = 0,
-    device: str = "cuda",
+    device_type: DeviceType = "cuda",
     wandb_run: wandb.Run | None = None,
 ) -> tuple[th.Tensor, th.Tensor, th.Tensor, th.Tensor]:
     """
@@ -169,7 +170,9 @@ def gradient_descent(
     minibatch_size = batch_size // grad_accumulation_steps
 
     th.manual_seed(seed)
-    th.cuda.manual_seed(seed)
+    backend = get_backend(device_type)
+    backend.manual_seed(seed)
+    device = get_device(device_type)
 
     # Setup async batch logging if wandb_run is provided
     log_queue = None
@@ -296,7 +299,7 @@ def load_and_gradient_descent(
     batch_size: int = 0,
     grad_accumulation_steps: int = 1,
     seed: int = 0,
-    device: str = "cuda",
+    device_type: DeviceType = "cuda",
 ) -> None:
     raise NotImplementedError("Refactor this code to use the Activations class")
     data = None
@@ -329,7 +332,7 @@ def load_and_gradient_descent(
         num_cooldown_epochs,
         batch_size,
         grad_accumulation_steps,
-        device=device,
+        device_type=device_type,
         seed=seed,
         wandb_run=wandb_run,
     )
@@ -361,7 +364,7 @@ def grid_search_gradient_descent(
     num_seeds: int = 1,
     batch_size: int = 0,
     grad_accumulation_steps: int = 1,
-    device: str = "cuda",
+    device_type: DeviceType = "cuda",
 ) -> None:
     if complexity_importances is None:
         # complexity_importances = [0.5, 0.9, 0.1, 0.99, 0.01]
@@ -415,6 +418,7 @@ def grid_search_gradient_descent(
 
     raise NotImplementedError("Refactor this code to use the Activations class")
     data = None
+    device = get_device(device_type)
 
     loss_landscape = th.empty(
         num_seeds,
@@ -519,7 +523,7 @@ def grid_search_gradient_descent(
             num_cooldown_epochs=num_cooldown_epochs,
             batch_size=batch_size,
             grad_accumulation_steps=grad_accumulation_steps,
-            device=device,
+            device_type=device_type,
             seed=seed,
             wandb_run=wandb_run,
         )

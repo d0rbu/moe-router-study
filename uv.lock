@@ -1875,6 +1875,20 @@ wheels = [
 ]
 
 [[package]]
+name = "intel-extension-for-pytorch"
+version = "2.8.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "packaging" },
+    { name = "psutil" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/64/2a/cb48cb2a6a0b2917c85f3489af3e4dcf8e26ca74e4ffb99b8ec80498c2d5/intel_extension_for_pytorch-2.8.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:4c0d6ba2c61712add4ff7a168cd80326137f7279a5496f2f9ca2922c318e0cdf", size = 49957557, upload-time = "2025-08-12T05:53:16.196Z" },
+    { url = "https://files.pythonhosted.org/packages/6c/fd/0da69378e8be2c3e867277d79928cc56bfc9638efe4582d57753d340ba32/intel_extension_for_pytorch-2.8.0-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:68a0114aaa793d87609a35b1b39ea4f6323cade48c8664626fb36bc45eb8015c", size = 49957515, upload-time = "2025-08-12T05:56:20.54Z" },
+]
+
+[[package]]
 name = "interegular"
 version = "0.3.3"
 source = { registry = "https://pypi.org/simple" }
@@ -2626,6 +2640,7 @@ dependencies = [
     { name = "editables" },
     { name = "einops" },
     { name = "hatchling" },
+    { name = "intel-extension-for-pytorch" },
     { name = "matplotlib" },
     { name = "more-itertools" },
     { name = "nnsight" },
@@ -2680,6 +2695,7 @@ requires-dist = [
     { name = "einops", specifier = ">=0.6.0" },
     { name = "flash-attn", marker = "extra == 'flash'", specifier = ">=2.8.2" },
     { name = "hatchling", specifier = ">=1.27.0" },
+    { name = "intel-extension-for-pytorch", specifier = ">=2.8.0" },
     { name = "matplotlib", specifier = ">=3.5.0" },
     { name = "more-itertools", specifier = ">=10.8.0" },
     { name = "nnsight", specifier = ">=0.5.0.dev13" },
