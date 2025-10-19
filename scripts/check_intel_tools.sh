@@ -89,13 +89,23 @@ packages_to_check=(
 )
 
 for pkg in "${packages_to_check[@]}"; do
-    if dpkg -l | grep -q "$pkg" 2>/dev/null; then
-        echo "✅ $pkg is installed"
-    elif rpm -qa | grep -q "$pkg" 2>/dev/null; then
-        echo "✅ $pkg is installed (RPM)"
-    else
-        echo "❌ $pkg not found"
+    # Check if dpkg is available (Debian/Ubuntu systems)
+    if command -v dpkg >/dev/null 2>&1; then
+        if dpkg -l | grep -q "$pkg" 2>/dev/null; then
+            echo "✅ $pkg is installed"
+            continue
+        fi
     fi
+    
+    # Check if rpm is available (RHEL/CentOS/SUSE systems)
+    if command -v rpm >/dev/null 2>&1; then
+        if rpm -qa | grep -q "$pkg" 2>/dev/null; then
+            echo "✅ $pkg is installed (RPM)"
+            continue
+        fi
+    fi
+    
+    echo "❌ $pkg not found"
 done
 
 echo ""
@@ -132,4 +142,3 @@ echo "   export SYCL_DEVICE_FILTER=level_zero:gpu"
 echo "3. Install Intel Extension for PyTorch:"
 echo "   pip install intel-extension-for-pytorch"
 echo "4. Check if Intel GPU kernel modules are loaded"
-

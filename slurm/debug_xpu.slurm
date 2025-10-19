@@ -52,17 +52,44 @@ echo ""
 echo "🐍 Step 2: Running Python XPU debug script"
 echo "==========================================="
 
-# Activate ACES shared Intel AI environment or user virtual environment
+# Activate user virtual environment (prioritize .venv with Python 3.12)
 if [ -f ".venv/bin/activate" ]; then
-    echo "Activating user virtual environment..."
+    echo "Activating user virtual environment (.venv)..."
     source .venv/bin/activate
+    echo "Python version: $(python --version)"
+    echo "Python path: $(which python)"
+    
+    # Check if torch is available in this environment
+    if python -c "import torch" 2>/dev/null; then
+        echo "✅ PyTorch is available in user environment"
+    else
+        echo "❌ PyTorch not found in user environment, falling back to ACES environment"
+        deactivate 2>/dev/null || true
+        echo "Activating ACES shared Intel AI environment..."
+        source /sw/hprc/sw/Python/virtualenvs/intelpython/2024.1.0_814/intel-ai-python-env/bin/activate
+    fi
 elif [ -f "venv/bin/activate" ]; then
-    echo "Activating user virtual environment..."
+    echo "Activating user virtual environment (venv)..."
     source venv/bin/activate
+    echo "Python version: $(python --version)"
+    echo "Python path: $(which python)"
+    
+    # Check if torch is available in this environment
+    if python -c "import torch" 2>/dev/null; then
+        echo "✅ PyTorch is available in user environment"
+    else
+        echo "❌ PyTorch not found in user environment, falling back to ACES environment"
+        deactivate 2>/dev/null || true
+        echo "Activating ACES shared Intel AI environment..."
+        source /sw/hprc/sw/Python/virtualenvs/intelpython/2024.1.0_814/intel-ai-python-env/bin/activate
+    fi
 else
-    echo "Activating ACES shared Intel AI environment..."
+    echo "No user virtual environment found, activating ACES shared Intel AI environment..."
     source /sw/hprc/sw/Python/virtualenvs/intelpython/2024.1.0_814/intel-ai-python-env/bin/activate
 fi
+
+echo "Final Python version: $(python --version)"
+echo "Final Python path: $(which python)"
 
 # Set environment variables for oneAPI toolkits
 echo "Setting up oneAPI environment..."
