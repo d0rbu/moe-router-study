@@ -59,6 +59,13 @@ if [ -f ".venv/bin/activate" ]; then
     echo "Python version: $(python --version)"
     echo "Python path: $(which python)"
     
+    # Sync dependencies with uv if pyproject.toml exists
+    if [ -f "pyproject.toml" ] && command -v uv >/dev/null 2>&1; then
+        echo "📦 Syncing dependencies with uv..."
+        uv sync --quiet
+        echo "✅ Dependencies synced"
+    fi
+    
     # Check if torch is available in this environment
     if python -c "import torch" 2>/dev/null; then
         echo "✅ PyTorch is available in user environment"
@@ -73,6 +80,13 @@ elif [ -f "venv/bin/activate" ]; then
     source venv/bin/activate
     echo "Python version: $(python --version)"
     echo "Python path: $(which python)"
+    
+    # Sync dependencies with uv if pyproject.toml exists
+    if [ -f "pyproject.toml" ] && command -v uv >/dev/null 2>&1; then
+        echo "📦 Syncing dependencies with uv..."
+        uv sync --quiet
+        echo "✅ Dependencies synced"
+    fi
     
     # Check if torch is available in this environment
     if python -c "import torch" 2>/dev/null; then
