@@ -7,6 +7,7 @@ import random
 import sys
 from typing import Any
 
+from core.memory import clear_memory
 from loguru import logger
 from nnterp import StandardizedTransformer
 from sae_bench.evals.autointerp import main as autointerp
@@ -631,6 +632,6 @@ def run_eval(
         eval_output.to_json_file(sae_result_path, indent=2)
 
         gc.collect()
-        th.cuda.empty_cache()
+        clear_memory()
 
     return results_dict

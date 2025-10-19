@@ -7,6 +7,7 @@ import shutil
 import sys
 from typing import Any
 
+from core.memory import clear_memory
 from loguru import logger
 from nnterp import StandardizedTransformer
 from sae_bench.evals.sparse_probing.eval_config import SparseProbingEvalConfig
@@ -352,7 +353,7 @@ def run_eval_single_dataset(
             all_sae_train_acts_BF[key] = all_sae_train_acts_BF[key].cpu()
             all_sae_test_acts_BF[key] = all_sae_test_acts_BF[key].cpu()
 
-        th.cuda.empty_cache()
+        clear_memory()
         gc.collect()
 
     per_class_results_dict.update(llm_results)
@@ -542,7 +543,7 @@ def run_eval(
         eval_output.to_json_file(sae_result_path, indent=2)
 
         gc.collect()
-        th.cuda.empty_cache()
+        clear_memory()
 
     if (
         clean_up_activations
