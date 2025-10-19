@@ -8,10 +8,9 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=8G
 
-# ACES cluster specific configuration for Intel XPU nodes
-#SBATCH --partition=gpu
-#SBATCH --gres=gpu:1
-#SBATCH --constraint=intel
+# ACES cluster specific configuration for Intel PVC GPUs
+#SBATCH --partition=pvc
+#SBATCH --gres=gpu:pvc:1
 
 echo "🚀 Starting XPU Debug Job"
 echo "========================="
@@ -20,10 +19,11 @@ echo "Node: $SLURMD_NODENAME"
 echo "Date: $(date)"
 echo ""
 
-# Load necessary modules for ACES cluster
-module load intel/oneapi/2024.0
-module load python/3.11
-module load pytorch/2.1.0
+# Load ACES cluster modules for Intel PVC GPUs
+module purge
+module load WebProxy
+module load intelpython/2024.1.0_814
+module load intel/2023.07
 
 # Set up environment variables that might be needed for Intel XPU
 export ZE_ENABLE_PCI_ID_DEVICE_ORDER=1
@@ -52,16 +52,21 @@ echo ""
 echo "🐍 Step 2: Running Python XPU debug script"
 echo "==========================================="
 
-# Activate virtual environment if it exists
+# Activate ACES shared Intel AI environment or user virtual environment
 if [ -f "../.venv/bin/activate" ]; then
-    echo "Activating virtual environment..."
+    echo "Activating user virtual environment..."
     source ../.venv/bin/activate
 elif [ -f "../venv/bin/activate" ]; then
-    echo "Activating virtual environment..."
+    echo "Activating user virtual environment..."
     source ../venv/bin/activate
 else
-    echo "No virtual environment found, using system Python"
+    echo "Activating ACES shared Intel AI environment..."
+    source /sw/hprc/sw/Python/virtualenvs/intelpython/2024.1.0_814/intel-ai-python-env/bin/activate
 fi
+
+# Set environment variables for oneAPI toolkits
+echo "Setting up oneAPI environment..."
+source /sw/hprc/sw/oneAPI/2024.2/setvars.sh
 
 # Run the Python debug script
 python debug_xpu.py
