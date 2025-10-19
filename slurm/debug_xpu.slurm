@@ -34,18 +34,18 @@ echo "ZE_ENABLE_PCI_ID_DEVICE_ORDER: $ZE_ENABLE_PCI_ID_DEVICE_ORDER"
 echo "SYCL_DEVICE_FILTER: $SYCL_DEVICE_FILTER"
 echo ""
 
-# Change to the script directory
-cd "$(dirname "$0")"
+# Change to the repository root directory
+cd "$(dirname "$0")/.."
 
 echo "📁 Current directory: $(pwd)"
 echo ""
 
 # Make the shell script executable
-chmod +x check_intel_tools.sh
+chmod +x scripts/check_intel_tools.sh
 
 echo "🔍 Step 1: Checking Intel GPU tools and environment"
 echo "=================================================="
-./check_intel_tools.sh
+scripts/check_intel_tools.sh
 
 echo ""
 echo ""
@@ -53,12 +53,12 @@ echo "🐍 Step 2: Running Python XPU debug script"
 echo "==========================================="
 
 # Activate ACES shared Intel AI environment or user virtual environment
-if [ -f "../.venv/bin/activate" ]; then
+if [ -f ".venv/bin/activate" ]; then
     echo "Activating user virtual environment..."
-    source ../.venv/bin/activate
-elif [ -f "../venv/bin/activate" ]; then
+    source .venv/bin/activate
+elif [ -f "venv/bin/activate" ]; then
     echo "Activating user virtual environment..."
-    source ../venv/bin/activate
+    source venv/bin/activate
 else
     echo "Activating ACES shared Intel AI environment..."
     source /sw/hprc/sw/Python/virtualenvs/intelpython/2024.1.0_814/intel-ai-python-env/bin/activate
@@ -69,7 +69,7 @@ echo "Setting up oneAPI environment..."
 source /sw/hprc/sw/oneAPI/2024.2/setvars.sh
 
 # Run the Python debug script
-python debug_xpu.py
+python scripts/debug_xpu.py
 
 echo ""
 echo "🏁 XPU Debug Job Complete"
