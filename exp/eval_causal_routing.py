@@ -85,18 +85,15 @@ def load_and_select_centroid(
     top_k: int = data["top_k"]
 
     # Find the centroid set with the matching number of centroids
-    matching_set_idx = None
-    for idx, centroid_set in enumerate(centroid_sets):
-        if centroid_set.shape[0] == num_centroids:
-            matching_set_idx = idx
-            break
-
-    if matching_set_idx is None:
-        available_sizes = [cs.shape[0] for cs in centroid_sets]
-        raise ValueError(
+    available_sizes = [centroids.shape[0] for centroids in centroid_sets]
+    try:
+        matching_set_idx = available_sizes.index(num_centroids)
+    except ValueError:
+        logger.critical(
             f"No centroid set found with {num_centroids} centroids. "
             f"Available sizes: {available_sizes}"
         )
+        raise
 
     centroid_set = centroid_sets[matching_set_idx]
     logger.debug(
