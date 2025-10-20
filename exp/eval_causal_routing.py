@@ -37,6 +37,7 @@ from transformers import (
 )
 import yaml
 
+from core.data import get_dataset_fn
 from core.dtype import get_dtype
 from core.model import get_model_config
 from delphi.config import (  # type: ignore
@@ -52,6 +53,82 @@ from exp.eval_intruder import (
     process_cache,
 )
 from exp.kmeans import KMEANS_FILENAME
+
+
+def load_seed_dataset(
+    dataset_name: str,
+    tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast,
+    sample_length: int,
+    max_samples: int,
+    seed: int = 0,
+) -> list[th.Tensor]:
+    """
+    Load and filter a dataset to create seed tensors for generation.
+
+    Args:
+        dataset_name: Name of the dataset to load (e.g., "lmsys")
+        tokenizer: Tokenizer to use for tokenization
+        sample_length: Target length for each sample (samples will be filtered to this length)
+        max_samples: Maximum number of samples to collect
+        seed: Random seed for reproducible sampling
+
+    Returns:
+        List of tokenized tensors, each of shape (sample_length,) with int token IDs
+    """
+    logger.info(
+        f"Loading seed dataset '{dataset_name}' with max_samples={max_samples}, sample_length={sample_length}"
+    )
+
+    # Get the dataset function
+    dataset_fn = get_dataset_fn(dataset_name)
+
+    # Create dataset iterator
+    dataset_iter = dataset_fn(tokenizer)
+
+    # Set random seed for reproducible sampling
+    random.seed(seed)
+
+    seed_tensors = []
+    processed_count = 0
+
+    for text in dataset_iter:
+        if len(seed_tensors) >= max_samples:
+            break
+
+        processed_count += 1
+
+        # Tokenize the text
+        tokens = tokenizer(text, return_tensors="pt", truncation=False).input_ids[0]
+
+        # Filter by length: must be at least sample_length tokens
+        if len(tokens) < sample_length:
+            continue
+
+        # Truncate to exact sample_length
+        truncated_tokens = tokens[:sample_length]
+
+        # Validate that tokens are integers
+        assert truncated_tokens.dtype in [th.int32, th.int64, th.long], (
+            f"Expected int tensor, got {truncated_tokens.dtype}"
+        )
+
+        seed_tensors.append(truncated_tokens)
+
+        if len(seed_tensors) % 100 == 0:
+            logger.debug(
+                f"Collected {len(seed_tensors)}/{max_samples} seed samples (processed {processed_count} texts)"
+            )
+
+    logger.info(
+        f"Collected {len(seed_tensors)} seed samples from {processed_count} texts"
+    )
+
+    if len(seed_tensors) == 0:
+        raise ValueError(
+            f"No samples found with length >= {sample_length} in dataset '{dataset_name}'"
+        )
+
+    return seed_tensors
 
 
 def load_and_select_centroid(
@@ -518,7 +595,9 @@ def eval_causal_routing(
     num_causal_samples: int = 10,
     max_gen_length: int = 256,
     gen_temperature: float = 1.0,
-    seed_dataset: list[th.Tensor] | None = None,
+    seed_dataset: str | None = None,
+    seed_sample_length: int = 256,
+    max_seed_samples: int = 1000,
     # Intruder detection settings
     ctxlen: int = 256,
     n_tokens: int = 10_000_000,
@@ -561,11 +640,11 @@ def eval_causal_routing(
         num_causal_samples: Number of causal samples to generate
         max_gen_length: Maximum length for generated sequences
         gen_temperature: Temperature for sampling during generation
-        seed_dataset: Optional list of tokenized seed tensors to start generation from.
-                     If None, generates from BOS token. Each tensor should be a 1D
-                     int tensor of token IDs. Should be filtered to: (i) not activate
-                     the target centroid, (ii) have sufficient but not excessive context
-                     (e.g., 256 tokens), and (iii) exclude samples < 256 tokens.
+        seed_dataset: Optional dataset name to load seed samples from (e.g., "lmsys").
+                     If None, generates from BOS token. Dataset will be loaded, tokenized,
+                     and filtered to create seed tensors for generation.
+        seed_sample_length: Length to truncate/filter seed samples to
+        max_seed_samples: Maximum number of seed samples to collect from dataset
         ctxlen: Context length for activation caching
         n_tokens: Number of tokens to process for caching
         batchsize: Batch size for processing
@@ -696,6 +775,19 @@ def eval_causal_routing(
     logger.info("STEP 2: Generating causal samples")
     logger.info("=" * 80)
 
+    # Load seed dataset if specified
+    seed_tensors = None
+    if seed_dataset is not None:
+        logger.info(f"Loading seed dataset: {seed_dataset}")
+        seed_tensors = load_seed_dataset(
+            seed_dataset,
+            tokenizer,
+            seed_sample_length,
+            max_seed_samples,
+            seed=seed,
+        )
+        logger.info(f"Loaded {len(seed_tensors)} seed samples")
+
     causal_samples = generate_causal_samples(
         model,
         tokenizer,
@@ -706,7 +798,7 @@ def eval_causal_routing(
         max_length=max_gen_length,
         temperature=gen_temperature,
         seed=seed,
-        seed_dataset=seed_dataset,
+        seed_dataset=seed_tensors,
     )
 
     # Save generated samples
