@@ -110,12 +110,14 @@ def load_and_select_centroid(
         # Set random seed for reproducible selection
         random.seed(seed)
         selected_centroid_idx = random.randint(0, num_centroids - 1)
-        logger.debug(f"Randomly selected centroid {selected_centroid_idx} (seed={seed})")
+        logger.debug(
+            f"Randomly selected centroid {selected_centroid_idx} (seed={seed})"
+        )
     else:
         assert (0 <= centroid_idx < num_centroids), f"centroid_idx {centroid_idx} out of range [0, {num_centroids})"
         selected_centroid_idx = centroid_idx
         logger.debug(f"Using specified centroid {selected_centroid_idx}")
-    
+
     selected_centroid_flat = centroids[selected_centroid_idx]  # Shape: (L * E,)
 
     # Determine L and E dimensions
