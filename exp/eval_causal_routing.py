@@ -139,15 +139,32 @@ def load_and_select_centroid(
     if activation_dim is None:
         raise ValueError(f"activation_dim not found in metadata at {metadata_path}")
 
-    # activation_dim is E (number of experts)
-    # flat_dim = L * E, so L = flat_dim / E
-    E = activation_dim
-    L = flat_dim // E
+    # Get shape information from metadata
+    num_layers = metadata.get("num_layers")
+    num_experts = metadata.get("num_experts")
+    
+    if num_layers is None:
+        raise ValueError(f"num_layers not found in metadata at {metadata_path}")
+    if num_experts is None:
+        raise ValueError(f"num_experts not found in metadata at {metadata_path}")
 
-    if flat_dim % E != 0:
-        raise ValueError(
-            f"Flat dimension {flat_dim} is not divisible by activation_dim {E}"
-        )
+    # Verify dimensions are consistent
+    expected_dim = num_layers * num_experts
+    
+    logger.debug(f"Shape validation: flat_dim={flat_dim}, expected={expected_dim}")
+    logger.debug(f"Metadata: num_layers={num_layers}, num_experts={num_experts}")
+    logger.debug(f"activation_dim={activation_dim}")
+    
+    assert flat_dim == expected_dim, (
+        f"Centroid dimension mismatch: got {flat_dim}, expected {expected_dim} "
+        f"(num_layers={num_layers} * num_experts={num_experts})"
+    )
+    assert activation_dim == expected_dim, (
+        f"Metadata dimension mismatch: activation_dim={activation_dim}, "
+        f"expected {expected_dim} (num_layers={num_layers} * num_experts={num_experts})"
+    )
+
+    L, E = num_layers, num_experts
 
     # Reshape from (L * E,) to (L, E)
     centroid_reshaped = selected_centroid_flat.reshape(L, E).to(dtype=dtype)
