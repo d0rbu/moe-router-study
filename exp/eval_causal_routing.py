@@ -242,7 +242,7 @@ def generate_causal_samples(
     max_length: int = 256,
     temperature: float = 1.0,
     seed: int = 0,
-    seed_dataset: list[str] | None = None,
+    seed_dataset: list[th.Tensor] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Generate samples with causally-modulated routing using nnterp tracing.
@@ -257,9 +257,10 @@ def generate_causal_samples(
         max_length: Maximum length of generated sequences
         temperature: Temperature for sampling
         seed: Random seed for reproducibility
-        seed_dataset: Optional list of seed texts to start generation from.
+        seed_dataset: Optional list of tokenized seed tensors to start generation from.
                      If None, generates from BOS token. If provided, samples
                      are selected randomly from this dataset as starting points.
+                     Each tensor should be a 1D int tensor of token IDs.
 
     Returns:
         List of dictionaries containing generated samples and metadata
@@ -282,15 +283,17 @@ def generate_causal_samples(
     samples = []
     for i in tqdm(range(num_samples), desc="Generating causal samples"):
         # Determine starting point for generation
-        seed_text = None
+        seed_tensor = None
         if seed_dataset is not None:
-            # Select a random seed text from the dataset
-            seed_text = rng.choice(seed_dataset)
-            input_ids = tokenizer(
-                seed_text, return_tensors="pt", truncation=True, max_length=256
-            ).input_ids.to(model.device)
+            # Select a random seed tensor from the dataset
+            seed_tensor = rng.choice(seed_dataset)
+            # Ensure it's a 2D tensor (batch_size=1, seq_len)
+            if seed_tensor.dim() == 1:
+                input_ids = seed_tensor.unsqueeze(0).to(model.device)
+            else:
+                input_ids = seed_tensor.to(model.device)
             logger.debug(
-                f"Sample {i}: Starting from seed text with {input_ids.shape[1]} tokens"
+                f"Sample {i}: Starting from seed tensor with {input_ids.shape[1]} tokens"
             )
         else:
             # Use BOS token or empty string as prompt
@@ -344,7 +347,9 @@ def generate_causal_samples(
                 "text": generated_text,
                 "influence": influence,
                 "seed": seed + i,
-                "seed_text": seed_text,
+                "seed_tensor": seed_tensor.cpu().tolist()
+                if seed_dataset is not None
+                else None,
                 "initial_tokens": input_ids.shape[1],
                 "generated_tokens": generated_tokens.shape[1] - input_ids.shape[1],
             }
@@ -513,7 +518,7 @@ def eval_causal_routing(
     num_causal_samples: int = 10,
     max_gen_length: int = 256,
     gen_temperature: float = 1.0,
-    seed_dataset: list[str] | None = None,
+    seed_dataset: list[th.Tensor] | None = None,
     # Intruder detection settings
     ctxlen: int = 256,
     n_tokens: int = 10_000_000,
@@ -556,11 +561,11 @@ def eval_causal_routing(
         num_causal_samples: Number of causal samples to generate
         max_gen_length: Maximum length for generated sequences
         gen_temperature: Temperature for sampling during generation
-        seed_dataset: Optional list of seed texts to start generation from.
-                     If None, generates from BOS token. Should be filtered to:
-                     (i) not activate the target centroid, (ii) have sufficient
-                     but not excessive context (e.g., 256 tokens), and
-                     (iii) exclude samples < 256 tokens.
+        seed_dataset: Optional list of tokenized seed tensors to start generation from.
+                     If None, generates from BOS token. Each tensor should be a 1D
+                     int tensor of token IDs. Should be filtered to: (i) not activate
+                     the target centroid, (ii) have sufficient but not excessive context
+                     (e.g., 256 tokens), and (iii) exclude samples < 256 tokens.
         ctxlen: Context length for activation caching
         n_tokens: Number of tokens to process for caching
         batchsize: Batch size for processing
