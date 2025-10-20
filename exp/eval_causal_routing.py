@@ -114,7 +114,9 @@ def load_and_select_centroid(
             f"Randomly selected centroid {selected_centroid_idx} (seed={seed})"
         )
     else:
-        assert (0 <= centroid_idx < num_centroids), f"centroid_idx {centroid_idx} out of range [0, {num_centroids})"
+        assert 0 <= centroid_idx < num_centroids, (
+            f"centroid_idx {centroid_idx} out of range [0, {num_centroids})"
+        )
         selected_centroid_idx = centroid_idx
         logger.debug(f"Using specified centroid {selected_centroid_idx}")
 
