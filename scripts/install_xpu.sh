@@ -24,18 +24,18 @@ fi
 
 # Remove existing CPU-only version
 echo "📦 Removing existing Intel Extension for PyTorch..."
-uv run pip uninstall intel-extension-for-pytorch -y 2>/dev/null || echo "   (No existing installation found)"
+uv remove intel-extension-for-pytorch 2>/dev/null || echo "   (No existing installation found)"
 
 # Clean up any conflicting system-wide packages that might interfere
 echo "🧹 Cleaning up potential conflicting system packages..."
 pip uninstall intel-extension-for-pytorch numpy psutil packaging -y 2>/dev/null || echo "   (No conflicting system packages found)"
 
 # Also clean up from the uv environment to ensure fresh install
-uv run pip uninstall intel-extension-for-pytorch numpy psutil packaging -y 2>/dev/null || echo "   (No conflicting uv packages found)"
+uv remove intel-extension-for-pytorch numpy psutil packaging 2>/dev/null || echo "   (No conflicting uv packages found)"
 
 # Ensure PyTorch is installed first
 echo "🔥 Installing PyTorch..."
-uv run pip install torch --force-reinstall
+uv add torch --force
 
 # Check available versions first
 echo "🔍 Checking available XPU versions..."
@@ -55,12 +55,11 @@ echo "⚡ Installing XPU version: $XPU_VERSION..."
 # Try multiple installation approaches
 INSTALL_SUCCESS=false
 
-# Approach 1: Direct uv run pip install
-echo "   Trying approach 1: uv run pip install..."
-if uv run pip install "intel-extension-for-pytorch==$XPU_VERSION" \
+# Approach 1: Direct uv add
+echo "   Trying approach 1: uv add..."
+if uv add "intel-extension-for-pytorch==$XPU_VERSION" \
     --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/ \
-    --force-reinstall \
-    --no-cache-dir 2>/dev/null; then
+    --force 2>/dev/null; then
     INSTALL_SUCCESS=true
     echo "   ✅ Approach 1 succeeded"
 fi
@@ -68,21 +67,19 @@ fi
 # Approach 2: Try with different URL format if first approach failed
 if [ "$INSTALL_SUCCESS" = false ]; then
     echo "   Trying approach 2: alternative index URL..."
-    if uv run pip install "intel-extension-for-pytorch==$XPU_VERSION" \
+    if uv add "intel-extension-for-pytorch==$XPU_VERSION" \
         --index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/ \
-        --force-reinstall \
-        --no-cache-dir 2>/dev/null; then
+        --force 2>/dev/null; then
         INSTALL_SUCCESS=true
         echo "   ✅ Approach 2 succeeded"
     fi
 fi
 
-# Approach 3: Try without no-cache-dir if still failed
+# Approach 3: Try with basic uv add if still failed
 if [ "$INSTALL_SUCCESS" = false ]; then
-    echo "   Trying approach 3: without cache restrictions..."
-    if uv run pip install "intel-extension-for-pytorch==$XPU_VERSION" \
-        --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/ \
-        --force-reinstall; then
+    echo "   Trying approach 3: basic uv add..."
+    if uv add "intel-extension-for-pytorch==$XPU_VERSION" \
+        --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/; then
         INSTALL_SUCCESS=true
         echo "   ✅ Approach 3 succeeded"
     fi
@@ -92,7 +89,7 @@ if [ "$INSTALL_SUCCESS" = false ]; then
     echo "❌ All installation approaches failed!"
     echo "   Please check your internet connection and try again."
     echo "   You may also try installing manually with:"
-    echo "   uv run pip install intel-extension-for-pytorch==$XPU_VERSION --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/"
+    echo "   uv add intel-extension-for-pytorch==$XPU_VERSION --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/"
     exit 1
 fi
 
