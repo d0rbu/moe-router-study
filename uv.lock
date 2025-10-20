@@ -2695,7 +2695,7 @@ requires-dist = [
     { name = "einops", specifier = ">=0.6.0" },
     { name = "flash-attn", marker = "extra == 'flash'", specifier = ">=2.8.2" },
     { name = "hatchling", specifier = ">=1.27.0" },
-    { name = "intel-extension-for-pytorch", extras = ["xpu"], specifier = ">=2.8.0" },
+    { name = "intel-extension-for-pytorch", specifier = ">=2.8.0" },
     { name = "matplotlib", specifier = ">=3.5.0" },
     { name = "more-itertools", specifier = ">=10.8.0" },
     { name = "nnsight", specifier = ">=0.5.0.dev13" },
