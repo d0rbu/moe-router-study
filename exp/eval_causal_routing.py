@@ -128,21 +128,20 @@ def load_and_select_centroid(
     # For now, we'll infer from the data structure
     flat_dim = selected_centroid_flat.shape[0]
 
-    # Load metadata to get activation dimensions
+    # Load metadata to get activation dimensions and shape information
     metadata_path = experiment_dir / "metadata.yaml"
     if not metadata_path.is_file():
         raise FileNotFoundError(f"Metadata file not found at {metadata_path}")
 
     with open(metadata_path) as f:
         metadata = yaml.safe_load(f)
+    
     activation_dim = metadata.get("activation_dim")
-    if activation_dim is None:
-        raise ValueError(f"activation_dim not found in metadata at {metadata_path}")
-
-    # Get shape information from metadata
     num_layers = metadata.get("num_layers")
     num_experts = metadata.get("num_experts")
     
+    if activation_dim is None:
+        raise ValueError(f"activation_dim not found in metadata at {metadata_path}")
     if num_layers is None:
         raise ValueError(f"num_layers not found in metadata at {metadata_path}")
     if num_experts is None:
@@ -155,6 +154,20 @@ def load_and_select_centroid(
     logger.debug(f"Metadata: num_layers={num_layers}, num_experts={num_experts}")
     logger.debug(f"activation_dim={activation_dim}")
     
+    # Verify dimensions match
+    if flat_dim != activation_dim:
+        raise ValueError(
+            f"Centroid dimension ({flat_dim}) doesn't match "
+            f"activation dimension ({activation_dim}) from metadata"
+        )
+
+    # Verify the relationship L * E = activation_dim
+    if activation_dim != num_layers * num_experts:
+        raise ValueError(
+            f"Activation dimension ({activation_dim}) doesn't match "
+            f"num_layers * num_experts ({num_layers} * {num_experts} = {num_layers * num_experts})"
+        )
+    
     assert flat_dim == expected_dim, (
         f"Centroid dimension mismatch: got {flat_dim}, expected {expected_dim} "
         f"(num_layers={num_layers} * num_experts={num_experts})"
@@ -164,10 +177,8 @@ def load_and_select_centroid(
         f"expected {expected_dim} (num_layers={num_layers} * num_experts={num_experts})"
     )
 
-    L, E = num_layers, num_experts
-
     # Reshape from (L * E,) to (L, E)
-    centroid_reshaped = selected_centroid_flat.reshape(L, E).to(dtype=dtype)
+    centroid_reshaped = selected_centroid_flat.reshape(num_layers, num_experts).to(dtype=dtype)
 
     logger.info(
         f"Selected centroid {selected_centroid_idx} from set with {num_centroids} centroids. "
