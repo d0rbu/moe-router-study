@@ -20,6 +20,7 @@ from transformers import (
     PreTrainedTokenizerFast,
 )
 
+from core.device import DeviceType, get_backend
 from core.dtype import get_dtype
 from core.model import get_model_config
 from core.type import assert_type
@@ -416,14 +417,20 @@ def eval_intruder(
     explainer: str = "default",
     filter_bos: bool = False,
     pipeline_num_proc: int = cpu_count() // 2,
-    num_gpus: int = th.cuda.device_count(),
+    num_gpus: int | None = None,
     verbose: bool = True,
     seed: int = 0,
     hf_token: str = "",
     log_level: str = "INFO",
+    device_type: DeviceType = "cuda",
 ) -> None:
     logger.remove()
     logger.add(sys.stderr, level=log_level)
+
+    # Set GPU count dynamically based on device type
+    if num_gpus is None:
+        backend = get_backend(device_type)
+        num_gpus = backend.device_count() if backend.is_available() else 0
 
     logger.info(f"Running with log level: {log_level}")
 
