@@ -160,77 +160,65 @@ def load_and_select_centroid(
     return centroid_reshaped, selected_centroid_idx, top_k
 
 
-class RouterModulationHook:
+def create_standard_forward_fn(model: StandardizedTransformer) -> Callable:
     """
-    Forward hook that modulates router logits based on centroid values.
-
-    This hook intercepts router logits during the forward pass and applies
-    centroid-based modulation using the formula:
-        modified_probs = renormalize(softmax(logits) * centroid[layer])
-
-    The modulation is applied probabilistically based on the influence parameter.
+    Create a standard forward pass function for generation.
+    
+    Args:
+        model: The transformer model
+        
+    Returns:
+        Function that performs standard forward pass
     """
+    def standard_forward(input_ids: th.Tensor) -> th.Tensor:
+        with model.trace(input_ids):
+            # Standard forward pass - no modifications
+            logits = model.lm_head.output
+        return logits
+    
+    return standard_forward
 
-    def __init__(
-        self,
-        centroid: th.Tensor,  # Shape: (L, E)
-        influence: float,
-        layer_idx: int,
-        seed: int = 0,
-    ):
-        """
-        Args:
-            centroid: Centroid tensor of shape (L, E)
-            influence: Probability of applying modulation (0.0 to 1.0)
-            layer_idx: Index of the layer this hook is attached to
-            seed: Random seed for reproducibility
-        """
-        self.centroid = centroid  # (L, E)
-        self.influence = influence
-        self.layer_idx = layer_idx
-        self.rng = random.Random(seed)
-        self.apply_modulation = True  # Will be set per forward pass
 
-    def __call__(
-        self,
-        module: nn.Module,
-        input: tuple[th.Tensor, ...],
-        output: th.Tensor,
-    ) -> th.Tensor:
-        """
-        Hook function that modulates router logits.
-
-        Args:
-            module: The router module
-            input: Input tensors to the module
-            output: Router logits of shape (B, T, E) or (B, E)
-
-        Returns:
-            Modified router logits with same shape as output
-        """
-        # Decide whether to apply modulation for this forward pass
-        if self.rng.random() > self.influence:
-            return output
-
-        # Get the centroid values for this layer
-        layer_centroid = self.centroid[self.layer_idx]  # Shape: (E,)
-
-        # Apply softmax to get probabilities
-        probs = F.softmax(output, dim=-1)  # Shape: (B, T, E) or (B, E)
-
-        # Multiply by centroid values (broadcasting)
-        modulated_probs = probs * layer_centroid.unsqueeze(0).unsqueeze(
-            0
-        )  # Broadcast to (B, T, E)
-
-        # Renormalize to maintain valid probability distribution
-        modulated_probs = modulated_probs / modulated_probs.sum(dim=-1, keepdim=True)
-
-        # Convert back to logits (inverse softmax)
-        # Use log to get logits from probabilities
-        modulated_logits = th.log(modulated_probs + 1e-10)  # Add epsilon for stability
-
-        return modulated_logits
+def create_causal_forward_fn(
+    model: StandardizedTransformer, 
+    centroid: th.Tensor,
+    rng: random.Random
+) -> Callable:
+    """
+    Create a causally-modified forward pass function for generation.
+    
+    Args:
+        model: The transformer model
+        centroid: Centroid tensor of shape (L, E) for router modulation
+        rng: Random number generator for reproducibility
+        
+    Returns:
+        Function that performs causally-modified forward pass
+    """
+    def causal_forward(input_ids: th.Tensor) -> th.Tensor:
+        with model.trace(input_ids):
+            # Get router outputs and apply centroid-based modulation
+            router_logits = model.routers_output  # Shape: (B, T, L, E)
+            
+            # Apply softmax to get probabilities
+            router_probs = F.softmax(router_logits, dim=-1)  # (B, T, L, E)
+            
+            # Multiply by centroid values (broadcasting across batch and time)
+            # centroid shape: (L, E) -> broadcast to (B, T, L, E)
+            modulated_probs = router_probs * centroid.unsqueeze(0).unsqueeze(0)
+            
+            # Renormalize to maintain valid probability distribution
+            modulated_probs = modulated_probs / modulated_probs.sum(dim=-1, keepdim=True)
+            
+            # Set the modified router probabilities
+            model.router_probabilities = modulated_probs
+            
+            # Get final logits
+            logits = model.lm_head.output
+            
+        return logits
+    
+    return causal_forward
 
 
 def generate_causal_samples(
@@ -244,13 +232,13 @@ def generate_causal_samples(
     seed: int = 0,
 ) -> list[dict[str, Any]]:
     """
-    Generate samples with causally-modulated routing.
+    Generate samples with causally-modulated routing using nnterp tracing.
 
     Args:
         model: The transformer model
         tokenizer: Tokenizer for the model
         centroid: Centroid tensor of shape (L, E)
-        influence: Probability of applying modulation per token
+        influence: Probability of applying modulation per token (0.0-1.0)
         num_samples: Number of samples to generate
         max_length: Maximum length of generated sequences
         temperature: Temperature for sampling
@@ -263,89 +251,60 @@ def generate_causal_samples(
 
     # Set random seed for reproducibility
     th.manual_seed(seed)
-    random.seed(seed)
+    rng = random.Random(seed)
 
-    # Identify router layers in the model
-    # Assuming model has attribute layers_with_routers or similar
-    # For now, we'll try to find router modules by name
-    router_modules = []
-    router_layer_indices = []
+    # Create forward pass functions
+    standard_forward = create_standard_forward_fn(model)
+    causal_forward = create_causal_forward_fn(model, centroid, rng)
 
-    for name, module in model.named_modules():
-        # Look for router/gate modules
-        if "gate" in name.lower() or "router" in name.lower():
-            # Extract layer index from name (e.g., "layers.5.mlp.gate")
-            parts = name.split(".")
-            for i, part in enumerate(parts):
-                if part == "layers" and i + 1 < len(parts):
-                    try:
-                        layer_idx = int(parts[i + 1])
-                        router_modules.append(module)
-                        router_layer_indices.append(layer_idx)
-                        break
-                    except ValueError:
-                        continue
-
-    logger.debug(
-        f"Found {len(router_modules)} router modules at layers: {router_layer_indices}"
-    )
-
-    # Register hooks on all router modules
-    hooks = []
-    for router_module, layer_idx in zip(
-        router_modules, router_layer_indices, strict=False
-    ):
-        hook = RouterModulationHook(
-            centroid=centroid,
-            influence=influence,
-            layer_idx=layer_idx,
-            seed=seed + layer_idx,  # Different seed per layer
-        )
-        handle = router_module.register_forward_hook(hook)
-        hooks.append(handle)
-
-    # Generate samples
+    # Generate samples using autoregressive generation with probabilistic forward selection
     samples = []
-    try:
-        for i in tqdm(range(num_samples), desc="Generating causal samples"):
-            # Use a simple prompt or BOS token
-            if tokenizer.bos_token_id is not None:
-                input_ids = th.tensor([[tokenizer.bos_token_id]], device=model.device)
+    for i in tqdm(range(num_samples), desc="Generating causal samples"):
+        # Use a simple prompt or BOS token
+        if tokenizer.bos_token_id is not None:
+            input_ids = th.tensor([[tokenizer.bos_token_id]], device=model.device)
+        else:
+            # Use empty string as prompt
+            input_ids = tokenizer("", return_tensors="pt").input_ids.to(model.device)
+
+        # Autoregressive generation with probabilistic forward pass selection
+        generated_tokens = input_ids.clone()
+        
+        for step in range(max_length - input_ids.shape[1]):
+            # Decide whether to use causal or standard forward pass for this token
+            use_causal = rng.random() < influence
+            
+            if use_causal:
+                logits = causal_forward(generated_tokens)
             else:
-                # Use empty string as prompt
-                input_ids = tokenizer("", return_tensors="pt").input_ids.to(
-                    model.device
-                )
+                logits = standard_forward(generated_tokens)
+            
+            # Apply temperature and sample next token
+            next_token_logits = logits[0, -1, :] / temperature
+            probs = F.softmax(next_token_logits, dim=-1)
+            next_token = th.multinomial(probs, num_samples=1)
+            
+            # Append to sequence
+            generated_tokens = th.cat([generated_tokens, next_token.unsqueeze(0)], dim=1)
+            
+            # Stop if we hit EOS token
+            if tokenizer.eos_token_id is not None and next_token.item() == tokenizer.eos_token_id:
+                break
 
-            # Generate
-            output_ids = model.generate(
-                input_ids,
-                max_length=max_length,
-                temperature=temperature,
-                do_sample=True,
-                pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
-            )
+        # Decode generated sequence
+        generated_text = tokenizer.decode(generated_tokens[0], skip_special_tokens=True)
 
-            # Decode
-            generated_text = tokenizer.decode(output_ids[0], skip_special_tokens=True)  # type: ignore
+        samples.append(
+            {
+                "sample_idx": i,
+                "tokens": generated_tokens[0].cpu().tolist(),
+                "text": generated_text,
+                "influence": influence,
+                "seed": seed + i,
+            }
+        )
 
-            samples.append(
-                {
-                    "sample_idx": i,
-                    "tokens": output_ids[0].cpu().tolist(),  # type: ignore
-                    "text": generated_text,
-                    "influence": influence,
-                    "seed": seed + i,
-                }
-            )
-
-            logger.trace(f"Generated sample {i}: {generated_text[:100]}...")
-
-    finally:
-        # Remove all hooks
-        for handle in hooks:
-            handle.remove()
-        logger.debug("Removed all router hooks")
+        logger.trace(f"Generated sample {i}: {generated_text[:100]}...")
 
     return samples
 
