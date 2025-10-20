@@ -58,6 +58,8 @@ def load_and_select_centroid(
     experiment_dir: Path,
     num_centroids: int,
     dtype: th.dtype,
+    centroid_idx: int | None = None,
+    seed: int = 0,
 ) -> tuple[th.Tensor, int, int]:
     """
     Load k-means centroids and select one based on num_centroids parameter.
@@ -66,6 +68,8 @@ def load_and_select_centroid(
         experiment_dir: Directory containing kmeans.pt file
         num_centroids: Number of centroids to select (k value)
         dtype: Data type for the centroid tensor
+        centroid_idx: Specific centroid index to select (None for random selection)
+        seed: Random seed for reproducible centroid selection when centroid_idx is None
 
     Returns:
         Tuple of (centroid_tensor, centroid_idx, top_k):
@@ -95,14 +99,26 @@ def load_and_select_centroid(
         )
         raise
 
-    centroid_set = centroid_sets[matching_set_idx]
+    centroids = centroid_sets[matching_set_idx]
     logger.debug(
-        f"Found centroid set at index {matching_set_idx} with shape {centroid_set.shape}"
+        f"Found centroid set at index {matching_set_idx} with shape {centroids.shape}"
     )
 
-    # Randomly select one centroid from the set
-    centroid_idx = random.randint(0, num_centroids - 1)
-    selected_centroid_flat = centroid_set[centroid_idx]  # Shape: (L * E,)
+    # Select specific centroid or pick one randomly
+    if centroid_idx is None:
+        # Set random seed for reproducible selection
+        random.seed(seed)
+        selected_centroid_idx = random.randint(0, num_centroids - 1)
+        logger.debug(f"Randomly selected centroid {selected_centroid_idx} (seed={seed})")
+    else:
+        if not (0 <= centroid_idx < num_centroids):
+            raise ValueError(
+                f"centroid_idx {centroid_idx} out of range [0, {num_centroids})"
+            )
+        selected_centroid_idx = centroid_idx
+        logger.debug(f"Using specified centroid {selected_centroid_idx}")
+    
+    selected_centroid_flat = centroids[selected_centroid_idx]  # Shape: (L * E,)
 
     # Determine L and E dimensions
     # We need to know the number of experts per layer and number of layers
@@ -137,11 +153,11 @@ def load_and_select_centroid(
     centroid_reshaped = selected_centroid_flat.reshape(L, E).to(dtype=dtype)
 
     logger.info(
-        f"Selected centroid {centroid_idx} from set with {num_centroids} centroids. "
+        f"Selected centroid {selected_centroid_idx} from set with {num_centroids} centroids. "
         f"Reshaped from {selected_centroid_flat.shape} to {centroid_reshaped.shape}"
     )
 
-    return centroid_reshaped, centroid_idx, top_k
+    return centroid_reshaped, selected_centroid_idx, top_k
 
 
 class RouterModulationHook:
