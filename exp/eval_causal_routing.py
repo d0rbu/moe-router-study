@@ -160,29 +160,10 @@ def load_and_select_centroid(
     return centroid_reshaped, selected_centroid_idx, top_k
 
 
-def create_standard_forward_fn(model: StandardizedTransformer) -> Callable:
-    """
-    Create a standard forward pass function for generation.
-    
-    Args:
-        model: The transformer model
-        
-    Returns:
-        Function that performs standard forward pass
-    """
-    def standard_forward(input_ids: th.Tensor) -> th.Tensor:
-        with model.trace(input_ids):
-            # Standard forward pass - no modifications
-            logits = model.lm_head.output
-        return logits
-    
-    return standard_forward
-
-
 def create_causal_forward_fn(
     model: StandardizedTransformer, 
     centroid: th.Tensor,
-    rng: random.Random
+    top_k: int
 ) -> Callable:
     """
     Create a causally-modified forward pass function for generation.
@@ -190,31 +171,47 @@ def create_causal_forward_fn(
     Args:
         model: The transformer model
         centroid: Centroid tensor of shape (L, E) for router modulation
-        rng: Random number generator for reproducibility
+        top_k: Top-k value for routing
         
     Returns:
         Function that performs causally-modified forward pass
     """
     def causal_forward(input_ids: th.Tensor) -> th.Tensor:
         with model.trace(input_ids):
-            # Get router outputs and apply centroid-based modulation
-            router_logits = model.routers_output  # Shape: (B, T, L, E)
+            # Loop through layers with routers and modify only the last token
+            for layer_idx in model.layers_with_routers:
+                # Get router logits for this layer: shape (B, T, E)
+                router_logits = model.routers_output[layer_idx]
+                
+                # Only modify the last token in the sequence: shape (B, E)
+                last_token_logits = router_logits[:, -1, :]  # (B, E)
+                
+                # Apply softmax to get probabilities
+                router_probs = F.softmax(last_token_logits, dim=-1)  # (B, E)
+                
+                # Multiply by centroid values for this layer
+                modulated_probs = router_probs * centroid[layer_idx]  # (B, E)
+                
+                # Apply top-k: zero out all but top-k values
+                topk_values, topk_indices = th.topk(modulated_probs, k=top_k, dim=-1)
+                
+                # Create mask with zeros everywhere except top-k positions
+                topk_probs = th.zeros_like(modulated_probs)
+                topk_probs.scatter_(dim=-1, index=topk_indices, src=topk_values)
+                
+                # Renormalize to maintain valid probability distribution
+                renormalized_probs = topk_probs / topk_probs.sum(dim=-1, keepdim=True)
+                
+                # Set the modified router probabilities for this layer
+                # We need to update the full tensor, keeping other positions unchanged
+                full_router_probs = F.softmax(router_logits, dim=-1)  # (B, T, E)
+                full_router_probs[:, -1, :] = renormalized_probs  # Update only last token
+                
+                # Assign back to model
+                model.router_probabilities[layer_idx] = full_router_probs
             
-            # Apply softmax to get probabilities
-            router_probs = F.softmax(router_logits, dim=-1)  # (B, T, L, E)
-            
-            # Multiply by centroid values (broadcasting across batch and time)
-            # centroid shape: (L, E) -> broadcast to (B, T, L, E)
-            modulated_probs = router_probs * centroid.unsqueeze(0).unsqueeze(0)
-            
-            # Renormalize to maintain valid probability distribution
-            modulated_probs = modulated_probs / modulated_probs.sum(dim=-1, keepdim=True)
-            
-            # Set the modified router probabilities
-            model.router_probabilities = modulated_probs
-            
-            # Get final logits
-            logits = model.lm_head.output
+            # Get final logits after all router modifications
+            logits = model.lm_head.output.save()
             
         return logits
     
@@ -225,6 +222,7 @@ def generate_causal_samples(
     model: StandardizedTransformer,
     tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast,
     centroid: th.Tensor,
+    top_k: int,
     influence: float,
     num_samples: int = 10,
     max_length: int = 256,
@@ -238,6 +236,7 @@ def generate_causal_samples(
         model: The transformer model
         tokenizer: Tokenizer for the model
         centroid: Centroid tensor of shape (L, E)
+        top_k: Top-k value for routing
         influence: Probability of applying modulation per token (0.0-1.0)
         num_samples: Number of samples to generate
         max_length: Maximum length of generated sequences
@@ -253,9 +252,8 @@ def generate_causal_samples(
     th.manual_seed(seed)
     rng = random.Random(seed)
 
-    # Create forward pass functions
-    standard_forward = create_standard_forward_fn(model)
-    causal_forward = create_causal_forward_fn(model, centroid, rng)
+    # Create causal forward pass function (standard forward is just model)
+    causal_forward = create_causal_forward_fn(model, centroid, top_k)
 
     # Generate samples using autoregressive generation with probabilistic forward selection
     samples = []
@@ -277,7 +275,7 @@ def generate_causal_samples(
             if use_causal:
                 logits = causal_forward(generated_tokens)
             else:
-                logits = standard_forward(generated_tokens)
+                logits = model(generated_tokens)
             
             # Apply temperature and sample next token
             next_token_logits = logits[0, -1, :] / temperature
@@ -643,6 +641,7 @@ def eval_causal_routing(
         model,
         tokenizer,
         centroid,
+        top_k,
         influence,
         num_samples=num_causal_samples,
         max_length=max_gen_length,
