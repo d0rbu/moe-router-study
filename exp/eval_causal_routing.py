@@ -28,7 +28,6 @@ import arguably
 from loguru import logger
 from nnterp import StandardizedTransformer
 import torch as th
-import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm
 from transformers import (
@@ -135,11 +134,11 @@ def load_and_select_centroid(
 
     with open(metadata_path) as f:
         metadata = yaml.safe_load(f)
-    
+
     activation_dim = metadata.get("activation_dim")
     num_layers = metadata.get("num_layers")
     num_experts = metadata.get("num_experts")
-    
+
     if activation_dim is None:
         raise ValueError(f"activation_dim not found in metadata at {metadata_path}")
     if num_layers is None:
@@ -149,11 +148,11 @@ def load_and_select_centroid(
 
     # Verify dimensions are consistent
     expected_dim = num_layers * num_experts
-    
+
     logger.debug(f"Shape validation: flat_dim={flat_dim}, expected={expected_dim}")
     logger.debug(f"Metadata: num_layers={num_layers}, num_experts={num_experts}")
     logger.debug(f"activation_dim={activation_dim}")
-    
+
     # Verify dimensions match
     if flat_dim != activation_dim:
         raise ValueError(
@@ -167,7 +166,7 @@ def load_and_select_centroid(
             f"Activation dimension ({activation_dim}) doesn't match "
             f"num_layers * num_experts ({num_layers} * {num_experts} = {num_layers * num_experts})"
         )
-    
+
     assert flat_dim == expected_dim, (
         f"Centroid dimension mismatch: got {flat_dim}, expected {expected_dim} "
         f"(num_layers={num_layers} * num_experts={num_experts})"
@@ -178,7 +177,9 @@ def load_and_select_centroid(
     )
 
     # Reshape from (L * E,) to (L, E)
-    centroid_reshaped = selected_centroid_flat.reshape(num_layers, num_experts).to(dtype=dtype)
+    centroid_reshaped = selected_centroid_flat.reshape(num_layers, num_experts).to(
+        dtype=dtype
+    )
 
     logger.info(
         f"Selected centroid {selected_centroid_idx} from set with {num_centroids} centroids. "
@@ -189,60 +190,61 @@ def load_and_select_centroid(
 
 
 def create_causal_forward_fn(
-    model: StandardizedTransformer, 
-    centroid: th.Tensor,
-    top_k: int
+    model: StandardizedTransformer, centroid: th.Tensor, top_k: int
 ) -> Callable:
     """
     Create a causally-modified forward pass function for generation.
-    
+
     Args:
         model: The transformer model
         centroid: Centroid tensor of shape (L, E) for router modulation
         top_k: Top-k value for routing
-        
+
     Returns:
         Function that performs causally-modified forward pass
     """
+
     def causal_forward(input_ids: th.Tensor) -> th.Tensor:
         with model.trace(input_ids):
             # Loop through layers with routers and modify only the last token
             for layer_idx in model.layers_with_routers:
                 # Get router logits for this layer: shape (B, T, E)
                 router_logits = model.routers_output[layer_idx]
-                
+
                 # Only modify the last token in the sequence: shape (B, E)
                 last_token_logits = router_logits[:, -1, :]  # (B, E)
-                
+
                 # Apply softmax to get probabilities
                 router_probs = F.softmax(last_token_logits, dim=-1)  # (B, E)
-                
+
                 # Multiply by centroid values for this layer
                 modulated_probs = router_probs * centroid[layer_idx]  # (B, E)
-                
+
                 # Apply top-k: zero out all but top-k values
                 topk_values, topk_indices = th.topk(modulated_probs, k=top_k, dim=-1)
-                
+
                 # Create mask with zeros everywhere except top-k positions
                 topk_probs = th.zeros_like(modulated_probs)
                 topk_probs.scatter_(dim=-1, index=topk_indices, src=topk_values)
-                
+
                 # Renormalize to maintain valid probability distribution
                 renormalized_probs = topk_probs / topk_probs.sum(dim=-1, keepdim=True)
-                
+
                 # Set the modified router probabilities for this layer
                 # We need to update the full tensor, keeping other positions unchanged
                 full_router_probs = F.softmax(router_logits, dim=-1)  # (B, T, E)
-                full_router_probs[:, -1, :] = renormalized_probs  # Update only last token
-                
+                full_router_probs[:, -1, :] = (
+                    renormalized_probs  # Update only last token
+                )
+
                 # Assign back to model
                 model.router_probabilities[layer_idx] = full_router_probs
-            
+
             # Get final logits after all router modifications
             logits = model.lm_head.output.save()
-            
+
         return logits
-    
+
     return causal_forward
 
 
@@ -256,6 +258,7 @@ def generate_causal_samples(
     max_length: int = 256,
     temperature: float = 1.0,
     seed: int = 0,
+    seed_dataset: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Generate samples with causally-modulated routing using nnterp tracing.
@@ -270,11 +273,19 @@ def generate_causal_samples(
         max_length: Maximum length of generated sequences
         temperature: Temperature for sampling
         seed: Random seed for reproducibility
+        seed_dataset: Optional list of seed texts to start generation from.
+                     If None, generates from BOS token. If provided, samples
+                     are selected randomly from this dataset as starting points.
 
     Returns:
         List of dictionaries containing generated samples and metadata
     """
-    logger.info(f"Generating {num_samples} causal samples with influence={influence}")
+    # Validate influence parameter
+    assert 0.0 <= influence <= 1.0, (
+        f"influence must be between 0.0 and 1.0, got {influence}"
+    )
+
+    logger.debug(f"Generating {num_samples} causal samples with influence={influence}")
 
     # Set random seed for reproducibility
     th.manual_seed(seed)
@@ -286,35 +297,57 @@ def generate_causal_samples(
     # Generate samples using autoregressive generation with probabilistic forward selection
     samples = []
     for i in tqdm(range(num_samples), desc="Generating causal samples"):
-        # Use a simple prompt or BOS token
-        if tokenizer.bos_token_id is not None:
-            input_ids = th.tensor([[tokenizer.bos_token_id]], device=model.device)
+        # Determine starting point for generation
+        seed_text = None
+        if seed_dataset is not None:
+            # Select a random seed text from the dataset
+            seed_text = rng.choice(seed_dataset)
+            input_ids = tokenizer(
+                seed_text, return_tensors="pt", truncation=True, max_length=256
+            ).input_ids.to(model.device)
+            logger.debug(
+                f"Sample {i}: Starting from seed text with {input_ids.shape[1]} tokens"
+            )
         else:
-            # Use empty string as prompt
-            input_ids = tokenizer("", return_tensors="pt").input_ids.to(model.device)
+            # Use BOS token or empty string as prompt
+            if tokenizer.bos_token_id is not None:
+                input_ids = th.tensor([[tokenizer.bos_token_id]], device=model.device)
+            else:
+                # Use empty string as prompt
+                input_ids = tokenizer("", return_tensors="pt").input_ids.to(
+                    model.device
+                )
+            logger.debug(
+                f"Sample {i}: Starting from BOS/empty with {input_ids.shape[1]} tokens"
+            )
 
         # Autoregressive generation with probabilistic forward pass selection
         generated_tokens = input_ids.clone()
-        
-        for step in range(max_length - input_ids.shape[1]):
+
+        for _step in range(max_length - input_ids.shape[1]):
             # Decide whether to use causal or standard forward pass for this token
             use_causal = rng.random() < influence
-            
+
             if use_causal:
                 logits = causal_forward(generated_tokens)
             else:
                 logits = model(generated_tokens)
-            
+
             # Apply temperature and sample next token
             next_token_logits = logits[0, -1, :] / temperature
             probs = F.softmax(next_token_logits, dim=-1)
             next_token = th.multinomial(probs, num_samples=1)
-            
+
             # Append to sequence
-            generated_tokens = th.cat([generated_tokens, next_token.unsqueeze(0)], dim=1)
-            
+            generated_tokens = th.cat(
+                [generated_tokens, next_token.unsqueeze(0)], dim=1
+            )
+
             # Stop if we hit EOS token
-            if tokenizer.eos_token_id is not None and next_token.item() == tokenizer.eos_token_id:
+            if (
+                tokenizer.eos_token_id is not None
+                and next_token.item() == tokenizer.eos_token_id
+            ):
                 break
 
         # Decode generated sequence
@@ -327,6 +360,9 @@ def generate_causal_samples(
                 "text": generated_text,
                 "influence": influence,
                 "seed": seed + i,
+                "seed_text": seed_text,
+                "initial_tokens": input_ids.shape[1],
+                "generated_tokens": generated_tokens.shape[1] - input_ids.shape[1],
             }
         )
 
@@ -493,6 +529,7 @@ def eval_causal_routing(
     num_causal_samples: int = 10,
     max_gen_length: int = 256,
     gen_temperature: float = 1.0,
+    seed_dataset: list[str] | None = None,
     # Intruder detection settings
     ctxlen: int = 256,
     n_tokens: int = 10_000_000,
@@ -535,6 +572,11 @@ def eval_causal_routing(
         num_causal_samples: Number of causal samples to generate
         max_gen_length: Maximum length for generated sequences
         gen_temperature: Temperature for sampling during generation
+        seed_dataset: Optional list of seed texts to start generation from.
+                     If None, generates from BOS token. Should be filtered to:
+                     (i) not activate the target centroid, (ii) have sufficient
+                     but not excessive context (e.g., 256 tokens), and
+                     (iii) exclude samples < 256 tokens.
         ctxlen: Context length for activation caching
         n_tokens: Number of tokens to process for caching
         batchsize: Batch size for processing
@@ -675,6 +717,7 @@ def eval_causal_routing(
         max_length=max_gen_length,
         temperature=gen_temperature,
         seed=seed,
+        seed_dataset=seed_dataset,
     )
 
     # Save generated samples
