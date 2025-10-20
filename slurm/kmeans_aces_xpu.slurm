@@ -40,7 +40,7 @@ cd $SCRATCH/moe-router-study
 echo "📁 Current directory: $(pwd)"
 echo ""
 
-# Activate user virtual environment (prioritize .venv with Python 3.12)
+# Activate user virtual environment (.venv is required)
 if [ -f ".venv/bin/activate" ]; then
     echo "Activating user virtual environment (.venv)..."
     source .venv/bin/activate
@@ -58,36 +58,12 @@ if [ -f ".venv/bin/activate" ]; then
     if python -c "import torch" 2>/dev/null; then
         echo "✅ PyTorch is available in user environment"
     else
-        echo "❌ PyTorch not found in user environment, falling back to ACES environment"
-        deactivate 2>/dev/null || true
-        echo "Activating ACES shared Intel AI environment..."
-        source /sw/hprc/sw/Python/virtualenvs/intelpython/2024.1.0_814/intel-ai-python-env/bin/activate
-    fi
-elif [ -f "venv/bin/activate" ]; then
-    echo "Activating user virtual environment (venv)..."
-    source venv/bin/activate
-    echo "Python version: $(python --version)"
-    echo "Python path: $(which python)"
-    
-    # Sync dependencies with uv if pyproject.toml exists
-    if [ -f "pyproject.toml" ] && command -v uv >/dev/null 2>&1; then
-        echo "📦 Syncing dependencies with uv..."
-        uv sync --quiet
-        echo "✅ Dependencies synced"
-    fi
-    
-    # Check if torch is available in this environment
-    if python -c "import torch" 2>/dev/null; then
-        echo "✅ PyTorch is available in user environment"
-    else
-        echo "❌ PyTorch not found in user environment, falling back to ACES environment"
-        deactivate 2>/dev/null || true
-        echo "Activating ACES shared Intel AI environment..."
-        source /sw/hprc/sw/Python/virtualenvs/intelpython/2024.1.0_814/intel-ai-python-env/bin/activate
+        echo "❌ PyTorch not found in user environment"
+        exit 1
     fi
 else
-    echo "No user virtual environment found, activating ACES shared Intel AI environment..."
-    source /sw/hprc/sw/Python/virtualenvs/intelpython/2024.1.0_814/intel-ai-python-env/bin/activate
+    echo "❌ .venv/bin/activate not found - virtual environment is required"
+    exit 1
 fi
 
 echo "Final Python version: $(python --version)"
