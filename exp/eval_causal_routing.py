@@ -36,6 +36,7 @@ from transformers import (
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
 )
+import yaml
 
 from core.dtype import get_dtype
 from core.model import get_model_config
@@ -111,10 +112,7 @@ def load_and_select_centroid(
         selected_centroid_idx = random.randint(0, num_centroids - 1)
         logger.debug(f"Randomly selected centroid {selected_centroid_idx} (seed={seed})")
     else:
-        if not (0 <= centroid_idx < num_centroids):
-            raise ValueError(
-                f"centroid_idx {centroid_idx} out of range [0, {num_centroids})"
-            )
+        assert (0 <= centroid_idx < num_centroids), f"centroid_idx {centroid_idx} out of range [0, {num_centroids})"
         selected_centroid_idx = centroid_idx
         logger.debug(f"Using specified centroid {selected_centroid_idx}")
     
@@ -129,8 +127,6 @@ def load_and_select_centroid(
     # Load metadata to get activation dimensions
     metadata_path = experiment_dir / "metadata.yaml"
     if metadata_path.is_file():
-        import yaml
-
         with open(metadata_path) as f:
             metadata = yaml.safe_load(f)
         activation_dim = metadata.get("activation_dim")
