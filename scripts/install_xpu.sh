@@ -35,7 +35,7 @@ uv remove intel-extension-for-pytorch oneccl_bind_pt numpy psutil packaging 2>/d
 
 # Ensure PyTorch is installed first
 echo "🔥 Installing PyTorch..."
-uv add torch --force-reinstall
+uv add torch --reinstall
 
 # Use official Intel documentation versions
 IPEX_VERSION="2.8.10+xpu"
@@ -51,7 +51,7 @@ INSTALL_SUCCESS=false
 echo "   Trying approach 1: uv add..."
 if uv add "intel-extension-for-pytorch==$IPEX_VERSION" "oneccl_bind_pt==$ONECCL_VERSION" \
     --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/ \
-    --force-reinstall 2>/dev/null; then
+    --reinstall 2>/dev/null; then
     INSTALL_SUCCESS=true
     echo "   ✅ Approach 1 succeeded"
 fi
@@ -61,7 +61,7 @@ if [ "$INSTALL_SUCCESS" = false ]; then
     echo "   Trying approach 2: alternative index URL..."
     if uv add "intel-extension-for-pytorch==$IPEX_VERSION" "oneccl_bind_pt==$ONECCL_VERSION" \
         --index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/ \
-        --force-reinstall 2>/dev/null; then
+        --reinstall 2>/dev/null; then
         INSTALL_SUCCESS=true
         echo "   ✅ Approach 2 succeeded"
     fi
