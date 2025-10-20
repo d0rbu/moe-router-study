@@ -77,7 +77,7 @@ def load_and_select_centroid(
     if not kmeans_path.is_file():
         raise FileNotFoundError(f"K-means file not found at {kmeans_path}")
 
-    logger.info(f"Loading centroids from {kmeans_path}")
+    logger.debug(f"Loading centroids from {kmeans_path}")
     with open(kmeans_path, "rb") as f:
         data = th.load(f)
 
