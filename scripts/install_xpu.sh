@@ -23,41 +23,33 @@ if [[ "$PYTHON_VERSION" == "3.13" ]]; then
 fi
 
 # Remove existing CPU-only version
-echo "📦 Removing existing Intel Extension for PyTorch..."
-uv remove intel-extension-for-pytorch 2>/dev/null || echo "   (No existing installation found)"
+echo "📦 Removing existing Intel Extension for PyTorch and OneCCL..."
+uv remove intel-extension-for-pytorch oneccl_bind_pt 2>/dev/null || echo "   (No existing installation found)"
 
 # Clean up any conflicting system-wide packages that might interfere
 echo "🧹 Cleaning up potential conflicting system packages..."
-pip uninstall intel-extension-for-pytorch numpy psutil packaging -y 2>/dev/null || echo "   (No conflicting system packages found)"
+pip uninstall intel-extension-for-pytorch oneccl_bind_pt numpy psutil packaging -y 2>/dev/null || echo "   (No conflicting system packages found)"
 
 # Also clean up from the uv environment to ensure fresh install
-uv remove intel-extension-for-pytorch numpy psutil packaging 2>/dev/null || echo "   (No conflicting uv packages found)"
+uv remove intel-extension-for-pytorch oneccl_bind_pt numpy psutil packaging 2>/dev/null || echo "   (No conflicting uv packages found)"
 
 # Ensure PyTorch is installed first
 echo "🔥 Installing PyTorch..."
 uv add torch --force
 
-# Check available versions first
-echo "🔍 Checking available XPU versions..."
-AVAILABLE_VERSIONS=$(uv run pip index versions intel-extension-for-pytorch --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/ 2>/dev/null | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\++xpu' | head -1)
+# Use official Intel documentation versions
+IPEX_VERSION="2.8.10+xpu"
+ONECCL_VERSION="2.8.0+xpu"
 
-if [ -z "$AVAILABLE_VERSIONS" ]; then
-    echo "❌ Error: Could not find XPU versions. Trying with latest available XPU version..."
-    XPU_VERSION="2.8.10+xpu"
-else
-    XPU_VERSION="$AVAILABLE_VERSIONS"
-    echo "   Found XPU version: $XPU_VERSION"
-fi
-
-# Install XPU version from Intel's index
-echo "⚡ Installing XPU version: $XPU_VERSION..."
+# Install XPU versions from Intel's index
+echo "⚡ Installing Intel Extension for PyTorch $IPEX_VERSION and OneCCL $ONECCL_VERSION..."
 
 # Try multiple installation approaches
 INSTALL_SUCCESS=false
 
 # Approach 1: Direct uv add
 echo "   Trying approach 1: uv add..."
-if uv add "intel-extension-for-pytorch==$XPU_VERSION" \
+if uv add "intel-extension-for-pytorch==$IPEX_VERSION" "oneccl_bind_pt==$ONECCL_VERSION" \
     --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/ \
     --force 2>/dev/null; then
     INSTALL_SUCCESS=true
@@ -67,7 +59,7 @@ fi
 # Approach 2: Try with different URL format if first approach failed
 if [ "$INSTALL_SUCCESS" = false ]; then
     echo "   Trying approach 2: alternative index URL..."
-    if uv add "intel-extension-for-pytorch==$XPU_VERSION" \
+    if uv add "intel-extension-for-pytorch==$IPEX_VERSION" "oneccl_bind_pt==$ONECCL_VERSION" \
         --index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/ \
         --force 2>/dev/null; then
         INSTALL_SUCCESS=true
@@ -78,7 +70,7 @@ fi
 # Approach 3: Try with basic uv add if still failed
 if [ "$INSTALL_SUCCESS" = false ]; then
     echo "   Trying approach 3: basic uv add..."
-    if uv add "intel-extension-for-pytorch==$XPU_VERSION" \
+    if uv add "intel-extension-for-pytorch==$IPEX_VERSION" "oneccl_bind_pt==$ONECCL_VERSION" \
         --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/; then
         INSTALL_SUCCESS=true
         echo "   ✅ Approach 3 succeeded"
@@ -89,7 +81,7 @@ if [ "$INSTALL_SUCCESS" = false ]; then
     echo "❌ All installation approaches failed!"
     echo "   Please check your internet connection and try again."
     echo "   You may also try installing manually with:"
-    echo "   uv add intel-extension-for-pytorch==$XPU_VERSION --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/"
+    echo "   uv add intel-extension-for-pytorch==$IPEX_VERSION oneccl_bind_pt==$ONECCL_VERSION --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/"
     exit 1
 fi
 
