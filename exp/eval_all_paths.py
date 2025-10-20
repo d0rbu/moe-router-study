@@ -12,7 +12,6 @@ import traceback
 
 import arguably
 from loguru import logger
-import torch as th
 
 from core.device import DeviceType, get_backend
 from exp.eval_intruder import eval_intruder
