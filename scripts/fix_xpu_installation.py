@@ -54,19 +54,19 @@ def investigate_xpu_packages():
     print("🔍 Investigating XPU Package Options:")
     print("=" * 50)
 
-    # Check PyPI for Intel Extension variants
+    # Check PyPI for Intel Extension variants using uv
     print("Searching PyPI for Intel Extension packages...")
     ret_code, stdout, stderr = run_command(
-        "pip search intel-extension-for-pytorch 2>/dev/null || echo 'pip search not available'"
+        "uv pip search intel-extension-for-pytorch 2>/dev/null || echo 'uv pip search not available'"
     )
 
-    # Alternative: use pip index to check available versions
+    # Alternative: use uv to check available versions
     print("Checking available versions...")
     ret_code, stdout, stderr = run_command(
-        "pip index versions intel-extension-for-pytorch"
+        "uv pip show intel-extension-for-pytorch --verbose"
     )
     if ret_code == 0:
-        print("Available versions:")
+        print("Package information:")
         print(stdout)
     else:
         print("Could not retrieve version information")
@@ -110,7 +110,7 @@ def try_alternative_installations():
     for pattern in xpu_wheel_patterns:
         print(f"Checking for: {pattern}")
         ret_code, stdout, stderr = run_command(
-            f"pip search {pattern} 2>/dev/null || echo 'Not found'"
+            f"uv pip search {pattern} 2>/dev/null || echo 'Not found'"
         )
         if "Not found" not in stdout and stdout.strip():
             print(f"  ✅ Found: {stdout.strip()}")

@@ -112,10 +112,10 @@ fi
 echo "Trying to install XPU version..."
 uv add "intel-extension-for-pytorch[xpu]" || echo "❌ Failed to install XPU version via uv"
 
-# Alternative: try pip install in the venv
+# Alternative: try uv pip install in the venv
 if ! python -c "import intel_extension_for_pytorch as ipex; 'xpu' in ipex.__version__" 2>/dev/null; then
     echo "Trying alternative installation method..."
-    pip install intel-extension-for-pytorch[xpu] --upgrade || echo "❌ Failed to install XPU version via pip"
+    uv pip install intel-extension-for-pytorch[xpu] --upgrade || echo "❌ Failed to install XPU version via uv pip"
 fi
 
 echo ""
