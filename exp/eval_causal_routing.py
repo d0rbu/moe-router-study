@@ -126,24 +126,24 @@ def load_and_select_centroid(
 
     # Load metadata to get activation dimensions
     metadata_path = experiment_dir / "metadata.yaml"
-    if metadata_path.is_file():
-        with open(metadata_path) as f:
-            metadata = yaml.safe_load(f)
-        activation_dim = metadata.get("activation_dim")
-        if activation_dim is None:
-            raise ValueError(f"activation_dim not found in metadata at {metadata_path}")
-
-        # activation_dim is E (number of experts)
-        # flat_dim = L * E, so L = flat_dim / E
-        E = activation_dim
-        L = flat_dim // E
-
-        if flat_dim % E != 0:
-            raise ValueError(
-                f"Flat dimension {flat_dim} is not divisible by activation_dim {E}"
-            )
-    else:
+    if not metadata_path.is_file():
         raise FileNotFoundError(f"Metadata file not found at {metadata_path}")
+
+    with open(metadata_path) as f:
+        metadata = yaml.safe_load(f)
+    activation_dim = metadata.get("activation_dim")
+    if activation_dim is None:
+        raise ValueError(f"activation_dim not found in metadata at {metadata_path}")
+
+    # activation_dim is E (number of experts)
+    # flat_dim = L * E, so L = flat_dim / E
+    E = activation_dim
+    L = flat_dim // E
+
+    if flat_dim % E != 0:
+        raise ValueError(
+            f"Flat dimension {flat_dim} is not divisible by activation_dim {E}"
+        )
 
     # Reshape from (L * E,) to (L, E)
     centroid_reshaped = selected_centroid_flat.reshape(L, E).to(dtype=dtype)
