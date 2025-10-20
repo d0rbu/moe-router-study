@@ -14,6 +14,7 @@ import arguably
 from loguru import logger
 import torch as th
 
+from core.device import DeviceType, get_backend
 from exp.eval_intruder import eval_intruder
 from exp.path_eval_saebench import path_eval_saebench
 
@@ -155,12 +156,13 @@ def eval_all_paths(
     intruder_explainer: str = "default",
     intruder_filter_bos: bool = False,
     intruder_pipeline_num_proc: int = cpu_count() // 2,
-    intruder_num_gpus: int = th.cuda.device_count(),
+    intruder_num_gpus: int | None = None,
     intruder_verbose: bool = True,
     intruder_hf_token: str = "",
     dtype: str = "bf16",
     seed: int = 0,
     log_level: str = "INFO",
+    device_type: DeviceType = "cuda",
 ) -> None:
     """
     Evaluate a k-means path experiment using both SAEBench and intruder evaluations.
@@ -198,6 +200,11 @@ def eval_all_paths(
     # Setup logging
     logger.remove()
     logger.add(sys.stderr, level=log_level)
+    
+    # Set default device count if not specified
+    if intruder_num_gpus is None:
+        backend = get_backend(device_type)
+        intruder_num_gpus = backend.device_count() if backend.is_available() else 0
 
     logger.info(f"Running evaluation for k-means experiment: {experiment_dir}")
     logger.info(

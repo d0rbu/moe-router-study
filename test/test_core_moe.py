@@ -3,6 +3,7 @@
 import pytest
 import torch as th
 
+from core.device import get_backend
 from core.moe import convert_router_logits_to_paths
 from test.utils import assert_tensor_shape, create_synthetic_router_logits
 
@@ -181,7 +182,7 @@ class TestConvertRouterLogitsToPaths:
     def test_different_dtypes(self):
         """Test with different input dtypes."""
         for dtype in [th.float32, th.float16]:
-            if dtype == th.float16 and not th.cuda.is_available():
+            if dtype == th.float16 and not get_backend("cuda").is_available():
                 # Skip float16 on CPU as it might not be supported
                 continue
 

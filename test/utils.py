@@ -5,6 +5,8 @@ from unittest.mock import MagicMock
 
 import torch as th
 
+from core.device import get_backend
+
 
 def create_mock_hf_refs(branches: list[str]) -> MagicMock:
     """Create a mock HuggingFace refs object with the given branch names."""
@@ -97,7 +99,7 @@ def skip_if_no_gpu():
     """Decorator to skip tests if no GPU is available."""
     import pytest
 
-    return pytest.mark.skipif(not th.cuda.is_available(), reason="GPU not available")
+    return pytest.mark.skipif(not get_backend("cuda").is_available(), reason="GPU not available")
 
 
 def skip_if_no_network():
@@ -128,7 +130,7 @@ def parametrize_devices():
     import pytest
 
     devices = ["cpu"]
-    if th.cuda.is_available():
+    if get_backend("cuda").is_available():
         devices.append("cuda")
 
     return pytest.mark.parametrize("device", devices)

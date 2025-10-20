@@ -27,6 +27,7 @@ import torch.distributed as dist
 from tqdm import tqdm
 
 from core.async_utils import handle_exceptions
+from core.device import DeviceType, get_backend
 from core.dtype import get_dtype
 from core.training import exponential_to_linear_save_steps
 from core.type import assert_type
@@ -188,12 +189,14 @@ async def run_sae_training(
     num_workers: int = 64,
     debug: bool = False,
     dtype: th.dtype = th.bfloat16,
+    device_type: DeviceType = "cuda",
 ) -> None:
     """Train autoencoders to sweep over the given hyperparameter sets."""
     assert "moe" not in architecture, (
         "MoE is not supported for SAE training, use kmeans.py instead."
     )
-    assert th.cuda.is_available(), "CUDA is not available"
+    backend = get_backend(device_type)
+    assert backend.is_available(), f"{device_type.upper()} is not available"
 
     logger.debug("loading activations and initializing distributed setup")
     logger.trace(
@@ -240,6 +243,7 @@ async def run_sae_training(
         context_length=context_length,
         num_workers=num_workers,
         debug=debug,
+        device_type=device_type,
     )
 
     sae_experiment_name = get_experiment_name(
@@ -292,7 +296,7 @@ async def run_sae_training(
         "wandb_name": model_name,
     }
 
-    num_gpus = th.cuda.device_count()
+    num_gpus = backend.device_count()
     logger.info(f"Number of GPUs: {num_gpus}")
     gpu_queues = [asyncio.PriorityQueue() for _ in range(num_gpus)]
 
@@ -545,6 +549,7 @@ def main(
     log_level: str = "INFO",
     num_workers: int = 64,
     dtype: str = "bf16",
+    device_type: DeviceType = "cuda",
 ) -> None:
     """Train a sparse autoencoder on the given model and dataset."""
     # Check if log level is valid by trying to get it
@@ -618,6 +623,7 @@ def main(
             num_workers=num_workers,
             debug=log_level_numeric <= debug_level_numeric,
             dtype=torch_dtype,
+            device_type=device_type,
         )
     )
 
