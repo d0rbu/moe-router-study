@@ -26,14 +26,8 @@ classifiers = [
 ]
 dependencies = [
     "nnterp",
-    # PyTorch XPU versions (pinned to pytorch-xpu index)
-    "torch==2.8.0",
-    "torchvision==0.23.0",
-    "torchaudio==2.8.0",
-    # Intel XPU packages (pinned to intel-xpu index)
+    "torch>=2.0.0",
     "intel-extension-for-pytorch==2.8.10+xpu",
-    "oneccl-bind-pt==2.8.0+xpu",
-    # Other dependencies
     "transformers>=4.55.1",
     "nnsight>=0.5.0.dev13",
     "datasets==3.6.0",
@@ -198,27 +192,13 @@ exclude_lines = [
 
 
 
-# Intel XPU package indexes
-[[tool.uv.index]]
-name = "pytorch-xpu"
-url = "https://download.pytorch.org/whl/xpu"
-explicit = true
-
 [[tool.uv.index]]
 name = "intel-xpu"
 url = "https://pytorch-extension.intel.com/release-whl/stable/xpu/us/"
 explicit = true
 
 [tool.uv.sources]
-# Pin PyTorch packages to XPU index for Intel XPU support
-torch = { index = "pytorch-xpu" }
-torchvision = { index = "pytorch-xpu" }
-torchaudio = { index = "pytorch-xpu" }
-# Pin Intel Extension packages to Intel XPU index
 intel-extension-for-pytorch = { index = "intel-xpu" }
-oneccl-bind-pt = { index = "intel-xpu" }
-
-# Git-based dependencies
 transformers = { git = "https://github.com/huggingface/transformers.git" }
 nnterp = { git = "https://github.com/d0rbu/nnterp.git" }
 dictionary-learning = { git = "https://github.com/d0rbu/dictionary_learning" }
