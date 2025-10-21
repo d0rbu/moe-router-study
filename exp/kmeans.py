@@ -1556,37 +1556,6 @@ def cluster_paths(
     residual_activation_dim = activation_dims[ActivationKeys.MLP_OUTPUT]
     router_activation_dim = activation_dims[ActivationKeys.ROUTER_LOGITS]
 
-    # We need to extract num_layers and num_experts from the router_activation_dim
-    # Since we know activation_dim = L * E, we need to determine L and E
-    # For now, we'll need to peek at the first activation to get the shape
-    # This is a bit hacky but necessary to get the shape information
-
-    # Create a new iterator to peek at the first item without consuming it
-    activations_iter = aiter(activations)
-    first_activation = await anext(activations_iter)
-    router_logits_shape = first_activation[ActivationKeys.ROUTER_LOGITS].shape
-
-    # Router logits shape is (B, L, E) where B=batch, L=layers, E=experts
-    num_layers = router_logits_shape[1]
-    num_experts = router_logits_shape[2]
-
-    logger.debug(f"Router logits shape: {router_logits_shape}")
-    logger.debug(f"Number of layers: {num_layers}, Number of experts: {num_experts}")
-    logger.debug(
-        f"Activation dim (L * E): {router_activation_dim} = {num_layers} * {num_experts}"
-    )
-
-    # Verify our understanding is correct
-    assert router_activation_dim == num_layers * num_experts, (
-        f"Expected activation_dim ({router_activation_dim}) to equal "
-        f"num_layers * num_experts ({num_layers} * {num_experts} = {num_layers * num_experts})"
-    )
-
-    # Create a new activations iterator that includes the first item we peeked at
-    import itertools
-
-    activations = itertools.chain([first_activation], activations_iter)
-
     assert residual_activation_dim > 0, (
         "Residual activation dimension must be greater than 0"
     )
