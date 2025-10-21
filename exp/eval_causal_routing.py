@@ -28,7 +28,6 @@ import arguably
 from loguru import logger
 from nnterp import StandardizedTransformer
 import torch as th
-from torch import Tensor
 import torch.nn.functional as F
 from tqdm import tqdm
 from transformers import (
@@ -286,7 +285,7 @@ def create_causal_forward_fn(
                     router_scores = router_output
 
                 # Convert to tensor using .save() method
-                router_logits = cast("Tensor", router_scores.save())
+                router_logits = cast("th.Tensor", router_scores.save())
 
                 # Only modify the last token in the sequence: shape (B, E)
                 last_token_logits = router_logits[:, -1, :]
@@ -314,8 +313,9 @@ def create_causal_forward_fn(
                     renormalized_probs  # Update only last token
                 )
 
-                # Assign back to model
-                model.router_probabilities[layer_idx] = full_router_probs
+                # Assign back to model using copy_ to update in-place
+                layer_probs = model.router_probabilities[layer_idx].save()
+                layer_probs.copy_(full_router_probs)
 
             # Get final logits after all router modifications
             logits = model.lm_head.output.save()
