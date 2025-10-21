@@ -75,7 +75,7 @@ def load_seed_dataset(
     Returns:
         List of tokenized tensors, each of shape (sample_length,) with int token IDs
     """
-    logger.info(
+    logger.debug(
         f"Loading seed dataset '{dataset_name}' with max_samples={max_samples}, sample_length={sample_length}"
     )
 
@@ -90,6 +90,9 @@ def load_seed_dataset(
 
     seed_tensors = []
     processed_count = 0
+
+    # Create progress bar for seed collection
+    pbar = tqdm(total=max_samples, desc="Collecting seed samples", leave=False)
 
     for text in dataset_iter:
         if len(seed_tensors) >= max_samples:
@@ -113,13 +116,11 @@ def load_seed_dataset(
         )
 
         seed_tensors.append(truncated_tokens)
+        pbar.update(1)
 
-        if len(seed_tensors) % 100 == 0:
-            logger.debug(
-                f"Collected {len(seed_tensors)}/{max_samples} seed samples (processed {processed_count} texts)"
-            )
+    pbar.close()
 
-    logger.info(
+    logger.debug(
         f"Collected {len(seed_tensors)} seed samples from {processed_count} texts"
     )
 
