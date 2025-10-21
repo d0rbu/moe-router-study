@@ -22,12 +22,13 @@ from multiprocessing import cpu_count
 from pathlib import Path
 import random
 import sys
-from typing import Any
+from typing import Any, cast
 
 import arguably
 from loguru import logger
 from nnterp import StandardizedTransformer
 import torch as th
+from torch import Tensor
 import torch.nn.functional as F
 from tqdm import tqdm
 from transformers import (
@@ -83,7 +84,7 @@ def load_seed_dataset(
     dataset_fn = get_dataset_fn(dataset_name)
 
     # Create dataset iterator
-    dataset_iter = dataset_fn(tokenizer)  # type: ignore
+    dataset_iter = dataset_fn(cast("PreTrainedTokenizer", tokenizer))
 
     # Set random seed for reproducible sampling
     random.seed(seed)
@@ -271,13 +272,27 @@ def create_causal_forward_fn(
             # Loop through layers with routers and modify only the last token
             for layer_idx in model.layers_with_routers:
                 # Get router logits for this layer: shape (B, T, E)
-                router_logits = model.routers_output[layer_idx]
+                router_output = model.routers_output[layer_idx]
+
+                # Handle different router output formats and get tensor
+                if isinstance(router_output, tuple):
+                    if len(router_output) == 2:
+                        router_scores, _router_indices = router_output
+                    else:
+                        raise ValueError(
+                            f"Found tuple of length {len(router_output)} for router output at layer {layer_idx}"
+                        )
+                else:
+                    router_scores = router_output
+
+                # Convert to tensor using .save() method
+                router_logits = cast("Tensor", router_scores.save())
 
                 # Only modify the last token in the sequence: shape (B, E)
-                last_token_logits = router_logits[:, -1, :]  # type: ignore
+                last_token_logits = router_logits[:, -1, :]
 
                 # Apply softmax to get probabilities
-                router_probs = F.softmax(last_token_logits, dim=-1)  # type: ignore
+                router_probs = F.softmax(last_token_logits, dim=-1)
 
                 # Multiply by centroid values for this layer
                 modulated_probs = router_probs * centroid[layer_idx]  # (B, E)
@@ -294,7 +309,7 @@ def create_causal_forward_fn(
 
                 # Set the modified router probabilities for this layer
                 # We need to update the full tensor, keeping other positions unchanged
-                full_router_probs = F.softmax(router_logits, dim=-1)  # type: ignore
+                full_router_probs = F.softmax(router_logits, dim=-1)
                 full_router_probs[:, -1, :] = (
                     renormalized_probs  # Update only last token
                 )
