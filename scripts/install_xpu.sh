@@ -22,56 +22,59 @@ if [[ "$PYTHON_VERSION" == "3.13" ]]; then
     echo "   ⚠️  Python 3.13 detected - this may cause compatibility issues with some packages"
 fi
 
-# Remove existing CPU-only version
-echo "📦 Removing existing Intel Extension for PyTorch and OneCCL..."
-uv remove intel-extension-for-pytorch oneccl_bind_pt 2>/dev/null || echo "   (No existing installation found)"
+# Remove existing versions (CPU, CUDA, or XPU)
+echo "📦 Removing existing PyTorch and Intel Extension installations..."
+uv remove torch torchvision torchaudio intel-extension-for-pytorch oneccl_bind_pt 2>/dev/null || echo "   (No existing installation found)"
 
 # Clean up any conflicting system-wide packages that might interfere
 echo "🧹 Cleaning up potential conflicting system packages..."
-pip uninstall intel-extension-for-pytorch oneccl_bind_pt numpy psutil packaging -y 2>/dev/null || echo "   (No conflicting system packages found)"
+pip uninstall torch torchvision torchaudio intel-extension-for-pytorch oneccl_bind_pt numpy psutil packaging -y 2>/dev/null || echo "   (No conflicting system packages found)"
 
 # Also clean up from the uv environment to ensure fresh install
-uv remove intel-extension-for-pytorch oneccl_bind_pt numpy psutil packaging 2>/dev/null || echo "   (No conflicting uv packages found)"
-
-# Ensure PyTorch is installed first
-echo "🔥 Installing PyTorch..."
-uv add torch --reinstall
+uv remove torch torchvision torchaudio intel-extension-for-pytorch oneccl_bind_pt numpy psutil packaging 2>/dev/null || echo "   (No conflicting uv packages found)"
 
 # Use official Intel documentation versions
+TORCH_VERSION="2.8.0"
+TORCHVISION_VERSION="0.23.0"
+TORCHAUDIO_VERSION="2.8.0"
 IPEX_VERSION="2.8.10+xpu"
 ONECCL_VERSION="2.8.0+xpu"
 
-# Install XPU versions from Intel's index
-echo "⚡ Installing Intel Extension for PyTorch $IPEX_VERSION and OneCCL $ONECCL_VERSION..."
+# Install PyTorch XPU version first (following Intel's official docs)
+echo "🔥 Installing PyTorch XPU version..."
+echo "   Following Intel's official installation guide"
 
 # Try multiple installation approaches
 INSTALL_SUCCESS=false
 
-# Approach 1: Direct uv add
-echo "   Trying approach 1: uv add..."
-if uv add "intel-extension-for-pytorch==$IPEX_VERSION" "oneccl_bind_pt==$ONECCL_VERSION" \
-    --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/ \
-    --reinstall 2>/dev/null; then
+# Approach 1: Install PyTorch XPU version first, then Intel Extension
+echo "   Trying approach 1: PyTorch XPU + Intel Extension..."
+if uv add "torch==$TORCH_VERSION" "torchvision==$TORCHVISION_VERSION" "torchaudio==$TORCHAUDIO_VERSION" \
+    --index-url https://download.pytorch.org/whl/xpu --reinstall 2>/dev/null && \
+   uv add "intel-extension-for-pytorch==$IPEX_VERSION" "oneccl_bind_pt==$ONECCL_VERSION" \
+    --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/ 2>/dev/null; then
     INSTALL_SUCCESS=true
     echo "   ✅ Approach 1 succeeded"
 fi
 
-# Approach 2: Try with different URL format if first approach failed
+# Approach 2: Use pip fallback if uv fails (common with specialized indexes)
 if [ "$INSTALL_SUCCESS" = false ]; then
-    echo "   Trying approach 2: alternative index URL..."
-    if uv add "intel-extension-for-pytorch==$IPEX_VERSION" "oneccl_bind_pt==$ONECCL_VERSION" \
-        --index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/ \
-        --reinstall 2>/dev/null; then
+    echo "   Trying approach 2: pip fallback for specialized indexes..."
+    if uv run pip install "torch==$TORCH_VERSION" "torchvision==$TORCHVISION_VERSION" "torchaudio==$TORCHAUDIO_VERSION" \
+        --index-url https://download.pytorch.org/whl/xpu 2>/dev/null && \
+       uv run pip install "intel-extension-for-pytorch==$IPEX_VERSION" "oneccl_bind_pt==$ONECCL_VERSION" \
+        --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/ 2>/dev/null; then
         INSTALL_SUCCESS=true
         echo "   ✅ Approach 2 succeeded"
     fi
 fi
 
-# Approach 3: Try with basic uv add if still failed
+# Approach 3: Try with frozen flag to skip dependency resolution
 if [ "$INSTALL_SUCCESS" = false ]; then
-    echo "   Trying approach 3: basic uv add..."
-    if uv add "intel-extension-for-pytorch==$IPEX_VERSION" "oneccl_bind_pt==$ONECCL_VERSION" \
-        --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/; then
+    echo "   Trying approach 3: frozen installation..."
+    if uv add "torch==$TORCH_VERSION" --index-url https://download.pytorch.org/whl/xpu --frozen 2>/dev/null && \
+       uv add "intel-extension-for-pytorch==$IPEX_VERSION" "oneccl_bind_pt==$ONECCL_VERSION" \
+        --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/ --frozen 2>/dev/null; then
         INSTALL_SUCCESS=true
         echo "   ✅ Approach 3 succeeded"
     fi
@@ -79,9 +82,14 @@ fi
 
 if [ "$INSTALL_SUCCESS" = false ]; then
     echo "❌ All installation approaches failed!"
-    echo "   Please check your internet connection and try again."
-    echo "   You may also try installing manually with:"
-    echo "   uv add intel-extension-for-pytorch==$IPEX_VERSION oneccl_bind_pt==$ONECCL_VERSION --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/"
+    echo "   This may be due to:"
+    echo "   - Network connectivity issues"
+    echo "   - Authentication issues with Intel's package index"
+    echo "   - Dependency resolution conflicts"
+    echo ""
+    echo "   Manual installation commands (run these individually):"
+    echo "   uv run pip install torch==$TORCH_VERSION torchvision==$TORCHVISION_VERSION torchaudio==$TORCHAUDIO_VERSION --index-url https://download.pytorch.org/whl/xpu"
+    echo "   uv run pip install intel-extension-for-pytorch==$IPEX_VERSION oneccl_bind_pt==$ONECCL_VERSION --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/"
     exit 1
 fi
 
