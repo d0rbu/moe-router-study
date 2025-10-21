@@ -927,7 +927,7 @@ async def kmeans_manhattan(
     validate_every: int = 64,
     group: dist.ProcessGroup | None = None,
     device_type: DeviceType = "cuda",
-) -> tuple[list[th.Tensor], int, th.Tensor]:
+) -> tuple[list[th.Tensor], int, th.Tensor, int, int]:
     """
     Perform k-means clustering with Manhattan distance.
 
@@ -948,6 +948,8 @@ async def kmeans_manhattan(
         centroid_sets: List of cluster centroids, each element of shape (K, D)
         top_k: Topk value of the model used to generate the activations
         losses: Losses for each iteration, shape (num_K, T)
+        num_layers: Number of layers with routers
+        num_experts: Number of experts per layer
     """
     # Get backend once and reuse throughout the function
     backend = get_backend(device_type)
@@ -1094,6 +1096,23 @@ async def kmeans_manhattan(
     data_iterable.close()
     router_activations = activation_batch[ActivationKeys.ROUTER_LOGITS]
     top_k = activation_batch["topk"]
+
+    # Extract shape information for metadata
+    # router_activations shape: (B, L, E) where L=layers, E=experts
+    num_layers = router_activations.shape[1]
+    num_experts = router_activations.shape[2]
+
+    logger.debug(
+        f"Extracted shape info: num_layers={num_layers}, num_experts={num_experts}"
+    )
+    logger.debug(
+        f"Activation dim check: {num_layers * num_experts} == {activation_dim}"
+    )
+
+    assert num_layers * num_experts == activation_dim, (
+        f"Shape mismatch: num_layers ({num_layers}) * num_experts ({num_experts}) = "
+        f"{num_layers * num_experts} != activation_dim ({activation_dim})"
+    )
 
     # Split into initialization and validation data
     init_activation_logits = router_activations[:max_k]
@@ -1382,7 +1401,13 @@ async def kmeans_manhattan(
 
     logger.trace("Returning results")
 
-    return all_gpu_data[0].synced_data.centroid_sets, top_k, losses
+    return (
+        all_gpu_data[0].synced_data.centroid_sets,
+        top_k,
+        losses,
+        num_layers,
+        num_experts,
+    )
 
 
 def get_top_circuits(
@@ -1436,7 +1461,7 @@ async def cluster_paths_async(
 
     logger.trace(f"Save directory: {save_dir}")
 
-    centroids, top_k, losses = await kmeans_manhattan(
+    centroids, top_k, losses, num_layers, num_experts = await kmeans_manhattan(
         activations=activations,
         activation_dim=activation_dim,
         k_values=k,
@@ -1467,6 +1492,8 @@ async def cluster_paths_async(
             "model_name": model_name,
             "dataset_name": dataset_name,
             "activation_dim": activation_dim,
+            "num_layers": num_layers,
+            "num_experts": num_experts,
             "k": k,
             "max_iters": max_iters,
             "seed": seed,
