@@ -27,6 +27,7 @@ classifiers = [
 dependencies = [
     "nnterp",
     "torch>=2.0.0",
+    "intel-extension-for-pytorch==2.8.10+xpu",
     "transformers>=4.55.1",
     "nnsight>=0.5.0.dev13",
     "datasets==3.6.0",
@@ -55,7 +56,6 @@ dependencies = [
     "docstring-parser>=0.16",
     "seaborn>=0.13.2",
     "pandas>=2.3.1",
-    "intel-extension-for-pytorch>=2.8.0",
 ]
 
 [project.optional-dependencies]
@@ -192,7 +192,13 @@ exclude_lines = [
 
 
 
+[[tool.uv.index]]
+name = "intel-xpu"
+url = "https://pytorch-extension.intel.com/release-whl/stable/xpu/us/"
+explicit = true
+
 [tool.uv.sources]
+intel-extension-for-pytorch = { index = "intel-xpu" }
 transformers = { git = "https://github.com/huggingface/transformers.git" }
 nnterp = { git = "https://github.com/d0rbu/nnterp.git" }
 dictionary-learning = { git = "https://github.com/d0rbu/dictionary_learning" }
