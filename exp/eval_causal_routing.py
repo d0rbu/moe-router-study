@@ -83,7 +83,7 @@ def load_seed_dataset(
     dataset_fn = get_dataset_fn(dataset_name)
 
     # Create dataset iterator
-    dataset_iter = dataset_fn(tokenizer)
+    dataset_iter = dataset_fn(tokenizer)  # type: ignore
 
     # Set random seed for reproducible sampling
     random.seed(seed)
@@ -274,10 +274,10 @@ def create_causal_forward_fn(
                 router_logits = model.routers_output[layer_idx]
 
                 # Only modify the last token in the sequence: shape (B, E)
-                last_token_logits = router_logits[:, -1, :]  # (B, E)
+                last_token_logits = router_logits[:, -1, :]  # type: ignore
 
                 # Apply softmax to get probabilities
-                router_probs = F.softmax(last_token_logits, dim=-1)  # (B, E)
+                router_probs = F.softmax(last_token_logits, dim=-1)  # type: ignore
 
                 # Multiply by centroid values for this layer
                 modulated_probs = router_probs * centroid[layer_idx]  # (B, E)
@@ -294,7 +294,7 @@ def create_causal_forward_fn(
 
                 # Set the modified router probabilities for this layer
                 # We need to update the full tensor, keeping other positions unchanged
-                full_router_probs = F.softmax(router_logits, dim=-1)  # (B, T, E)
+                full_router_probs = F.softmax(router_logits, dim=-1)  # type: ignore
                 full_router_probs[:, -1, :] = (
                     renormalized_probs  # Update only last token
                 )
