@@ -1096,15 +1096,19 @@ async def kmeans_manhattan(
     data_iterable.close()
     router_activations = activation_batch[ActivationKeys.ROUTER_LOGITS]
     top_k = activation_batch["topk"]
-    
+
     # Extract shape information for metadata
     # router_activations shape: (B, L, E) where L=layers, E=experts
     num_layers = router_activations.shape[1]
     num_experts = router_activations.shape[2]
-    
-    logger.debug(f"Extracted shape info: num_layers={num_layers}, num_experts={num_experts}")
-    logger.debug(f"Activation dim check: {num_layers * num_experts} == {activation_dim}")
-    
+
+    logger.debug(
+        f"Extracted shape info: num_layers={num_layers}, num_experts={num_experts}"
+    )
+    logger.debug(
+        f"Activation dim check: {num_layers * num_experts} == {activation_dim}"
+    )
+
     assert num_layers * num_experts == activation_dim, (
         f"Shape mismatch: num_layers ({num_layers}) * num_experts ({num_experts}) = "
         f"{num_layers * num_experts} != activation_dim ({activation_dim})"
@@ -1397,7 +1401,13 @@ async def kmeans_manhattan(
 
     logger.trace("Returning results")
 
-    return all_gpu_data[0].synced_data.centroid_sets, top_k, losses, num_layers, num_experts
+    return (
+        all_gpu_data[0].synced_data.centroid_sets,
+        top_k,
+        losses,
+        num_layers,
+        num_experts,
+    )
 
 
 def get_top_circuits(
@@ -1423,9 +1433,7 @@ async def cluster_paths_async(
     model_name: str,
     dataset_name: str,
     activations: Activations,
-    activation_dim: int,  # router activation dimension (L * E)
-    num_layers: int,  # number of layers with routers
-    num_experts: int,  # number of experts per layer
+    activation_dim: int,  # router activation dimension
     k: tuple[int, ...],
     batch_size: int,
     max_iters: int,
@@ -1547,33 +1555,36 @@ def cluster_paths(
     )
     residual_activation_dim = activation_dims[ActivationKeys.MLP_OUTPUT]
     router_activation_dim = activation_dims[ActivationKeys.ROUTER_LOGITS]
-    
+
     # We need to extract num_layers and num_experts from the router_activation_dim
     # Since we know activation_dim = L * E, we need to determine L and E
     # For now, we'll need to peek at the first activation to get the shape
     # This is a bit hacky but necessary to get the shape information
-    
+
     # Create a new iterator to peek at the first item without consuming it
     activations_iter = aiter(activations)
     first_activation = await anext(activations_iter)
     router_logits_shape = first_activation[ActivationKeys.ROUTER_LOGITS].shape
-    
+
     # Router logits shape is (B, L, E) where B=batch, L=layers, E=experts
     num_layers = router_logits_shape[1]
     num_experts = router_logits_shape[2]
-    
+
     logger.debug(f"Router logits shape: {router_logits_shape}")
     logger.debug(f"Number of layers: {num_layers}, Number of experts: {num_experts}")
-    logger.debug(f"Activation dim (L * E): {router_activation_dim} = {num_layers} * {num_experts}")
-    
+    logger.debug(
+        f"Activation dim (L * E): {router_activation_dim} = {num_layers} * {num_experts}"
+    )
+
     # Verify our understanding is correct
     assert router_activation_dim == num_layers * num_experts, (
         f"Expected activation_dim ({router_activation_dim}) to equal "
         f"num_layers * num_experts ({num_layers} * {num_experts} = {num_layers * num_experts})"
     )
-    
+
     # Create a new activations iterator that includes the first item we peeked at
     import itertools
+
     activations = itertools.chain([first_activation], activations_iter)
 
     assert residual_activation_dim > 0, (
@@ -1613,8 +1624,6 @@ def cluster_paths(
             dataset_name=dataset_name,
             activations=activations,
             activation_dim=router_activation_dim,
-            num_layers=num_layers,
-            num_experts=num_experts,
             k=k,
             batch_size=batch_size,
             max_iters=max_iters,
