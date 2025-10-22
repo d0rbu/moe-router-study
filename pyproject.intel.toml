@@ -27,6 +27,8 @@ classifiers = [
 dependencies = [
     "nnterp",
     "torch>=2.0.0",
+    "pytorch-triton-xpu",
+    "oneccl-bind-pt==2.8.0+xpu",
     "transformers>=4.55.1",
     "nnsight>=0.5.0.dev13",
     "datasets==3.6.0",
@@ -55,6 +57,13 @@ dependencies = [
     "docstring-parser>=0.16",
     "seaborn>=0.13.2",
     "pandas>=2.3.1",
+    "oneccl",
+    "mkl",
+    "onemkl-sycl-blas",
+    "onemkl-sycl-dft",
+    "onemkl-sycl-lapack",
+    "onemkl-sycl-rng",
+    "onemkl-sycl-sparse",
 ]
 
 [project.optional-dependencies]
@@ -190,7 +199,21 @@ exclude_lines = [
 ]
 
 
+
+[[tool.uv.index]]
+name = "intel-xpu"
+url = "https://pytorch-extension.intel.com/release-whl/stable/xpu/us/"
+explicit = true
+
+[[tool.uv.index]]
+name = "torch-xpu"
+url = "https://download.pytorch.org/whl/xpu"
+explicit = true
+
 [tool.uv.sources]
+oneccl-bind-pt = { index = "intel-xpu" }
+torch = { index = "torch-xpu" }
+pytorch-triton-xpu = { index = "torch-xpu" }
 transformers = { git = "https://github.com/huggingface/transformers.git" }
 nnterp = { git = "https://github.com/d0rbu/nnterp.git" }
 dictionary-learning = { git = "https://github.com/d0rbu/dictionary_learning" }
