@@ -62,6 +62,7 @@ dependencies = [
     "onemkl-sycl-blas>=2025.2.0",
     "onemkl-sycl-dft>=2025.2.0",
     "onemkl-sycl-lapack>=2025.2.0",
+    "onemkl-sycl-rng>=2025.2.0",
 ]
 
 [project.optional-dependencies]
