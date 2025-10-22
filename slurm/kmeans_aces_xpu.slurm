@@ -28,6 +28,9 @@ export WORLD_SIZE=$SLURM_NTASKS
 module purge
 module load WebProxy
 
+mv uv.intel.lock uv.lock
+mv pyproject.intel.toml pyproject.toml
+
 # Set up environment variables that might be needed for Intel XPU
 export ZE_ENABLE_PCI_ID_DEVICE_ORDER=1
 export SYCL_DEVICE_FILTER=level_zero:gpu
@@ -40,17 +43,13 @@ echo ""
 
 # Activate user virtual environment (.venv is required)
 if [ -f ".venv/bin/activate" ]; then
+    echo "📦 Syncing dependencies with uv..."
+    uv sync --quiet
+    echo "✅ Dependencies synced"
     echo "Activating user virtual environment (.venv)..."
     source .venv/bin/activate
     echo "Python version: $(python --version)"
     echo "Python path: $(which python)"
-    
-    # Sync dependencies with uv if pyproject.toml exists
-    if [ -f "pyproject.toml" ] && command -v uv >/dev/null 2>&1; then
-        echo "📦 Syncing dependencies with uv..."
-        uv sync --quiet
-        echo "✅ Dependencies synced"
-    fi
     
     # Check if torch is available in this environment
     if python -c "import torch" 2>/dev/null; then
