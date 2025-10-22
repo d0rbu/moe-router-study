@@ -27,8 +27,8 @@ export WORLD_SIZE=$SLURM_NTASKS
 
 module purge
 module load WebProxy
-module load intelpython/2024.1.0_814
-module load intel/2023.07
+module load AI-Tools-GPU/20240816
+module load intel/2024a
 
 # Set up environment variables that might be needed for Intel XPU
 export ZE_ENABLE_PCI_ID_DEVICE_ORDER=1
