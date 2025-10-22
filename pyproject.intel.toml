@@ -65,6 +65,7 @@ dependencies = [
     "onemkl-sycl-rng",
     "onemkl-sycl-sparse",
     "torchvision",
+    "torchaudio",
 ]
 
 [project.optional-dependencies]
@@ -214,6 +215,8 @@ explicit = true
 [tool.uv.sources]
 oneccl-bind-pt = { index = "intel-xpu" }
 torch = { index = "torch-xpu" }
+torchvision = { index = "torch-xpu" }
+torchaudio = { index = "torch-xpu" }
 pytorch-triton-xpu = { index = "torch-xpu" }
 transformers = { git = "https://github.com/huggingface/transformers.git" }
 nnterp = { git = "https://github.com/d0rbu/nnterp.git" }

@@ -55,7 +55,6 @@ dependencies = [
     "docstring-parser>=0.16",
     "seaborn>=0.13.2",
     "pandas>=2.3.1",
-    "torchvision",
 ]
 
 [project.optional-dependencies]
