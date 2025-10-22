@@ -28,8 +28,6 @@ echo ""
 
 module purge
 module load WebProxy
-module load AI-Tools-GPU/20240816
-module load intel/2024a
 
 # Set up environment variables that might be needed for Intel XPU
 export ZE_ENABLE_PCI_ID_DEVICE_ORDER=1
@@ -69,10 +67,6 @@ fi
 
 echo "Final Python version: $(python --version)"
 echo "Final Python path: $(which python)"
-
-# Set environment variables for oneAPI toolkits
-echo "Setting up oneAPI environment..."
-source /sw/hprc/sw/oneAPI/2024.2/setvars.sh
 
 echo ""
 echo "🚀 Running Intel XPU Debug Script..."

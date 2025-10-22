@@ -27,8 +27,6 @@ export WORLD_SIZE=$SLURM_NTASKS
 
 module purge
 module load WebProxy
-module load AI-Tools-GPU/20240816
-module load intel/2024a
 
 # Set up environment variables that might be needed for Intel XPU
 export ZE_ENABLE_PCI_ID_DEVICE_ORDER=1
@@ -68,9 +66,5 @@ fi
 
 echo "Final Python version: $(python --version)"
 echo "Final Python path: $(which python)"
-
-# Set environment variables for oneAPI toolkits
-echo "Setting up oneAPI environment..."
-source /sw/hprc/sw/oneAPI/2024.2/setvars.sh
 
 srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/kmeans.py main --device-type xpu --expansion-factor 1,2,4,8,16,32,64 --tokens-per-file 100000 --reshuffled-tokens-per-file 100000 --minibatch-size 10000 --centroid-minibatch-size 16384 --batch-size 40000 --validate-every 4000
