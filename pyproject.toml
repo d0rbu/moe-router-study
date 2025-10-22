@@ -59,6 +59,7 @@ dependencies = [
     "pandas>=2.3.1",
     "oneccl>=2021.16.2",
     "mkl>=2025.2.0",
+    "onemkl-sycl-blas>=2025.2.0",
 ]
 
 [project.optional-dependencies]

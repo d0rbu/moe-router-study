@@ -966,6 +966,20 @@ wheels = [
 ]
 
 [[package]]
+name = "dpcpp-cpp-rt"
+version = "2025.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "intel-opencl-rt" },
+    { name = "intel-openmp" },
+    { name = "intel-sycl-rt" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8c/79/04d766ab2585b2e5586dfc5e39fd1a29eb61d415b1538ec5c2d02e7a4995/dpcpp_cpp_rt-2025.2.1-py2.py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:e601799b8698342116d165d52b9a86bddd1acca6b3522e656417e5128229f66e", size = 28795, upload-time = "2025-08-13T18:31:52.648Z" },
+    { url = "https://files.pythonhosted.org/packages/42/b9/ce5c467427d8f915b658eb6bc632e5eb078ffcd585558286ec502cc64513/dpcpp_cpp_rt-2025.2.1-py2.py3-none-win_amd64.whl", hash = "sha256:c00329ca42a8ce3686aa9ed416e4e71191d0201fbf67d20cdfc14ab3984e9d14", size = 58374, upload-time = "2025-08-13T18:31:24.398Z" },
+]
+
+[[package]]
 name = "dulwich"
 version = "0.24.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1781,6 +1795,19 @@ wheels = [
 ]
 
 [[package]]
+name = "intel-opencl-rt"
+version = "2025.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "intel-cmplr-lic-rt" },
+    { name = "tbb" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d4/2d/bb5fdf03f267afa3b9d0e1a6d92ebb487e35aee3462d19b38669b4f8b455/intel_opencl_rt-2025.2.1-py2.py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:5f8c5f9c2840ebc0360524f46fb13f28a1c45a98483f78f0c488b3ec4c411d28", size = 193043449, upload-time = "2025-08-13T18:31:45.158Z" },
+    { url = "https://files.pythonhosted.org/packages/96/df/098ba613babaea73ef4fd3ebae91cdbbb740bc42c1509285be4b4215eca7/intel_opencl_rt-2025.2.1-py2.py3-none-win_amd64.whl", hash = "sha256:66c71b51b88a213bc1b05120f20752e28fe9dfb470cdfd433627cd70f6452a60", size = 105012215, upload-time = "2025-08-13T18:31:01.657Z" },
+]
+
+[[package]]
 name = "intel-openmp"
 version = "2025.2.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2491,6 +2518,7 @@ dependencies = [
     { name = "nvitop" },
     { name = "oneccl" },
     { name = "oneccl-bind-pt" },
+    { name = "onemkl-sycl-blas" },
     { name = "pandas" },
     { name = "poetry" },
     { name = "pytest-cov" },
@@ -2549,6 +2577,7 @@ requires-dist = [
     { name = "nvitop", specifier = ">=1.5.3" },
     { name = "oneccl", specifier = ">=2021.16.2" },
     { name = "oneccl-bind-pt", specifier = "==2.8.0+xpu", index = "https://pytorch-extension.intel.com/release-whl/stable/xpu/us/" },
+    { name = "onemkl-sycl-blas", specifier = ">=2025.2.0" },
     { name = "pandas", specifier = ">=2.3.1" },
     { name = "poetry", specifier = ">=2.2.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.0.0" },
@@ -3053,6 +3082,20 @@ wheels = [
     { url = "https://download.pytorch-extension.intel.com/ipex_stable/xpu/./oneccl_bind_pt-2.8.0%2Bxpu-cp312-cp312-linux_x86_64.whl" },
     { url = "https://download.pytorch-extension.intel.com/ipex_stable/xpu/./oneccl_bind_pt-2.8.0%2Bxpu-cp313-cp313-linux_x86_64.whl" },
     { url = "https://download.pytorch-extension.intel.com/ipex_stable/xpu/./oneccl_bind_pt-2.8.0%2Bxpu-cp313-cp313t-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "onemkl-sycl-blas"
+version = "2025.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "dpcpp-cpp-rt" },
+    { name = "intel-opencl-rt" },
+    { name = "mkl" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ce/c2/b37cf1963b73a3c971efc36d53b97efccaa30f52f1f523a5452d582dbe08/onemkl_sycl_blas-2025.2.0-py2.py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:28ad1e49c821f34b57ba217dc64ab6f95d5f8f262b582296d8551d298408fd72", size = 23585330, upload-time = "2025-06-24T13:16:37.562Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/b5/ff5fe87ee3a9c14cc2110d168b3a846b64de3cbf4bdec508bc52ef552dff/onemkl_sycl_blas-2025.2.0-py2.py3-none-win_amd64.whl", hash = "sha256:eda2664fca363fa8231e5a08aa10126b91e199b3f4a5a118e4bc3988fc7e00f5", size = 17318162, upload-time = "2025-06-24T13:17:40.743Z" },
 ]
 
 [[package]]
