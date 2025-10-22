@@ -57,6 +57,8 @@ dependencies = [
     "docstring-parser>=0.16",
     "seaborn>=0.13.2",
     "pandas>=2.3.1",
+    "oneccl>=2021.16.2",
+    "mkl>=2025.2.0",
 ]
 
 [project.optional-dependencies]
