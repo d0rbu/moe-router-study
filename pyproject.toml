@@ -60,6 +60,7 @@ dependencies = [
     "oneccl>=2021.16.2",
     "mkl>=2025.2.0",
     "onemkl-sycl-blas>=2025.2.0",
+    "onemkl-sycl-dft>=2025.2.0",
 ]
 
 [project.optional-dependencies]

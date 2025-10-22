@@ -1073,7 +1073,7 @@ requires-dist = [
     { name = "simple-parsing" },
     { name = "torch" },
     { name = "transformers", git = "https://github.com/huggingface/transformers.git" },
-    { name = "vllm" },
+    { name = "vllm", specifier = ">=0.10.2" },
 ]
 provides-extras = ["dev", "visualize"]
 
@@ -2519,6 +2519,7 @@ dependencies = [
     { name = "oneccl" },
     { name = "oneccl-bind-pt" },
     { name = "onemkl-sycl-blas" },
+    { name = "onemkl-sycl-dft" },
     { name = "pandas" },
     { name = "poetry" },
     { name = "pytest-cov" },
@@ -2578,6 +2579,7 @@ requires-dist = [
     { name = "oneccl", specifier = ">=2021.16.2" },
     { name = "oneccl-bind-pt", specifier = "==2.8.0+xpu", index = "https://pytorch-extension.intel.com/release-whl/stable/xpu/us/" },
     { name = "onemkl-sycl-blas", specifier = ">=2025.2.0" },
+    { name = "onemkl-sycl-dft", specifier = ">=2025.2.0" },
     { name = "pandas", specifier = ">=2.3.1" },
     { name = "poetry", specifier = ">=2.2.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.0.0" },
@@ -3096,6 +3098,20 @@ dependencies = [
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ce/c2/b37cf1963b73a3c971efc36d53b97efccaa30f52f1f523a5452d582dbe08/onemkl_sycl_blas-2025.2.0-py2.py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:28ad1e49c821f34b57ba217dc64ab6f95d5f8f262b582296d8551d298408fd72", size = 23585330, upload-time = "2025-06-24T13:16:37.562Z" },
     { url = "https://files.pythonhosted.org/packages/2c/b5/ff5fe87ee3a9c14cc2110d168b3a846b64de3cbf4bdec508bc52ef552dff/onemkl_sycl_blas-2025.2.0-py2.py3-none-win_amd64.whl", hash = "sha256:eda2664fca363fa8231e5a08aa10126b91e199b3f4a5a118e4bc3988fc7e00f5", size = 17318162, upload-time = "2025-06-24T13:17:40.743Z" },
+]
+
+[[package]]
+name = "onemkl-sycl-dft"
+version = "2025.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "dpcpp-cpp-rt" },
+    { name = "intel-opencl-rt" },
+    { name = "mkl" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f2/5b/5d26447da4cf01abab3020c82924b1661684adb0286a99c692cd1c08461d/onemkl_sycl_dft-2025.2.0-py2.py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:1f05b0b8315d7b59867ad512e7e06297b24778d0dcb9deac5201c1982bc8af57", size = 6859958, upload-time = "2025-06-24T13:15:48.466Z" },
+    { url = "https://files.pythonhosted.org/packages/36/c4/43677c327afdd73c1e876f28f6ffb35dc7e53d18e44c5d675597dbdcbfd4/onemkl_sycl_dft-2025.2.0-py2.py3-none-win_amd64.whl", hash = "sha256:8e6ed87138f7064c51059229199d0e090d660dcb30f76a1be91afd27e2e32b4f", size = 6089311, upload-time = "2025-06-24T13:17:33.976Z" },
 ]
 
 [[package]]
