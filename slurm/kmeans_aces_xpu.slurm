@@ -9,7 +9,7 @@
 #SBATCH --mem=192G                      # Request 192GB per node (adjusted for lower VRAM)
 #SBATCH --output=kmeans_xpu.%j          # Send stdout/err to "kmeans_xpu.[jobID]"
 #SBATCH --error=kmeans_xpu.%j.err       # Send stderr to separate file
-#SBATCH --gres=gpu:pvc:4                # Request 4 Intel PVC XPUs per node
+#SBATCH --gres=gpu:pvc:8                # Request 8 Intel PVC XPUs per node
 #SBATCH --partition=pvc                 # Request the XPU partition/queue
 
 ##OPTIONAL JOB SPECIFICATIONS
@@ -66,4 +66,4 @@ fi
 echo "Final Python version: $(python --version)"
 echo "Final Python path: $(which python)"
 
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/kmeans.py main --device-type xpu --expansion-factor 1,2,4,8,16,32,64 --tokens-per-file 100000 --reshuffled-tokens-per-file 100000 --minibatch-size 10000 --centroid-minibatch-size 16384 --batch-size 40000 --validate-every 4000
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/kmeans.py main --log-level DEBUG --device-type xpu --expansion-factor 1,2,4,8,16,32,64 --tokens-per-file 100000 --reshuffled-tokens-per-file 100000 --minibatch-size 10000 --centroid-minibatch-size 16384 --batch-size 40000 --validate-every 4000
