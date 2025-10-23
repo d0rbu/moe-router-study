@@ -7,7 +7,6 @@ These functions are used during k-means training to validate:
 """
 
 from dataclasses import dataclass
-from typing import List, Tuple
 import math
 
 from loguru import logger
@@ -112,22 +111,22 @@ def _compute_batch_centroid_distances(
 ) -> th.Tensor:
     """
     Compute distances between a batch of data points and a chunk of centroids.
-    
+
     Args:
         batch_data: Tensor of shape (batch_size, D) on CPU
-        centroid_chunk: Tensor of shape (chunk_size, D) on CPU  
+        centroid_chunk: Tensor of shape (chunk_size, D) on CPU
         device: Device to perform computation on
-        
+
     Returns:
         Distance tensor of shape (batch_size, chunk_size) on CPU
     """
     # Move data to device
     batch_gpu = batch_data.to(device).to(th.float32)
     centroids_gpu = centroid_chunk.to(device).to(th.float32)
-    
+
     # Compute distances (Manhattan/L1 distance)
     distances = th.cdist(batch_gpu, centroids_gpu, p=1)
-    
+
     # Move result back to CPU
     return distances.cpu()
 
@@ -138,86 +137,98 @@ def _distribute_work_across_devices(
     minibatch_size: int,
     centroid_minibatch_size: int,
     device_type: DeviceType,
-) -> List[th.Tensor]:
+) -> list[th.Tensor]:
     """
     Distribute centroid validation work across available devices.
-    
+
     This function explicitly splits work along two dimensions:
     1. Batch dimension: Split validation data into minibatches
     2. Centroid dimension: Split centroids into chunks
-    
+
     Each (batch, centroid_chunk) pair is processed on an available device.
-    
+
     Args:
         validation_data: Tensor of shape (N, D) containing validation datapoints
         centroids: Tensor of shape (K, D) containing cluster centroids
         minibatch_size: Size of data batches
         centroid_minibatch_size: Size of centroid chunks
         device_type: Device type to use ("cuda" or "xpu")
-        
+
     Returns:
         List of assignment tensors, one per data batch
     """
     backend = get_backend(device_type)
-    
+
     # Get available devices
     if backend.is_available():
         num_devices = backend.device_count()
         devices = [get_device(device_type, i) for i in range(num_devices)]
-        logger.debug(f"Using {num_devices} {device_type.upper()} devices for validation")
+        logger.debug(
+            f"Using {num_devices} {device_type.upper()} devices for validation"
+        )
     else:
         devices = [th.device("cpu")]
         logger.debug("Using CPU for validation (no GPU devices available)")
-    
+
     n_samples = validation_data.shape[0]
     n_centroids = centroids.shape[0]
-    
+
     # Split data into batches
     n_batches = math.ceil(n_samples / minibatch_size)
     data_batches = [
-        validation_data[i * minibatch_size:(i + 1) * minibatch_size]
+        validation_data[i * minibatch_size : (i + 1) * minibatch_size]
         for i in range(n_batches)
     ]
-    
+
     # Split centroids into chunks
     n_centroid_chunks = math.ceil(n_centroids / centroid_minibatch_size)
     centroid_chunks = [
-        centroids[i * centroid_minibatch_size:(i + 1) * centroid_minibatch_size]
+        centroids[i * centroid_minibatch_size : (i + 1) * centroid_minibatch_size]
         for i in range(n_centroid_chunks)
     ]
-    
+
     logger.debug(
-        f"Split work: {n_batches} data batches × {n_centroid_chunks} centroid chunks "
+        f"Split work: {n_batches} data batches x {n_centroid_chunks} centroid chunks "
         f"= {n_batches * n_centroid_chunks} total tasks across {len(devices)} devices"
     )
-    
+
     # Assertions for correctness
-    assert len(data_batches) == n_batches, f"Expected {n_batches} data batches, got {len(data_batches)}"
-    assert len(centroid_chunks) == n_centroid_chunks, f"Expected {n_centroid_chunks} centroid chunks, got {len(centroid_chunks)}"
-    assert sum(batch.shape[0] for batch in data_batches) == n_samples, "Data batches don't sum to original sample count"
-    assert sum(chunk.shape[0] for chunk in centroid_chunks) == n_centroids, "Centroid chunks don't sum to original centroid count"
-    
+    assert len(data_batches) == n_batches, (
+        f"Expected {n_batches} data batches, got {len(data_batches)}"
+    )
+    assert len(centroid_chunks) == n_centroid_chunks, (
+        f"Expected {n_centroid_chunks} centroid chunks, got {len(centroid_chunks)}"
+    )
+    assert sum(batch.shape[0] for batch in data_batches) == n_samples, (
+        "Data batches don't sum to original sample count"
+    )
+    assert sum(chunk.shape[0] for chunk in centroid_chunks) == n_centroids, (
+        "Centroid chunks don't sum to original centroid count"
+    )
+
     all_assignments = []
     device_idx = 0
-    
+
     # Process each data batch
-    for batch_idx, batch_data in enumerate(tqdm(data_batches, desc="Processing validation batches", leave=False)):
+    for batch_idx, batch_data in enumerate(
+        tqdm(data_batches, desc="Processing validation batches", leave=False)
+    ):
         batch_size = batch_data.shape[0]
-        
+
         # For this batch, compute distances to all centroid chunks
         batch_distance_chunks = []
-        
-        for chunk_idx, centroid_chunk in enumerate(centroid_chunks):
+
+        for _chunk_idx, centroid_chunk in enumerate(centroid_chunks):
             # Select device in round-robin fashion
             device = devices[device_idx % len(devices)]
             device_idx += 1
-            
+
             # Compute distances for this (batch, centroid_chunk) pair
             distance_chunk = _compute_batch_centroid_distances(
                 batch_data, centroid_chunk, device
             )
             batch_distance_chunks.append(distance_chunk)
-            
+
             # Clear device cache after each computation
             if device.type != "cpu":
                 if device_type == "cuda":
@@ -228,36 +239,38 @@ def _distribute_work_across_devices(
                         backend.empty_cache()
                 else:
                     backend.empty_cache()
-        
+
         # Concatenate distance chunks along centroid dimension
         batch_distances = th.cat(batch_distance_chunks, dim=1)
-        
+
         # Sanity check: distances should have shape (batch_size, n_centroids)
         expected_shape = (batch_size, n_centroids)
         assert batch_distances.shape == expected_shape, (
             f"Batch {batch_idx}: Expected distance shape {expected_shape}, "
             f"got {batch_distances.shape}"
         )
-        
+
         # Find closest centroids for this batch
         batch_assignments = th.argmin(batch_distances, dim=1)
-        
+
         # Sanity check: assignments should have shape (batch_size,)
         assert batch_assignments.shape == (batch_size,), (
             f"Batch {batch_idx}: Expected assignment shape ({batch_size},), "
             f"got {batch_assignments.shape}"
         )
-        
+
         all_assignments.append(batch_assignments)
-    
+
     # Final sanity check: total assignments should equal original sample count
     total_assignments = sum(assignments.shape[0] for assignments in all_assignments)
     assert total_assignments == n_samples, (
         f"Total assignments ({total_assignments}) != original samples ({n_samples})"
     )
-    
-    logger.debug(f"✅ Distributed validation completed: processed {n_samples} samples across {len(devices)} devices")
-    
+
+    logger.debug(
+        f"✅ Distributed validation completed: processed {n_samples} samples across {len(devices)} devices"
+    )
+
     return all_assignments
 
 
@@ -272,7 +285,7 @@ def validate_centroid_distribution(
 ) -> tuple[bool, CentroidValidationStats]:
     """
     Validate that centroids produce a reasonable distribution of assignments on validation data.
-    
+
     This function now uses distributed processing across multiple devices, explicitly splitting
     work along both batch and centroid dimensions for better parallelization.
 
@@ -325,13 +338,15 @@ def validate_centroid_distribution(
 
     # Concatenate all assignments
     assignments = th.cat(all_assignments, dim=0)
-    
+
     # Final sanity check: assignments should match original data size
     assert assignments.shape[0] == n_samples, (
         f"Final assignments shape ({assignments.shape[0]}) != original samples ({n_samples})"
     )
 
-    logger.debug(f"✅ {device_type.upper()} distributed validation completed successfully")
+    logger.debug(
+        f"✅ {device_type.upper()} distributed validation completed successfully"
+    )
 
     # Count assignments per centroid
     k = centroids.shape[0]
@@ -413,10 +428,10 @@ def validate_centroid_distribution_legacy(
 ) -> tuple[bool, CentroidValidationStats]:
     """
     Legacy single-device validation function for comparison and fallback.
-    
+
     This is the original implementation that processes everything on a single device.
     Kept for backward compatibility and performance comparison.
-    
+
     Args:
         validation_data: Tensor of shape (N, D) containing validation datapoints
         centroids: Tensor of shape (K, D) containing cluster centroids
@@ -465,7 +480,9 @@ def validate_centroid_distribution_legacy(
     )
 
     for start_idx in tqdm(
-        range(0, n_samples, minibatch_size), desc="Legacy validation batches", leave=False
+        range(0, n_samples, minibatch_size),
+        desc="Legacy validation batches",
+        leave=False,
     ):
         end_idx = min(start_idx + minibatch_size, n_samples)
         batch_data = validation_data[start_idx:end_idx].to(device).to(th.float32)
