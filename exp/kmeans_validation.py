@@ -131,13 +131,13 @@ def _compute_batch_centroid_distances(
     return distances.cpu()
 
 
-def _distribute_work_across_devices(
+def _distributed_kmeans_assignment(
     validation_data: th.Tensor,
     centroids: th.Tensor,
     minibatch_size: int,
     centroid_minibatch_size: int,
     device_type: DeviceType,
-) -> list[th.Tensor]:
+) -> th.Tensor:
     """
     Distribute centroid validation work across available devices.
 
@@ -155,7 +155,7 @@ def _distribute_work_across_devices(
         device_type: Device type to use ("cuda" or "xpu")
 
     Returns:
-        List of assignment tensors, one per data batch
+        Concatenated assignment tensor of shape (N,)
     """
     backend = get_backend(device_type)
 
@@ -271,7 +271,8 @@ def _distribute_work_across_devices(
         f"✅ Distributed validation completed: processed {n_samples} samples across {len(devices)} devices"
     )
 
-    return all_assignments
+    # Concatenate all assignments and return
+    return th.cat(all_assignments, dim=0)
 
 
 def validate_centroid_distribution(
@@ -305,7 +306,7 @@ def validate_centroid_distribution(
     """
     # Check for any nans
     if th.isnan(validation_data).any() or th.isnan(centroids).any():
-        logger.warning("K-means validation: Found NaN in validation data or centroids")
+        logger.critical("K-means validation: Found NaN in validation data or centroids")
         return False, CentroidValidationStats(
             num_empty_centroids=0,
             num_over_concentrated_centroids=0,
@@ -328,16 +329,13 @@ def validate_centroid_distribution(
     )
 
     # Use distributed processing across devices
-    all_assignments = _distribute_work_across_devices(
+    assignments = _distributed_kmeans_assignment(
         validation_data=validation_data,
         centroids=centroids,
         minibatch_size=minibatch_size,
         centroid_minibatch_size=centroid_minibatch_size,
         device_type=device_type,
     )
-
-    # Concatenate all assignments
-    assignments = th.cat(all_assignments, dim=0)
 
     # Final sanity check: assignments should match original data size
     assert assignments.shape[0] == n_samples, (
@@ -448,7 +446,7 @@ def validate_centroid_distribution_legacy(
     """
     # Check for any nans
     if th.isnan(validation_data).any() or th.isnan(centroids).any():
-        logger.warning("K-means validation: Found NaN in validation data or centroids")
+        logger.critical("K-means validation: Found NaN in validation data or centroids")
         return False, CentroidValidationStats(
             num_empty_centroids=0,
             num_over_concentrated_centroids=0,
