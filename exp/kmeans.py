@@ -962,6 +962,7 @@ async def kmeans_manhattan(
     num_nodes = dist.get_world_size()
     total_gpus = num_gpus * num_nodes
 
+    logger.debug(f"Running kmeans with device type: {device_type}")
     logger.trace(f"Number of devices: {num_gpus}")
     logger.trace(f"Number of nodes: {num_nodes}")
     logger.trace(f"Total number of devices: {total_gpus}")
@@ -1175,6 +1176,7 @@ async def kmeans_manhattan(
         validation_data,
         minibatch_size=minibatch_size,
         centroid_minibatch_size=centroid_minibatch_size,
+        device_type=device_type,
     )
 
     logger.info(
@@ -1586,6 +1588,8 @@ def cluster_paths(
 
     # Validate device type
     assert_device_type(device_type)
+
+    logger.info(f"Running with device type: {device_type}")
 
     asyncio.run(
         cluster_paths_async(
