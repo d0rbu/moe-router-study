@@ -2,13 +2,14 @@ from collections import deque
 from multiprocessing.synchronize import Event
 import os
 import time
-from typing import Any, TypeVar
+from typing import Any, Iterator, TypeVar, cast
+import multiprocessing as mp
 import warnings
 
 import arguably
 from nnterp import StandardizedTransformer
 import torch as th
-import torch.multiprocessing as mp
+import torch.multiprocessing as tmp
 from tqdm import tqdm
 
 # Import trackio with the same interface as wandb
@@ -163,8 +164,8 @@ def tokenizer_worker(
     model_name: str,
     tokenizer_batch: int,
     tokens_per_file: int,
-    main_queue: mp.Queue,
-    stop_event: Event,
+    main_queue: mp.Queue[Any],
+    stop_event: mp.Event[bool],
     wandb_run_id: str,  # noqa: ARG001
     resume_from_batch: int = 0,
 ) -> None:
@@ -192,7 +193,7 @@ def tokenizer_worker(
         raise ValueError(f"Dataset {dataset_name} not found")
 
     # Create dataset iterator
-    dataset_iter = iter(dataset_fn(tokenizer))
+    dataset_iter = cast(Iterator[str], iter(dataset_fn(tokenizer)))
 
     # Skip batches if resuming
     if resume_from_batch > 0:
@@ -305,9 +306,9 @@ def tokenizer_worker(
 
 
 def multiplexer_worker(
-    main_queue: mp.Queue,
-    gpu_queues: list[mp.Queue],
-    stop_event: Event,
+    main_queue: mp.Queue[Any],
+    gpu_queues: list[mp.Queue[Any]],
+    stop_event: mp.Event[bool],
     wandb_run_id: str,  # noqa: ARG001
     gpu_busy: list[bool],
 ) -> None:
@@ -383,11 +384,11 @@ def multiplexer_worker(
 def gpu_worker(
     rank: int,
     _world_size: int,  # Renamed to avoid unused argument warning
-    gpu_queue: mp.Queue,
+    gpu_queue: mp.Queue[Any],
     model_name: str,
     experiment_name: str,
     device: str,
-    stop_event: Event,
+    stop_event: mp.Event[bool],
     wandb_run_id: str,  # noqa: ARG001
 ) -> None:
     """Worker process that runs on a specific GPU and processes batches."""
