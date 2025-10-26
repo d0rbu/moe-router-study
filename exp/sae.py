@@ -1,18 +1,15 @@
-import arguably
-import trackio as wandb
-from nnterp import StandardizedTransformer
-from dictionary_learning import ActivationBuffer
-from dictionary_learning.trainers.trainer import SAETrainer
-from dictionary_learning.trainers.dictionary import Dictionary
-from dictionary_learning.trainers.top_k import BatchTopKTrainer, BatchTopKSAE
-from dictionary_learning.trainers.matryoshka_batch_top_k import MatryoshkaBatchTopKTrainer, MatryoshkaBatchTopKSAE
-from dictionary_learning.training import trainSAE
 from dataclasses import dataclass
 
-from core.data import DATASETS
+import arguably
+from dictionary_learning.trainers.dictionary import Dictionary
+from dictionary_learning.trainers.matryoshka_batch_top_k import (
+    MatryoshkaBatchTopKSAE,
+    MatryoshkaBatchTopKTrainer,
+)
+from dictionary_learning.trainers.top_k import BatchTopKSAE, BatchTopKTrainer
+from dictionary_learning.trainers.trainer import SAETrainer
+
 from core.model import MODELS
-from exp import OUTPUT_DIR
-from exp.get_activations import get_experiment_name, ACTIVATION_DIRNAME
 
 
 @dataclass
@@ -35,14 +32,14 @@ ARCHITECTURES = {
 
 @arguably.command()
 def run_sae_training(
-    model_name: str = "olmoe-i",
-    dataset_name: str = "lmsys",
-    layer_idx: int = 7,
+    _model_name: str = "olmoe-i",
+    _dataset_name: str = "lmsys",
+    _layer_idx: int = 7,
     *_args,
-    name: str | None = None,
-    device: str = "auto",
-    seed: int = 0,
-    num_tokens: int = 1_000_000_000,  # 1B tokens
+    _name: str | None = None,
+    _device: str = "auto",
+    _seed: int = 0,
+    _num_tokens: int = 1_000_000_000,  # 1B tokens
     architectures: list[str] | None = None,
     expansion_factors: list[int] | None = None,
     lrs: list[float] | None = None,
@@ -55,9 +52,9 @@ def run_sae_training(
         lrs = [5e-5]
 
     # Get model config
-    model_config = MODELS.get(model_name)
+    model_config = MODELS.get(_model_name)
     if model_config is None:
-        raise ValueError(f"Model {model_name} not found")
+        raise ValueError(f"Model {_model_name} not found")
 
     # name = get_experiment_name(
     #     model_name=model_name,

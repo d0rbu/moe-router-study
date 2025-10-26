@@ -147,7 +147,7 @@ def process_batch(
         padding_mask = attention_mask.bool().flatten()
 
         # Extract activations for each layer
-        for layer_idx, layer in enumerate(model.layers):
+        for layer_idx, _layer in enumerate(model.layers):
             if "attn_output" in activations_to_store:
                 attn_output = model.attentions_output[layer_idx]
                 activations["attn_output"].append(attn_output.output.clone().detach())
