@@ -71,7 +71,7 @@ def router_spaces(
     sorted_expert_vectors = th.cat(sorted_expert_routers, dim=0)
 
     # next we concatenate the router weights and look at the spectrum
-    u, s, vh = th.linalg.svd(sorted_expert_vectors)
+    _u, s, vh = th.linalg.svd(sorted_expert_vectors)
     full_expert_spectrum = s
     plt.plot(full_expert_spectrum)
     plt.savefig(os.path.join(ROUTER_VIZ_DIR, "full_expert_spectrum.png"), dpi=300)

@@ -103,7 +103,7 @@ class TestLoadActivationsAndIndicesAndTopk:
         th.save(data, temp_dir / "0.pt")
 
         with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
-            activated_experts, activated_indices, top_k = (
+            activated_experts, _activated_indices, _top_k = (
                 load_activations_and_indices_and_topk()
             )
 
@@ -193,7 +193,7 @@ class TestLoadActivationsAndTopk:
 
         with patch("exp.activations.ROUTER_LOGITS_DIR", str(temp_dir)):
             # Call both functions
-            full_experts, full_indices, full_topk = (
+            full_experts, _full_indices, full_topk = (
                 load_activations_and_indices_and_topk()
             )
             wrapper_experts, wrapper_topk = load_activations_and_topk()

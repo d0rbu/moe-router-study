@@ -24,7 +24,7 @@ def svd_circuits(
     print(activated_experts.shape)
 
     # SVD to get circuits
-    u, s, vh = th.linalg.svd(activated_experts)
+    _u, s, vh = th.linalg.svd(activated_experts)
 
     # plot singular values
     singular_values_path = os.path.join(FIGURE_DIR, "singular_values.png")

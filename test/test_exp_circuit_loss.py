@@ -74,7 +74,7 @@ class TestMaxIouAndIndex:
         circuits = th.zeros(1, 2, 3, dtype=th.bool)
         circuits[0, 0, 1] = True  # Different expert
 
-        max_iou, max_iou_idx = max_iou_and_index(data, circuits)
+        max_iou, _max_iou_idx = max_iou_and_index(data, circuits)
 
         # Should get IoU of 0.0
         assert_tensor_close(max_iou, th.tensor([0.0]))
@@ -91,7 +91,7 @@ class TestMaxIouAndIndex:
         circuits[0, 0, 0] = True  # Overlap
         circuits[0, 0, 2] = True  # Additional
 
-        max_iou, max_iou_idx = max_iou_and_index(data, circuits)
+        max_iou, _max_iou_idx = max_iou_and_index(data, circuits)
 
         # IoU = intersection / union = 1 / 3 = 0.333...
         expected_iou = 1.0 / 3.0
@@ -392,7 +392,7 @@ class TestMinLogitLossAndIndex:
         circuits_logits[1, 0, 0] = -10.0  # sigmoid ≈ 0
         circuits_logits[1, 0, 1] = 10.0  # sigmoid ≈ 1
 
-        loss, indices = min_logit_loss_and_index(data, circuits_logits)
+        _loss, indices = min_logit_loss_and_index(data, circuits_logits)
 
         # Should select circuit 0 (closer match)
         assert indices[0] == 0
@@ -476,7 +476,7 @@ class TestCircuitLoss:
 
         # Test invalid complexity importance values
         with pytest.raises(
-            AssertionError, match="complexity_importance must be between 0.0 and 1.0"
+            AssertionError, match=r"complexity_importance must be between 0\.0 and 1\.0"
         ):
             circuit_loss(
                 sample_bool_tensor_3d,
@@ -486,7 +486,7 @@ class TestCircuitLoss:
             )
 
         with pytest.raises(
-            AssertionError, match="complexity_importance must be between 0.0 and 1.0"
+            AssertionError, match=r"complexity_importance must be between 0\.0 and 1\.0"
         ):
             circuit_loss(
                 sample_bool_tensor_3d, circuits_logits, top_k, complexity_importance=1.1

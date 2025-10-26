@@ -41,7 +41,7 @@ def kmeans_manhattan(
 
     assert data.ndim == 2, "Data must be of dimensions (B, D)"
 
-    dataset_size, dim = data.shape
+    dataset_size, _dim = data.shape
 
     assert minibatch_size > 0 and minibatch_size <= dataset_size, (
         "Batch size must be > 0 and <= dataset_size"
@@ -136,7 +136,7 @@ def elbow(
 ) -> None:
     assert data.ndim == 2, "Data must be of dimensions (B, D)"
 
-    dataset_size, dim = data.shape
+    dataset_size, _dim = data.shape
 
     total_iters = (stop - start) // step
 
@@ -219,7 +219,7 @@ def cluster_circuits(
 ) -> None:
     activated_experts, top_k = load_activations_and_topk()
 
-    batch_size, num_layers, num_experts = activated_experts.shape
+    batch_size, _num_layers, _num_experts = activated_experts.shape
 
     if minibatch_size is None:
         minibatch_size = batch_size

@@ -126,7 +126,7 @@ class TestExpertImportance:
 
     def test_expert_importance_invalid_model(self):
         """Test expert_importance with invalid model name."""
-        with pytest.raises(ValueError, match="Model .* not found"):
+        with pytest.raises(ValueError, match=r"Model .* not found"):
             expert_importance(model_name="nonexistent_model")
 
     def test_expert_importance_calculation(self, temp_dir, monkeypatch):
