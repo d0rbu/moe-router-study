@@ -1,4 +1,5 @@
 from collections import deque
+from multiprocessing.synchronize import Event
 import os
 import time
 from typing import Any, TypeVar
@@ -99,9 +100,7 @@ def save_router_logits(
     router_logits_tensor = th.cat(router_logit_collection, dim=0)
 
     # Save router logits
-    output_path = os.path.join(
-        router_logits_dir, f"{router_logit_collection_idx}.pt"
-    )
+    output_path = os.path.join(router_logits_dir, f"{router_logit_collection_idx}.pt")
     output = {
         "topk": top_k,
         "router_logits": router_logits_tensor,
@@ -165,15 +164,14 @@ def tokenizer_worker(
     tokenizer_batch: int,
     tokens_per_file: int,
     main_queue: mp.Queue,
-    stop_event: mp.Event,
-    wandb_run_id: str,
+    stop_event: Event,
+    wandb_run_id: str,  # noqa: ARG001
     resume_from_batch: int = 0,
 ) -> None:
     """Worker process that tokenizes text and puts batches into the queue."""
     # Initialize wandb in this process
     wandb.init(
         project="router_activations",
-        id=wandb_run_id,
         resume="allow",
         name=f"tokenizer-{dataset_name}-{model_name}",
     )
@@ -194,7 +192,7 @@ def tokenizer_worker(
         raise ValueError(f"Dataset {dataset_name} not found")
 
     # Create dataset iterator
-    dataset_iter = dataset_fn(tokenizer)
+    dataset_iter = iter(dataset_fn(tokenizer))
 
     # Skip batches if resuming
     if resume_from_batch > 0:
@@ -257,7 +255,8 @@ def tokenizer_worker(
                         "tokenizer/total_tokens": total_tokens + tokens_sum,
                         "tokenizer/sequences_in_batch": len(batch_texts),
                         "tokenizer/buffer_size": len(buffer),
-                        "tokenizer/tokens_per_second": (total_tokens + tokens_sum) / elapsed
+                        "tokenizer/tokens_per_second": (total_tokens + tokens_sum)
+                        / elapsed
                         if elapsed > 0
                         else 0,
                     }
@@ -279,7 +278,9 @@ def tokenizer_worker(
             batch_texts, batch_tokens = tuple(zip(*batch, strict=False))
             tokens_sum = sum(len(tokens) for tokens in batch_tokens)
 
-            main_queue.put((batch_idx, batch_texts, batch_tokens, tokens_sum), block=True)
+            main_queue.put(
+                (batch_idx, batch_texts, batch_tokens, tokens_sum), block=True
+            )
 
             # Log statistics
             elapsed = time.time() - start_time
@@ -306,15 +307,14 @@ def tokenizer_worker(
 def multiplexer_worker(
     main_queue: mp.Queue,
     gpu_queues: list[mp.Queue],
-    stop_event: mp.Event,
-    wandb_run_id: str,
+    stop_event: Event,
+    wandb_run_id: str,  # noqa: ARG001
     gpu_busy: list[bool],
 ) -> None:
     """Worker that distributes batches to GPU queues based on load balancing."""
     # Initialize wandb in this process
     wandb.init(
         project="router_activations",
-        id=wandb_run_id,
         resume="allow",
         name="multiplexer",
     )
@@ -359,7 +359,9 @@ def multiplexer_worker(
                     "multiplexer/main_queue_size": main_queue.qsize(),
                     "multiplexer/total_batches": total_batches,
                     "multiplexer/total_tokens": total_tokens,
-                    "multiplexer/tokens_per_second": total_tokens / elapsed if elapsed > 0 else 0,
+                    "multiplexer/tokens_per_second": total_tokens / elapsed
+                    if elapsed > 0
+                    else 0,
                     "multiplexer/elapsed_time": elapsed,
                     **{
                         f"multiplexer/gpu_{i}_queue_size": q.qsize()
@@ -385,25 +387,26 @@ def gpu_worker(
     model_name: str,
     experiment_name: str,
     device: str,
-    stop_event: mp.Event,
-    wandb_run_id: str,
+    stop_event: Event,
+    wandb_run_id: str,  # noqa: ARG001
 ) -> None:
     """Worker process that runs on a specific GPU and processes batches."""
     # Set device for this process
     os.environ["CUDA_VISIBLE_DEVICES"] = str(rank)
-    device_id = f"cuda:{0}"  # Always use first visible device (which is our assigned GPU)
+    device_id = (
+        f"cuda:{0}"  # Always use first visible device (which is our assigned GPU)
+    )
 
     # Initialize wandb in this process
     wandb.init(
         project="router_activations",
-        id=wandb_run_id,
         resume="allow",
         name=f"gpu-{rank}",
     )
 
     # Get model config
     model_config = MODELS[model_name]
-    hf_name = model_config["hf_name"]
+    hf_name = model_config.hf_name
 
     # Set up device map
     device_map = CUSTOM_DEVICES.get(device, lambda: device_id)()
@@ -477,7 +480,8 @@ def gpu_worker(
                     else 0,
                     f"gpu_{rank}/total_batches": total_batches,
                     f"gpu_{rank}/total_tokens": total_tokens,
-                    f"gpu_{rank}/avg_batch_time": sum(processing_times) / len(processing_times),
+                    f"gpu_{rank}/avg_batch_time": sum(processing_times)
+                    / len(processing_times),
                     f"gpu_{rank}/ema_batch_time": ema_batch_time,
                     f"gpu_{rank}/elapsed_time": elapsed,
                 }
@@ -599,8 +603,8 @@ def get_router_activations(
     save_config(config, experiment_dir)
 
     # Initialize WandB
-    wandb_run = wandb.init(project=wandb_project, name=name, config=config)
-    wandb_run_id = wandb_run.id
+    wandb.init(project=wandb_project, name=name, config=config)
+    wandb_run_id = f"{name}_{int(time.time())}"  # Simple unique ID
 
     # Find completed batches if resuming
     resume_batch_idx = 0
