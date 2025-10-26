@@ -159,7 +159,7 @@ def validate_centroid_distribution(
     n_samples = validation_data.shape[0]
 
     logger.debug(
-        f"🚀 {device_type.upper()} validation: Processing {n_samples} samples in batches of {minibatch_size}, centroids in chunks of {centroid_minibatch_size}"
+        f"🚀 {device_type.upper()} validation: Processing {n_samples} samples in batches of {minibatch_size}, {centroids_gpu.shape[0]} centroids in chunks of {centroid_minibatch_size}"
     )
 
     for start_idx in tqdm(
