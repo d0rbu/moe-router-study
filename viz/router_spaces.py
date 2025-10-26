@@ -1,5 +1,5 @@
 import os
-from typing import cast, Optional
+from typing import cast
 
 import arguably
 import matplotlib.pyplot as plt
@@ -18,7 +18,7 @@ def router_spaces(
     checkpoint_idx: int | None = None,
     device: str = "cpu",
     topk: int = 8,
-    experiment_name: Optional[str] = None,
+    experiment_name: str | None = None,
 ) -> None:
     """Visualize router spaces directly from model weights.
 
@@ -131,4 +131,3 @@ def router_spaces(
 
 if __name__ == "__main__":
     arguably.run()
-

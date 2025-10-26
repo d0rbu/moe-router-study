@@ -69,7 +69,9 @@ class TestLoadActivationsAndIndicesAndTopk:
             patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
             patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
         ):
-            _, _, top_k = load_activations_and_indices_and_topk(experiment_name="test_experiment")
+            _, _, top_k = load_activations_and_indices_and_topk(
+                experiment_name="test_experiment"
+            )
 
         assert top_k == 3
 
@@ -166,7 +168,9 @@ class TestLoadActivationsAndIndicesAndTopk:
             patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
             patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
         ):
-            activated_experts, _, _ = load_activations_and_indices_and_topk(experiment_name="test_experiment")
+            activated_experts, _, _ = load_activations_and_indices_and_topk(
+                experiment_name="test_experiment"
+            )
 
         # Should only load file 0.pt (stops at first missing file)
         assert_tensor_shape_and_type(activated_experts, (3, 2, 4), th.bool)
@@ -206,7 +210,9 @@ class TestLoadActivationsAndTopk:
             patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
             patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
         ):
-            activated_experts, top_k = load_activations_and_topk(experiment_name="test_experiment")
+            activated_experts, top_k = load_activations_and_topk(
+                experiment_name="test_experiment"
+            )
 
         assert top_k == 3
         assert_tensor_shape_and_type(activated_experts, (4, 2, 8), th.bool)
@@ -224,7 +230,9 @@ class TestLoadActivationsAndTopk:
             full_experts, full_indices, full_topk = (
                 load_activations_and_indices_and_topk(experiment_name="test_experiment")
             )
-            wrapper_experts, wrapper_topk = load_activations_and_topk(experiment_name="test_experiment")
+            wrapper_experts, wrapper_topk = load_activations_and_topk(
+                experiment_name="test_experiment"
+            )
 
         # Should return same results
         assert th.equal(full_experts, wrapper_experts)
@@ -270,7 +278,9 @@ class TestLoadActivations:
             patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
             patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
         ):
-            full_experts, _, _ = load_activations_and_indices_and_topk(experiment_name="test_experiment")
+            full_experts, _, _ = load_activations_and_indices_and_topk(
+                experiment_name="test_experiment"
+            )
             simple_experts = load_activations(experiment_name="test_experiment")
 
         assert th.equal(full_experts, simple_experts)
@@ -401,7 +411,9 @@ class TestActivationLoadingErrorHandling:
         non_existent_dir = os.path.join(temp_dir, "non_existent_dir")
         with (
             patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
-            patch("exp.activations.get_router_logits_dir", return_value=non_existent_dir),
+            patch(
+                "exp.activations.get_router_logits_dir", return_value=non_existent_dir
+            ),
             pytest.raises(FileNotFoundError),
         ):
             load_activations_and_indices_and_topk(experiment_name="test_experiment")
@@ -461,7 +473,9 @@ class TestActivationLoadingIntegration:
             patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
         ):
             # Should complete without memory errors
-            activated_experts, _, _ = load_activations_and_indices_and_topk(experiment_name="test_experiment")
+            activated_experts, _, _ = load_activations_and_indices_and_topk(
+                experiment_name="test_experiment"
+            )
 
             # Verify final shape
             assert_tensor_shape_and_type(activated_experts, (1000, 6, 16), th.bool)
@@ -487,9 +501,13 @@ class TestActivationLoadingIntegration:
 
             with (
                 patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
-                patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
+                patch(
+                    "exp.activations.get_router_logits_dir", return_value=str(temp_dir)
+                ),
             ):
-                activated_experts, _, _ = load_activations_and_indices_and_topk(experiment_name="test_experiment")
+                activated_experts, _, _ = load_activations_and_indices_and_topk(
+                    experiment_name="test_experiment"
+                )
                 assert_tensor_shape_and_type(
                     activated_experts, (50, num_layers, num_experts), th.bool
                 )

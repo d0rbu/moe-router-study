@@ -1,5 +1,4 @@
 import os
-from typing import Optional
 
 import streamlit as st
 import torch as th
@@ -8,22 +7,24 @@ from exp import get_experiment_dir
 from exp.activations import load_activations_indices_tokens_and_topk
 
 
-def save_circuits(circuits_dict: dict, circuits_path: str = "", experiment_name: Optional[str] = None):
+def save_circuits(
+    circuits_dict: dict, circuits_path: str = "", experiment_name: str | None = None
+):
     """Save all circuits to a single file."""
     if not circuits_path:
         experiment_dir = get_experiment_dir(name=experiment_name)
         circuits_path = os.path.join(experiment_dir, "saved_circuits.pt")
-    
+
     os.makedirs(os.path.dirname(circuits_path), exist_ok=True)
     th.save(circuits_dict, circuits_path)
 
 
-def load_circuits(circuits_path: str = "", experiment_name: Optional[str] = None) -> dict:
+def load_circuits(circuits_path: str = "", experiment_name: str | None = None) -> dict:
     """Load all circuits from the single file."""
     if not circuits_path:
         experiment_dir = get_experiment_dir(name=experiment_name)
         circuits_path = os.path.join(experiment_dir, "saved_circuits.pt")
-    
+
     if not os.path.exists(circuits_path):
         return {"circuits": th.zeros((0, 0, 0)), "names": []}
 
@@ -106,7 +107,7 @@ def max_activating_examples_server(
     *_args,
     device: str = "cuda",
     _minibatch_size: int | None = None,
-    experiment_name: Optional[str] = None,
+    experiment_name: str | None = None,
 ) -> None:
     """Run the max-activating tokens visualization from the command line.
 
@@ -226,9 +227,9 @@ def max_activating_examples_server(
 
             # Save to disk
             save_circuits(
-                st.session_state.circuits_dict, 
+                st.session_state.circuits_dict,
                 st.session_state.circuits_path,
-                st.session_state.experiment_name
+                st.session_state.experiment_name,
             )
 
             st.success(f"Circuit saved as: {circuit_name}")
@@ -365,4 +366,3 @@ def max_activating_examples_server(
 
 if __name__ == "__main__":
     max_activating_examples_server()
-

@@ -94,10 +94,14 @@ def setup_test_environment(monkeypatch):
     # Write outputs to test folders
     monkeypatch.setattr("exp.BASE_OUTPUT_DIR", "test_output", raising=False)
     monkeypatch.setattr("viz.BASE_FIGURE_DIR", "test_figures", raising=False)
-    
+
     # Set a default test experiment name
-    monkeypatch.setattr("exp.get_experiment_dir", lambda name=None: "test_output", raising=False)
-    monkeypatch.setattr("viz.get_figure_dir", lambda experiment_name=None: "test_figures", raising=False)
+    monkeypatch.setattr(
+        "exp.get_experiment_dir", lambda name=None: "test_output", raising=False
+    )
+    monkeypatch.setattr(
+        "viz.get_figure_dir", lambda experiment_name=None: "test_figures", raising=False
+    )
 
 
 @pytest.fixture

@@ -1,6 +1,6 @@
 from itertools import product
 import os
-from typing import Any, cast, Optional
+from typing import Any, cast
 
 import arguably
 from nnterp import StandardizedTransformer
@@ -17,7 +17,7 @@ def expert_importance(
     model_name: str = "olmoe",
     checkpoint_idx: int | None = None,
     device: str = "cpu",
-    experiment_name: Optional[str] = None,
+    experiment_name: str | None = None,
 ) -> None:
     """Compute reader/writer importance vectors and scores for ALL experts across ALL router layers.
 
@@ -268,4 +268,3 @@ def expert_importance(
 
 if __name__ == "__main__":
     arguably.run()
-

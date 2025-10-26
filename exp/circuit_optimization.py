@@ -1,12 +1,11 @@
+import gc
 from itertools import product
 import os
-from typing import Any, Optional
 import queue
 import threading
-import gc
+from typing import Any
 
 import arguably
-from loguru import logger
 import torch as th
 from tqdm import tqdm
 import trackio as wandb
@@ -217,7 +216,7 @@ def gradient_descent(
         data_shuffled = data[indices]
 
         # Train on batches
-        num_batches = (batch_size_data + batch_size - 1) // batch_size
+        (batch_size_data + batch_size - 1) // batch_size
         for batch_idx in range(0, batch_size_data, batch_size):
             # Get batch
             batch_end = min(batch_idx + batch_size, batch_size_data)
@@ -233,7 +232,9 @@ def gradient_descent(
             loss.backward()
 
             # Gradient accumulation
-            if (batch_idx // batch_size) % grad_accumulation_steps == 0 or batch_end == batch_size_data:
+            if (
+                batch_idx // batch_size
+            ) % grad_accumulation_steps == 0 or batch_end == batch_size_data:
                 optimizer.step()
                 optimizer.zero_grad()
 
@@ -295,7 +296,7 @@ def load_and_gradient_descent(
     grad_accumulation_steps: int = 1,
     seed: int = 0,
     device: str = "cuda",
-    experiment_name: Optional[str] = None,
+    experiment_name: str | None = None,
 ) -> None:
     data = load_activations(experiment_name=experiment_name, device=device)
 
@@ -363,7 +364,7 @@ def grid_search_gradient_descent(
     batch_size: int = 0,
     grad_accumulation_steps: int = 1,
     device: str = "cuda",
-    experiment_name: Optional[str] = None,
+    experiment_name: str | None = None,
 ) -> None:
     if complexity_importances is None:
         # complexity_importances = [0.5, 0.9, 0.1, 0.99, 0.01]
