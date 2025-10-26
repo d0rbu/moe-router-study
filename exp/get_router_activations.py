@@ -1,15 +1,16 @@
 from collections import deque
-from multiprocessing.synchronize import Event
+import multiprocessing as mp
 import os
 import time
-from typing import Any, Iterator, TypeVar, cast
-import multiprocessing as mp
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 import warnings
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 import arguably
 from nnterp import StandardizedTransformer
 import torch as th
-import torch.multiprocessing as tmp
 from tqdm import tqdm
 
 # Import trackio with the same interface as wandb
@@ -193,7 +194,7 @@ def tokenizer_worker(
         raise ValueError(f"Dataset {dataset_name} not found")
 
     # Create dataset iterator
-    dataset_iter = cast(Iterator[str], iter(dataset_fn(tokenizer)))
+    dataset_iter = cast("Iterator[str]", iter(dataset_fn(tokenizer)))
 
     # Skip batches if resuming
     if resume_from_batch > 0:
