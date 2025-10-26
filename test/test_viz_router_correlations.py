@@ -1,4 +1,6 @@
 """Tests for router correlations visualization."""
+
+import contextlib
 import os
 import tempfile
 from unittest.mock import patch
@@ -10,13 +12,22 @@ import torch
 @pytest.mark.skip(reason="Needs more robust mocking")
 def test_router_correlations_empty_directory():
     """Test router_correlations with an empty directory."""
-    with tempfile.TemporaryDirectory() as temp_dir, (
-        patch("exp.get_experiment_dir", return_value=os.path.join(temp_dir, "test_experiment")),
-        patch("exp.get_router_logits_dir", return_value=str(temp_dir)),
-    ):
-        from viz.router_correlations import router_correlations
-        with pytest.raises(ValueError, match="No data files found"):
-            router_correlations(experiment_name="test_experiment")
+    with tempfile.TemporaryDirectory() as temp_dir:
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(
+                patch(
+                    "exp.get_experiment_dir",
+                    return_value=os.path.join(temp_dir, "test_experiment"),
+                )
+            )
+            stack.enter_context(
+                patch("exp.get_router_logits_dir", return_value=str(temp_dir))
+            )
+            
+            from viz.router_correlations import router_correlations
+
+            with pytest.raises(ValueError, match="No data files found"):
+                router_correlations(experiment_name="test_experiment")
 
 
 @pytest.mark.skip(reason="Needs more robust mocking")
@@ -54,12 +65,15 @@ def test_router_correlations_basic():
         ):
             # Import here to avoid module-level binding issues
             from viz.router_correlations import router_correlations
+
             # Run the function
             router_correlations(experiment_name="test_experiment")
 
             # Check that the output files were created
             assert os.path.exists(os.path.join(figure_dir, "router_correlations.png"))
-            assert os.path.exists(os.path.join(figure_dir, "router_correlations_random.png"))
+            assert os.path.exists(
+                os.path.join(figure_dir, "router_correlations_random.png")
+            )
             assert os.path.exists(
                 os.path.join(figure_dir, "router_correlations_cross_layer.png")
             )
@@ -104,12 +118,15 @@ def test_router_correlations_multiple_files():
         ):
             # Import here to avoid module-level binding issues
             from viz.router_correlations import router_correlations
+
             # Run the function
             router_correlations(experiment_name="test_experiment")
 
             # Check that the output files were created
             assert os.path.exists(os.path.join(figure_dir, "router_correlations.png"))
-            assert os.path.exists(os.path.join(figure_dir, "router_correlations_random.png"))
+            assert os.path.exists(
+                os.path.join(figure_dir, "router_correlations_random.png")
+            )
             assert os.path.exists(
                 os.path.join(figure_dir, "router_correlations_cross_layer.png")
             )
@@ -154,16 +171,18 @@ def test_router_correlations_with_tokens():
         ):
             # Import here to avoid module-level binding issues
             from viz.router_correlations import router_correlations
+
             # Run the function
             router_correlations(experiment_name="test_experiment")
 
             # Check that the output files were created
             assert os.path.exists(os.path.join(figure_dir, "router_correlations.png"))
-            assert os.path.exists(os.path.join(figure_dir, "router_correlations_random.png"))
+            assert os.path.exists(
+                os.path.join(figure_dir, "router_correlations_random.png")
+            )
             assert os.path.exists(
                 os.path.join(figure_dir, "router_correlations_cross_layer.png")
             )
             assert os.path.exists(
                 os.path.join(figure_dir, "router_correlations_cross_layer_random.png")
             )
-

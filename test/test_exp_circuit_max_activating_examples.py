@@ -160,7 +160,6 @@ class TestHelperFunctions:
         assert all(0 <= c <= 1 for c in color_max)
 
 
-
 @pytest.mark.skip(reason="Test needs further work to fix mocking issues")
 def test_viz_render_precomputed_no_display(monkeypatch):
     """Test _viz_render_precomputed without display."""

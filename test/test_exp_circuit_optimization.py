@@ -229,8 +229,8 @@ class TestExpandBatch:
 
         assert len(expanded) == 2
         # Check that precision is maintained (within float32 limits)
-        assert abs(expanded[0]["precise_values"] - 1.23456789) < 1e-6
-        assert abs(expanded[1]["precise_values"] - 9.87654321) < 1e-6
+        assert abs(float(expanded[0]["precise_values"]) - 1.23456789) < 1e-6
+        assert abs(float(expanded[1]["precise_values"]) - 9.87654321) < 1e-6
 
 
 class TestAsyncWandbBatchLogger:
