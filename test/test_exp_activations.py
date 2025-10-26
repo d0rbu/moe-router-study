@@ -1,4 +1,5 @@
 """Tests for activation loading utilities."""
+
 import os
 from unittest.mock import patch
 
@@ -39,8 +40,10 @@ class TestActivationLoading:
             patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
         ):
             # Test load_activations_indices_tokens_and_topk
-            activated_experts, indices, tokens, loaded_topk = load_activations_indices_tokens_and_topk(
-                experiment_name="test_experiment"
+            activated_experts, indices, tokens, loaded_topk = (
+                load_activations_indices_tokens_and_topk(
+                    experiment_name="test_experiment"
+                )
             )
             assert activated_experts.shape == (batch_size, num_layers, num_experts)
             assert indices.shape == (batch_size, num_layers, topk)
@@ -48,8 +51,8 @@ class TestActivationLoading:
             assert loaded_topk == topk
 
             # Test load_activations_and_indices_and_topk
-            activated_experts2, indices2, loaded_topk2 = load_activations_and_indices_and_topk(
-                experiment_name="test_experiment"
+            activated_experts2, indices2, loaded_topk2 = (
+                load_activations_and_indices_and_topk(experiment_name="test_experiment")
             )
             assert th.all(activated_experts2 == activated_experts)
             assert th.all(indices2 == indices)
@@ -77,14 +80,18 @@ class TestActivationLoading:
         # Create multiple router logits files
         for i in range(3):
             router_logits = th.randn(batch_size, num_layers, num_experts)
-            th.save({"router_logits": router_logits, "topk": topk}, temp_dir / f"{i}.pt")
+            th.save(
+                {"router_logits": router_logits, "topk": topk}, temp_dir / f"{i}.pt"
+            )
 
         with (
             patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
             patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
         ):
-            activated_experts, indices, tokens, loaded_topk = load_activations_indices_tokens_and_topk(
-                experiment_name="test_experiment"
+            activated_experts, indices, tokens, loaded_topk = (
+                load_activations_indices_tokens_and_topk(
+                    experiment_name="test_experiment"
+                )
             )
             assert activated_experts.shape == (batch_size * 3, num_layers, num_experts)
             assert indices.shape == (batch_size * 3, num_layers, topk)
@@ -111,8 +118,10 @@ class TestActivationLoading:
             patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
             patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
         ):
-            activated_experts, indices, loaded_tokens, loaded_topk = load_activations_indices_tokens_and_topk(
-                experiment_name="test_experiment"
+            activated_experts, indices, loaded_tokens, loaded_topk = (
+                load_activations_indices_tokens_and_topk(
+                    experiment_name="test_experiment"
+                )
             )
             assert activated_experts.shape == (batch_size, num_layers, num_experts)
             assert indices.shape == (batch_size, num_layers, topk)
@@ -156,8 +165,13 @@ class TestActivationLoadingErrorHandling:
     def test_directory_not_found(self):
         """Test handling of directory not found error."""
         with (
-            patch("exp.activations.get_experiment_dir", return_value="/non/existent/path"),
-            patch("exp.activations.get_router_logits_dir", return_value="/non/existent/path"),
+            patch(
+                "exp.activations.get_experiment_dir", return_value="/non/existent/path"
+            ),
+            patch(
+                "exp.activations.get_router_logits_dir",
+                return_value="/non/existent/path",
+            ),
             pytest.raises(FileNotFoundError, match="Activation directory not found"),
         ):
             load_activations_and_indices_and_topk(experiment_name="test_experiment")
@@ -239,7 +253,9 @@ class TestActivationLoadingErrorHandling:
         with (
             patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
             patch("exp.activations.get_router_logits_dir", return_value=str(temp_dir)),
-            pytest.raises(ValueError, match="topk .* cannot be greater than number of experts"),
+            pytest.raises(
+                ValueError, match="topk .* cannot be greater than number of experts"
+            ),
         ):
             load_activations_and_indices_and_topk(experiment_name="test_experiment")
 
@@ -249,7 +265,9 @@ class TestActivationLoadingErrorHandling:
         non_existent_dir = os.path.join(temp_dir, "non_existent_dir")
         with (
             patch("exp.activations.get_experiment_dir", return_value=str(temp_dir)),
-            patch("exp.activations.get_router_logits_dir", return_value=non_existent_dir),
+            patch(
+                "exp.activations.get_router_logits_dir", return_value=non_existent_dir
+            ),
             pytest.raises(FileNotFoundError, match="Activation directory not found"),
         ):
             load_activations_and_indices_and_topk(experiment_name="test_experiment")
@@ -299,4 +317,3 @@ class TestActivationLoadingErrorHandling:
             pytest.raises(RuntimeError, match="Failed to load router logits file"),
         ):
             load_activations_and_indices_and_topk(experiment_name="test_experiment")
-
