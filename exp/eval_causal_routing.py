@@ -40,6 +40,7 @@ import yaml
 from core.data import get_dataset_fn
 from core.dtype import get_dtype
 from core.model import get_model_config
+from core.type import assert_type
 from delphi.config import (  # type: ignore
     CacheConfig,
     ConstructorConfig,
@@ -80,7 +81,7 @@ def load_seed_dataset(
     assert sample_length > 0, f"sample_length must be positive, got {sample_length}"
     assert seed >= 0, f"seed must be non-negative, got {seed}"
 
-    logger.info(
+    logger.debug(
         f"Loading seed dataset '{dataset_name}' with max_samples={max_samples}, sample_length={sample_length}, seed={seed}"
     )
 
@@ -130,12 +131,9 @@ def load_seed_dataset(
 
     # Validate collection results
     if len(seed_tensors) == 0:
-        logger.critical(
-            f"Failed to collect any samples from '{dataset_name}'. "
-            f"Processed {processed_count} texts but none matched length requirement >= {sample_length}"
-        )
         raise ValueError(
-            f"No samples found with length >= {sample_length} in dataset '{dataset_name}'"
+            f"No samples found with length >= {sample_length} in dataset '{dataset_name}'. "
+            f"Processed {processed_count} texts but none matched length requirement."
         )
 
     # Verify all samples have correct shape
@@ -189,10 +187,9 @@ def load_and_select_centroid(
 
     kmeans_path = experiment_dir / KMEANS_FILENAME
     if not kmeans_path.is_file():
-        logger.critical(f"K-means file not found at expected path: {kmeans_path}")
         raise FileNotFoundError(f"K-means file not found at {kmeans_path}")
 
-    logger.info(f"Loading centroids from {kmeans_path}")
+    logger.debug(f"Loading centroids from {kmeans_path}")
     with open(kmeans_path, "rb") as f:
         data = th.load(f)
 
@@ -237,7 +234,7 @@ def load_and_select_centroid(
         # Set random seed for reproducible selection
         random.seed(seed)
         selected_centroid_idx = random.randint(0, num_centroids - 1)
-        logger.info(
+        logger.debug(
             f"Randomly selected centroid {selected_centroid_idx} out of {num_centroids} (seed={seed})"
         )
     else:
@@ -245,7 +242,7 @@ def load_and_select_centroid(
             f"centroid_idx {centroid_idx} out of range [0, {num_centroids})"
         )
         selected_centroid_idx = centroid_idx
-        logger.info(f"Using specified centroid {selected_centroid_idx}")
+        logger.debug(f"Using specified centroid {selected_centroid_idx}")
 
     selected_centroid_flat = centroids[selected_centroid_idx]  # Shape: (L * E,)
     assert selected_centroid_flat.dim() == 1, (
@@ -261,16 +258,13 @@ def load_and_select_centroid(
     # Load metadata to get activation dimensions and shape information
     metadata_path = experiment_dir / "metadata.yaml"
     if not metadata_path.is_file():
-        logger.critical(f"Metadata file not found at expected path: {metadata_path}")
         raise FileNotFoundError(f"Metadata file not found at {metadata_path}")
 
     logger.debug(f"Loading metadata from {metadata_path}")
     with open(metadata_path) as f:
         metadata = yaml.safe_load(f)
 
-    assert isinstance(metadata, dict), (
-        f"Expected dict for metadata, got {type(metadata)}"
-    )
+    metadata = assert_type(metadata, dict)
 
     activation_dim = metadata.get("activation_dim")
     num_layers = metadata.get("num_layers")
@@ -465,7 +459,7 @@ def generate_causal_samples(
     assert temperature > 0, f"temperature must be positive, got {temperature}"
     assert seed >= 0, f"seed must be non-negative, got {seed}"
 
-    logger.info(
+    logger.debug(
         f"Generating {num_samples} causal samples with influence={influence}, "
         f"max_length={max_length}, temperature={temperature}, seed={seed}"
     )
