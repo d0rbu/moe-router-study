@@ -40,6 +40,7 @@ import yaml
 from core.data import get_dataset_fn
 from core.dtype import get_dtype
 from core.model import get_model_config
+from core.type import assert_type
 from delphi.config import (  # type: ignore
     CacheConfig,
     ConstructorConfig,
@@ -75,12 +76,20 @@ def load_seed_dataset(
     Returns:
         List of tokenized tensors, each of shape (sample_length,) with int token IDs
     """
+    # Validate input parameters
+    assert max_samples > 0, f"max_samples must be positive, got {max_samples}"
+    assert sample_length > 0, f"sample_length must be positive, got {sample_length}"
+    assert seed >= 0, f"seed must be non-negative, got {seed}"
+
     logger.debug(
-        f"Loading seed dataset '{dataset_name}' with max_samples={max_samples}, sample_length={sample_length}"
+        f"Loading seed dataset '{dataset_name}' with max_samples={max_samples}, sample_length={sample_length}, seed={seed}"
     )
 
     # Get the dataset function
     dataset_fn = get_dataset_fn(dataset_name)
+    assert dataset_fn is not None, (
+        f"Failed to get dataset function for '{dataset_name}'"
+    )
 
     # Create dataset iterator
     dataset_iter = dataset_fn(cast("PreTrainedTokenizer", tokenizer))
@@ -120,14 +129,27 @@ def load_seed_dataset(
 
     pbar.close()
 
-    logger.debug(
-        f"Collected {len(seed_tensors)} seed samples from {processed_count} texts"
-    )
-
+    # Validate collection results
     if len(seed_tensors) == 0:
         raise ValueError(
-            f"No samples found with length >= {sample_length} in dataset '{dataset_name}'"
+            f"No samples found with length >= {sample_length} in dataset '{dataset_name}'. "
+            f"Processed {processed_count} texts but none matched length requirement."
         )
+
+    # Verify all samples have correct shape
+    for idx, tensor in enumerate(seed_tensors):
+        assert tensor.shape == (sample_length,), (
+            f"Sample {idx} has incorrect shape {tensor.shape}, expected ({sample_length},)"
+        )
+
+    acceptance_rate = len(seed_tensors) / processed_count if processed_count > 0 else 0
+    logger.success(
+        f"Successfully collected {len(seed_tensors)} seed samples from {processed_count} texts "
+        f"(acceptance rate: {acceptance_rate:.1%})"
+    )
+    logger.debug(
+        f"First sample shape: {seed_tensors[0].shape}, dtype: {seed_tensors[0].dtype}"
+    )
 
     return seed_tensors
 
@@ -155,6 +177,14 @@ def load_and_select_centroid(
             - centroid_idx: Index of the selected centroid within its set
             - top_k: Top-k value used for routing
     """
+    # Validate input parameters
+    assert num_centroids > 0, f"num_centroids must be positive, got {num_centroids}"
+    if centroid_idx is not None:
+        assert centroid_idx >= 0, (
+            f"centroid_idx must be non-negative, got {centroid_idx}"
+        )
+    assert seed >= 0, f"seed must be non-negative, got {seed}"
+
     kmeans_path = experiment_dir / KMEANS_FILENAME
     if not kmeans_path.is_file():
         raise FileNotFoundError(f"K-means file not found at {kmeans_path}")
@@ -163,8 +193,22 @@ def load_and_select_centroid(
     with open(kmeans_path, "rb") as f:
         data = th.load(f)
 
+    # Validate loaded data structure
+    assert "centroids" in data, "Missing 'centroids' key in k-means data"
+    assert "top_k" in data, "Missing 'top_k' key in k-means data"
+
     centroid_sets: list[th.Tensor] = data["centroids"]
     top_k: int = data["top_k"]
+
+    # Validate data types and values
+    assert isinstance(centroid_sets, list), (
+        f"Expected list for centroids, got {type(centroid_sets)}"
+    )
+    assert len(centroid_sets) > 0, "Centroid sets list is empty"
+    assert isinstance(top_k, int), f"Expected int for top_k, got {type(top_k)}"
+    assert top_k > 0, f"top_k must be positive, got {top_k}"
+
+    logger.debug(f"Loaded {len(centroid_sets)} centroid sets with top_k={top_k}")
 
     # Find the centroid set with the matching number of centroids
     available_sizes = [centroids.shape[0] for centroids in centroid_sets]
@@ -178,7 +222,10 @@ def load_and_select_centroid(
         raise
 
     centroids = centroid_sets[matching_set_idx]
-    logger.debug(
+    assert centroids.shape[0] == num_centroids, (
+        f"Centroid set size mismatch: expected {num_centroids}, got {centroids.shape[0]}"
+    )
+    logger.success(
         f"Found centroid set at index {matching_set_idx} with shape {centroids.shape}"
     )
 
@@ -188,7 +235,7 @@ def load_and_select_centroid(
         random.seed(seed)
         selected_centroid_idx = random.randint(0, num_centroids - 1)
         logger.debug(
-            f"Randomly selected centroid {selected_centroid_idx} (seed={seed})"
+            f"Randomly selected centroid {selected_centroid_idx} out of {num_centroids} (seed={seed})"
         )
     else:
         assert 0 <= centroid_idx < num_centroids, (
@@ -198,6 +245,9 @@ def load_and_select_centroid(
         logger.debug(f"Using specified centroid {selected_centroid_idx}")
 
     selected_centroid_flat = centroids[selected_centroid_idx]  # Shape: (L * E,)
+    assert selected_centroid_flat.dim() == 1, (
+        f"Expected 1D centroid tensor, got shape {selected_centroid_flat.shape}"
+    )
 
     # Determine L and E dimensions
     # We need to know the number of experts per layer and number of layers
@@ -210,8 +260,11 @@ def load_and_select_centroid(
     if not metadata_path.is_file():
         raise FileNotFoundError(f"Metadata file not found at {metadata_path}")
 
+    logger.debug(f"Loading metadata from {metadata_path}")
     with open(metadata_path) as f:
         metadata = yaml.safe_load(f)
+
+    metadata = assert_type(metadata, dict)
 
     activation_dim = metadata.get("activation_dim")
     num_layers = metadata.get("num_layers")
@@ -226,6 +279,13 @@ def load_and_select_centroid(
     assert num_experts is not None, (
         f"num_experts not found in metadata at {metadata_path}"
     )
+    assert activation_dim > 0, f"activation_dim must be positive, got {activation_dim}"
+    assert num_layers > 0, f"num_layers must be positive, got {num_layers}"
+    assert num_experts > 0, f"num_experts must be positive, got {num_experts}"
+
+    logger.debug(
+        f"Metadata loaded: activation_dim={activation_dim}, num_layers={num_layers}, num_experts={num_experts}"
+    )
 
     # Verify dimensions are consistent
     expected_dim = num_layers * num_experts
@@ -239,13 +299,26 @@ def load_and_select_centroid(
     )
 
     # Reshape from (L * E,) to (L, E)
+    logger.debug(
+        f"Reshaping centroid from {selected_centroid_flat.shape} to ({num_layers}, {num_experts})"
+    )
     centroid_reshaped = selected_centroid_flat.reshape(num_layers, num_experts).to(
         dtype=dtype
     )
 
-    logger.info(
-        f"Selected centroid {selected_centroid_idx} from set with {num_centroids} centroids. "
-        f"Reshaped from {selected_centroid_flat.shape} to {centroid_reshaped.shape}"
+    # Validate reshaped tensor
+    assert centroid_reshaped.shape == (num_layers, num_experts), (
+        f"Reshaped centroid has incorrect shape {centroid_reshaped.shape}, "
+        f"expected ({num_layers}, {num_experts})"
+    )
+    assert not th.isnan(centroid_reshaped).any(), "Centroid contains NaN values"
+    assert not th.isinf(centroid_reshaped).any(), "Centroid contains inf values"
+
+    logger.success(
+        f"Successfully loaded centroid {selected_centroid_idx} from set with {num_centroids} centroids. "
+        f"Shape: {selected_centroid_flat.shape} → {centroid_reshaped.shape}, "
+        f"dtype: {centroid_reshaped.dtype}, "
+        f"value range: [{centroid_reshaped.min():.4f}, {centroid_reshaped.max():.4f}]"
     )
 
     return centroid_reshaped, selected_centroid_idx, top_k
@@ -265,8 +338,27 @@ def create_causal_forward_fn(
     Returns:
         Function that performs causally-modified forward pass
     """
+    # Validate inputs
+    assert centroid.dim() == 2, (
+        f"Expected 2D centroid tensor, got shape {centroid.shape}"
+    )
+    assert top_k > 0, f"top_k must be positive, got {top_k}"
+    assert top_k <= centroid.shape[1], (
+        f"top_k ({top_k}) cannot exceed number of experts ({centroid.shape[1]})"
+    )
+
+    logger.debug(
+        f"Creating causal forward function with centroid shape {centroid.shape}, top_k={top_k}"
+    )
 
     def causal_forward(input_ids: th.Tensor) -> th.Tensor:
+        # Validate input
+        assert input_ids.dim() == 2, (
+            f"Expected 2D input_ids, got shape {input_ids.shape}"
+        )
+        assert input_ids.shape[0] == 1, (
+            f"Expected batch size 1, got {input_ids.shape[0]}"
+        )
         with model.trace(input_ids):
             # Loop through layers with routers and modify only the last token
             for layer_idx in model.layers_with_routers:
@@ -358,12 +450,19 @@ def generate_causal_samples(
     Returns:
         List of dictionaries containing generated samples and metadata
     """
-    # Validate influence parameter
+    # Validate parameters
     assert 0.0 <= influence <= 1.0, (
         f"influence must be between 0.0 and 1.0, got {influence}"
     )
+    assert num_samples > 0, f"num_samples must be positive, got {num_samples}"
+    assert max_length > 0, f"max_length must be positive, got {max_length}"
+    assert temperature > 0, f"temperature must be positive, got {temperature}"
+    assert seed >= 0, f"seed must be non-negative, got {seed}"
 
-    logger.debug(f"Generating {num_samples} causal samples with influence={influence}")
+    logger.debug(
+        f"Generating {num_samples} causal samples with influence={influence}, "
+        f"max_length={max_length}, temperature={temperature}, seed={seed}"
+    )
 
     # Set random seed for reproducibility
     th.manual_seed(seed)
@@ -433,6 +532,14 @@ def generate_causal_samples(
         # Decode generated sequence
         generated_text = tokenizer.decode(generated_tokens[0], skip_special_tokens=True)
 
+        # Validate generated output
+        assert generated_tokens.shape[0] == 1, (
+            f"Expected batch size 1, got {generated_tokens.shape[0]}"
+        )
+        assert generated_tokens.shape[1] <= max_length, (
+            f"Generated sequence length {generated_tokens.shape[1]} exceeds max_length {max_length}"
+        )
+
         samples.append(
             {
                 "sample_idx": i,
@@ -448,8 +555,11 @@ def generate_causal_samples(
             }
         )
 
-        logger.trace(f"Generated sample {i}: {generated_text[:100]}...")
+        logger.trace(
+            f"Generated sample {i} ({generated_tokens.shape[1]} tokens): {generated_text[:100]}..."
+        )
 
+    logger.success(f"Successfully generated {len(samples)} causal samples")
     return samples
 
 
