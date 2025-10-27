@@ -6,7 +6,7 @@ from loguru import logger
 
 def handle_exceptions(task: asyncio.Task) -> None:
     """
-    Handle exceptions from async tasks by logging them and closing the event loop.
+    Handle exceptions from async tasks by logging them and stopping the event loop.
 
     Args:
         task: The asyncio task to check for exceptions
@@ -20,5 +20,6 @@ def handle_exceptions(task: asyncio.Task) -> None:
     traceback_str = "".join(traceback_lines)
     exception_str = str(exception)
     logger.exception(f"[worker {task.get_name()}]:\n{traceback_str}{exception_str}")
-    # throw a tantrum and fuck up everything
-    asyncio.get_running_loop().close()
+    # Stop the event loop gracefully instead of closing it while running
+    loop = asyncio.get_running_loop()
+    loop.stop()
