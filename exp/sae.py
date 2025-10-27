@@ -551,13 +551,11 @@ def main(
     device_type: str = "cuda",
 ) -> None:
     """Train a sparse autoencoder on the given model and dataset."""
-    # Check if log level is valid by trying to get it
     try:
         logger.level(log_level)
     except ValueError as err:
         raise ValueError(f"Invalid log level: {log_level}") from err
 
-    # Validate device_type
     device_type = assert_device_type(device_type)
 
     logger.remove()
