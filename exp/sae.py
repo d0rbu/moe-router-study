@@ -27,7 +27,7 @@ import torch.distributed as dist
 from tqdm import tqdm
 
 from core.async_utils import handle_exceptions
-from core.device import DeviceType, get_backend
+from core.device import DeviceType, assert_device_type, get_backend
 from core.dtype import get_dtype
 from core.training import exponential_to_linear_save_steps
 from core.type import assert_type
@@ -548,7 +548,7 @@ def main(
     log_level: str = "INFO",
     num_workers: int = 64,
     dtype: str = "bf16",
-    device_type: DeviceType = "cuda",
+    device_type: str = "cuda",
 ) -> None:
     """Train a sparse autoencoder on the given model and dataset."""
     # Check if log level is valid by trying to get it
@@ -556,6 +556,9 @@ def main(
         logger.level(log_level)
     except ValueError as err:
         raise ValueError(f"Invalid log level: {log_level}") from err
+
+    # Validate device_type
+    device_type = assert_device_type(device_type)
 
     logger.remove()
     logger.add(sys.stderr, level=log_level)
