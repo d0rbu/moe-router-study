@@ -5,11 +5,11 @@
 #SBATCH --time=48:00:00                 # Set the wall clock limit to 48 hours
 #SBATCH --ntasks=1                      # Total number of tasks (processes) across all nodes
 #SBATCH --ntasks-per-node=1             # Number of tasks per node
-#SBATCH --cpus-per-task=32              # Number of CPUs per task
-#SBATCH --mem=256G                      # Request 256GB per node
+#SBATCH --cpus-per-task=16              # Number of CPUs per task
+#SBATCH --mem=128G                      # Request 128GB per node
 #SBATCH --output=train_saes_sweep.%j    # Send stdout/err to "train_saes_sweep.[jobID]"
 #SBATCH --error=train_saes_sweep.%j.err # Send stderr to separate file
-#SBATCH --gres=gpu:h100:6               # Request 6 H100 GPUs per node
+#SBATCH --gres=gpu:h100:3               # Request 3 H100 GPUs per node
 #SBATCH --partition=gpu                 # Request the GPU partition/queue
 
 ##OPTIONAL JOB SPECIFICATIONS
