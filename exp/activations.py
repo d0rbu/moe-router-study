@@ -810,6 +810,8 @@ async def load_activations_and_init_dist(
     logger.info(f"Rank {rank} initialized gloo group")
 
     backend = get_backend(device_type)
+    logger.debug(f"Backend: {backend}")
+    logger.debug(f"Backend is available: {backend.is_available()}")
     if backend.is_available():
         nccl_port = gloo_port + 1
         os.environ["MASTER_PORT"] = str(nccl_port)

@@ -1553,6 +1553,7 @@ def cluster_paths(
             context_length=context_length,
             num_workers=num_workers,
             debug=log_level_numeric <= debug_level_numeric,
+            device_type=device_type,
         )
     )
     residual_activation_dim = activation_dims[ActivationKeys.MLP_OUTPUT]

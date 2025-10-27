@@ -237,8 +237,6 @@ def _distributed_kmeans_assignment(
                 elif device_type == "xpu":
                     with th.xpu.device(device):
                         backend.empty_cache()
-                else:
-                    backend.empty_cache()
 
         # Concatenate distance chunks along centroid dimension
         batch_distances = th.cat(batch_distance_chunks, dim=1)

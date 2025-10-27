@@ -243,6 +243,7 @@ async def run_sae_training(
         context_length=context_length,
         num_workers=num_workers,
         debug=debug,
+        device_type=device_type,
     )
 
     sae_experiment_name = get_experiment_name(
