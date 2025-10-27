@@ -538,25 +538,13 @@ async def sync(
             f"🔄 SYNC GPU {gpu_idx} k_idx={k_idx} BEFORE: Dirty centroids zero_norms={zero_norms}/{len(centroid_norms)}, norm_stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}, weight_sum={weight_sum:.2f}"
         )
 
-    # For XPU devices, we need to use gloo backend for distributed ops
-    # Move tensors to CPU if using XPU, since xccl backend has limited support
-    use_cpu_for_dist = device_type == "xpu" or group is None
-    actual_group = None if use_cpu_for_dist else group
-
     # gather across nodes
-    losses_for_gather = (
-        gpu_data.dirty_data.losses.cpu()
-        if use_cpu_for_dist
-        else gpu_data.dirty_data.losses
+    all_losses = (
+        th.empty_like(gpu_data.dirty_data.losses).unsqueeze(0).repeat(world_size, 1)
     )
-    all_losses = th.empty_like(losses_for_gather).unsqueeze(0).repeat(world_size, 1)
 
     # N, num_K
-    dist.all_gather_into_tensor(all_losses, losses_for_gather, group=actual_group)
-
-    # Move back to original device if needed
-    if use_cpu_for_dist:
-        all_losses = all_losses.to(gpu_data.dirty_data.losses.device)
+    dist.all_gather_into_tensor(all_losses, gpu_data.dirty_data.losses, group=group)
 
     logger.trace(
         f"All losses: {all_losses.shape} {all_losses.dtype} {all_losses.device} {all_losses}"
@@ -579,28 +567,13 @@ async def sync(
             strict=True,
         )
     ):
-        # Move tensors to CPU for distributed ops if using XPU
-        centroids_for_gather = centroids.cpu() if use_cpu_for_dist else centroids
-        weights_for_gather = weights.cpu() if use_cpu_for_dist else weights
-
         # (N, K, D)
-        all_centroids = (
-            th.empty_like(centroids_for_gather).unsqueeze(0).repeat(world_size, 1, 1)
-        )
+        all_centroids = th.empty_like(centroids).unsqueeze(0).repeat(world_size, 1, 1)
         # (N, K)
-        all_weights = (
-            th.empty_like(weights_for_gather).unsqueeze(0).repeat(world_size, 1)
-        )
+        all_weights = th.empty_like(weights).unsqueeze(0).repeat(world_size, 1)
 
-        dist.all_gather_into_tensor(
-            all_centroids, centroids_for_gather, group=actual_group
-        )
-        dist.all_gather_into_tensor(all_weights, weights_for_gather, group=actual_group)
-
-        # Move back to original device if needed
-        if use_cpu_for_dist:
-            all_centroids = all_centroids.to(centroids.device)
-            all_weights = all_weights.to(weights.device)
+        dist.all_gather_into_tensor(all_centroids, centroids, group=group)
+        dist.all_gather_into_tensor(all_weights, weights, group=group)
 
         # (K)
         weights_total = all_weights.sum(dim=0)
