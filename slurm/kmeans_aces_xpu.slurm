@@ -35,6 +35,14 @@ mv pyproject.intel.toml pyproject.toml
 export ZE_ENABLE_PCI_ID_DEVICE_ORDER=1
 export SYCL_DEVICE_FILTER=level_zero:gpu
 
+# Configure oneCCL worker threads
+# Reduce worker count to avoid pthread_create errors
+export CCL_WORKER_COUNT=1
+# Use automatic affinity to let oneCCL manage CPU core assignment
+export CCL_WORKER_AFFINITY=auto
+# Disable verbose logging to reduce overhead
+export CCL_LOG_LEVEL=warn
+
 # Change to the project directory
 cd $SCRATCH/moe-router-study
 
