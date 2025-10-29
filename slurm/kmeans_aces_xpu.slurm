@@ -36,12 +36,27 @@ export ZE_ENABLE_PCI_ID_DEVICE_ORDER=1
 export SYCL_DEVICE_FILTER=level_zero:gpu
 
 # Configure oneCCL worker threads
-# Reduce worker count to avoid pthread_create errors
+# Get the list of CPU cores assigned by SLURM to this job
+# SLURM_JOB_CPUS_PER_NODE gives us the number of CPUs allocated
+# We'll use the CPU list from taskset to get the actual core IDs
+SLURM_CPUS=$(taskset -cp $$ | cut -d: -f2 | tr -d ' ')
+
+# Set worker count to 1 to minimize resource usage
 export CCL_WORKER_COUNT=1
-# Use automatic affinity to let oneCCL manage CPU core assignment
-export CCL_WORKER_AFFINITY=auto
+
+# Use the first CPU from our SLURM allocation for the worker thread
+# This ensures we only use cores that SLURM has assigned to us
+FIRST_CPU=$(echo $SLURM_CPUS | cut -d',' -f1 | cut -d'-' -f1)
+export CCL_WORKER_AFFINITY=$FIRST_CPU
+
 # Disable verbose logging to reduce overhead
 export CCL_LOG_LEVEL=warn
+
+echo "🔧 oneCCL Configuration:"
+echo "   - SLURM assigned CPUs: $SLURM_CPUS"
+echo "   - CCL_WORKER_COUNT: $CCL_WORKER_COUNT"
+echo "   - CCL_WORKER_AFFINITY: $CCL_WORKER_AFFINITY"
+echo ""
 
 # Change to the project directory
 cd $SCRATCH/moe-router-study
