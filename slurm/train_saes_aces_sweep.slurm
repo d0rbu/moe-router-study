@@ -32,10 +32,5 @@ cd $SCRATCH/moe-router-study
 
 source .venv/bin/activate
 
-# print python version, path, and working directory
-echo "Python version: $(python --version)"
-echo "Python path: $(which python)"
-echo "Working directory: $(pwd)"
-
 # Run the distributed job
 srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE python exp/sae.py main --trainers-per-gpu 16 --expansion-factor 16,32,64 --k 160,320,640 --layer 6,7,8,9 --submodule-name mlp_output,layer_output --architecture batchtopk,matryoshka --tokens-per-file 100000 --reshuffled-tokens-per-file 100000 --steps 32768 --warmup-steps 128

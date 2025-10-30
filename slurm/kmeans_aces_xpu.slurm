@@ -26,7 +26,7 @@ export RANK=$SLURM_PROCID
 export WORLD_SIZE=$SLURM_NTASKS
 
 module purge
-module load WebProxy
+module load WebProxy iimpi/2024a
 
 mv uv.intel.lock uv.lock
 mv pyproject.intel.toml pyproject.toml
