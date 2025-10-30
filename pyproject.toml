@@ -55,15 +55,6 @@ dependencies = [
     "docstring-parser>=0.16",
     "seaborn>=0.13.2",
     "pandas>=2.3.1",
-    "oneccl",
-    "mkl",
-    "onemkl-sycl-blas",
-    "onemkl-sycl-dft",
-    "onemkl-sycl-lapack",
-    "onemkl-sycl-rng",
-    "onemkl-sycl-sparse",
-    "torchvision",
-    "torchaudio",
 ]
 
 [project.optional-dependencies]
