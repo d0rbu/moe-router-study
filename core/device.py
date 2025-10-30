@@ -7,6 +7,26 @@ import torch as th
 # Type definition for supported device types
 DeviceType = Literal["cuda", "xpu"]
 
+# Track if IPEX has been imported
+_ipex_imported = False
+
+
+def _ensure_ipex_imported() -> None:
+    """Ensure Intel Extension for PyTorch is imported to register XPU backend.
+
+    This must be called before any XPU operations to register the XPU device type
+    with PyTorch. This is a no-op if IPEX has already been imported.
+    """
+    global _ipex_imported
+    if not _ipex_imported:
+        try:
+            import intel_extension_for_pytorch as ipex  # noqa: F401
+
+            _ipex_imported = True
+        except ImportError:
+            # IPEX not available, XPU operations will fail later with clear error
+            pass
+
 
 def assert_device_type(device_type: str) -> DeviceType:
     """Assert that the device type is valid and return it as a DeviceType.
@@ -40,6 +60,8 @@ def get_backend(device_type: DeviceType) -> Any:
     if device_type == "cuda":
         return th.cuda
     elif device_type == "xpu":
+        # Ensure IPEX is imported before accessing th.xpu
+        _ensure_ipex_imported()
         return th.xpu
     else:
         raise ValueError(f"Unsupported device_type: {device_type}")
@@ -55,6 +77,9 @@ def get_device(device_type: DeviceType, device_idx: int = 0) -> th.device:
     Returns:
         A torch.device object
     """
+    # Ensure IPEX is imported for XPU devices
+    if device_type == "xpu":
+        _ensure_ipex_imported()
     return th.device(f"{device_type}:{device_idx}")
 
 
