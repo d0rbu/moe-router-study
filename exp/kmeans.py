@@ -679,17 +679,23 @@ async def sync(
     for k_idx, centroids in enumerate(gpu_data.synced_data.centroid_sets):
         centroid_norms = th.norm(centroids, dim=1)
         zero_norms = (centroid_norms == 0).sum().item()
-        logger.debug(
+        # Use trace level if there are no zero norms (normal case), debug if there are issues
+        log_level = logger.debug if zero_norms > 0 else logger.trace
+        log_level(
             f"🔄 SYNC GPU {gpu_idx} k_idx={k_idx} FINAL: Synced centroids zero_norms={zero_norms}/{len(centroid_norms)}, norm_stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}"
         )
 
     if rank == 0 and gpu_idx == 0:
+        logger.trace(f"GPU {gpu_idx}: Appending losses to history")
         losses_over_time.append(gpu_data.synced_data.losses.detach().cpu().clone())
 
         # Check for monotonically increasing loss windows
         if (
             len(losses_over_time) >= WARNING_WINDOW_SIZE
         ):  # Need at least window_size iterations
+            logger.trace(
+                f"GPU {gpu_idx}: Checking for monotonic increasing loss window"
+            )
             losses_tensor = th.stack(losses_over_time, dim=1)
             has_problem, start_idx = check_monotonic_increasing_window(
                 losses_tensor, window_size=WARNING_WINDOW_SIZE
@@ -699,6 +705,8 @@ async def sync(
                     f"Detected monotonically increasing loss window starting at "
                     f"iteration {start_idx}. This may indicate a training problem."
                 )
+
+    logger.debug(f"✅ SYNC GPU {gpu_idx}: Sync operation fully completed")
 
 
 async def gpu_worker(
@@ -836,10 +844,13 @@ async def gpu_worker(
             operation_name=f"sync operation for GPU {gpu_idx}",
         )
 
-        logger.trace(f"GPU {gpu_idx} completed sync operation")
+        logger.debug(
+            f"✅ GPU {gpu_idx} completed sync operation, proceeding to validation"
+        )
 
         # Increment sync iteration counter
         sync_iteration += 1
+        logger.trace(f"GPU {gpu_idx} sync_iteration now at {sync_iteration}")
 
         # Validate GPU synchronization after sync (only on GPU 0 to avoid redundant checks)
         # Only validate every validate_every iterations
@@ -848,6 +859,9 @@ async def gpu_worker(
             and (len(all_gpu_data) > 1 or dist.get_world_size() > 1)
             and sync_iteration % validate_every == 0
         ):
+            logger.trace(
+                f"GPU {gpu_idx}: Starting validation at sync_iteration {sync_iteration}"
+            )
             # We need k_values, but it's not available in this scope
             # For now, we'll infer it from the number of centroid sets
             k_values = tuple(
@@ -864,6 +878,7 @@ async def gpu_worker(
                     f"GPU centroid synchronization failed after sync on GPU {gpu_idx} at iteration {sync_iteration}. "
                     f"Check logs for detailed mismatch information."
                 )
+            logger.trace(f"GPU {gpu_idx}: Validation passed")
 
         # save checkpoint if save_idx is not None and we're on rank 0 gpu 0
         if (
@@ -891,6 +906,8 @@ async def gpu_worker(
             logger.info(
                 f"Saved checkpoint at iteration {save_idx} to {checkpoint_path}"
             )
+
+        logger.debug(f"🔄 GPU {gpu_idx} finished iteration, ready for next queue item")
 
 
 GPU_QUEUE_MAXSIZE = 4
