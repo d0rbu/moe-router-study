@@ -59,7 +59,7 @@ echo ""
 # Activate user virtual environment (.venv is required)
 if [ -f ".venv/bin/activate" ]; then
     echo "📦 Syncing dependencies with uv..."
-    uv sync --quiet
+    uv sync --quiet --reinstall
     echo "✅ Dependencies synced"
     echo "Activating user virtual environment (.venv)..."
     source .venv/bin/activate
@@ -81,4 +81,4 @@ fi
 echo "Final Python version: $(python --version)"
 echo "Final Python path: $(which python)"
 
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/kmeans.py main --log-level INFO --device-type xpu --expansion-factor 1,2,4,8,16,32,64 --tokens-per-file 100000 --reshuffled-tokens-per-file 100000 --minibatch-size 4000 --centroid-minibatch-size 16384 --batch-size 40000 --validate-every 8000
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/kmeans.py main --log-level DEBUG --device-type xpu --expansion-factor 1,2,4,8,16,32,64 --tokens-per-file 100000 --reshuffled-tokens-per-file 100000 --minibatch-size 4000 --centroid-minibatch-size 16384 --batch-size 40000 --validate-every 8000
