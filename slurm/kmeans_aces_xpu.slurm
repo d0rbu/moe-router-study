@@ -35,6 +35,21 @@ mv pyproject.intel.toml pyproject.toml
 export ZE_ENABLE_PCI_ID_DEVICE_ORDER=1
 export SYCL_DEVICE_FILTER=level_zero:gpu
 
+# Configure oneCCL worker threads
+# Get the list of CPU cores assigned by SLURM to this job
+# SLURM_JOB_CPUS_PER_NODE gives us the number of CPUs allocated
+# We'll use the CPU list from taskset to get the actual core IDs
+SLURM_CPUS=$(taskset -cp $$ | cut -d: -f2 | tr -d ' ')
+
+# Use all CPUs from our SLURM allocation for worker threads
+# This ensures we use all cores that SLURM has assigned to us
+export CCL_WORKER_AFFINITY=$SLURM_CPUS
+
+echo "🔧 oneCCL Configuration:"
+echo "   - SLURM assigned CPUs: $SLURM_CPUS"
+echo "   - CCL_WORKER_AFFINITY: $CCL_WORKER_AFFINITY"
+echo ""
+
 # Change to the project directory
 cd $SCRATCH/moe-router-study
 
