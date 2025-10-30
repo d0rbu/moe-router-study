@@ -41,20 +41,12 @@ export SYCL_DEVICE_FILTER=level_zero:gpu
 # We'll use the CPU list from taskset to get the actual core IDs
 SLURM_CPUS=$(taskset -cp $$ | cut -d: -f2 | tr -d ' ')
 
-# Set worker count to 1 to minimize resource usage
-export CCL_WORKER_COUNT=1
-
-# Use the first CPU from our SLURM allocation for the worker thread
-# This ensures we only use cores that SLURM has assigned to us
-FIRST_CPU=$(echo $SLURM_CPUS | cut -d',' -f1 | cut -d'-' -f1)
-export CCL_WORKER_AFFINITY=$FIRST_CPU
-
-# Disable verbose logging to reduce overhead
-export CCL_LOG_LEVEL=warn
+# Use all CPUs from our SLURM allocation for worker threads
+# This ensures we use all cores that SLURM has assigned to us
+export CCL_WORKER_AFFINITY=$SLURM_CPUS
 
 echo "🔧 oneCCL Configuration:"
 echo "   - SLURM assigned CPUs: $SLURM_CPUS"
-echo "   - CCL_WORKER_COUNT: $CCL_WORKER_COUNT"
 echo "   - CCL_WORKER_AFFINITY: $CCL_WORKER_AFFINITY"
 echo ""
 
