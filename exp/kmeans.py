@@ -199,23 +199,6 @@ class RunningKMeansData:
             other_contribution = other_weight_proportion.unsqueeze(-1) * other_centroids
             new_centroid_values = base_contribution + other_contribution
 
-            # Debug: Check for zero centroids after weighted averaging
-            new_centroid_norms = th.norm(new_centroid_values, dim=1)
-            zero_norms_after_add = (new_centroid_norms == 0).sum().item()
-            if zero_norms_after_add > 0:
-                logger.warning(
-                    f"__add__ produced {zero_norms_after_add} zero-norm centroids"
-                )
-                logger.warning(
-                    f"base_weight_proportion sum: {base_weight_proportion.sum():.6f}, other_weight_proportion sum: {other_weight_proportion.sum():.6f}"
-                )
-                logger.warning(
-                    f"base_centroids norms: min={th.norm(base_centroids, dim=1).min():.6f}, max={th.norm(base_centroids, dim=1).max():.6f}"
-                )
-                logger.warning(
-                    f"other_centroids norms: min={th.norm(other_centroids, dim=1).min():.6f}, max={th.norm(other_centroids, dim=1).max():.6f}"
-                )
-
             new_centroids.copy_(new_centroid_values)
 
             base_weights_sum = base_weights.sum()
