@@ -437,7 +437,10 @@ async def kmeans_step(
     if th.isnan(centroids).any():
         num_nan = th.isnan(centroids).sum().item()
         logger.error(
-            f"🚨 NaN in centroids! {num_nan}/{centroids.numel()} values are NaN"
+            f"🚨 NaN in centroids! {num_nan}/{centroids.numel()} values are NaN\n"
+            f"  centroids shape: {centroids.shape}\n"
+            f"  data shape: {data.shape}\n"
+            f"  centroid_minibatch_size: {centroid_minibatch_size}"
         )
         nan_mask = th.isnan(centroids).any(dim=1)
         nan_indices = th.where(nan_mask)[0]
@@ -446,7 +449,15 @@ async def kmeans_step(
 
     if th.isinf(centroids).any():
         num_inf = th.isinf(centroids).sum().item()
-        logger.error(f"🚨 Inf in centroids! {num_inf}/{centroids.numel()} values")
+        logger.error(
+            f"🚨 Inf in centroids! {num_inf}/{centroids.numel()} values are Inf\n"
+            f"  centroids shape: {centroids.shape}\n"
+            f"  data shape: {data.shape}\n"
+            f"  centroid_minibatch_size: {centroid_minibatch_size}"
+        )
+        inf_mask = th.isinf(centroids).any(dim=1)
+        inf_indices = th.where(inf_mask)[0]
+        logger.error(f"Centroids with Inf: {inf_indices.tolist()[:10]}")
         raise RuntimeError("Inf detected in centroids")
 
     # (B, K) - Compute distances with centroid batching to avoid CUDA limits
@@ -519,7 +530,6 @@ async def kmeans_step(
         )
         nan_mask = th.isnan(new_centroids).any(dim=1)
         nan_indices = th.where(nan_mask)[0]
-        logger.error(f"Centroids with NaN: {nan_indices.tolist()[:10]}")
         for idx in nan_indices[:5]:
             logger.error(f"  Centroid {idx}: weight={new_weights[idx]}")
         raise RuntimeError("NaN in new centroids after update")
