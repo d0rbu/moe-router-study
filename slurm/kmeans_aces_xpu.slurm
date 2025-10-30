@@ -49,11 +49,9 @@ export CCL_WORKER_COUNT=1
 FIRST_CPU=$(echo $SLURM_CPUS | cut -d',' -f1 | cut -d'-' -f1)
 export CCL_WORKER_AFFINITY=$FIRST_CPU
 
-# Reduce logging verbosity
-export CCL_LOG_LEVEL=warn
-
 echo "🔧 oneCCL Configuration:"
 echo "   - SLURM assigned CPUs: $SLURM_CPUS"
+echo "   - First CPU extracted: $FIRST_CPU"
 echo "   - CCL_WORKER_COUNT: $CCL_WORKER_COUNT"
 echo "   - CCL_WORKER_AFFINITY: $CCL_WORKER_AFFINITY"
 echo ""

@@ -706,7 +706,7 @@ async def sync(
                     f"iteration {start_idx}. This may indicate a training problem."
                 )
 
-    logger.debug(f"✅ SYNC GPU {gpu_idx}: Sync operation fully completed")
+    logger.trace(f"✅ SYNC GPU {gpu_idx}: Sync operation fully completed")
 
 
 async def gpu_worker(
@@ -844,7 +844,7 @@ async def gpu_worker(
             operation_name=f"sync operation for GPU {gpu_idx}",
         )
 
-        logger.debug(
+        logger.trace(
             f"✅ GPU {gpu_idx} completed sync operation, proceeding to validation"
         )
 
@@ -907,7 +907,7 @@ async def gpu_worker(
                 f"Saved checkpoint at iteration {save_idx} to {checkpoint_path}"
             )
 
-        logger.debug(f"🔄 GPU {gpu_idx} finished iteration, ready for next queue item")
+        logger.trace(f"🔄 GPU {gpu_idx} finished iteration, ready for next queue item")
 
 
 GPU_QUEUE_MAXSIZE = 4
