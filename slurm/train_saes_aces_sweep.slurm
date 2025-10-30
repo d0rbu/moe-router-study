@@ -25,12 +25,10 @@ export MASTER_PORT=$(expr 10000 + $(echo -n $SLURM_JOBID | tail -c 4))
 export RANK=$SLURM_PROCID
 export WORLD_SIZE=$SLURM_NTASKS
 
-module load GCCcore/13.3.0 Python/3.12.3 iimpi/2024a
+module load GCCcore/13.3.0 Python/3.12.3 MPICH/4.2.1
 
 # Change to the project directory
 cd $SCRATCH/moe-router-study
 
-source .venv/bin/activate
-
 # Run the distributed job
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE python exp/sae.py main --trainers-per-gpu 16 --expansion-factor 16,32,64 --k 160,320,640 --layer 6,7,8,9 --submodule-name mlp_output,layer_output --architecture batchtopk,matryoshka --tokens-per-file 100000 --reshuffled-tokens-per-file 100000 --steps 32768 --warmup-steps 128
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/sae.py main --trainers-per-gpu 16 --expansion-factor 16,32,64 --k 160,320,640 --layer 6,7,8,9 --submodule-name mlp_output,layer_output --architecture batchtopk,matryoshka --tokens-per-file 100000 --reshuffled-tokens-per-file 100000 --steps 32768 --warmup-steps 128
