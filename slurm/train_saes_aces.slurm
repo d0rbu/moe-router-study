@@ -25,7 +25,7 @@ export MASTER_PORT=$(expr 10000 + $(echo -n $SLURM_JOBID | tail -c 4))
 export RANK=$SLURM_PROCID
 export WORLD_SIZE=$SLURM_NTASKS
 
-module load GCCcore/13.3.0 Python/3.12.3 MPICH/4.2.1
+module load GCCcore/13.3.0 Python/3.12.3 GCC/12.3.0 MPICH/4.2.1
 
 # Change to the project directory
 cd $SCRATCH/moe-router-study
