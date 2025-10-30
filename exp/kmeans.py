@@ -175,10 +175,23 @@ class RunningKMeansData:
                     f"NaN in weight proportions! base_weights: {base_weights}, other_weights: {other_weights}, new_weights: {new_weights}"
                 )
 
-            # Check if all weights are zero (which would cause issues)
+            # Check if all weights are zero (which should NEVER happen)
             if new_weights.sum() == 0:
-                logger.warning(
-                    "All weights are zero in __add__ - this might cause centroid issues"
+                logger.critical(
+                    f"🚨 CRITICAL: new_weights.sum() == 0! This should NEVER happen.\n"
+                    f"  base_weights sum: {base_weights.sum()}\n"
+                    f"  other_weights sum: {other_weights.sum()}\n"
+                    f"  new_weights sum: {new_weights.sum()}\n"
+                    f"  Expected sum: minibatch_size or effective_batch_size\n"
+                    f"  base_centroids device: {base_centroids.device}\n"
+                    f"  other_centroids device: {other_centroids.device}\n"
+                    f"  Has NaN in base_centroids: {th.isnan(base_centroids).any()}\n"
+                    f"  Has NaN in other_centroids: {th.isnan(other_centroids).any()}\n"
+                    f"  Has Inf in base_centroids: {th.isinf(base_centroids).any()}\n"
+                    f"  Has Inf in other_centroids: {th.isinf(other_centroids).any()}"
+                )
+                raise RuntimeError(
+                    "All weights are zero in __add__ - this indicates a serious bug in the k-means algorithm"
                 )
 
             logger.trace(
@@ -420,6 +433,33 @@ async def kmeans_step(
     logger.trace(f"Data: {data.dtype} {data.device} {data.shape}")
     logger.trace(f"Centroids: {centroids.dtype} {centroids.device} {centroids.shape}")
 
+    # Validate centroids before distance computation
+    if th.isnan(centroids).any():
+        num_nan = th.isnan(centroids).sum().item()
+        logger.error(
+            f"🚨 NaN in centroids! {num_nan}/{centroids.numel()} values are NaN\n"
+            f"  centroids shape: {centroids.shape}\n"
+            f"  data shape: {data.shape}\n"
+            f"  centroid_minibatch_size: {centroid_minibatch_size}"
+        )
+        nan_mask = th.isnan(centroids).any(dim=1)
+        nan_indices = th.where(nan_mask)[0]
+        logger.error(f"Centroids with NaN: {nan_indices.tolist()[:10]}")
+        raise RuntimeError("NaN detected in centroids")
+
+    if th.isinf(centroids).any():
+        num_inf = th.isinf(centroids).sum().item()
+        logger.error(
+            f"🚨 Inf in centroids! {num_inf}/{centroids.numel()} values are Inf\n"
+            f"  centroids shape: {centroids.shape}\n"
+            f"  data shape: {data.shape}\n"
+            f"  centroid_minibatch_size: {centroid_minibatch_size}"
+        )
+        inf_mask = th.isinf(centroids).any(dim=1)
+        inf_indices = th.where(inf_mask)[0]
+        logger.error(f"Centroids with Inf: {inf_indices.tolist()[:10]}")
+        raise RuntimeError("Inf detected in centroids")
+
     # (B, K) - Compute distances with centroid batching to avoid CUDA limits
     data_float = data.to(th.float32)
     centroids_float = centroids.to(th.float32)
@@ -447,6 +487,16 @@ async def kmeans_step(
 
     logger.trace(f"Computed distances with shape {distances.shape}")
 
+    # Validate distances before argmin
+    if th.isnan(distances).any():
+        num_nan = th.isnan(distances).sum().item()
+        logger.error(f"🚨 NaN in distances! {num_nan}/{distances.numel()} values")
+        raise RuntimeError("NaN detected in distance computation")
+
+    if th.isinf(distances).any():
+        num_inf = th.isinf(distances).sum().item()
+        logger.error(f"🚨 Inf in distances! {num_inf}/{distances.numel()} values")
+        raise RuntimeError("Inf detected in distance computation")
     # (B)
     assignments = th.argmin(distances, dim=1)
     logger.trace(f"Computed assignments with shape {assignments.shape}")
@@ -472,6 +522,18 @@ async def kmeans_step(
     new_weights = th.tensor(new_weights_raw, dtype=th.int64, device=data.device)
 
     # Log update statistics
+    # Validate new centroids
+    if th.isnan(new_centroids).any():
+        num_nan = th.isnan(new_centroids).sum().item()
+        logger.error(
+            f"🚨 NaN in new_centroids! {num_nan}/{new_centroids.numel()} values"
+        )
+        nan_mask = th.isnan(new_centroids).any(dim=1)
+        nan_indices = th.where(nan_mask)[0]
+        for idx in nan_indices[:5]:
+            logger.error(f"  Centroid {idx}: weight={new_weights[idx]}")
+        raise RuntimeError("NaN in new centroids after update")
+
     update_norms = th.norm(new_centroids, dim=1)
     zero_update_norms = (update_norms == 0).sum().item()
     total_weight = new_weights.sum().item()
