@@ -505,11 +505,21 @@ async def kmeans_step(
     centroid_distances = th.gather(distances, 1, assignments.unsqueeze(1))
     logger.trace(f"Computed centroid distances with shape {centroid_distances.shape}")
 
-    centroid_awaitables = [
-        compute_centroid_from_assignment(data, assignments, i)
-        for i in range(centroids.shape[0])
-    ]
-    centroids_and_weights = await asyncio.gather(*centroid_awaitables)
+    # Batch centroid computations to avoid overwhelming event loop with 131k+ tasks
+    batch_size = 1000
+    num_centroids = centroids.shape[0]
+    all_centroids_and_weights = []
+
+    for batch_start in range(0, num_centroids, batch_size):
+        batch_end = min(batch_start + batch_size, num_centroids)
+        centroid_awaitables = [
+            compute_centroid_from_assignment(data, assignments, i)
+            for i in range(batch_start, batch_end)
+        ]
+        batch_results = await asyncio.gather(*centroid_awaitables)
+        all_centroids_and_weights.extend(batch_results)
+
+    centroids_and_weights = all_centroids_and_weights
     logger.trace(
         f"Computed centroids and weights with shape {len(centroids_and_weights)}"
     )
