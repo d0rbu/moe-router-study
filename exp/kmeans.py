@@ -569,8 +569,15 @@ async def sync(
     world_size = dist.get_world_size()
     gpu_data = all_gpu_data[gpu_idx]
 
-    # Prioritize process group: GPU-specific > general GPU > default None
-    group = gpu_specific_group if gpu_specific_group is not None else general_gpu_group
+    # prioritize process group: GPU-specific > general GPU > default None
+    if gpu_specific_group is not None:
+        group = gpu_specific_group
+    else:
+        # assert there is only one gpu/device per rank
+        assert backend.device_count() == 1, (
+            "No GPU-specific process group found, but there is more than one device per rank"
+        )
+        group = general_gpu_group
 
     logger.debug(f"🔄 SYNC: Starting sync for GPU {gpu_idx}, rank {rank}")
 
@@ -622,8 +629,8 @@ async def sync(
         # (N, K)
         all_weights = th.empty_like(weights).unsqueeze(0).repeat(world_size, 1)
 
-        dist.all_gather_into_tensor(all_centroids, centroids, group=group)
-        dist.all_gather_into_tensor(all_weights, weights, group=group)
+        await dist.all_gather_into_tensor(all_centroids, centroids, group=group)
+        await dist.all_gather_into_tensor(all_weights, weights, group=group)
 
         # (K)
         weights_total = all_weights.sum(dim=0)
@@ -705,7 +712,6 @@ async def sync(
         )
 
     # now do an all-gather along gpus (among entries in all_gpu_data)
-    device = get_device(device_type, gpu_idx)
     empty_data = RunningKMeansData(
         centroid_sets=[
             th.zeros_like(centroids) for centroids in gpu_data.synced_data.centroid_sets
@@ -724,14 +730,14 @@ async def sync(
             f"🔄 SYNC GPU {gpu_idx} k_idx={k_idx} BEFORE GPU AGGREGATION: Synced centroids zero_norms={zero_norms}/{len(centroid_norms)}, norm_stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}"
         )
 
+    await barrier.wait()
+
     gpu_data.synced_data += sum(
         (current_gpu_data.dirty_data.to(device) for current_gpu_data in all_gpu_data),
         start=empty_data,
     )
 
     backend.empty_cache()
-
-    await barrier.wait()
 
     # reset dirty data now that it has been synced
     logger.debug(f"🔄 SYNC GPU {gpu_idx}: Resetting dirty data to zero...")
