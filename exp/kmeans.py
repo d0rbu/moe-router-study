@@ -558,7 +558,8 @@ async def sync(
     all_gpu_data: list[GPUData],
     losses_over_time: list[th.Tensor],
     barrier: Barrier,
-    group: dist.ProcessGroup | None = None,
+    general_gpu_group: dist.ProcessGroup | None = None,
+    gpu_specific_group: dist.ProcessGroup | None = None,
     device_type: DeviceType = "cuda",
 ) -> None:
     backend = get_backend(device_type)
@@ -567,6 +568,9 @@ async def sync(
     rank = dist.get_rank()
     world_size = dist.get_world_size()
     gpu_data = all_gpu_data[gpu_idx]
+
+    # Prioritize process group: GPU-specific > general GPU > default None
+    group = gpu_specific_group if gpu_specific_group is not None else general_gpu_group
 
     logger.debug(f"🔄 SYNC: Starting sync for GPU {gpu_idx}, rank {rank}")
 
@@ -777,7 +781,8 @@ async def gpu_worker(
     top_k: int,
     losses_over_time: list[th.Tensor],
     barrier: Barrier,
-    group: dist.ProcessGroup | None = None,
+    general_gpu_group: dist.ProcessGroup | None = None,
+    gpu_specific_group: dist.ProcessGroup | None = None,
     save_dir: str | None = None,
     validate_every: int = 64,
     centroid_minibatch_size: int = 65536,
@@ -792,7 +797,8 @@ async def gpu_worker(
         top_k: Number of top experts to consider
         losses_over_time: Shared list to store losses over time
         barrier: Synchronization barrier for coordinating workers
-        group: Distributed process group for communication
+        general_gpu_group: Distributed process group for communication (general GPU group)
+        gpu_specific_group: GPU-specific process group for this device index (or None)
         save_dir: Directory to save checkpoints (if any)
         validate_every: Validate centroid synchronization every N sync operations (default: 1)
         centroid_minibatch_size: Size of centroid chunks to avoid device limits (default: 65536)
@@ -899,7 +905,8 @@ async def gpu_worker(
                 all_gpu_data,
                 losses_over_time,
                 barrier,
-                group,
+                general_gpu_group,
+                gpu_specific_group,
                 device_type,
             ),
             timeout=300.0,
@@ -987,7 +994,8 @@ async def kmeans_manhattan(
     save_every: int | None = None,
     save_dir: str | None = None,
     validate_every: int = 64,
-    group: dist.ProcessGroup | None = None,
+    general_gpu_group: dist.ProcessGroup | None = None,
+    gpu_process_groups: list[dist.ProcessGroup] | None = None,
     device_type: DeviceType = "cuda",
 ) -> tuple[list[th.Tensor], int, th.Tensor, int, int]:
     """
@@ -1032,6 +1040,13 @@ async def kmeans_manhattan(
     assert backend.is_available() and num_gpus > 0, (
         f"CPU-only not supported yet :( Device {device_type} not available."
     )
+
+    # Verify that gpu_process_groups length matches number of devices if available
+    if gpu_process_groups is not None:
+        assert len(gpu_process_groups) == num_gpus, (
+            f"gpu_process_groups length ({len(gpu_process_groups)}) must match "
+            f"number of devices ({num_gpus})"
+        )
 
     if effective_batch_size is None:
         effective_batch_size = (len(activations) // total_gpus) * total_gpus
@@ -1338,7 +1353,8 @@ async def kmeans_manhattan(
                 top_k,
                 losses_over_time,
                 synchronization_barrier,
-                group,
+                general_gpu_group,
+                gpu_process_groups[gpu_idx] if gpu_process_groups is not None else None,
                 save_dir,
                 validate_every,
                 centroid_minibatch_size,
@@ -1507,7 +1523,8 @@ async def cluster_paths_async(
     centroid_minibatch_size: int = 16384,
     save_every: int | None = None,
     validate_every: int = 64,
-    group: dist.ProcessGroup | None = None,
+    general_gpu_group: dist.ProcessGroup | None = None,
+    gpu_process_groups: list[dist.ProcessGroup] | None = None,
     device_type: DeviceType = "cuda",
 ) -> None:
     kmeans_experiment_name = get_experiment_name(
@@ -1525,6 +1542,16 @@ async def cluster_paths_async(
 
     logger.trace(f"Save directory: {save_dir}")
 
+    # Verify that gpu_process_groups length matches number of devices if available
+    backend = get_backend(device_type)
+    if backend.is_available():
+        num_devices = backend.device_count()
+        if gpu_process_groups is not None:
+            assert len(gpu_process_groups) == num_devices, (
+                f"gpu_process_groups length ({len(gpu_process_groups)}) must match "
+                f"number of devices ({num_devices})"
+            )
+
     centroids, top_k, losses, num_layers, num_experts = await kmeans_manhattan(
         activations=activations,
         activation_dim=activation_dim,
@@ -1537,7 +1564,8 @@ async def cluster_paths_async(
         save_every=save_every,
         save_dir=save_dir,
         validate_every=validate_every,
-        group=group,
+        general_gpu_group=general_gpu_group,
+        gpu_process_groups=gpu_process_groups,
         device_type=device_type,
     )
 
@@ -1605,7 +1633,7 @@ def cluster_paths(
     log_level_numeric = logger.level(log_level).no
     debug_level_numeric = logger.level("DEBUG").no
 
-    activations, activation_dims, gpu_process_group = asyncio.run(
+    activations, activation_dims, gpu_process_group, gpu_process_groups = asyncio.run(
         load_activations_and_init_dist(
             model_name=model_name,
             dataset_name=dataset_name,
@@ -1618,6 +1646,16 @@ def cluster_paths(
             device_type=device_type,
         )
     )
+
+    # Verify that gpu_process_groups length matches number of devices if available
+    backend = get_backend(device_type)
+    if backend.is_available():
+        num_devices = backend.device_count()
+        if gpu_process_groups is not None:
+            assert len(gpu_process_groups) == num_devices, (
+                f"gpu_process_groups length ({len(gpu_process_groups)}) must match "
+                f"number of devices ({num_devices})"
+            )
     residual_activation_dim = activation_dims[ActivationKeys.MLP_OUTPUT]
     router_activation_dim = activation_dims[ActivationKeys.ROUTER_LOGITS]
 
@@ -1669,7 +1707,8 @@ def cluster_paths(
             centroid_minibatch_size=centroid_minibatch_size,
             save_every=save_every,
             validate_every=validate_every,
-            group=gpu_process_group,
+            general_gpu_group=gpu_process_group,
+            gpu_process_groups=gpu_process_groups,
             device_type=device_type,
         )
     )

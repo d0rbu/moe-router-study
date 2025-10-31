@@ -784,13 +784,20 @@ async def load_activations_and_init_dist(
     num_workers: int = 8,
     debug: bool = False,
     device_type: DeviceType = "cuda",
-) -> tuple[Activations, dict[str, int], dist.ProcessGroup | None]:
+) -> tuple[
+    Activations,
+    dict[str, int],
+    dist.ProcessGroup | None,
+    list[dist.ProcessGroup] | None,
+]:
     """
     Load activations and initialize the distributed process group.
 
     Returns:
         activations: Activations object
         activation_dims: Dimensionality of the activations for each submodule as a dictionary
+        gpu_process_group: General GPU process group (or None if GPU not available)
+        gpu_process_groups: List of GPU-specific process groups, one per device (or None if GPU not available)
     """
     activations_experiment_name = get_experiment_name(
         model_name=model_name,
@@ -813,6 +820,9 @@ async def load_activations_and_init_dist(
     logger.debug(f"Backend: {backend}")
     logger.debug(f"Backend is available: {backend.is_available()}")
     if backend.is_available():
+        num_devices = backend.device_count()
+        logger.debug(f"Number of devices: {num_devices}")
+
         nccl_port = gloo_port + 1
         os.environ["MASTER_PORT"] = str(nccl_port)
 
@@ -821,8 +831,14 @@ async def load_activations_and_init_dist(
             ranks=list(range(world_size)), backend=backend_name
         )
         logger.info(f"Rank {rank} initialized {backend_name} group")
+
+        gpu_process_groups = [
+            dist.new_group(ranks=list(range(world_size)), backend=backend_name)
+            for _ in range(num_devices)
+        ]
     else:
         gpu_process_group = None
+        gpu_process_groups = None
 
     init_distributed_logging()
 
@@ -888,4 +904,4 @@ async def load_activations_and_init_dist(
     # clean up the background worker and queue
     data_iterable.close()
 
-    return activations, activation_dims, gpu_process_group
+    return activations, activation_dims, gpu_process_group, gpu_process_groups
