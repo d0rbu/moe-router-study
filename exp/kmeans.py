@@ -105,6 +105,7 @@ class RunningKMeansData:
     centroid_sets: list[th.Tensor]
     # list of weights of shape (K) for online running updates
     weight_sets: list[th.Tensor]
+    # losses of shape (num_K) for online running updates
     losses: th.Tensor
 
     def clone(self) -> "RunningKMeansData":
@@ -561,6 +562,7 @@ async def sync(
     device_type: DeviceType = "cuda",
 ) -> None:
     backend = get_backend(device_type)
+    device = get_device(device_type, gpu_idx)
 
     rank = dist.get_rank()
     world_size = dist.get_world_size()
@@ -584,11 +586,10 @@ async def sync(
         )
 
     # gather across nodes
+    # (N, num_K)
     all_losses = (
         th.empty_like(gpu_data.dirty_data.losses).unsqueeze(0).repeat(world_size, 1)
     )
-
-    # N, num_K
     dist.all_gather_into_tensor(all_losses, gpu_data.dirty_data.losses, group=group)
 
     logger.trace(
@@ -674,10 +675,10 @@ async def sync(
             logger.error(f"Centroids with inf values: {inf_centroids}")
             logger.error(f"Centroids with nan values: {nan_centroids}")
 
-        # (K)
-        loss_proportion = all_weights.sum(dim=1) / weights_total.sum()
+        # (N)
+        dist_losses = all_losses[:, losses_idx]
         # ()
-        new_loss = (all_losses[:, losses_idx] * loss_proportion).sum()
+        new_loss = dist_losses.mean()
 
         gpu_data.dirty_data.centroid_sets[losses_idx] = new_centroids
         gpu_data.dirty_data.weight_sets[losses_idx] = weights_total
@@ -696,7 +697,6 @@ async def sync(
             weights_total,
             weights_proportion,
             new_centroids,
-            loss_proportion,
             new_loss,
         )
 
