@@ -2,6 +2,7 @@
 
 [rules]
 possibly-unbound-attribute = "ignore"
+unresolved-import = "ignore"
 
 [environment]
 # Add the delphi submodule to the search path
