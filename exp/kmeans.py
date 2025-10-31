@@ -427,6 +427,7 @@ async def kmeans_step(
     data: th.Tensor,  # (B, L * E)
     centroids: th.Tensor,  # (K, L * E)
     centroid_minibatch_size: int = 65536,
+    gpu_idx: int | None = None,
 ) -> tuple[th.Tensor, th.Tensor, th.Tensor]:
     logger.trace(
         f"Running kmeans step with {data.shape[0]} data points and {centroids.shape[0]} centroids"
@@ -438,7 +439,7 @@ async def kmeans_step(
     if th.isnan(centroids).any():
         num_nan = th.isnan(centroids).sum().item()
         logger.error(
-            f"🚨 NaN in centroids! {num_nan}/{centroids.numel()} values are NaN\n"
+            f"[GPU {gpu_idx}] 🚨 NaN in centroids! {num_nan}/{centroids.numel()} values are NaN\n"
             f"  centroids shape: {centroids.shape}\n"
             f"  data shape: {data.shape}\n"
             f"  centroid_minibatch_size: {centroid_minibatch_size}"
@@ -451,7 +452,7 @@ async def kmeans_step(
     if th.isinf(centroids).any():
         num_inf = th.isinf(centroids).sum().item()
         logger.error(
-            f"🚨 Inf in centroids! {num_inf}/{centroids.numel()} values are Inf\n"
+            f"[GPU {gpu_idx}] 🚨 Inf in centroids! {num_inf}/{centroids.numel()} values are Inf\n"
             f"  centroids shape: {centroids.shape}\n"
             f"  data shape: {data.shape}\n"
             f"  centroid_minibatch_size: {centroid_minibatch_size}"
@@ -491,12 +492,16 @@ async def kmeans_step(
     # Validate distances before argmin
     if th.isnan(distances).any():
         num_nan = th.isnan(distances).sum().item()
-        logger.error(f"🚨 NaN in distances! {num_nan}/{distances.numel()} values")
+        logger.error(
+            f"[GPU {gpu_idx}] 🚨 NaN in distances! {num_nan}/{distances.numel()} values"
+        )
         raise RuntimeError("NaN detected in distance computation")
 
     if th.isinf(distances).any():
         num_inf = th.isinf(distances).sum().item()
-        logger.error(f"🚨 Inf in distances! {num_inf}/{distances.numel()} values")
+        logger.error(
+            f"[GPU {gpu_idx}] 🚨 Inf in distances! {num_inf}/{distances.numel()} values"
+        )
         raise RuntimeError("Inf detected in distance computation")
     # (B)
     assignments = th.argmin(distances, dim=1)
@@ -527,7 +532,7 @@ async def kmeans_step(
     if th.isnan(new_centroids).any():
         num_nan = th.isnan(new_centroids).sum().item()
         logger.error(
-            f"🚨 NaN in new_centroids! {num_nan}/{new_centroids.numel()} values"
+            f"[GPU {gpu_idx}] 🚨 NaN in new_centroids! {num_nan}/{new_centroids.numel()} values"
         )
         nan_mask = th.isnan(new_centroids).any(dim=1)
         nan_indices = th.where(nan_mask)[0]
@@ -539,7 +544,7 @@ async def kmeans_step(
     zero_update_norms = (update_norms == 0).sum().item()
     total_weight = new_weights.sum().item()
     logger.debug(
-        f"📊 UPDATE: Computed updates - zero_norms={zero_update_norms}/{len(update_norms)}, norm_stats: min={update_norms.min():.6f}, max={update_norms.max():.6f}, mean={update_norms.mean():.6f}, total_weight={total_weight}"
+        f"[GPU {gpu_idx}] 📊 UPDATE: Computed updates - zero_norms={zero_update_norms}/{len(update_norms)}, norm_stats: min={update_norms.min():.6f}, max={update_norms.max():.6f}, mean={update_norms.mean():.6f}, total_weight={total_weight}"
     )
 
     logger.trace(
@@ -874,6 +879,7 @@ async def gpu_worker(
                     flat_data,
                     centroids,
                     centroid_minibatch_size,
+                    gpu_idx,
                 )
                 for centroids in gpu_data.synced_data.centroid_sets
             ]
