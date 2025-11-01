@@ -244,7 +244,7 @@ def compute_all_centroids_from_assignments(
     num_centroids: int,
 ) -> tuple[th.Tensor, th.Tensor]:
     """
-    Vectorized computation of all centroids from assignments.
+    Vectorized computation of all centroids using scatter_add_.
 
     Args:
         data: (B, D) tensor of data points
@@ -258,27 +258,26 @@ def compute_all_centroids_from_assignments(
     B, D = data.shape
     K = num_centroids
 
-    # Create one-hot encoding of assignments: (B, K)
-    # This tells us which data points belong to which centroid
-    assignments_one_hot = th.nn.functional.one_hot(assignments, num_classes=K).to(
-        data.dtype
+    # Initialize tensors for sums and counts
+    centroid_sums = th.zeros(K, D, dtype=data.dtype, device=data.device)
+    weights = th.zeros(K, dtype=th.int64, device=data.device)
+
+    # Scatter add data points to their assigned centroids
+    # assignments shape: (B,) -> (B, 1) for broadcasting
+    assignments_expanded = assignments.unsqueeze(1).expand(-1, D)
+    centroid_sums.scatter_add_(0, assignments_expanded, data)
+
+    # Count number of points per centroid
+    ones = th.ones(B, dtype=th.int64, device=data.device)
+    weights.scatter_add_(0, assignments, ones)
+
+    # Compute means with safe division (avoid div by zero for empty clusters)
+    weights_float = weights.float().unsqueeze(1)
+    new_centroids = th.where(
+        weights.unsqueeze(1) > 0,
+        centroid_sums / weights_float,
+        th.zeros_like(centroid_sums),
     )
-
-    # Count points per centroid: (K,)
-    weights = assignments_one_hot.sum(dim=0).to(th.int64)
-
-    # Sum data points for each centroid: (K, D)
-    # Matrix multiply: (K, B) @ (B, D) = (K, D)
-    centroid_sums = assignments_one_hot.T @ data
-
-    # Compute means, handling empty clusters
-    # For empty clusters (weight=0), centroid will be zero vector
-    weights_safe = weights.float().clamp(min=1.0)  # Avoid division by zero
-    new_centroids = centroid_sums / weights_safe.unsqueeze(1)
-
-    # Zero out centroids with no assignments
-    empty_mask = (weights == 0).unsqueeze(1)
-    new_centroids = th.where(empty_mask, th.zeros_like(new_centroids), new_centroids)
 
     # Check for NaN in results
     if th.isnan(new_centroids).any():
