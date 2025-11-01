@@ -238,6 +238,67 @@ class GPUData:
     queue: asyncio.Queue | None = None
 
 
+def compute_all_centroids_from_assignments(
+    data: th.Tensor,
+    assignments: th.Tensor,
+    num_centroids: int,
+) -> tuple[th.Tensor, th.Tensor]:
+    """
+    Vectorized computation of all centroids using scatter_add_.
+
+    Args:
+        data: (B, D) tensor of data points
+        assignments: (B,) tensor of centroid assignments
+        num_centroids: Total number of centroids (K)
+
+    Returns:
+        new_centroids: (K, D) tensor of new centroid positions
+        weights: (K,) tensor of number of points assigned to each centroid
+    """
+    B, D = data.shape
+    K = num_centroids
+
+    # Initialize tensors for sums and counts
+    centroid_sums = th.zeros(K, D, dtype=data.dtype, device=data.device)
+    weights = th.zeros(K, dtype=th.int64, device=data.device)
+
+    # Scatter add data points to their assigned centroids
+    # assignments shape: (B,) -> (B, 1) for broadcasting
+    assignments_expanded = assignments.unsqueeze(1).expand(-1, D)
+    centroid_sums.scatter_add_(0, assignments_expanded, data)
+
+    # Count number of points per centroid
+    ones = th.ones(B, dtype=th.int64, device=data.device)
+    weights.scatter_add_(0, assignments, ones)
+
+    # Compute means with safe division (avoid div by zero for empty clusters)
+    weights_float = weights.float().unsqueeze(1)
+    new_centroids = th.where(
+        weights.unsqueeze(1) > 0,
+        centroid_sums / weights_float,
+        th.zeros_like(centroid_sums),
+    )
+
+    # Check for NaN in results
+    if th.isnan(new_centroids).any():
+        nan_mask = th.isnan(new_centroids).any(dim=1)
+        nan_indices = th.where(nan_mask)[0]
+        logger.error(
+            f"🚨 NaN detected in centroid computation for centroids: {nan_indices.tolist()[:10]}"
+        )
+        logger.error(
+            f"data shape: {data.shape}, assignments shape: {assignments.shape}"
+        )
+        logger.error(f"weights: {weights[nan_indices[:5]]}")
+
+    # Log empty clusters at TRACE level
+    num_empty = (weights == 0).sum().item()
+    if num_empty > 0:
+        logger.trace(f"{num_empty} centroids have no assigned points")
+
+    return new_centroids, weights
+
+
 async def compute_centroid_from_assignment(
     data: th.Tensor,
     assignments: th.Tensor,
@@ -511,21 +572,14 @@ async def kmeans_step(
     centroid_distances = th.gather(distances, 1, assignments.unsqueeze(1))
     logger.trace(f"Computed centroid distances with shape {centroid_distances.shape}")
 
-    centroid_awaitables = [
-        compute_centroid_from_assignment(data, assignments, i)
-        for i in range(centroids.shape[0])
-    ]
-    centroids_and_weights = await asyncio.gather(*centroid_awaitables)
-    logger.trace(
-        f"Computed centroids and weights with shape {len(centroids_and_weights)}"
+    # Vectorized centroid computation (replaces 131k async tasks with single operation)
+    new_centroids, new_weights = compute_all_centroids_from_assignments(
+        data, assignments, centroids.shape[0]
     )
+    logger.trace(f"Computed centroids and weights with shape {new_centroids.shape}")
 
     new_loss = centroid_distances.mean()
     logger.trace(f"Computed new loss with shape {new_loss.shape}")
-
-    new_centroids_raw, new_weights_raw = zip(*centroids_and_weights, strict=True)
-    new_centroids = th.stack(new_centroids_raw, dim=0)
-    new_weights = th.tensor(new_weights_raw, dtype=th.int64, device=data.device)
 
     # Log update statistics
     # Validate new centroids
