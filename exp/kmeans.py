@@ -238,7 +238,7 @@ class GPUData:
     queue: asyncio.Queue | None = None
 
 
-def compute_all_centroids_from_assignments(
+async def compute_all_centroids_from_assignments(
     data: th.Tensor,
     assignments: th.Tensor,
     num_centroids: int,
@@ -247,13 +247,13 @@ def compute_all_centroids_from_assignments(
     Vectorized computation of all centroids using scatter_add_.
 
     Args:
-        data: (batch_size, embed_dim) tensor of data points
-        assignments: (batch_size,) tensor of centroid assignments
-        num_centroids: Total number of centroids
+        data: (B, D) tensor of data points
+        assignments: (B,) tensor of centroid assignments
+        num_centroids: Total number of centroids (K)
 
     Returns:
-        new_centroids: (num_centroids, embed_dim) tensor of new centroid positions
-        weights: (num_centroids,) tensor of number of points assigned to each centroid
+        new_centroids: (K, D) tensor of new centroid positions
+        weights: (K,) tensor of number of points assigned to each centroid
     """
     batch_size, embed_dim = data.shape
 
@@ -264,7 +264,7 @@ def compute_all_centroids_from_assignments(
     weights = th.zeros(num_centroids, dtype=th.int64, device=data.device)
 
     # Scatter add data points to their assigned centroids
-    # Expand assignments from (batch_size,) -> (batch_size, embed_dim) for scatter_add_
+    # Expand assignments from (B,) -> (B, D) for scatter_add_
     assignments_expanded = assignments.unsqueeze(1).expand(-1, embed_dim)
     centroid_sums.scatter_add_(0, assignments_expanded, data)
 
@@ -288,7 +288,7 @@ def compute_all_centroids_from_assignments(
         f"Expected shape ({num_centroids},), got {weights.shape}"
     )
     assert (weights >= 0).all(), "Weights should be non-negative"
-    assert weights.sum() <= batch_size, (
+    assert weights.sum() == batch_size, (
         f"Total weights {weights.sum()} should not exceed batch_size {batch_size}"
     )
 
@@ -559,7 +559,7 @@ async def kmeans_step(
     centroid_distances = th.gather(distances, 1, assignments.unsqueeze(1))
     logger.trace(f"Computed centroid distances with shape {centroid_distances.shape}")
 
-    new_centroids, new_weights = compute_all_centroids_from_assignments(
+    new_centroids, new_weights = await compute_all_centroids_from_assignments(
         data, assignments, centroids.shape[0]
     )
     logger.trace(f"Computed centroids and weights with shape {new_centroids.shape}")
