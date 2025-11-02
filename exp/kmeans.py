@@ -247,36 +247,49 @@ def compute_all_centroids_from_assignments(
     Vectorized computation of all centroids using scatter_add_.
 
     Args:
-        data: (B, D) tensor of data points
-        assignments: (B,) tensor of centroid assignments
-        num_centroids: Total number of centroids (K)
+        data: (batch_size, embed_dim) tensor of data points
+        assignments: (batch_size,) tensor of centroid assignments
+        num_centroids: Total number of centroids
 
     Returns:
-        new_centroids: (K, D) tensor of new centroid positions
-        weights: (K,) tensor of number of points assigned to each centroid
+        new_centroids: (num_centroids, embed_dim) tensor of new centroid positions
+        weights: (num_centroids,) tensor of number of points assigned to each centroid
     """
-    B, D = data.shape
-    K = num_centroids
+    batch_size, embed_dim = data.shape
 
     # Initialize tensors for sums and counts
-    centroid_sums = th.zeros(K, D, dtype=data.dtype, device=data.device)
-    weights = th.zeros(K, dtype=th.int64, device=data.device)
+    centroid_sums = th.zeros(
+        num_centroids, embed_dim, dtype=data.dtype, device=data.device
+    )
+    weights = th.zeros(num_centroids, dtype=th.int64, device=data.device)
 
     # Scatter add data points to their assigned centroids
-    # assignments shape: (B,) -> (B, 1) for broadcasting
-    assignments_expanded = assignments.unsqueeze(1).expand(-1, D)
+    # Expand assignments from (batch_size,) -> (batch_size, embed_dim) for scatter_add_
+    assignments_expanded = assignments.unsqueeze(1).expand(-1, embed_dim)
     centroid_sums.scatter_add_(0, assignments_expanded, data)
 
     # Count number of points per centroid
-    ones = th.ones(B, dtype=th.int64, device=data.device)
-    weights.scatter_add_(0, assignments, ones)
+    weights.scatter_add_(0, assignments, th.ones_like(assignments))
 
     # Compute means with safe division (avoid div by zero for empty clusters)
-    weights_float = weights.float().unsqueeze(1)
+    weights_expanded = weights.unsqueeze(1)
+    weights_float = weights_expanded.float()
     new_centroids = th.where(
-        weights.unsqueeze(1) > 0,
+        weights_expanded > 0,
         centroid_sums / weights_float,
         th.zeros_like(centroid_sums),
+    )
+
+    # Assertions to validate correctness
+    assert new_centroids.shape == (num_centroids, embed_dim), (
+        f"Expected shape ({num_centroids}, {embed_dim}), got {new_centroids.shape}"
+    )
+    assert weights.shape == (num_centroids,), (
+        f"Expected shape ({num_centroids},), got {weights.shape}"
+    )
+    assert (weights >= 0).all(), "Weights should be non-negative"
+    assert weights.sum() <= batch_size, (
+        f"Total weights {weights.sum()} should not exceed batch_size {batch_size}"
     )
 
     # Check for NaN in results
@@ -297,32 +310,6 @@ def compute_all_centroids_from_assignments(
         logger.trace(f"{num_empty} centroids have no assigned points")
 
     return new_centroids, weights
-
-
-async def compute_centroid_from_assignment(
-    data: th.Tensor,
-    assignments: th.Tensor,
-    centroid_idx: int,
-) -> tuple[th.Tensor, th.Tensor]:
-    centroid_mask = assignments == centroid_idx
-    num_assigned = centroid_mask.sum()
-
-    if num_assigned == 0:
-        logger.trace(
-            f"Centroid {centroid_idx} has no assigned points, returning zero vector"
-        )
-        return th.zeros_like(data[0]), num_assigned
-
-    new_centroid = data[centroid_mask].mean(dim=0)
-
-    if th.isnan(new_centroid).any():
-        logger.error(f"NaN detected in centroid {centroid_idx} computation!")
-        logger.error(f"num_assigned: {num_assigned}, data shape: {data.shape}")
-        logger.error(
-            f"assigned data stats: min={data[centroid_mask].min()}, max={data[centroid_mask].max()}"
-        )
-
-    return new_centroid, num_assigned
 
 
 def validate_gpu_centroid_synchronization(
@@ -572,7 +559,6 @@ async def kmeans_step(
     centroid_distances = th.gather(distances, 1, assignments.unsqueeze(1))
     logger.trace(f"Computed centroid distances with shape {centroid_distances.shape}")
 
-    # Vectorized centroid computation (replaces 131k async tasks with single operation)
     new_centroids, new_weights = compute_all_centroids_from_assignments(
         data, assignments, centroids.shape[0]
     )
