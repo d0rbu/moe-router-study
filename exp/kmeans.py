@@ -682,7 +682,8 @@ async def sync(
         )
 
         await asyncio.gather(
-            asyncio.to_thread(centroids_future.wait), asyncio.to_thread(weights_future.wait)
+            asyncio.to_thread(centroids_future.wait),
+            asyncio.to_thread(weights_future.wait),
         )
 
         # (K)
