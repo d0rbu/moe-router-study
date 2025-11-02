@@ -674,8 +674,8 @@ async def sync(
         # (N, K)
         all_weights = th.empty_like(weights).unsqueeze(0).repeat(world_size, 1)
 
-        await dist.all_gather_into_tensor(all_centroids, centroids, group=group)
-        await dist.all_gather_into_tensor(all_weights, weights, group=group)
+        dist.all_gather_into_tensor(all_centroids, centroids, group=group)
+        dist.all_gather_into_tensor(all_weights, weights, group=group)
 
         # (K)
         weights_total = all_weights.sum(dim=0)
