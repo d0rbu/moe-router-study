@@ -238,7 +238,7 @@ class GPUData:
     queue: asyncio.Queue | None = None
 
 
-async def compute_all_centroids_from_assignments(
+def compute_all_centroids_from_assignments(
     data: th.Tensor,
     assignments: th.Tensor,
     num_centroids: int,
@@ -273,7 +273,7 @@ async def compute_all_centroids_from_assignments(
 
     # Compute means with safe division (avoid div by zero for empty clusters)
     weights_expanded = weights.unsqueeze(1)
-    weights_float = weights_expanded.float()
+    weights_float = weights_expanded.to(dtype=data.dtype)
     new_centroids = th.where(
         weights_expanded > 0,
         centroid_sums / weights_float,
@@ -559,7 +559,7 @@ async def kmeans_step(
     centroid_distances = th.gather(distances, 1, assignments.unsqueeze(1))
     logger.trace(f"Computed centroid distances with shape {centroid_distances.shape}")
 
-    new_centroids, new_weights = await compute_all_centroids_from_assignments(
+    new_centroids, new_weights = compute_all_centroids_from_assignments(
         data, assignments, centroids.shape[0]
     )
     logger.trace(f"Computed centroids and weights with shape {new_centroids.shape}")
