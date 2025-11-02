@@ -60,12 +60,10 @@ def compute_all_centroids_from_assignments(
 
     # Check for NaN in results
     if th.isnan(new_centroids).any():
-        nan_mask = th.isnan(new_centroids).any(dim=1)
-        nan_indices = th.where(nan_mask)[0]
         # Skip logging in tests to avoid dependency on logger
+        pass
 
     # Skip logging empty clusters in tests
-    num_empty = (weights == 0).sum().item()
 
     return new_centroids, weights
 
