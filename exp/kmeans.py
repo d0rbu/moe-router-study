@@ -674,8 +674,15 @@ async def sync(
         # (N, K)
         all_weights = th.empty_like(weights).unsqueeze(0).repeat(world_size, 1)
 
-        dist.all_gather_into_tensor(all_centroids, centroids, group=group)
-        dist.all_gather_into_tensor(all_weights, weights, group=group)
+        # Start both gather operations asynchronously
+        centroids_work = dist.all_gather_into_tensor(all_centroids, centroids, group=group, async_op=True)
+        weights_work = dist.all_gather_into_tensor(all_weights, weights, group=group, async_op=True)
+        
+        # Wait for both to complete
+        await asyncio.gather(
+            asyncio.to_thread(centroids_work.wait),
+            asyncio.to_thread(weights_work.wait)
+        )
 
         # (K)
         weights_total = all_weights.sum(dim=0)
