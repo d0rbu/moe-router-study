@@ -3,69 +3,7 @@
 import pytest
 import torch as th
 
-
-def compute_all_centroids_from_assignments(
-    data: th.Tensor,
-    assignments: th.Tensor,
-    num_centroids: int,
-) -> tuple[th.Tensor, th.Tensor]:
-    """
-    Vectorized computation of all centroids using scatter_add_.
-
-    Args:
-        data: (B, D) tensor of data points
-        assignments: (B,) tensor of centroid assignments
-        num_centroids: Total number of centroids (K)
-
-    Returns:
-        new_centroids: (K, D) tensor of new centroid positions
-        weights: (K,) tensor of number of points assigned to each centroid
-    """
-    batch_size, embed_dim = data.shape
-
-    # Initialize tensors for sums and counts
-    centroid_sums = th.zeros(
-        num_centroids, embed_dim, dtype=data.dtype, device=data.device
-    )
-    weights = th.zeros(num_centroids, dtype=th.int64, device=data.device)
-
-    # Scatter add data points to their assigned centroids
-    # Expand assignments from (B,) -> (B, D) for scatter_add_
-    assignments_expanded = assignments.unsqueeze(1).expand(-1, embed_dim)
-    centroid_sums.scatter_add_(0, assignments_expanded, data)
-
-    # Count number of points per centroid
-    weights.scatter_add_(0, assignments, th.ones_like(assignments))
-
-    # Compute means with safe division (avoid div by zero for empty clusters)
-    weights_expanded = weights.unsqueeze(1)
-    weights_float = weights_expanded.to(dtype=data.dtype)
-    new_centroids = th.where(
-        weights_expanded > 0,
-        centroid_sums / weights_float,
-        th.zeros_like(centroid_sums),
-    )
-
-    # Assertions to validate correctness
-    assert new_centroids.shape == (num_centroids, embed_dim), (
-        f"Expected shape ({num_centroids}, {embed_dim}), got {new_centroids.shape}"
-    )
-    assert weights.shape == (num_centroids,), (
-        f"Expected shape ({num_centroids},), got {weights.shape}"
-    )
-    assert (weights >= 0).all(), "Weights should be non-negative"
-    assert weights.sum() == batch_size, (
-        f"Total weights {weights.sum()} should not exceed batch_size {batch_size}"
-    )
-
-    # Check for NaN in results
-    if th.isnan(new_centroids).any():
-        # Skip logging in tests to avoid dependency on logger
-        pass
-
-    # Skip logging empty clusters in tests
-
-    return new_centroids, weights
+from exp.kmeans import compute_all_centroids_from_assignments
 
 
 class TestComputeAllCentroidsFromAssignments:
