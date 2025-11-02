@@ -677,7 +677,7 @@ async def sync(
         # Start both gather operations asynchronously
         centroids_work = dist.all_gather_into_tensor(all_centroids, centroids, group=group, async_op=True)
         weights_work = dist.all_gather_into_tensor(all_weights, weights, group=group, async_op=True)
-        
+
         # Wait for both to complete
         await asyncio.gather(
             asyncio.to_thread(centroids_work.wait),
