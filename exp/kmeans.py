@@ -793,6 +793,9 @@ async def sync(
 
     backend.empty_cache()
 
+    # Wait for all GPUs to finish reading dirty data before resetting
+    await barrier.wait()
+
     # reset dirty data now that it has been synced
     logger.debug(f"🔄 SYNC GPU {gpu_idx}: Resetting dirty data to zero...")
     for weights in gpu_data.dirty_data.weight_sets:
