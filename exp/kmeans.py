@@ -273,16 +273,11 @@ async def compute_all_centroids_from_assignments(
     )
     weights = th.zeros(num_centroids, dtype=th.int64, device=data.device)
 
-    # Process data in minibatches
-    n_batches = (batch_size + minibatch_size - 1) // minibatch_size
+    # Process data in minibatches using torch.split
+    data_batches = th.split(data, minibatch_size, dim=0)
+    assignments_batches = th.split(assignments, minibatch_size, dim=0)
 
-    for i in range(n_batches):
-        start_idx = i * minibatch_size
-        end_idx = min((i + 1) * minibatch_size, batch_size)
-
-        data_batch = data[start_idx:end_idx]
-        assignments_batch = assignments[start_idx:end_idx]
-
+    for data_batch, assignments_batch in zip(data_batches, assignments_batches, strict=False):
         # Scatter add data points to their assigned centroids
         assignments_expanded = assignments_batch.unsqueeze(1).expand(-1, embed_dim)
         centroid_sums.scatter_add_(0, assignments_expanded, data_batch)
