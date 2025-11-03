@@ -577,7 +577,10 @@ async def kmeans_step(
     logger.trace(f"Computed centroid distances with shape {centroid_distances.shape}")
 
     new_centroids, new_weights = await compute_all_centroids_from_assignments(
-        data, assignments, centroids.shape[0], assignment_minibatch_size=assignment_minibatch_size
+        data,
+        assignments,
+        centroids.shape[0],
+        assignment_minibatch_size=assignment_minibatch_size,
     )
     logger.trace(f"Computed centroids and weights with shape {new_centroids.shape}")
 
