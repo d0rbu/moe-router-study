@@ -277,7 +277,9 @@ async def compute_all_centroids_from_assignments(
     data_batches = th.split(data, minibatch_size, dim=0)
     assignments_batches = th.split(assignments, minibatch_size, dim=0)
 
-    for data_batch, assignments_batch in zip(data_batches, assignments_batches, strict=False):
+    for data_batch, assignments_batch in zip(
+        data_batches, assignments_batches, strict=False
+    ):
         # Scatter add data points to their assigned centroids
         assignments_expanded = assignments_batch.unsqueeze(1).expand(-1, embed_dim)
         centroid_sums.scatter_add_(0, assignments_expanded, data_batch)
