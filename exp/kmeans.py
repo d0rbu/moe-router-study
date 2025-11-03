@@ -242,6 +242,7 @@ async def compute_all_centroids_from_assignments(
     data: th.Tensor,
     assignments: th.Tensor,
     num_centroids: int,
+    minibatch_size: int = 0,
 ) -> tuple[th.Tensor, th.Tensor]:
     """
     Vectorized computation of all centroids using scatter_add_.
@@ -250,11 +251,14 @@ async def compute_all_centroids_from_assignments(
         data: (B, D) tensor of data points
         assignments: (B,) tensor of centroid assignments
         num_centroids: Total number of centroids (K)
+        minibatch_size: Size of data minibatches to process (0 = no batching, default: 0)
 
     Returns:
         new_centroids: (K, D) tensor of new centroid positions
         weights: (K,) tensor of number of points assigned to each centroid
     """
+    assert minibatch_size >= 0, f"minibatch_size must be non-negative, got {minibatch_size}"
+
     batch_size, embed_dim = data.shape
 
     # Initialize tensors for sums and counts
@@ -263,13 +267,32 @@ async def compute_all_centroids_from_assignments(
     )
     weights = th.zeros(num_centroids, dtype=th.int64, device=data.device)
 
-    # Scatter add data points to their assigned centroids
-    # Expand assignments from (B,) -> (B, D) for scatter_add_
-    assignments_expanded = assignments.unsqueeze(1).expand(-1, embed_dim)
-    centroid_sums.scatter_add_(0, assignments_expanded, data)
+    # Process in minibatches if minibatch_size > 0, otherwise process all at once
+    if minibatch_size > 0 and batch_size > minibatch_size:
+        n_batches = (batch_size + minibatch_size - 1) // minibatch_size
 
-    # Count number of points per centroid
-    weights.scatter_add_(0, assignments, th.ones_like(assignments))
+        for i in range(n_batches):
+            start_idx = i * minibatch_size
+            end_idx = min((i + 1) * minibatch_size, batch_size)
+
+            data_batch = data[start_idx:end_idx]
+            assignments_batch = assignments[start_idx:end_idx]
+
+            # Scatter add data points to their assigned centroids
+            assignments_expanded = assignments_batch.unsqueeze(1).expand(-1, embed_dim)
+            centroid_sums.scatter_add_(0, assignments_expanded, data_batch)
+
+            # Count number of points per centroid
+            weights.scatter_add_(0, assignments_batch, th.ones_like(assignments_batch))
+    else:
+        # Process all data at once (original behavior)
+        # Scatter add data points to their assigned centroids
+        # Expand assignments from (B,) -> (B, D) for scatter_add_
+        assignments_expanded = assignments.unsqueeze(1).expand(-1, embed_dim)
+        centroid_sums.scatter_add_(0, assignments_expanded, data)
+
+        # Count number of points per centroid
+        weights.scatter_add_(0, assignments, th.ones_like(assignments))
 
     # Compute means with safe division (avoid div by zero for empty clusters)
     weights_expanded = weights.unsqueeze(1)
@@ -560,7 +583,7 @@ async def kmeans_step(
     logger.trace(f"Computed centroid distances with shape {centroid_distances.shape}")
 
     new_centroids, new_weights = await compute_all_centroids_from_assignments(
-        data, assignments, centroids.shape[0]
+        data, assignments, centroids.shape[0], minibatch_size=centroid_minibatch_size
     )
     logger.trace(f"Computed centroids and weights with shape {new_centroids.shape}")
 
