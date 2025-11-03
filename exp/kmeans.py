@@ -242,7 +242,7 @@ async def compute_all_centroids_from_assignments(
     data: th.Tensor,
     assignments: th.Tensor,
     num_centroids: int,
-    assignment_minibatch_size: int = 4096,
+    assignment_minibatch_size: int = 0,
 ) -> tuple[th.Tensor, th.Tensor]:
     """
     Vectorized computation of all centroids using scatter_add_.
@@ -251,7 +251,7 @@ async def compute_all_centroids_from_assignments(
         data: (B, D) tensor of data points
         assignments: (B,) tensor of centroid assignments
         num_centroids: Total number of centroids (K)
-        assignment_minibatch_size: Size of data minibatches to process (0 = no batching, default: 4096)
+        assignment_minibatch_size: Size of data minibatches to process (0 = no batching, default: 0)
 
     Returns:
         new_centroids: (K, D) tensor of new centroid positions
@@ -577,9 +577,9 @@ async def kmeans_step(
     logger.trace(f"Computed centroid distances with shape {centroid_distances.shape}")
 
     new_centroids, new_weights = await compute_all_centroids_from_assignments(
-        data,
-        assignments,
-        centroids.shape[0],
+        data=data,
+        assignments=assignments,
+        num_centroids=centroids.shape[0],
         assignment_minibatch_size=assignment_minibatch_size,
     )
     logger.trace(f"Computed centroids and weights with shape {new_centroids.shape}")
