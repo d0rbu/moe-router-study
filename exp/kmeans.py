@@ -949,9 +949,9 @@ async def gpu_worker(
         updates = await asyncio.gather(
             *[
                 kmeans_step(
-                    flat_data,
-                    centroids,
-                    centroid_minibatch_size,
+                    data=flat_data,
+                    centroids=centroids,
+                    centroid_minibatch_size=centroid_minibatch_size,
                     assignment_minibatch_size=assignment_minibatch_size,
                     gpu_idx=gpu_idx,
                 )
