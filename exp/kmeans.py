@@ -257,7 +257,9 @@ async def compute_all_centroids_from_assignments(
         new_centroids: (K, D) tensor of new centroid positions
         weights: (K,) tensor of number of points assigned to each centroid
     """
-    assert minibatch_size >= 0, f"minibatch_size must be non-negative, got {minibatch_size}"
+    assert minibatch_size >= 0, (
+        f"minibatch_size must be non-negative, got {minibatch_size}"
+    )
 
     batch_size, embed_dim = data.shape
 
