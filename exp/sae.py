@@ -1,6 +1,5 @@
 import asyncio
-from collections.abc import Callable
-from collections.abc import Generator as TypedGenerator
+from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 from itertools import batched, count, product
 import math
@@ -125,9 +124,7 @@ async def gpu_worker(
     num_epochs: int,
     num_gpus: int,
     gpu_queue: asyncio.Queue,
-    data_iterator: Callable[
-        [str], TypedGenerator[tuple[th.Tensor, list[int]], None, None]
-    ],
+    data_iterator: Callable[[str], Generator[tuple[th.Tensor, list[int]], None, None]],
 ) -> None:
     """Worker process for training SAE models on a specific GPU."""
 
@@ -286,7 +283,7 @@ async def run_sae_training(
 
     def data_iterator(
         submodule_name: str,
-    ) -> TypedGenerator[tuple[th.Tensor, list[int]], None, None]:
+    ) -> Generator[tuple[th.Tensor, list[int]], None, None]:
         """
         Create a data iterator for the given submodule.
 
