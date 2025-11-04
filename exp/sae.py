@@ -1,6 +1,6 @@
 import asyncio
 from collections.abc import Callable, Iterator
-from collections.abc import Generator as TypingGenerator
+from collections.abc import Generator as TypedGenerator
 from dataclasses import dataclass, field
 from itertools import batched, count, product
 import math
@@ -284,7 +284,7 @@ async def run_sae_training(
 
     def data_iterator(
         submodule_name: str,
-    ) -> TypingGenerator[tuple[th.Tensor, list[int]], None, None]:
+    ) -> TypedGenerator[tuple[th.Tensor, list[int]], None, None]:
         """
         Create a data iterator for the given submodule.
 
