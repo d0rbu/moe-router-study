@@ -6,7 +6,7 @@ from functools import partial
 import gc
 from itertools import batched, islice
 import os
-import queue
+from queue import Queue
 import sys
 from threading import Barrier
 import traceback
@@ -254,7 +254,7 @@ class RunningKMeansData:
 class GPUData:
     synced_data: RunningKMeansData
     dirty_data: RunningKMeansData
-    queue: queue.Queue[tuple[th.Tensor, bool, int | None]] | None = None  # type: ignore
+    queue: Queue[tuple[th.Tensor, bool, int | None]] | None = None
 
 
 def compute_all_centroids_from_assignments(
@@ -1239,7 +1239,7 @@ def kmeans_manhattan(
                 ],
                 losses=th.zeros(len(k_values), dtype=th.float32, device=gpu_idx),
             ),
-            queue=queue.Queue(maxsize=GPU_QUEUE_MAXSIZE),
+            queue=Queue(maxsize=GPU_QUEUE_MAXSIZE),
         )
         for gpu_idx in range(num_gpus)
     ]
