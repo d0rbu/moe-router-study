@@ -1,4 +1,3 @@
-import asyncio
 from collections import defaultdict, deque
 from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
@@ -75,7 +74,7 @@ class Activations:
         self._total_tokens = None
 
     @classmethod
-    async def load(
+    def load(
         cls,
         experiment_name: str,
         device: str = "cpu",
@@ -102,7 +101,7 @@ class Activations:
         cls.device = device
 
         logger.trace(f"Loading or reshuffling activations from {activation_dir}")
-        cls.activation_filepaths = await cls.load_files(
+        cls.activation_filepaths = cls.load_files(
             activation_dir=activation_dir,
             seed=seed,
             tokens_per_file_in_reshuffled=tokens_per_file_in_reshuffled,
@@ -328,7 +327,7 @@ class Activations:
         return self()
 
     @classmethod
-    async def load_files(
+    def load_files(
         cls,
         activation_dir: str,
         seed: int = 0,
@@ -359,7 +358,7 @@ class Activations:
             f"Reshuffling activations from {activation_dir} to {activation_files_dir}"
         )
 
-        new_activation_filepaths = await cls.reshuffle(
+        new_activation_filepaths = cls.reshuffle(
             activation_dir=activation_dir,
             output_dir=activation_files_dir,
             tokens_per_file_in_reshuffled=tokens_per_file_in_reshuffled,
@@ -418,19 +417,17 @@ class Activations:
         return truncated_contiguous_activation_filepaths
 
     @staticmethod
-    async def load_files_async(filepaths: list[str]) -> list[dict]:
-        results = await asyncio.gather(
-            *[
-                asyncio.to_thread(th.load, filepath, weights_only=False)
-                for filepath in filepaths
-            ]
-        )
-        return list(results)
+    def load_files_async(filepaths: list[str]) -> list[dict]:
+        with ThreadPoolExecutor() as executor:
+            load_unsafe = partial(th.load, weights_only=False)
+            futures = [executor.submit(load_unsafe, filepath) for filepath in filepaths]
+            results = [future.result() for future in futures]
+        return results
 
     NUM_DEBUG_FILES = 32
 
     @classmethod
-    async def reshuffle(
+    def reshuffle(
         cls,
         activation_dir: str,
         output_dir: str,
@@ -531,7 +528,7 @@ class Activations:
 
             filepaths, batch_sizes = zip(*shuffle_batch, strict=True)
 
-            file_data = await cls.load_files_async(filepaths)
+            file_data = cls.load_files_async(filepaths)
 
             batch_sizes = th.stack(batch_sizes, dim=0)
             batch_size_ranges = th.cumsum(batch_sizes, dim=0)
@@ -773,7 +770,7 @@ class Activations:
         return file_idx, local_idx
 
 
-async def load_activations_and_init_dist(
+def load_activations_and_init_dist(
     model_name: str,
     dataset_name: str,
     tokens_per_file: int,
@@ -843,7 +840,7 @@ async def load_activations_and_init_dist(
     init_distributed_logging()
 
     logger.debug(f"Initializing activations with seed {seed}")
-    activations = await Activations.load(
+    activations = Activations.load(
         experiment_name=activations_experiment_name,
         tokens_per_file_in_reshuffled=reshuffled_tokens_per_file,
         seed=seed,
@@ -905,47 +902,3 @@ async def load_activations_and_init_dist(
     data_iterable.close()
 
     return activations, activation_dims, gpu_process_group, gpu_process_groups
-
-
-def load_activations_and_init_dist_sync(
-    model_name: str,
-    dataset_name: str,
-    tokens_per_file: int,
-    reshuffled_tokens_per_file: int,
-    submodule_names: list[str],
-    context_length: int,
-    seed: int = 0,
-    num_workers: int = 8,
-    debug: bool = False,
-    device_type: DeviceType = "cuda",
-) -> tuple[
-    Activations,
-    dict[str, int],
-    dist.ProcessGroup | None,
-    list[dist.ProcessGroup] | None,
-]:
-    """
-    Synchronous wrapper for load_activations_and_init_dist.
-
-    Load activations and initialize the distributed process group.
-
-    Returns:
-        activations: Activations object
-        activation_dims: Dimensionality of the activations for each submodule as a dictionary
-        gpu_process_group: General GPU process group (or None if GPU not available)
-        gpu_process_groups: List of GPU-specific process groups, one per device (or None if GPU not available)
-    """
-    return asyncio.run(
-        load_activations_and_init_dist(
-            model_name=model_name,
-            dataset_name=dataset_name,
-            tokens_per_file=tokens_per_file,
-            reshuffled_tokens_per_file=reshuffled_tokens_per_file,
-            submodule_names=submodule_names,
-            context_length=context_length,
-            seed=seed,
-            num_workers=num_workers,
-            debug=debug,
-            device_type=device_type,
-        )
-    )

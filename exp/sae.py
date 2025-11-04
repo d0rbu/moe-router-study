@@ -32,7 +32,7 @@ from core.dtype import get_dtype
 from core.training import exponential_to_linear_save_steps
 from core.type import assert_type
 from exp import OUTPUT_DIR
-from exp.activations import load_activations_and_init_dist_sync
+from exp.activations import load_activations_and_init_dist
 from exp.get_activations import ActivationKeys
 from exp.training import get_experiment_name
 
@@ -254,7 +254,7 @@ def run_sae_training(
         activation_dims,
         _gpu_process_group,
         _gpu_process_groups,
-    ) = load_activations_and_init_dist_sync(
+    ) = load_activations_and_init_dist(
         model_name=model_name,
         dataset_name=dataset_name,
         tokens_per_file=tokens_per_file,
