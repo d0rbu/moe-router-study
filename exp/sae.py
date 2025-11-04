@@ -143,10 +143,10 @@ async def gpu_worker(
         batch = assert_type(batch, GPUBatch)
 
         logger.debug(f"[worker {device_idx}]: Got batch {worker_batch_idx}")
-        
+
         # Create the data iterator
         data_iter = data_iterator(batch.submodule_name)
-        
+
         try:
             await trainSAE(
                 data=data_iter,
@@ -165,7 +165,7 @@ async def gpu_worker(
             # Ensure the data iterator is properly closed to clean up worker processes
             data_iter.close()
             logger.debug(f"[worker {device_idx}]: Closed data iterator for batch {worker_batch_idx}")
-        
+
         gpu_queue.task_done()
 
 
@@ -280,7 +280,7 @@ async def run_sae_training(
     def data_iterator(submodule_name: str) -> Iterator[tuple[th.Tensor, list[int]]]:
         """
         Create a data iterator for the given submodule.
-        
+
         IMPORTANT: This generator should be explicitly closed after use to clean up
         background worker processes. The activations() call spawns a multiprocessing
         worker that loads files from disk, and failure to close it leads to process
@@ -306,7 +306,7 @@ async def run_sae_training(
                     )
 
                     yield activation, layers
-                
+
                 # Close the generator after each epoch to clean up the worker process
                 if activation_generator is not None:
                     activation_generator.close()
