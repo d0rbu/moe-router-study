@@ -125,7 +125,7 @@ async def gpu_worker(
     num_epochs: int,
     num_gpus: int,
     gpu_queue: asyncio.Queue,
-    data_iterator: Callable[[str], Iterator[tuple[th.Tensor, list[int]]]],
+    data_iterator: Callable[[str], TypedGenerator[tuple[th.Tensor, list[int]], None, None]],
 ) -> None:
     """Worker process for training SAE models on a specific GPU."""
 
