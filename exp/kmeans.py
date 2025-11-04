@@ -7,7 +7,6 @@ import gc
 from itertools import batched, islice
 import os
 import queue
-from queue import Queue
 import sys
 from threading import Barrier
 import traceback
@@ -255,7 +254,7 @@ class RunningKMeansData:
 class GPUData:
     synced_data: RunningKMeansData
     dirty_data: RunningKMeansData
-    queue: Queue[tuple[th.Tensor, bool, int | None]] | None = None
+    queue: queue.Queue[tuple[th.Tensor, bool, int | None]] | None = None  # type: ignore
 
 
 def compute_all_centroids_from_assignments(
