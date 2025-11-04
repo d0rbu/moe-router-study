@@ -644,6 +644,10 @@ async def sync(
         )
         group = general_gpu_group
 
+    # Clear cache at start to prevent memory fragmentation
+    backend.empty_cache()
+    logger.debug(f"🔄 SYNC: Cleared GPU cache for GPU {gpu_idx}")
+
     logger.debug(f"🔄 SYNC: Starting sync for GPU {gpu_idx}, rank {rank}")
 
     # Log dirty data state before sync
@@ -784,6 +788,9 @@ async def sync(
             new_centroids,
             new_loss,
         )
+
+        # Clear cache after each centroid set to prevent memory fragmentation
+        backend.empty_cache()
 
     # now do an all-gather along gpus (among entries in all_gpu_data)
     empty_data = RunningKMeansData(
