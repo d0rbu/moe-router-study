@@ -905,3 +905,47 @@ async def load_activations_and_init_dist(
     data_iterable.close()
 
     return activations, activation_dims, gpu_process_group, gpu_process_groups
+
+
+def load_activations_and_init_dist_sync(
+    model_name: str,
+    dataset_name: str,
+    tokens_per_file: int,
+    reshuffled_tokens_per_file: int,
+    submodule_names: list[str],
+    context_length: int,
+    seed: int = 0,
+    num_workers: int = 8,
+    debug: bool = False,
+    device_type: DeviceType = "cuda",
+) -> tuple[
+    Activations,
+    dict[str, int],
+    dist.ProcessGroup | None,
+    list[dist.ProcessGroup] | None,
+]:
+    """
+    Synchronous wrapper for load_activations_and_init_dist.
+
+    Load activations and initialize the distributed process group.
+
+    Returns:
+        activations: Activations object
+        activation_dims: Dimensionality of the activations for each submodule as a dictionary
+        gpu_process_group: General GPU process group (or None if GPU not available)
+        gpu_process_groups: List of GPU-specific process groups, one per device (or None if GPU not available)
+    """
+    return asyncio.run(
+        load_activations_and_init_dist(
+            model_name=model_name,
+            dataset_name=dataset_name,
+            tokens_per_file=tokens_per_file,
+            reshuffled_tokens_per_file=reshuffled_tokens_per_file,
+            submodule_names=submodule_names,
+            context_length=context_length,
+            seed=seed,
+            num_workers=num_workers,
+            debug=debug,
+            device_type=device_type,
+        )
+    )

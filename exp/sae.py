@@ -1,9 +1,10 @@
-import asyncio
 from collections.abc import Callable, Generator
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from itertools import batched, count, product
 import math
 import os
+from queue import PriorityQueue
 import sys
 from typing import Any
 
@@ -26,13 +27,12 @@ import torch as th
 import torch.distributed as dist
 from tqdm import tqdm
 
-from core.async_utils import handle_exceptions
 from core.device import DeviceType, assert_device_type, get_backend
 from core.dtype import get_dtype
 from core.training import exponential_to_linear_save_steps
 from core.type import assert_type
 from exp import OUTPUT_DIR
-from exp.activations import load_activations_and_init_dist
+from exp.activations import load_activations_and_init_dist_sync
 from exp.get_activations import ActivationKeys
 from exp.training import get_experiment_name
 
@@ -101,8 +101,8 @@ class GPUBatch:
 
 
 def select_least_loaded_gpu(
-    gpu_queues: list[asyncio.Queue],
-) -> tuple[int, asyncio.Queue]:
+    gpu_queues: list[PriorityQueue],
+) -> tuple[int, PriorityQueue]:
     """Select the GPU with the least loaded queue.
 
     Returns:
@@ -116,24 +116,25 @@ def select_least_loaded_gpu(
     return device_idx, gpu_queue
 
 
-async def gpu_worker(
+def gpu_worker(
     device_idx: int,
     dtype: th.dtype,
     steps: int,
     save_steps: list[int],
     num_epochs: int,
     num_gpus: int,
-    gpu_queue: asyncio.Queue,
+    gpu_queue: PriorityQueue,
     data_iterator: Callable[[str], Generator[tuple[th.Tensor, list[int]], None, None]],
 ) -> None:
-    """Worker process for training SAE models on a specific GPU."""
+    """Worker thread for training SAE models on a specific GPU."""
+    import asyncio
 
     logger.info(f"[worker {device_idx}]: Starting GPU worker")
     device = f"cuda:{device_idx}"
 
     for worker_batch_idx in count():
         logger.debug(f"[worker {device_idx}]: Awaiting batch {worker_batch_idx}")
-        _priority, _trainer_batch_idx, batch = await gpu_queue.get()
+        _priority, _trainer_batch_idx, batch = gpu_queue.get()
 
         if batch is None:
             logger.debug(f"[worker {device_idx}]: Stopping")
@@ -148,20 +149,24 @@ async def gpu_worker(
         data_iter = data_iterator(batch.submodule_name)
 
         try:
-            await trainSAE(
-                data=data_iter,
-                trainer_configs=batch.trainer_cfgs,
-                steps=steps * num_epochs,
-                save_steps=save_steps,
-                trainer_names=batch.trainer_names,
-                use_wandb=False,
-                save_dir=os.path.join(OUTPUT_DIR, batch.sae_experiment_name),
-                normalize_activations=True,
-                device=device,
-                autocast_dtype=dtype,
-                tqdm_kwargs={
-                    "position": dist.get_rank() * (num_gpus + 1) + device_idx + 1
-                },
+            # Since trainSAE is async, we need to run it in a new event loop
+            # Each worker thread gets its own event loop
+            asyncio.run(
+                trainSAE(
+                    data=data_iter,
+                    trainer_configs=batch.trainer_cfgs,
+                    steps=steps * num_epochs,
+                    save_steps=save_steps,
+                    trainer_names=batch.trainer_names,
+                    use_wandb=False,
+                    save_dir=os.path.join(OUTPUT_DIR, batch.sae_experiment_name),
+                    normalize_activations=True,
+                    device=device,
+                    autocast_dtype=dtype,
+                    tqdm_kwargs={
+                        "position": dist.get_rank() * (num_gpus + 1) + device_idx + 1
+                    },
+                )
             )
         finally:
             # Ensure the data iterator is properly closed to clean up worker processes
@@ -173,7 +178,7 @@ async def gpu_worker(
         gpu_queue.task_done()
 
 
-async def run_sae_training(
+def run_sae_training(
     model_name: str = "olmoe-i",
     dataset_name: str = "lmsys",
     *_args,
@@ -249,7 +254,7 @@ async def run_sae_training(
         activation_dims,
         _gpu_process_group,
         _gpu_process_groups,
-    ) = await load_activations_and_init_dist(
+    ) = load_activations_and_init_dist_sync(
         model_name=model_name,
         dataset_name=dataset_name,
         tokens_per_file=tokens_per_file,
@@ -337,27 +342,26 @@ async def run_sae_training(
 
     num_gpus = backend.device_count()
     logger.info(f"Number of GPUs: {num_gpus}")
-    gpu_queues = [asyncio.PriorityQueue() for _ in range(num_gpus)]
+    gpu_queues = [PriorityQueue() for _ in range(num_gpus)]
 
-    workers = [
-        asyncio.create_task(
-            gpu_worker(
-                device_idx,
-                dtype,
-                steps,
-                list(save_steps),
-                num_epochs,
-                num_gpus,
-                gpu_queue,
-                data_iterator,
-            ),
-            name=str(device_idx),
+    # Create thread pool executor for GPU workers
+    executor = ThreadPoolExecutor(max_workers=num_gpus, thread_name_prefix="gpu_worker")
+
+    # Submit worker threads
+    worker_futures = [
+        executor.submit(
+            gpu_worker,
+            device_idx,
+            dtype,
+            steps,
+            list(save_steps),
+            num_epochs,
+            num_gpus,
+            gpu_queue,
+            data_iterator,
         )
         for device_idx, gpu_queue in enumerate(gpu_queues)
     ]
-
-    for worker in workers:
-        worker.add_done_callback(handle_exceptions)
 
     debug_params = {
         "expansion_factor": expansion_factor,
@@ -533,16 +537,28 @@ async def run_sae_training(
             submodule_name=current_submodule_name,
         )
         logger.debug(f"Putting batch {trainer_batch_idx} into queue {device_idx}")
-        await gpu_queue.put((0, trainer_batch_idx, batch))
+        gpu_queue.put((0, trainer_batch_idx, batch))
 
     # put a sentinel value in the gpu queues to stop the workers
     for gpu_idx, gpu_queue in enumerate(gpu_queues):
         logger.debug(f"Putting sentinel value in queue {gpu_idx}")
-        await gpu_queue.put((1, 0, None))
+        gpu_queue.put((1, 0, None))
 
     logger.debug("Waiting for queues to finish")
     for gpu_queue in gpu_queues:
-        await gpu_queue.join()
+        gpu_queue.join()
+
+    # Wait for all worker threads to complete
+    logger.debug("Waiting for worker threads to finish")
+    for future in as_completed(worker_futures):
+        try:
+            future.result()  # This will re-raise any exceptions from worker threads
+        except Exception as e:
+            logger.error(f"Worker thread raised an exception: {e}")
+            raise
+
+    # Shutdown the executor
+    executor.shutdown(wait=True)
 
     logger.info("done :)")
 
@@ -633,38 +649,36 @@ def main(
 
     torch_dtype = get_dtype(dtype)
 
-    asyncio.run(
-        run_sae_training(
-            model_name=model_name,
-            dataset_name=dataset_name,
-            batch_size=batch_size,
-            trainers_per_gpu=trainers_per_gpu,
-            steps=steps,
-            save_every=save_every,
-            num_epochs=num_epochs,
-            expansion_factor=expansion_factor,
-            k=k,
-            layer=layer,
-            group_fractions=group_fractions,
-            group_weights=parsed_group_weights,
-            architecture=architecture,
-            lr=lr,
-            auxk_alpha=auxk_alpha,
-            warmup_steps=warmup_steps,
-            decay_start=parsed_decay_start,
-            threshold_beta=threshold_beta,
-            threshold_start_step=threshold_start_step,
-            k_anneal_steps=parsed_k_anneal_steps,
-            seed=seed,
-            submodule_name=submodule_name,
-            tokens_per_file=tokens_per_file,
-            reshuffled_tokens_per_file=reshuffled_tokens_per_file,
-            context_length=context_length,
-            num_workers=num_workers,
-            debug=log_level_numeric <= debug_level_numeric,
-            dtype=torch_dtype,
-            device_type=device_type,
-        )
+    run_sae_training(
+        model_name=model_name,
+        dataset_name=dataset_name,
+        batch_size=batch_size,
+        trainers_per_gpu=trainers_per_gpu,
+        steps=steps,
+        save_every=save_every,
+        num_epochs=num_epochs,
+        expansion_factor=expansion_factor,
+        k=k,
+        layer=layer,
+        group_fractions=group_fractions,
+        group_weights=parsed_group_weights,
+        architecture=architecture,
+        lr=lr,
+        auxk_alpha=auxk_alpha,
+        warmup_steps=warmup_steps,
+        decay_start=parsed_decay_start,
+        threshold_beta=threshold_beta,
+        threshold_start_step=threshold_start_step,
+        k_anneal_steps=parsed_k_anneal_steps,
+        seed=seed,
+        submodule_name=submodule_name,
+        tokens_per_file=tokens_per_file,
+        reshuffled_tokens_per_file=reshuffled_tokens_per_file,
+        context_length=context_length,
+        num_workers=num_workers,
+        debug=log_level_numeric <= debug_level_numeric,
+        dtype=torch_dtype,
+        device_type=device_type,
     )
 
 
