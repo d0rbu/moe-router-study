@@ -253,7 +253,7 @@ class RunningKMeansData:
 class GPUData:
     synced_data: RunningKMeansData
     dirty_data: RunningKMeansData
-    queue: "queue.Queue[tuple[th.Tensor, bool, int | None]] | None" = None
+    queue: queue.Queue[tuple[th.Tensor, bool, int | None]] | None = None
 
 
 def compute_all_centroids_from_assignments(

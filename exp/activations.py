@@ -1,6 +1,6 @@
-import asyncio
 from collections import defaultdict, deque
 from collections.abc import Callable, Generator
+import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from itertools import batched, count, islice, pairwise
@@ -75,7 +75,7 @@ class Activations:
         self._total_tokens = None
 
     @classmethod
-    async def load(
+    def load(
         cls,
         experiment_name: str,
         device: str = "cpu",
@@ -102,7 +102,7 @@ class Activations:
         cls.device = device
 
         logger.trace(f"Loading or reshuffling activations from {activation_dir}")
-        cls.activation_filepaths = await cls.load_files(
+        cls.activation_filepaths = cls.load_files(
             activation_dir=activation_dir,
             seed=seed,
             tokens_per_file_in_reshuffled=tokens_per_file_in_reshuffled,
@@ -328,7 +328,7 @@ class Activations:
         return self()
 
     @classmethod
-    async def load_files(
+    def load_files(
         cls,
         activation_dir: str,
         seed: int = 0,
@@ -359,7 +359,7 @@ class Activations:
             f"Reshuffling activations from {activation_dir} to {activation_files_dir}"
         )
 
-        new_activation_filepaths = await cls.reshuffle(
+        new_activation_filepaths = cls.reshuffle(
             activation_dir=activation_dir,
             output_dir=activation_files_dir,
             tokens_per_file_in_reshuffled=tokens_per_file_in_reshuffled,
@@ -418,19 +418,19 @@ class Activations:
         return truncated_contiguous_activation_filepaths
 
     @staticmethod
-    async def load_files_async(filepaths: list[str]) -> list[dict]:
-        results = await asyncio.gather(
-            *[
-                asyncio.to_thread(th.load, filepath, weights_only=False)
+    def load_files_sync(filepaths: list[str]) -> list[dict]:
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = [
+                executor.submit(th.load, filepath, weights_only=False)
                 for filepath in filepaths
             ]
-        )
-        return list(results)
+            results = [future.result() for future in futures]
+        return results
 
     NUM_DEBUG_FILES = 32
 
     @classmethod
-    async def reshuffle(
+    def reshuffle(
         cls,
         activation_dir: str,
         output_dir: str,
@@ -531,7 +531,7 @@ class Activations:
 
             filepaths, batch_sizes = zip(*shuffle_batch, strict=True)
 
-            file_data = await cls.load_files_async(filepaths)
+            file_data = cls.load_files_sync(filepaths)
 
             batch_sizes = th.stack(batch_sizes, dim=0)
             batch_size_ranges = th.cumsum(batch_sizes, dim=0)
@@ -773,7 +773,7 @@ class Activations:
         return file_idx, local_idx
 
 
-async def load_activations_and_init_dist(
+def load_activations_and_init_dist(
     model_name: str,
     dataset_name: str,
     tokens_per_file: int,
@@ -843,7 +843,7 @@ async def load_activations_and_init_dist(
     init_distributed_logging()
 
     logger.debug(f"Initializing activations with seed {seed}")
-    activations = await Activations.load(
+    activations = Activations.load(
         experiment_name=activations_experiment_name,
         tokens_per_file_in_reshuffled=reshuffled_tokens_per_file,
         seed=seed,
