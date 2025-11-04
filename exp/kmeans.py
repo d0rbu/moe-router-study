@@ -242,6 +242,7 @@ async def compute_all_centroids_from_assignments(
     data: th.Tensor,
     assignments: th.Tensor,
     num_centroids: int,
+    assignment_minibatch_size: int = 0,
 ) -> tuple[th.Tensor, th.Tensor]:
     """
     Vectorized computation of all centroids using scatter_add_.
@@ -250,12 +251,21 @@ async def compute_all_centroids_from_assignments(
         data: (B, D) tensor of data points
         assignments: (B,) tensor of centroid assignments
         num_centroids: Total number of centroids (K)
+        assignment_minibatch_size: Size of data minibatches to process (0 = no batching, default: 0)
 
     Returns:
         new_centroids: (K, D) tensor of new centroid positions
         weights: (K,) tensor of number of points assigned to each centroid
     """
+    assert assignment_minibatch_size >= 0, (
+        f"assignment_minibatch_size must be non-negative, got {assignment_minibatch_size}"
+    )
+
     batch_size, embed_dim = data.shape
+
+    # Set assignment_minibatch_size to batch_size if 0 or larger than batch_size
+    if assignment_minibatch_size == 0 or assignment_minibatch_size > batch_size:
+        assignment_minibatch_size = batch_size
 
     # Initialize tensors for sums and counts
     centroid_sums = th.zeros(
@@ -263,13 +273,19 @@ async def compute_all_centroids_from_assignments(
     )
     weights = th.zeros(num_centroids, dtype=th.int64, device=data.device)
 
-    # Scatter add data points to their assigned centroids
-    # Expand assignments from (B,) -> (B, D) for scatter_add_
-    assignments_expanded = assignments.unsqueeze(1).expand(-1, embed_dim)
-    centroid_sums.scatter_add_(0, assignments_expanded, data)
+    # Process data in minibatches using torch.split
+    data_batches = th.split(data, assignment_minibatch_size, dim=0)
+    assignments_batches = th.split(assignments, assignment_minibatch_size, dim=0)
 
-    # Count number of points per centroid
-    weights.scatter_add_(0, assignments, th.ones_like(assignments))
+    for data_batch, assignments_batch in zip(
+        data_batches, assignments_batches, strict=False
+    ):
+        # Scatter add data points to their assigned centroids
+        assignments_expanded = assignments_batch.unsqueeze(1).expand(-1, embed_dim)
+        centroid_sums.scatter_add_(0, assignments_expanded, data_batch)
+
+        # Count number of points per centroid
+        weights.scatter_add_(0, assignments_batch, th.ones_like(assignments_batch))
 
     # Compute means with safe division (avoid div by zero for empty clusters)
     weights_expanded = weights.unsqueeze(1)
@@ -475,6 +491,7 @@ async def kmeans_step(
     data: th.Tensor,  # (B, L * E)
     centroids: th.Tensor,  # (K, L * E)
     centroid_minibatch_size: int = 65536,
+    assignment_minibatch_size: int = 4096,
     gpu_idx: int | None = None,
 ) -> tuple[th.Tensor, th.Tensor, th.Tensor]:
     logger.trace(
@@ -560,7 +577,10 @@ async def kmeans_step(
     logger.trace(f"Computed centroid distances with shape {centroid_distances.shape}")
 
     new_centroids, new_weights = await compute_all_centroids_from_assignments(
-        data, assignments, centroids.shape[0]
+        data=data,
+        assignments=assignments,
+        num_centroids=centroids.shape[0],
+        assignment_minibatch_size=assignment_minibatch_size,
     )
     logger.trace(f"Computed centroids and weights with shape {new_centroids.shape}")
 
@@ -674,8 +694,17 @@ async def sync(
         # (N, K)
         all_weights = th.empty_like(weights).unsqueeze(0).repeat(world_size, 1)
 
-        await dist.all_gather_into_tensor(all_centroids, centroids, group=group)
-        await dist.all_gather_into_tensor(all_weights, weights, group=group)
+        centroids_future = dist.all_gather_into_tensor(
+            all_centroids, centroids, group=group, async_op=True
+        )
+        weights_future = dist.all_gather_into_tensor(
+            all_weights, weights, group=group, async_op=True
+        )
+
+        await asyncio.gather(
+            asyncio.to_thread(centroids_future.wait),
+            asyncio.to_thread(weights_future.wait),
+        )
 
         # (K)
         weights_total = all_weights.sum(dim=0)
@@ -784,6 +813,9 @@ async def sync(
 
     backend.empty_cache()
 
+    # Wait for all GPUs to finish reading dirty data before resetting
+    await barrier.wait()
+
     # reset dirty data now that it has been synced
     logger.debug(f"🔄 SYNC GPU {gpu_idx}: Resetting dirty data to zero...")
     for weights in gpu_data.dirty_data.weight_sets:
@@ -837,6 +869,7 @@ async def gpu_worker(
     save_dir: str | None = None,
     validate_every: int = 64,
     centroid_minibatch_size: int = 65536,
+    assignment_minibatch_size: int = 4096,
     device_type: DeviceType = "cuda",
 ) -> None:
     """
@@ -916,10 +949,11 @@ async def gpu_worker(
         updates = await asyncio.gather(
             *[
                 kmeans_step(
-                    flat_data,
-                    centroids,
-                    centroid_minibatch_size,
-                    gpu_idx,
+                    data=flat_data,
+                    centroids=centroids,
+                    centroid_minibatch_size=centroid_minibatch_size,
+                    assignment_minibatch_size=assignment_minibatch_size,
+                    gpu_idx=gpu_idx,
                 )
                 for centroids in gpu_data.synced_data.centroid_sets
             ]
@@ -1042,6 +1076,7 @@ async def kmeans_manhattan(
     max_iters: int = 128,
     minibatch_size: int | None = None,
     centroid_minibatch_size: int = 32768,
+    assignment_minibatch_size: int = 4096,
     seed: int = 0,
     save_every: int | None = None,
     save_dir: str | None = None,
@@ -1060,6 +1095,7 @@ async def kmeans_manhattan(
         max_iters: Maximum number of iterations
         minibatch_size: Batch size for processing data. If None, process all data at once.
         centroid_minibatch_size: Size of centroid chunks to avoid device limits (defaults to 32768)
+        assignment_minibatch_size: Size of assignment data minibatches (default: 4096)
         seed: Random seed for initialization
         save_every: Save checkpoints every N iterations. If None, no checkpoints are saved.
         save_dir: Directory to save checkpoints. Required if save_every is specified.
@@ -1410,6 +1446,7 @@ async def kmeans_manhattan(
                 save_dir,
                 validate_every,
                 centroid_minibatch_size,
+                assignment_minibatch_size,
                 device_type,
             ),
             name=str(gpu_idx),
@@ -1573,6 +1610,7 @@ async def cluster_paths_async(
     tokens_per_file: int,
     minibatch_size: int,
     centroid_minibatch_size: int = 32768,
+    assignment_minibatch_size: int = 4096,
     save_every: int | None = None,
     validate_every: int = 64,
     general_gpu_group: dist.ProcessGroup | None = None,
@@ -1612,6 +1650,7 @@ async def cluster_paths_async(
         max_iters=max_iters,
         minibatch_size=minibatch_size,
         centroid_minibatch_size=centroid_minibatch_size,
+        assignment_minibatch_size=assignment_minibatch_size,
         seed=seed,
         save_every=save_every,
         save_dir=save_dir,
@@ -1668,6 +1707,7 @@ def cluster_paths(
     seed: int = 0,
     minibatch_size: int = 100_000,
     centroid_minibatch_size: int = 32768,
+    assignment_minibatch_size: int = 4096,
     tokens_per_file: int = 5_000,
     reshuffled_tokens_per_file: int = 10_000,
     context_length: int = 2048,
@@ -1757,6 +1797,7 @@ def cluster_paths(
             tokens_per_file=reshuffled_tokens_per_file,
             minibatch_size=minibatch_size,
             centroid_minibatch_size=centroid_minibatch_size,
+            assignment_minibatch_size=assignment_minibatch_size,
             save_every=save_every,
             validate_every=validate_every,
             general_gpu_group=gpu_process_group,
@@ -1780,6 +1821,7 @@ def main(
     seed: int = 0,
     minibatch_size: int = 10_000,
     centroid_minibatch_size: int = 32768,
+    assignment_minibatch_size: int = 4096,
     tokens_per_file: int = 5_000,
     reshuffled_tokens_per_file: int = 10_000,
     context_length: int = 2048,
@@ -1800,6 +1842,7 @@ def main(
         seed=seed,
         minibatch_size=minibatch_size,
         centroid_minibatch_size=centroid_minibatch_size,
+        assignment_minibatch_size=assignment_minibatch_size,
         tokens_per_file=tokens_per_file,
         reshuffled_tokens_per_file=reshuffled_tokens_per_file,
         context_length=context_length,
