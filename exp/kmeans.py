@@ -1732,7 +1732,7 @@ def cluster_paths(
     log_level_numeric = logger.level(log_level).no
     debug_level_numeric = logger.level("DEBUG").no
 
-    activations, activation_dims, gpu_process_group, gpu_process_groups = asyncio.run(
+    activations, activation_dims, gpu_process_group, gpu_process_groups = (
         load_activations_and_init_dist(
             model_name=model_name,
             dataset_name=dataset_name,
