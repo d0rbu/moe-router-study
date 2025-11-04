@@ -1041,7 +1041,7 @@ async def kmeans_manhattan(
     effective_batch_size: int | None = None,
     max_iters: int = 128,
     minibatch_size: int | None = None,
-    centroid_minibatch_size: int = 16384,
+    centroid_minibatch_size: int = 32768,
     seed: int = 0,
     save_every: int | None = None,
     save_dir: str | None = None,
@@ -1059,7 +1059,7 @@ async def kmeans_manhattan(
         effective_batch_size: Batch size for k-means updates. If None, use the batch size of the activations.
         max_iters: Maximum number of iterations
         minibatch_size: Batch size for processing data. If None, process all data at once.
-        centroid_minibatch_size: Size of centroid chunks to avoid device limits (defaults to 16384)
+        centroid_minibatch_size: Size of centroid chunks to avoid device limits (defaults to 32768)
         seed: Random seed for initialization
         save_every: Save checkpoints every N iterations. If None, no checkpoints are saved.
         save_dir: Directory to save checkpoints. Required if save_every is specified.
@@ -1572,7 +1572,7 @@ async def cluster_paths_async(
     seed: int,
     tokens_per_file: int,
     minibatch_size: int,
-    centroid_minibatch_size: int = 16384,
+    centroid_minibatch_size: int = 32768,
     save_every: int | None = None,
     validate_every: int = 64,
     general_gpu_group: dist.ProcessGroup | None = None,
@@ -1667,7 +1667,7 @@ def cluster_paths(
     validate_every: int = 64,
     seed: int = 0,
     minibatch_size: int = 100_000,
-    centroid_minibatch_size: int = 16384,
+    centroid_minibatch_size: int = 32768,
     tokens_per_file: int = 5_000,
     reshuffled_tokens_per_file: int = 10_000,
     context_length: int = 2048,
@@ -1779,7 +1779,7 @@ def main(
     validate_every: int = 64,
     seed: int = 0,
     minibatch_size: int = 10_000,
-    centroid_minibatch_size: int = 16384,
+    centroid_minibatch_size: int = 32768,
     tokens_per_file: int = 5_000,
     reshuffled_tokens_per_file: int = 10_000,
     context_length: int = 2048,
