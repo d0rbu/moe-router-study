@@ -127,8 +127,6 @@ def gpu_worker(
     data_iterator: Callable[[str], Generator[tuple[th.Tensor, list[int]], None, None]],
 ) -> None:
     """Worker thread for training SAE models on a specific GPU."""
-    import asyncio
-
     logger.info(f"[worker {device_idx}]: Starting GPU worker")
     device = f"cuda:{device_idx}"
 
@@ -149,24 +147,20 @@ def gpu_worker(
         data_iter = data_iterator(batch.submodule_name)
 
         try:
-            # Since trainSAE is async, we need to run it in a new event loop
-            # Each worker thread gets its own event loop
-            asyncio.run(
-                trainSAE(
-                    data=data_iter,
-                    trainer_configs=batch.trainer_cfgs,
-                    steps=steps * num_epochs,
-                    save_steps=save_steps,
-                    trainer_names=batch.trainer_names,
-                    use_wandb=False,
-                    save_dir=os.path.join(OUTPUT_DIR, batch.sae_experiment_name),
-                    normalize_activations=True,
-                    device=device,
-                    autocast_dtype=dtype,
-                    tqdm_kwargs={
-                        "position": dist.get_rank() * (num_gpus + 1) + device_idx + 1
-                    },
-                )
+            trainSAE(
+                data=data_iter,
+                trainer_configs=batch.trainer_cfgs,
+                steps=steps * num_epochs,
+                save_steps=save_steps,
+                trainer_names=batch.trainer_names,
+                use_wandb=False,
+                save_dir=os.path.join(OUTPUT_DIR, batch.sae_experiment_name),
+                normalize_activations=True,
+                device=device,
+                autocast_dtype=dtype,
+                tqdm_kwargs={
+                    "position": dist.get_rank() * (num_gpus + 1) + device_idx + 1
+                },
             )
         finally:
             # Ensure the data iterator is properly closed to clean up worker processes
