@@ -146,7 +146,7 @@ async def gpu_worker(
         logger.debug(f"[worker {device_idx}]: Got batch {worker_batch_idx}")
 
         # Create the data iterator
-        data_iter = data_iterator(batch.submodule_name)  # type: ignore[assignment]
+        data_iter = data_iterator(batch.submodule_name)
 
         try:
             await trainSAE(
@@ -166,7 +166,7 @@ async def gpu_worker(
             )
         finally:
             # Ensure the data iterator is properly closed to clean up worker processes
-            data_iter.close()  # type: ignore[attr-defined]
+            data_iter.close()
             logger.debug(
                 f"[worker {device_idx}]: Closed data iterator for batch {worker_batch_idx}"
             )
