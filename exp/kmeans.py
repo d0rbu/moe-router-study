@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import concurrent.futures
 from dataclasses import dataclass
 from functools import partial
@@ -5,6 +7,7 @@ import gc
 from itertools import batched, islice
 import os
 import queue
+from queue import Queue
 import sys
 from threading import Barrier
 import traceback
@@ -125,21 +128,21 @@ class RunningKMeansData:
     # losses of shape (num_K) for online running updates
     losses: th.Tensor
 
-    def clone(self) -> "RunningKMeansData":
+    def clone(self) -> RunningKMeansData:
         return RunningKMeansData(
             centroid_sets=[centroids.clone() for centroids in self.centroid_sets],
             weight_sets=[weights.clone() for weights in self.weight_sets],
             losses=self.losses.clone(),
         )
 
-    def to(self, device: th.device) -> "RunningKMeansData":
+    def to(self, device: th.device) -> RunningKMeansData:
         return RunningKMeansData(
             centroid_sets=[centroids.to(device) for centroids in self.centroid_sets],
             weight_sets=[weights.to(device) for weights in self.weight_sets],
             losses=self.losses.to(device),
         )
 
-    def __add__(self, other: "RunningKMeansData") -> "RunningKMeansData":
+    def __add__(self, other: RunningKMeansData) -> RunningKMeansData:
         new_data = RunningKMeansData(
             centroid_sets=[
                 th.empty_like(centroids) for centroids in self.centroid_sets
@@ -252,7 +255,7 @@ class RunningKMeansData:
 class GPUData:
     synced_data: RunningKMeansData
     dirty_data: RunningKMeansData
-    queue: queue.Queue[tuple[th.Tensor, bool, int | None]] | None = None
+    queue: Queue[tuple[th.Tensor, bool, int | None]] | None = None
 
 
 def compute_all_centroids_from_assignments(
