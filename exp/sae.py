@@ -159,12 +159,16 @@ async def gpu_worker(
                 normalize_activations=True,
                 device=device,
                 autocast_dtype=dtype,
-                tqdm_kwargs={"position": dist.get_rank() * (num_gpus + 1) + device_idx + 1},
+                tqdm_kwargs={
+                    "position": dist.get_rank() * (num_gpus + 1) + device_idx + 1
+                },
             )
         finally:
             # Ensure the data iterator is properly closed to clean up worker processes
             data_iter.close()
-            logger.debug(f"[worker {device_idx}]: Closed data iterator for batch {worker_batch_idx}")
+            logger.debug(
+                f"[worker {device_idx}]: Closed data iterator for batch {worker_batch_idx}"
+            )
 
         gpu_queue.task_done()
 
