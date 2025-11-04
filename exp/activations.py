@@ -1,6 +1,5 @@
 from collections import defaultdict, deque
 from collections.abc import Callable, Generator
-import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from itertools import batched, count, islice, pairwise
@@ -418,12 +417,10 @@ class Activations:
         return truncated_contiguous_activation_filepaths
 
     @staticmethod
-    def load_files_sync(filepaths: list[str]) -> list[dict]:
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            futures = [
-                executor.submit(th.load, filepath, weights_only=False)
-                for filepath in filepaths
-            ]
+    def load_files_async(filepaths: list[str]) -> list[dict]:
+        with ThreadPoolExecutor() as executor:
+            load_unsafe = partial(th.load, weights_only=False)
+            futures = [executor.submit(load_unsafe, filepath) for filepath in filepaths]
             results = [future.result() for future in futures]
         return results
 
@@ -531,7 +528,7 @@ class Activations:
 
             filepaths, batch_sizes = zip(*shuffle_batch, strict=True)
 
-            file_data = cls.load_files_sync(filepaths)
+            file_data = cls.load_files_async(filepaths)
 
             batch_sizes = th.stack(batch_sizes, dim=0)
             batch_size_ranges = th.cumsum(batch_sizes, dim=0)
