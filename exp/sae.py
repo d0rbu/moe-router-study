@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Callable, Iterator
+from collections.abc import Generator as TypingGenerator
 from dataclasses import dataclass, field
 from itertools import batched, count, product
 import math
@@ -145,7 +146,7 @@ async def gpu_worker(
         logger.debug(f"[worker {device_idx}]: Got batch {worker_batch_idx}")
 
         # Create the data iterator
-        data_iter = data_iterator(batch.submodule_name)
+        data_iter = data_iterator(batch.submodule_name)  # type: ignore[assignment]
 
         try:
             await trainSAE(
@@ -165,7 +166,7 @@ async def gpu_worker(
             )
         finally:
             # Ensure the data iterator is properly closed to clean up worker processes
-            data_iter.close()
+            data_iter.close()  # type: ignore[attr-defined]
             logger.debug(
                 f"[worker {device_idx}]: Closed data iterator for batch {worker_batch_idx}"
             )
@@ -281,7 +282,9 @@ async def run_sae_training(
     assert activation_dim > 0, "Activation dimension must be greater than 0"
     assert num_epochs > 0, "Number of epochs must be greater than 0"
 
-    def data_iterator(submodule_name: str) -> Iterator[tuple[th.Tensor, list[int]]]:
+    def data_iterator(
+        submodule_name: str,
+    ) -> TypingGenerator[tuple[th.Tensor, list[int]], None, None]:
         """
         Create a data iterator for the given submodule.
 
