@@ -7,6 +7,7 @@ import os
 import queue
 import sys
 from threading import Barrier
+import traceback
 from typing import Any, TypeVar
 
 import arguably
@@ -43,8 +44,6 @@ def handle_exceptions(future: concurrent.futures.Future) -> None:
     try:
         exception = future.exception(timeout=0)
         if exception is not None:
-            import traceback
-
             tb_str = "".join(traceback.format_tb(exception.__traceback__))
             logger.exception(f"[worker]:\n{tb_str}{exception}")
             raise exception
