@@ -6,7 +6,7 @@ from itertools import batched, count, product
 import math
 import os
 import sys
-from typing import Any
+from typing import Any, cast
 
 import arguably
 from dictionary_learning.dictionary import Dictionary
@@ -146,7 +146,10 @@ async def gpu_worker(
         logger.debug(f"[worker {device_idx}]: Got batch {worker_batch_idx}")
 
         # Create the data iterator
-        data_iter = data_iterator(batch.submodule_name)
+        data_iter = cast(
+            TypedGenerator[tuple[th.Tensor, list[int]], None, None],
+            data_iterator(batch.submodule_name),
+        )
 
         try:
             await trainSAE(
