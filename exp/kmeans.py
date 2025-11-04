@@ -1,13 +1,12 @@
 import concurrent.futures
-import threading
-import queue
-from threading import Barrier
 from dataclasses import dataclass
 from functools import partial
 import gc
 from itertools import batched, islice
 import os
+import queue
 import sys
+from threading import Barrier
 from typing import Any, TypeVar
 
 import arguably
@@ -254,7 +253,7 @@ class RunningKMeansData:
 class GPUData:
     synced_data: RunningKMeansData
     dirty_data: RunningKMeansData
-    queue: queue.Queue | None = None
+    queue: "queue.Queue[tuple[th.Tensor, bool, int | None]] | None" = None
 
 
 def compute_all_centroids_from_assignments(
@@ -724,10 +723,9 @@ def sync(
             all_weights, weights, group=group, async_op=True
         )
 
-        asyncio.gather(
-            asyncio.to_thread(centroids_future.wait),
-            asyncio.to_thread(weights_future.wait),
-        )
+        # Wait for both futures to complete
+        centroids_future.wait()
+        weights_future.wait()
 
         # (K)
         weights_total = all_weights.sum(dim=0)
@@ -972,9 +970,11 @@ def gpu_worker(
             f"GPU {gpu_idx} running kmeans step with {len(gpu_data.synced_data.centroid_sets)} centroids"
         )
 
-        updates = asyncio.gather(
-            *[
-                kmeans_step(
+        # Use concurrent.futures to run kmeans_step in parallel
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = [
+                executor.submit(
+                    kmeans_step,
                     data=flat_data,
                     centroids=centroids,
                     centroid_minibatch_size=centroid_minibatch_size,
@@ -983,7 +983,7 @@ def gpu_worker(
                 )
                 for centroids in gpu_data.synced_data.centroid_sets
             ]
-        )
+            updates = [future.result() for future in futures]
         new_centroid_sets, new_weight_sets, new_losses = zip(*updates, strict=True)
 
         logger.trace(f"GPU {gpu_idx} updated dirty data")
