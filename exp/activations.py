@@ -4,6 +4,8 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from itertools import batched, count, islice, pairwise
 import os
+import threading
+import time
 
 from loguru import logger
 import torch as th
@@ -72,6 +74,17 @@ class Activations:
         self.activation_filepaths = activation_filepaths
         self.max_cache_size = max_cache_size
         self._total_tokens = None
+        
+        # Shared file cache and position tracking
+        self._file_cache = {}  # {file_index: file_data}
+        self._file_positions = {}  # {thread_id: current_file_index}
+        self._positions_lock = threading.Lock()
+        self._cache_lock = threading.Lock()
+        self._cache_update_event = threading.Event()
+        
+        # Shared worker process for file loading
+        self.file_worker = None
+        self._worker_lock = threading.Lock()
 
     @classmethod
     def load(
@@ -138,53 +151,159 @@ class Activations:
 
         return self._total_tokens
 
-    # worker to fetch data from disk
-    def _get_file_data(self, cached_file_data: mp.JoinableQueue):
-        for activation_filepath in self.activation_filepaths:
-            file_data = th.load(activation_filepath, weights_only=False)
-
-            logger.debug(f"Loaded file {activation_filepath}")
-            logger.debug(f"File data keys: {file_data.keys()}")
-            cached_file_data.put(file_data, block=True)
-
-        cached_file_data.put(None, block=True)
-        cached_file_data.join()
+    def _file_worker_loop(self):
+        """Background worker that maintains the file cache based on thread positions."""
+        logger.debug("File worker started")
+        
+        while True:
+            # Wait for a signal that positions have changed
+            self._cache_update_event.wait()
+            self._cache_update_event.clear()
+            
+            # Compute desired file set based on current positions
+            with self._positions_lock:
+                if not self._file_positions:
+                    # No active threads, nothing to do
+                    logger.trace("No active threads, worker idling")
+                    continue
+                
+                positions = list(self._file_positions.values())
+            
+            # Compute fair cache distribution
+            num_threads = len(positions)
+            files_per_thread = self.max_cache_size // num_threads
+            
+            if files_per_thread == 0:
+                logger.warning(
+                    f"Cache size {self.max_cache_size} too small for {num_threads} threads"
+                )
+                files_per_thread = 1
+            
+            desired_files = set()
+            allocated_files = set()
+            
+            # Allocate files fairly among threads
+            for position in sorted(positions):
+                thread_files = []
+                file_idx = position
+                
+                while len(thread_files) < files_per_thread:
+                    if file_idx >= len(self.activation_filepaths):
+                        break
+                    if file_idx not in allocated_files:
+                        thread_files.append(file_idx)
+                        allocated_files.add(file_idx)
+                    file_idx += 1
+                
+                desired_files.update(thread_files)
+                
+                if len(allocated_files) >= self.max_cache_size:
+                    break
+            
+            # Determine files to load and evict
+            with self._cache_lock:
+                current_files = set(self._file_cache.keys())
+                files_to_load = desired_files - current_files
+                files_to_evict = current_files - desired_files
+                
+                logger.trace(
+                    f"Worker: current={sorted(current_files)}, "
+                    f"desired={sorted(desired_files)}, "
+                    f"load={sorted(files_to_load)}, "
+                    f"evict={sorted(files_to_evict)}"
+                )
+                
+                # Evict files no longer needed
+                for file_idx in files_to_evict:
+                    logger.trace(f"Evicting file {file_idx}")
+                    del self._file_cache[file_idx]
+                
+                # Load new files
+                for file_idx in sorted(files_to_load):
+                    if file_idx < len(self.activation_filepaths):
+                        filepath = self.activation_filepaths[file_idx]
+                        logger.debug(f"Loading file {file_idx}: {filepath}")
+                        file_data = th.load(filepath, weights_only=False)
+                        self._file_cache[file_idx] = file_data
+                        logger.debug(f"Loaded file {file_idx}, cache size={len(self._file_cache)}")
+    
+    def _load_files_sequentially(self) -> Generator[dict, None, None]:
+        """Generator that loads files sequentially, coordinating with the shared worker."""
+        # Acquire a thread ID
+        with self._positions_lock:
+            # Find first available integer ID
+            thread_id = 0
+            while thread_id in self._file_positions:
+                thread_id += 1
+            
+            self._file_positions[thread_id] = 0
+            logger.debug(f"Thread {thread_id} acquired, starting at file 0")
+        
+        # Signal worker to load initial files
+        self._cache_update_event.set()
+        
+        try:
+            for file_idx in range(len(self.activation_filepaths)):
+                # Wait for file to be in cache
+                while True:
+                    with self._cache_lock:
+                        if file_idx in self._file_cache:
+                            file_data = self._file_cache[file_idx]
+                            logger.trace(f"Thread {thread_id} accessing file {file_idx} from cache")
+                            break
+                    
+                    # File not ready, wait a bit
+                    logger.trace(f"Thread {thread_id} waiting for file {file_idx}")
+                    time.sleep(0.01)
+                
+                # Yield the file data
+                yield file_data
+                
+                # Update position and signal worker
+                with self._positions_lock:
+                    if thread_id in self._file_positions:
+                        self._file_positions[thread_id] = file_idx + 1
+                        logger.trace(f"Thread {thread_id} moved to position {file_idx + 1}")
+                
+                self._cache_update_event.set()
+        
+        finally:
+            # Clean up thread tracking
+            with self._positions_lock:
+                if thread_id in self._file_positions:
+                    del self._file_positions[thread_id]
+                    logger.debug(f"Thread {thread_id} released")
+            
+            # Signal worker to update cache
+            self._cache_update_event.set()
 
     def __call__(
         self, batch_size: int = 4096, start_idx: int = 0, max_samples: int = 0
     ) -> Generator[dict, None, None]:
         assert max_samples >= 0, f"max_samples must be non-negative, got {max_samples}"
 
+        # Ensure worker is started (lazy initialization)
+        with self._worker_lock:
+            if self.file_worker is None:
+                self.file_worker = threading.Thread(
+                    target=self._file_worker_loop, daemon=True
+                )
+                self.file_worker.start()
+                logger.debug("Started shared file worker thread")
+
         # Track samples processed for max_samples limit
         samples_processed = 0
 
-        # cache of file data to come
-        cached_file_data = mp.JoinableQueue(maxsize=self.max_cache_size)
-
-        # create worker process to get file data
-        worker_process = mp.Process(
-            target=self._get_file_data, args=(cached_file_data,)
-        )
-        worker_process.start()
+        # Use the shared file loading mechanism
+        file_iterator = self._load_files_sequentially()
         skipped_start = False
 
         try:
-            current_data = cached_file_data.get(block=True)
-            cached_file_data.task_done()
-
-            if current_data is None:
-                logger.debug(
-                    "No more data to load, stopping activations worker process"
-                )
-                worker_process.join()
-                logger.trace("Activations worker process joined")
-                cached_file_data.close()
-                logger.trace("Cached file data queue closed")
-                return
-            else:
-                logger.debug(
-                    f"Loaded data with shape {current_data[ActivationKeys.MLP_OUTPUT].shape}"
-                )
+            current_data = next(file_iterator)
+            
+            logger.debug(
+                f"Loaded data with shape {current_data[ActivationKeys.MLP_OUTPUT].shape}"
+            )
 
             current_local_idx = 0
             current_data_size = current_data[ActivationKeys.MLP_OUTPUT].shape[0]
@@ -229,17 +348,11 @@ class Activations:
                                     current_batch[key] = value
 
                     remaining_batch_size -= current_data_size - current_local_idx
-                    current_data = cached_file_data.get(block=True)
-                    cached_file_data.task_done()
-
-                    if current_data is None:
-                        logger.debug(
-                            "No more data to load, stopping activations worker process"
-                        )
-                        worker_process.join()
-                        logger.trace("Activations worker process joined")
-                        cached_file_data.close()
-                        logger.trace("Cached file data queue closed")
+                    
+                    try:
+                        current_data = next(file_iterator)
+                    except StopIteration:
+                        logger.debug("No more data to load, iteration complete")
                         return
 
                     current_local_idx = 0
@@ -314,12 +427,9 @@ class Activations:
 
         except GeneratorExit:
             # Handle generator close() - clean up resources
-            logger.debug("GeneratorExit received, stopping activations worker process")
-            worker_process.terminate()
-            logger.trace("Activations worker process terminated")
-            cached_file_data.close()
-            logger.trace("Cached file data queue closed")
-            del worker_process, cached_file_data, current_data, current_batch
+            logger.debug("GeneratorExit received, closing file iterator")
+            file_iterator.close()
+            logger.trace("File iterator closed")
             clear_memory()
             raise  # Re-raise GeneratorExit to properly close the generator
 
