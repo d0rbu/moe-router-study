@@ -10,7 +10,6 @@ import time
 from loguru import logger
 import torch as th
 import torch.distributed as dist
-import torch.multiprocessing as mp
 from tqdm import tqdm
 
 from core.device import DeviceType, get_backend, get_distributed_backend
@@ -74,14 +73,14 @@ class Activations:
         self.activation_filepaths = activation_filepaths
         self.max_cache_size = max_cache_size
         self._total_tokens = None
-        
+
         # Shared file cache and position tracking
         self._file_cache = {}  # {file_index: file_data}
         self._file_positions = {}  # {thread_id: current_file_index}
         self._positions_lock = threading.Lock()
         self._cache_lock = threading.Lock()
         self._cache_update_event = threading.Event()
-        
+
         # Shared worker process for file loading
         self.file_worker = None
         self._worker_lock = threading.Lock()
@@ -154,39 +153,39 @@ class Activations:
     def _file_worker_loop(self):
         """Background worker that maintains the file cache based on thread positions."""
         logger.debug("File worker started")
-        
+
         while True:
             # Wait for a signal that positions have changed
             self._cache_update_event.wait()
             self._cache_update_event.clear()
-            
+
             # Compute desired file set based on current positions
             with self._positions_lock:
                 if not self._file_positions:
                     # No active threads, nothing to do
                     logger.trace("No active threads, worker idling")
                     continue
-                
+
                 positions = list(self._file_positions.values())
-            
+
             # Compute fair cache distribution
             num_threads = len(positions)
             files_per_thread = self.max_cache_size // num_threads
-            
+
             if files_per_thread == 0:
                 logger.warning(
                     f"Cache size {self.max_cache_size} too small for {num_threads} threads"
                 )
                 files_per_thread = 1
-            
+
             desired_files = set()
             allocated_files = set()
-            
+
             # Allocate files fairly among threads
             for position in sorted(positions):
                 thread_files = []
                 file_idx = position
-                
+
                 while len(thread_files) < files_per_thread:
                     if file_idx >= len(self.activation_filepaths):
                         break
@@ -194,30 +193,30 @@ class Activations:
                         thread_files.append(file_idx)
                         allocated_files.add(file_idx)
                     file_idx += 1
-                
+
                 desired_files.update(thread_files)
-                
+
                 if len(allocated_files) >= self.max_cache_size:
                     break
-            
+
             # Determine files to load and evict
             with self._cache_lock:
                 current_files = set(self._file_cache.keys())
                 files_to_load = desired_files - current_files
                 files_to_evict = current_files - desired_files
-                
+
                 logger.trace(
                     f"Worker: current={sorted(current_files)}, "
                     f"desired={sorted(desired_files)}, "
                     f"load={sorted(files_to_load)}, "
                     f"evict={sorted(files_to_evict)}"
                 )
-                
+
                 # Evict files no longer needed
                 for file_idx in files_to_evict:
                     logger.trace(f"Evicting file {file_idx}")
                     del self._file_cache[file_idx]
-                
+
                 # Load new files
                 for file_idx in sorted(files_to_load):
                     if file_idx < len(self.activation_filepaths):
@@ -225,8 +224,10 @@ class Activations:
                         logger.debug(f"Loading file {file_idx}: {filepath}")
                         file_data = th.load(filepath, weights_only=False)
                         self._file_cache[file_idx] = file_data
-                        logger.debug(f"Loaded file {file_idx}, cache size={len(self._file_cache)}")
-    
+                        logger.debug(
+                            f"Loaded file {file_idx}, cache size={len(self._file_cache)}"
+                        )
+
     def _load_files_sequentially(self) -> Generator[dict, None, None]:
         """Generator that loads files sequentially, coordinating with the shared worker."""
         # Acquire a thread ID
@@ -235,13 +236,13 @@ class Activations:
             thread_id = 0
             while thread_id in self._file_positions:
                 thread_id += 1
-            
+
             self._file_positions[thread_id] = 0
             logger.debug(f"Thread {thread_id} acquired, starting at file 0")
-        
+
         # Signal worker to load initial files
         self._cache_update_event.set()
-        
+
         try:
             for file_idx in range(len(self.activation_filepaths)):
                 # Wait for file to be in cache
@@ -249,31 +250,35 @@ class Activations:
                     with self._cache_lock:
                         if file_idx in self._file_cache:
                             file_data = self._file_cache[file_idx]
-                            logger.trace(f"Thread {thread_id} accessing file {file_idx} from cache")
+                            logger.trace(
+                                f"Thread {thread_id} accessing file {file_idx} from cache"
+                            )
                             break
-                    
+
                     # File not ready, wait a bit
                     logger.trace(f"Thread {thread_id} waiting for file {file_idx}")
                     time.sleep(0.01)
-                
+
                 # Yield the file data
                 yield file_data
-                
+
                 # Update position and signal worker
                 with self._positions_lock:
                     if thread_id in self._file_positions:
                         self._file_positions[thread_id] = file_idx + 1
-                        logger.trace(f"Thread {thread_id} moved to position {file_idx + 1}")
-                
+                        logger.trace(
+                            f"Thread {thread_id} moved to position {file_idx + 1}"
+                        )
+
                 self._cache_update_event.set()
-        
+
         finally:
             # Clean up thread tracking
             with self._positions_lock:
                 if thread_id in self._file_positions:
                     del self._file_positions[thread_id]
                     logger.debug(f"Thread {thread_id} released")
-            
+
             # Signal worker to update cache
             self._cache_update_event.set()
 
@@ -300,7 +305,7 @@ class Activations:
 
         try:
             current_data = next(file_iterator)
-            
+
             logger.debug(
                 f"Loaded data with shape {current_data[ActivationKeys.MLP_OUTPUT].shape}"
             )
@@ -348,7 +353,7 @@ class Activations:
                                     current_batch[key] = value
 
                     remaining_batch_size -= current_data_size - current_local_idx
-                    
+
                     try:
                         current_data = next(file_iterator)
                     except StopIteration:
