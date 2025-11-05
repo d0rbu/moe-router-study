@@ -5,7 +5,6 @@ from functools import partial
 from itertools import batched, count, islice, pairwise
 import os
 import threading
-import time
 
 from loguru import logger
 import torch as th
@@ -167,7 +166,7 @@ class Activations:
                     logger.trace("No active threads, worker idling")
                     continue
 
-                positions = sorted(list(self._file_positions.values()))
+                positions = sorted(self._file_positions.values())
 
             # Compute fair cache distribution (as equal as possible, not perfect)
             num_threads = len(positions)
@@ -186,8 +185,6 @@ class Activations:
             # Allocate files fairly among threads
             for thread_idx, position in enumerate(positions):
                 # First 'extra_files' threads get one extra file
-                files_for_this_thread = base_files_per_thread + (1 if thread_idx < extra_files else 0)
-                
                 # Add files starting from this thread's position
                 for file_idx in range(position, len(self.activation_filepaths)):
                     if file_idx not in desired_files:
@@ -202,8 +199,9 @@ class Activations:
                     break
 
             # Assert all desired files are valid before locking
-            assert all(0 <= f < len(self.activation_filepaths) for f in desired_files), \
-                f"Invalid file indices in desired_files: {desired_files}"
+            assert all(
+                0 <= f < len(self.activation_filepaths) for f in desired_files
+            ), f"Invalid file indices in desired_files: {desired_files}"
 
             # Determine files to load and evict
             with self._cache_lock:
@@ -228,18 +226,14 @@ class Activations:
                     filepath = self.activation_filepaths[file_idx]
                     logger.trace(f"Loading file {file_idx}: {filepath}")
                     file_data = th.load(filepath, weights_only=False)
-                    
                     # Apply share_memory_() to all tensors for thread safety
-                    for key, value in file_data.items():
+                    for value in file_data.values():
                         if isinstance(value, th.Tensor):
                             value.share_memory_()
-                    
                     self._file_cache[file_idx] = file_data
-                    
                     # Notify any waiting threads that this file is ready
                     if file_idx in self._file_ready_events:
                         self._file_ready_events[file_idx].set()
-                    
                     logger.trace(
                         f"Loaded file {file_idx}, cache size={len(self._file_cache)}"
                     )
@@ -280,19 +274,20 @@ class Activations:
                 # File should now be in cache
                 with self._cache_lock:
                     file_data = self._file_cache[file_idx]
-                    logger.trace(f"Thread {thread_id} accessing file {file_idx} from cache")
+                    logger.trace(
+                        f"Thread {thread_id} accessing file {file_idx} from cache"
+                    )
 
                 # Yield the file data
                 yield file_data
 
                 # Update position and signal worker
                 with self._positions_lock:
-                    assert thread_id in self._file_positions, \
+                    assert thread_id in self._file_positions, (
                         f"Thread {thread_id} not in _file_positions"
-                    self._file_positions[thread_id] = file_idx + 1
-                    logger.trace(
-                        f"Thread {thread_id} moved to position {file_idx + 1}"
                     )
+                    self._file_positions[thread_id] = file_idx + 1
+                    logger.trace(f"Thread {thread_id} moved to position {file_idx + 1}")
 
                 self._cache_update_event.set()
 
