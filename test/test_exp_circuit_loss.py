@@ -593,7 +593,7 @@ class TestCircuitLossIntegration:
         topk = data["topk"]
         assert isinstance(activated_experts, th.Tensor)
         assert isinstance(topk, int)
-        
+
         max_iou, _ = max_iou_and_index(activated_experts, circuits)
         mean_iou = mean_max_iou(activated_experts, circuits)
         hard_score = hard_circuit_score(activated_experts, circuits)
