@@ -1523,7 +1523,9 @@ def kmeans_manhattan(
 
                 # compute effective step index and determine if we should save
                 effective_step_idx = distributed_batch_idx // accumulation_size
-                save_idx = effective_step_idx if effective_step_idx in save_steps else None
+                save_idx = (
+                    effective_step_idx if effective_step_idx in save_steps else None
+                )
 
                 logger.trace(f"Should sync: {should_sync}")
                 logger.trace(f"Accumulation size: {accumulation_size}")
@@ -1544,7 +1546,7 @@ def kmeans_manhattan(
                             should_sync,
                             save_idx,
                         )
-                        )
+                    )
         finally:
             # Explicitly close the generator to clean up the background file-loading process
             # This prevents process accumulation across k-means iterations
