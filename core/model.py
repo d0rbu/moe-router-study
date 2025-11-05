@@ -1,12 +1,7 @@
-import re
 from dataclasses import dataclass, field
-from typing import Any
+import re
 
-from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel
-from transformers.tokenization_utils_base import PreTrainedTokenizerBase
-from transformers.utils.logging import disable_progress_bar
 from huggingface_hub import list_repo_refs
-import torch as th
 
 
 @dataclass
@@ -22,7 +17,7 @@ class Checkpoint:
 @dataclass
 class ModelConfig:
     hf_name: str
-    branch_regex: re.Pattern | None = None
+    branch_regex: str | re.Pattern | None = None
     revision_format: str | None = None
     tokenizer_has_padding_token: bool = True
     checkpoints: list[Checkpoint] = field(default_factory=list)
@@ -32,7 +27,9 @@ class ModelConfig:
             self.checkpoints = []
             return
 
-        self.branch_regex = re.compile(self.branch_regex)
+        # Compile regex if it's a string
+        if isinstance(self.branch_regex, str):
+            self.branch_regex = re.compile(self.branch_regex)
 
         refs = list_repo_refs(self.hf_name)
         self.all_branches = [branch.name for branch in refs.branches]

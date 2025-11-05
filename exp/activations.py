@@ -7,7 +7,9 @@ from tqdm import tqdm
 from exp import ROUTER_LOGITS_DIR
 
 
-def load_activations_and_indices_and_topk(device: str = "cuda") -> tuple[th.Tensor, th.Tensor, int]:
+def load_activations_and_indices_and_topk(
+    device: str = "cuda",
+) -> tuple[th.Tensor, th.Tensor, int]:
     activated_expert_indices_collection: list[th.Tensor] = []
     activated_experts_collection: list[th.Tensor] = []
 
@@ -21,7 +23,7 @@ def load_activations_and_indices_and_topk(device: str = "cuda") -> tuple[th.Tens
         router_logits = output["router_logits"].to(device)
 
         # (B, L, E) -> (B, L, topk)
-        num_layers, num_experts = router_logits.shape[1], router_logits.shape[2]
+        _num_layers, _num_experts = router_logits.shape[1], router_logits.shape[2]
         topk_indices = th.topk(router_logits, k=top_k, dim=2).indices
 
         # (B, L, topk) -> (B, L, E)

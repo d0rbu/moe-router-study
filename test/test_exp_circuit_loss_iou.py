@@ -22,8 +22,8 @@ def test_compute_iou_basic_overlap() -> None:
     # circuits: (C=2, L=1, E=4)
     circuits = th.tensor(
         [
-            [[True, True, False, False]],   # circuit 0
-            [[False, True, True, False]],   # circuit 1
+            [[True, True, False, False]],  # circuit 0
+            [[False, True, True, False]],  # circuit 1
         ],
         dtype=th.bool,
     )
@@ -33,7 +33,7 @@ def test_compute_iou_basic_overlap() -> None:
     assert iou.shape == (2, 2)
 
     # All pairs here have union of size 3 and intersection of size 1 -> IoU = 1/3
-    expected = th.tensor([[1/3, 1/3], [1/3, 1/3]], dtype=th.float32)
+    expected = th.tensor([[1 / 3, 1 / 3], [1 / 3, 1 / 3]], dtype=th.float32)
     assert th.allclose(iou, expected, atol=1e-6)
 
 
@@ -41,8 +41,8 @@ def test_compute_iou_full_and_zero_overlap() -> None:
     data = th.tensor([[[True, False]]], dtype=th.bool)  # (1,1,2)
     circuits = th.tensor(
         [
-            [[True, False]],   # full overlap -> IoU 1.0
-            [[False, True]],   # zero overlap -> IoU 0.0
+            [[True, False]],  # full overlap -> IoU 1.0
+            [[False, True]],  # zero overlap -> IoU 0.0
         ],
         dtype=th.bool,
     )

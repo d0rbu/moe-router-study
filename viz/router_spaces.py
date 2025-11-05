@@ -24,9 +24,9 @@ def router_spaces() -> None:
     o_proj_weights_data = th.load(o_proj_weight_path)
 
     router_weights = router_weights_data["weights"]
-    down_proj_weights = down_proj_weights_data["weights"]
+    down_proj_weights_data["weights"]
     o_proj_weights = o_proj_weights_data["weights"]
-    num_layers = len(o_proj_weights)
+    len(o_proj_weights)
     router_layers = list(router_weights.keys())
     num_router_layers = len(router_layers)
     topk = router_weights_data["topk"]
