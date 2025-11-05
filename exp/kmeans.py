@@ -1,12 +1,12 @@
-import asyncio
-from asyncio import Barrier
-from collections.abc import Awaitable
+import concurrent.futures
 from dataclasses import dataclass
 from functools import partial
 import gc
 from itertools import batched, islice
 import os
+from queue import Queue
 import sys
+from threading import Barrier
 from typing import Any, TypeVar
 
 import arguably
@@ -16,7 +16,7 @@ import torch.distributed as dist
 from tqdm import tqdm
 import yaml
 
-from core.async_utils import handle_exceptions
+from core.async_utils import handle_future_exceptions as handle_exceptions
 from core.device import (
     DeviceType,
     assert_device_type,
@@ -39,7 +39,9 @@ from exp.training import get_experiment_name
 T = TypeVar("T")
 
 
-def check_worker_health(workers: dict[str, asyncio.Task], *, context: str = "") -> None:
+def check_worker_health(
+    workers: dict[str, concurrent.futures.Future], *, context: str = ""
+) -> None:
     """Check if any workers have failed and raise appropriate exceptions."""
     for worker_name, worker in workers.items():
         if worker.done():
@@ -55,19 +57,19 @@ def check_worker_health(workers: dict[str, asyncio.Task], *, context: str = "") 
                 raise RuntimeError(f"{worker_name} worker completed unexpectedly")
 
 
-async def safe_await_with_worker_check[T](
-    awaitable: Awaitable[T],
+def safe_future_with_worker_check[T](
+    future: concurrent.futures.Future[T],
     *,
-    workers: dict[str, asyncio.Task] | None = None,
+    workers: dict[str, concurrent.futures.Future] | None = None,
     timeout: float = 30.0,
     operation_name: str = "",
 ) -> T:
-    """Safely await an operation with timeout and worker health checking on error."""
+    """Safely wait for a future with timeout and worker health checking on error."""
     if workers is None:
         workers = {}
 
     try:
-        result = await asyncio.wait_for(awaitable, timeout=timeout)
+        result = future.result(timeout=timeout)
         if operation_name:
             logger.trace(f"Successfully completed {operation_name}")
         else:
@@ -235,10 +237,10 @@ class RunningKMeansData:
 class GPUData:
     synced_data: RunningKMeansData
     dirty_data: RunningKMeansData
-    queue: asyncio.Queue | None = None
+    queue: Queue[tuple[th.Tensor, bool, int | None]] | None = None
 
 
-async def compute_all_centroids_from_assignments(
+def compute_all_centroids_from_assignments(
     data: th.Tensor,
     assignments: th.Tensor,
     num_centroids: int,
@@ -487,7 +489,7 @@ def validate_gpu_centroid_synchronization(
     return all_synchronized
 
 
-async def kmeans_step(
+def kmeans_step(
     data: th.Tensor,  # (B, L * E)
     centroids: th.Tensor,  # (K, L * E)
     centroid_minibatch_size: int = 65536,
@@ -576,7 +578,7 @@ async def kmeans_step(
     centroid_distances = th.gather(distances, 1, assignments.unsqueeze(1))
     logger.trace(f"Computed centroid distances with shape {centroid_distances.shape}")
 
-    new_centroids, new_weights = await compute_all_centroids_from_assignments(
+    new_centroids, new_weights = compute_all_centroids_from_assignments(
         data=data,
         assignments=assignments,
         num_centroids=centroids.shape[0],
@@ -618,7 +620,7 @@ async def kmeans_step(
     return new_centroids, new_weights, new_loss
 
 
-async def sync(
+def sync(
     gpu_idx: int,
     all_gpu_data: list[GPUData],
     losses_over_time: list[th.Tensor],
@@ -698,17 +700,8 @@ async def sync(
         # (N, K)
         all_weights = th.empty_like(weights).unsqueeze(0).repeat(world_size, 1)
 
-        centroids_future = dist.all_gather_into_tensor(
-            all_centroids, centroids, group=group, async_op=True
-        )
-        weights_future = dist.all_gather_into_tensor(
-            all_weights, weights, group=group, async_op=True
-        )
-
-        await asyncio.gather(
-            asyncio.to_thread(centroids_future.wait),
-            asyncio.to_thread(weights_future.wait),
-        )
+        dist.all_gather_into_tensor(all_centroids, centroids, group=group)
+        dist.all_gather_into_tensor(all_weights, weights, group=group)
 
         # (K)
         weights_total = all_weights.sum(dim=0)
@@ -811,7 +804,7 @@ async def sync(
             f"🔄 SYNC GPU {gpu_idx} k_idx={k_idx} BEFORE GPU AGGREGATION: Synced centroids zero_norms={zero_norms}/{len(centroid_norms)}, norm_stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}"
         )
 
-    await barrier.wait()
+    barrier.wait()
 
     gpu_data.synced_data += sum(
         (current_gpu_data.dirty_data.to(device) for current_gpu_data in all_gpu_data),
@@ -821,7 +814,7 @@ async def sync(
     backend.empty_cache()
 
     # Wait for all GPUs to finish reading dirty data before resetting
-    await barrier.wait()
+    barrier.wait()
 
     # reset dirty data now that it has been synced
     logger.debug(f"🔄 SYNC GPU {gpu_idx}: Resetting dirty data to zero...")
@@ -865,7 +858,7 @@ async def sync(
     logger.trace(f"✅ SYNC GPU {gpu_idx}: Sync operation fully completed")
 
 
-async def gpu_worker(
+def gpu_worker(
     gpu_idx: int,
     all_gpu_data: list[GPUData],
     top_k: int,
@@ -904,7 +897,7 @@ async def gpu_worker(
     while True:
         logger.trace(f"GPU {gpu_idx} waiting for queue item...")
         try:
-            queue_item = await asyncio.wait_for(gpu_data.queue.get(), timeout=60.0)
+            queue_item = gpu_data.queue.get(timeout=60.0)
             logger.trace(f"GPU {gpu_idx} picked up item from queue")
         except TimeoutError:
             logger.warning(
@@ -953,9 +946,11 @@ async def gpu_worker(
             f"GPU {gpu_idx} running kmeans step with {len(gpu_data.synced_data.centroid_sets)} centroids"
         )
 
-        updates = await asyncio.gather(
-            *[
-                kmeans_step(
+        # Use concurrent.futures to run kmeans_step in parallel
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = [
+                executor.submit(
+                    kmeans_step,
                     data=flat_data,
                     centroids=centroids,
                     centroid_minibatch_size=centroid_minibatch_size,
@@ -964,7 +959,7 @@ async def gpu_worker(
                 )
                 for centroids in gpu_data.synced_data.centroid_sets
             ]
-        )
+            updates = [future.result() for future in futures]
         new_centroid_sets, new_weight_sets, new_losses = zip(*updates, strict=True)
 
         logger.trace(f"GPU {gpu_idx} updated dirty data")
@@ -992,18 +987,14 @@ async def gpu_worker(
 
         logger.trace(f"GPU {gpu_idx} starting sync operation")
 
-        await safe_await_with_worker_check(
-            sync(
-                gpu_idx,
-                all_gpu_data,
-                losses_over_time,
-                barrier,
-                general_gpu_group,
-                gpu_specific_group,
-                device_type,
-            ),
-            timeout=300.0,
-            operation_name=f"sync operation for GPU {gpu_idx}",
+        sync(
+            gpu_idx,
+            all_gpu_data,
+            losses_over_time,
+            barrier,
+            general_gpu_group,
+            gpu_specific_group,
+            device_type,
         )
 
         logger.trace(
@@ -1075,7 +1066,7 @@ async def gpu_worker(
 GPU_QUEUE_MAXSIZE = 4
 
 
-async def kmeans_manhattan(
+def kmeans_manhattan(
     activations: Activations,
     activation_dim: int,
     k_values: tuple[int, ...],
@@ -1123,6 +1114,9 @@ async def kmeans_manhattan(
     backend.manual_seed(seed)
 
     num_gpus = backend.device_count()
+
+    # Create thread pool executor for concurrent workers
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=num_gpus)
     rank = dist.get_rank()
     num_nodes = dist.get_world_size()
     total_gpus = num_gpus * num_nodes
@@ -1220,7 +1214,7 @@ async def kmeans_manhattan(
                 ],
                 losses=th.zeros(len(k_values), dtype=th.float32, device=gpu_idx),
             ),
-            queue=asyncio.Queue(maxsize=GPU_QUEUE_MAXSIZE),
+            queue=Queue(maxsize=GPU_QUEUE_MAXSIZE),
         )
         for gpu_idx in range(num_gpus)
     ]
@@ -1441,22 +1435,20 @@ async def kmeans_manhattan(
 
     synchronization_barrier = Barrier(num_gpus)
     workers = [
-        asyncio.create_task(
-            gpu_worker(
-                gpu_idx,
-                all_gpu_data,
-                top_k,
-                losses_over_time,
-                synchronization_barrier,
-                general_gpu_group,
-                gpu_process_groups[gpu_idx] if gpu_process_groups is not None else None,
-                save_dir,
-                validate_every,
-                centroid_minibatch_size,
-                assignment_minibatch_size,
-                device_type,
-            ),
-            name=str(gpu_idx),
+        executor.submit(
+            gpu_worker,
+            gpu_idx,
+            all_gpu_data,
+            top_k,
+            losses_over_time,
+            synchronization_barrier,
+            general_gpu_group,
+            gpu_process_groups[gpu_idx] if gpu_process_groups is not None else None,
+            save_dir,
+            validate_every,
+            centroid_minibatch_size,
+            assignment_minibatch_size,
+            device_type,
         )
         for gpu_idx in range(num_gpus)
     ]
@@ -1545,17 +1537,12 @@ async def kmeans_manhattan(
                     f"Putting data on GPU {gpu_idx} with queue size {gpu_data.queue.qsize()}"
                 )
 
-                await safe_await_with_worker_check(
-                    gpu_data.queue.put(
-                        (
-                            gpu_minibatch[ActivationKeys.ROUTER_LOGITS],
-                            should_sync,
-                            save_idx,
-                        )
-                    ),
-                    workers={f"GPU {gpu_idx}": workers[gpu_idx]},
-                    timeout=3600.0,
-                    operation_name=f"queue put for GPU {gpu_idx}",
+                gpu_data.queue.put(
+                    (
+                        gpu_minibatch[ActivationKeys.ROUTER_LOGITS],
+                        should_sync,
+                        save_idx,
+                    )
                 )
 
     for gpu_data in all_gpu_data:
@@ -1563,7 +1550,7 @@ async def kmeans_manhattan(
             f"Putting stop signal on GPU with queue size {gpu_data.queue.qsize()}"
         )
 
-        await gpu_data.queue.put((None, False, None))
+        gpu_data.queue.put((None, False, None))
 
     if losses_over_time:
         logger.trace("Stacking losses over time")
@@ -1605,7 +1592,7 @@ KMEANS_FILENAME = "kmeans.pt"
 CHECKPOINT_FILENAME = "checkpoint_iter_{iteration}.pt"
 
 
-async def cluster_paths_async(
+def cluster_paths_async(
     model_name: str,
     dataset_name: str,
     activations: Activations,
@@ -1649,7 +1636,7 @@ async def cluster_paths_async(
                 f"number of devices ({num_devices})"
             )
 
-    centroids, top_k, losses, num_layers, num_experts = await kmeans_manhattan(
+    centroids, top_k, losses, num_layers, num_experts = kmeans_manhattan(
         activations=activations,
         activation_dim=activation_dim,
         k_values=k,
@@ -1791,26 +1778,24 @@ def cluster_paths(
 
     logger.info(f"Running with device type: {device_type}")
 
-    asyncio.run(
-        cluster_paths_async(
-            model_name=model_name,
-            dataset_name=dataset_name,
-            activations=activations,
-            activation_dim=router_activation_dim,
-            k=k,
-            batch_size=batch_size,
-            max_iters=max_iters,
-            seed=seed,
-            tokens_per_file=reshuffled_tokens_per_file,
-            minibatch_size=minibatch_size,
-            centroid_minibatch_size=centroid_minibatch_size,
-            assignment_minibatch_size=assignment_minibatch_size,
-            save_every=save_every,
-            validate_every=validate_every,
-            general_gpu_group=gpu_process_group,
-            gpu_process_groups=gpu_process_groups,
-            device_type=device_type,
-        )
+    cluster_paths_async(
+        model_name=model_name,
+        dataset_name=dataset_name,
+        activations=activations,
+        activation_dim=router_activation_dim,
+        k=k,
+        batch_size=batch_size,
+        max_iters=max_iters,
+        seed=seed,
+        tokens_per_file=reshuffled_tokens_per_file,
+        minibatch_size=minibatch_size,
+        centroid_minibatch_size=centroid_minibatch_size,
+        assignment_minibatch_size=assignment_minibatch_size,
+        save_every=save_every,
+        validate_every=validate_every,
+        general_gpu_group=gpu_process_group,
+        gpu_process_groups=gpu_process_groups,
+        device_type=device_type,
     )
 
 
