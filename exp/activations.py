@@ -193,7 +193,7 @@ class Activations:
                 # Add files starting from this thread's position
                 for file_idx in range(position, len(self.activation_filepaths)):
                     if file_idx in desired_files:
-                        continue  # Early exit: file already allocated
+                        continue
 
                     desired_thread_files.add(file_idx)
                     if len(desired_thread_files) >= num_files_for_thread:
