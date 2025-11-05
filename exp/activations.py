@@ -77,6 +77,7 @@ class Activations:
         # Shared file cache and position tracking
         self._file_cache = {}  # {file_index: file_data}
         self._file_positions = {}  # {thread_id: current_file_index}
+        self._file_ready_events = {}  # {file_index: threading.Event()} for signaling file loads
         self._positions_lock = threading.Lock()
         self._cache_lock = threading.Lock()
         self._cache_update_event = threading.Event()
@@ -166,38 +167,43 @@ class Activations:
                     logger.trace("No active threads, worker idling")
                     continue
 
-                positions = list(self._file_positions.values())
+                positions = sorted(list(self._file_positions.values()))
 
-            # Compute fair cache distribution
+            # Compute fair cache distribution (as equal as possible, not perfect)
             num_threads = len(positions)
-            files_per_thread = self.max_cache_size // num_threads
+            base_files_per_thread = self.max_cache_size // num_threads
+            extra_files = self.max_cache_size % num_threads  # Distribute remainder
 
-            if files_per_thread == 0:
+            if base_files_per_thread == 0:
                 logger.warning(
                     f"Cache size {self.max_cache_size} too small for {num_threads} threads"
                 )
-                files_per_thread = 1
+                base_files_per_thread = 1
+                extra_files = 0
 
             desired_files = set()
-            allocated_files = set()
 
             # Allocate files fairly among threads
-            for position in sorted(positions):
-                thread_files = []
-                file_idx = position
+            for thread_idx, position in enumerate(positions):
+                # First 'extra_files' threads get one extra file
+                files_for_this_thread = base_files_per_thread + (1 if thread_idx < extra_files else 0)
+                
+                # Add files starting from this thread's position
+                for file_idx in range(position, len(self.activation_filepaths)):
+                    if file_idx not in desired_files:
+                        desired_files.add(file_idx)
+                        if len(desired_files) >= sum(
+                            base_files_per_thread + (1 if i < extra_files else 0)
+                            for i in range(thread_idx + 1)
+                        ):
+                            break
 
-                while len(thread_files) < files_per_thread:
-                    if file_idx >= len(self.activation_filepaths):
-                        break
-                    if file_idx not in allocated_files:
-                        thread_files.append(file_idx)
-                        allocated_files.add(file_idx)
-                    file_idx += 1
-
-                desired_files.update(thread_files)
-
-                if len(allocated_files) >= self.max_cache_size:
+                if len(desired_files) >= self.max_cache_size:
                     break
+
+            # Assert all desired files are valid before locking
+            assert all(0 <= f < len(self.activation_filepaths) for f in desired_files), \
+                f"Invalid file indices in desired_files: {desired_files}"
 
             # Determine files to load and evict
             with self._cache_lock:
@@ -219,14 +225,24 @@ class Activations:
 
                 # Load new files
                 for file_idx in sorted(files_to_load):
-                    if file_idx < len(self.activation_filepaths):
-                        filepath = self.activation_filepaths[file_idx]
-                        logger.debug(f"Loading file {file_idx}: {filepath}")
-                        file_data = th.load(filepath, weights_only=False)
-                        self._file_cache[file_idx] = file_data
-                        logger.debug(
-                            f"Loaded file {file_idx}, cache size={len(self._file_cache)}"
-                        )
+                    filepath = self.activation_filepaths[file_idx]
+                    logger.trace(f"Loading file {file_idx}: {filepath}")
+                    file_data = th.load(filepath, weights_only=False)
+                    
+                    # Apply share_memory_() to all tensors for thread safety
+                    for key, value in file_data.items():
+                        if isinstance(value, th.Tensor):
+                            value.share_memory_()
+                    
+                    self._file_cache[file_idx] = file_data
+                    
+                    # Notify any waiting threads that this file is ready
+                    if file_idx in self._file_ready_events:
+                        self._file_ready_events[file_idx].set()
+                    
+                    logger.trace(
+                        f"Loaded file {file_idx}, cache size={len(self._file_cache)}"
+                    )
 
     def _load_files_sequentially(self) -> Generator[dict, None, None]:
         """Generator that loads files sequentially, coordinating with the shared worker."""
@@ -245,30 +261,38 @@ class Activations:
 
         try:
             for file_idx in range(len(self.activation_filepaths)):
-                # Wait for file to be in cache
-                while True:
-                    with self._cache_lock:
-                        if file_idx in self._file_cache:
-                            file_data = self._file_cache[file_idx]
-                            logger.trace(
-                                f"Thread {thread_id} accessing file {file_idx} from cache"
-                            )
-                            break
+                # Check if file is already in cache, otherwise wait for signal
+                with self._cache_lock:
+                    if file_idx not in self._file_cache:
+                        # Create event for this file if it doesn't exist
+                        if file_idx not in self._file_ready_events:
+                            self._file_ready_events[file_idx] = threading.Event()
+                        file_event = self._file_ready_events[file_idx]
+                    else:
+                        file_event = None
 
-                    # File not ready, wait a bit
+                # If file not in cache, wait for worker to load it
+                if file_event is not None:
                     logger.trace(f"Thread {thread_id} waiting for file {file_idx}")
-                    time.sleep(0.01)
+                    file_event.wait()
+                    file_event.clear()  # Reset for potential reuse
+
+                # File should now be in cache
+                with self._cache_lock:
+                    file_data = self._file_cache[file_idx]
+                    logger.trace(f"Thread {thread_id} accessing file {file_idx} from cache")
 
                 # Yield the file data
                 yield file_data
 
                 # Update position and signal worker
                 with self._positions_lock:
-                    if thread_id in self._file_positions:
-                        self._file_positions[thread_id] = file_idx + 1
-                        logger.trace(
-                            f"Thread {thread_id} moved to position {file_idx + 1}"
-                        )
+                    assert thread_id in self._file_positions, \
+                        f"Thread {thread_id} not in _file_positions"
+                    self._file_positions[thread_id] = file_idx + 1
+                    logger.trace(
+                        f"Thread {thread_id} moved to position {file_idx + 1}"
+                    )
 
                 self._cache_update_event.set()
 
