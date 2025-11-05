@@ -1137,6 +1137,18 @@ def kmeans_manhattan(
             f"number of devices ({num_gpus})"
         )
 
+    # Pre-load all activation files to avoid concurrent file I/O during training
+    # This prevents segfaults from multiple threads calling th.load() simultaneously
+    if activations.pre_loaded_files is None:
+        from exp.activations import pre_load_activation_files
+
+        logger.info("Pre-loading activation files to avoid concurrent I/O...")
+        pre_loaded_files = pre_load_activation_files(activations.activation_filepaths)
+        activations.pre_loaded_files = pre_loaded_files
+        logger.info(
+            f"✅ All {len(pre_loaded_files)} files pre-loaded and ready for training"
+        )
+
     if effective_batch_size is None:
         effective_batch_size = (len(activations) // total_gpus) * total_gpus
         logger.trace(f"Size of activations: {len(activations)}")

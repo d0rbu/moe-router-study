@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from itertools import batched, count, islice, pairwise
 import os
+from threading import Lock
 
 from loguru import logger
 import torch as th
@@ -18,6 +19,32 @@ from core.type import assert_type
 from exp import ACTIVATION_DIRNAME, OUTPUT_DIR
 from exp.get_activations import ActivationKeys
 from exp.training import get_experiment_name
+
+# Global lock to serialize file loading across all threads
+# This prevents concurrent th.load() calls which can cause segfaults
+_FILE_LOAD_LOCK = Lock()
+
+
+def pre_load_activation_files(activation_filepaths: list[str]) -> list[dict]:
+    """
+    Pre-load all activation files into memory to avoid concurrent file I/O during training.
+
+    Args:
+        activation_filepaths: List of file paths to load
+
+    Returns:
+        List of dictionaries containing the loaded activation data
+    """
+    logger.info(f"Pre-loading {len(activation_filepaths)} activation files...")
+    loaded_files = []
+
+    for filepath in tqdm(activation_filepaths, desc="Pre-loading files"):
+        file_data = th.load(filepath, weights_only=False)
+        loaded_files.append(file_data)
+        logger.trace(f"Pre-loaded file {filepath}")
+
+    logger.info(f"✅ Pre-loaded {len(loaded_files)} activation files into memory")
+    return loaded_files
 
 
 def broadcast_variable_length_list[T](
@@ -61,16 +88,19 @@ class Activations:
         device: str = "cpu",
         activation_filepaths: list[str] | None = None,
         max_cache_size: int = 2,
+        pre_loaded_files: list[dict] | None = None,
     ):
         """
         Args:
             device: Device to return the activations on
             activation_filepaths: List of activation filepaths
             max_cache_size: Maximum number of file data entries to cache when iterating
+            pre_loaded_files: Optional list of pre-loaded file data (avoids file I/O during iteration)
         """
         self.device = device
         self.activation_filepaths = activation_filepaths
         self.max_cache_size = max_cache_size
+        self.pre_loaded_files = pre_loaded_files
         self._total_tokens = None
 
     @classmethod
@@ -150,6 +180,149 @@ class Activations:
         cached_file_data.put(None, block=True)
         cached_file_data.join()
 
+    def _iterate_pre_loaded_files(
+        self, batch_size: int, start_idx: int, max_samples: int
+    ) -> Generator[dict, None, None]:
+        """Iterate over pre-loaded files without spawning a worker process."""
+        samples_processed = 0
+        current_batch = {}
+        remaining_batch_size = start_idx
+        skipped_start = False
+
+        for file_idx, current_data in enumerate(self.pre_loaded_files):
+            current_local_idx = 0
+            current_data_size = current_data[ActivationKeys.MLP_OUTPUT].shape[0]
+
+            for _batch_idx in count():
+                while current_data_size - current_local_idx <= remaining_batch_size:
+                    for key, value in current_data.items():
+                        match value:
+                            case th.Tensor():
+                                if key in current_batch:
+                                    current_batch[key] = th.cat(
+                                        [
+                                            current_batch[key],
+                                            value[
+                                                current_local_idx : current_local_idx
+                                                + batch_size
+                                            ].to(self.device),
+                                        ],
+                                        dim=0,
+                                    )
+                                else:
+                                    current_batch[key] = value[
+                                        current_local_idx : current_local_idx
+                                        + batch_size
+                                    ].to(self.device)
+                            case list():
+                                if key in current_batch:
+                                    assert current_batch[key] == value, (
+                                        f"Inconsistent value for {key}: {current_batch[key]} != {value}"
+                                    )
+                                else:
+                                    current_batch[key] = value
+                            case _:
+                                if key in current_batch:
+                                    assert current_batch[key] == value, (
+                                        f"Inconsistent value for {key}: {current_batch[key]} != {value}"
+                                    )
+                                else:
+                                    current_batch[key] = value
+
+                    remaining_batch_size -= current_data_size - current_local_idx
+
+                    # Move to next file
+                    if file_idx + 1 < len(self.pre_loaded_files):
+                        break
+                    else:
+                        # No more files, finish current batch if any
+                        if len(current_batch) > 0 and skipped_start:
+                            if max_samples > 0:
+                                batch_size_actual = current_batch[
+                                    ActivationKeys.ROUTER_LOGITS
+                                ].shape[0]
+                                if samples_processed + batch_size_actual > max_samples:
+                                    batch_size_actual = max_samples - samples_processed
+                                    if batch_size_actual > 0:
+                                        for key, value in current_batch.items():
+                                            if isinstance(value, th.Tensor):
+                                                current_batch[key] = value[
+                                                    :batch_size_actual
+                                                ]
+                                samples_processed += batch_size_actual
+                                yield current_batch
+                            else:
+                                yield current_batch
+                        return
+
+                # We have a complete batch
+                for key, value in current_data.items():
+                    match value:
+                        case th.Tensor():
+                            if key in current_batch:
+                                current_batch[key] = th.cat(
+                                    [
+                                        current_batch[key],
+                                        value[
+                                            current_local_idx : current_local_idx
+                                            + remaining_batch_size
+                                        ].to(self.device),
+                                    ],
+                                    dim=0,
+                                )
+                            else:
+                                current_batch[key] = value[
+                                    current_local_idx : current_local_idx
+                                    + remaining_batch_size
+                                ].to(self.device)
+                        case list():
+                            if key in current_batch:
+                                assert current_batch[key] == value, (
+                                    f"Inconsistent value for {key}: {current_batch[key]} != {value}"
+                                )
+                            else:
+                                current_batch[key] = value
+                        case _:
+                            if key in current_batch:
+                                assert current_batch[key] == value, (
+                                    f"Inconsistent value for {key}: {current_batch[key]} != {value}"
+                                )
+                            else:
+                                current_batch[key] = value
+
+                assert len(current_batch) > 0, "Current batch is empty"
+
+                if skipped_start:
+                    if max_samples > 0:
+                        batch_size_actual = current_batch[
+                            ActivationKeys.ROUTER_LOGITS
+                        ].shape[0]
+                        if samples_processed + batch_size_actual > max_samples:
+                            batch_size_actual = max_samples - samples_processed
+                            if batch_size_actual > 0:
+                                for key, value in current_batch.items():
+                                    if isinstance(value, th.Tensor):
+                                        current_batch[key] = value[:batch_size_actual]
+
+                        samples_processed += batch_size_actual
+                        yield current_batch
+                        if samples_processed >= max_samples:
+                            return
+                    else:
+                        yield current_batch
+                else:
+                    skipped_start = True
+
+                current_batch = {}
+                current_local_idx += remaining_batch_size
+                remaining_batch_size = batch_size
+
+                clear_memory()
+
+                # Check if we're done with this file
+                if current_local_idx >= current_data_size:
+                    break
+
     def __call__(
         self, batch_size: int = 4096, start_idx: int = 0, max_samples: int = 0
     ) -> Generator[dict, None, None]:
@@ -157,6 +330,13 @@ class Activations:
 
         # Track samples processed for max_samples limit
         samples_processed = 0
+
+        # If files are pre-loaded, use them directly instead of spawning a worker process
+        if self.pre_loaded_files is not None:
+            yield from self._iterate_pre_loaded_files(
+                batch_size, start_idx, max_samples
+            )
+            return
 
         # cache of file data to come
         cached_file_data = mp.JoinableQueue(maxsize=self.max_cache_size)
