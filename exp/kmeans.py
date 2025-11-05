@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import concurrent.futures
 from dataclasses import dataclass
 from functools import partial
@@ -9,7 +7,6 @@ import os
 from queue import Queue
 import sys
 from threading import Barrier
-import traceback
 from typing import Any, TypeVar
 
 import arguably
@@ -19,6 +16,7 @@ import torch.distributed as dist
 from tqdm import tqdm
 import yaml
 
+from core.async_utils import handle_future_exceptions as handle_exceptions
 from core.device import (
     DeviceType,
     assert_device_type,
@@ -37,21 +35,6 @@ from exp.kmeans_validation import (
     validate_centroid_distribution,
 )
 from exp.training import get_experiment_name
-
-
-def handle_exceptions(future: concurrent.futures.Future) -> None:
-    """Handle exceptions from futures by logging them."""
-    if not future.done():
-        return
-    try:
-        exception = future.exception(timeout=0)
-        if exception is not None:
-            tb_str = "".join(traceback.format_tb(exception.__traceback__))
-            logger.exception(f"[worker]:\n{tb_str}{exception}")
-            raise exception
-    except concurrent.futures.TimeoutError:
-        pass
-
 
 T = TypeVar("T")
 
@@ -127,21 +110,21 @@ class RunningKMeansData:
     # losses of shape (num_K) for online running updates
     losses: th.Tensor
 
-    def clone(self) -> RunningKMeansData:
+    def clone(self) -> "RunningKMeansData":
         return RunningKMeansData(
             centroid_sets=[centroids.clone() for centroids in self.centroid_sets],
             weight_sets=[weights.clone() for weights in self.weight_sets],
             losses=self.losses.clone(),
         )
 
-    def to(self, device: th.device) -> RunningKMeansData:
+    def to(self, device: th.device) -> "RunningKMeansData":
         return RunningKMeansData(
             centroid_sets=[centroids.to(device) for centroids in self.centroid_sets],
             weight_sets=[weights.to(device) for weights in self.weight_sets],
             losses=self.losses.to(device),
         )
 
-    def __add__(self, other: RunningKMeansData) -> RunningKMeansData:
+    def __add__(self, other: "RunningKMeansData") -> "RunningKMeansData":
         new_data = RunningKMeansData(
             centroid_sets=[
                 th.empty_like(centroids) for centroids in self.centroid_sets
@@ -717,16 +700,8 @@ def sync(
         # (N, K)
         all_weights = th.empty_like(weights).unsqueeze(0).repeat(world_size, 1)
 
-        centroids_future = dist.all_gather_into_tensor(
-            all_centroids, centroids, group=group, async_op=True
-        )
-        weights_future = dist.all_gather_into_tensor(
-            all_weights, weights, group=group, async_op=True
-        )
-
-        # Wait for both futures to complete
-        centroids_future.wait()
-        weights_future.wait()
+        dist.all_gather_into_tensor(all_centroids, centroids, group=group)
+        dist.all_gather_into_tensor(all_weights, weights, group=group)
 
         # (K)
         weights_total = all_weights.sum(dim=0)
@@ -1135,13 +1110,13 @@ def kmeans_manhattan(
     # Get backend once and reuse throughout the function
     backend = get_backend(device_type)
 
-    # Create thread pool executor for concurrent workers
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=32)
-
     th.manual_seed(seed)
     backend.manual_seed(seed)
 
     num_gpus = backend.device_count()
+
+    # Create thread pool executor for concurrent workers
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=num_gpus)
     rank = dist.get_rank()
     num_nodes = dist.get_world_size()
     total_gpus = num_gpus * num_nodes
