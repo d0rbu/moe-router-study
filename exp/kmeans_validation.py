@@ -6,8 +6,8 @@ These functions are used during k-means training to validate:
 2. Centroid quality - ensuring final centroids produce reasonable distributions
 """
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-import math
 
 from loguru import logger
 import torch as th
@@ -174,18 +174,12 @@ def _distributed_kmeans_assignment(
     n_centroids = centroids.shape[0]
 
     # Split data into batches
-    n_batches = math.ceil(n_samples / minibatch_size)
-    data_batches = [
-        validation_data[i * minibatch_size : (i + 1) * minibatch_size]
-        for i in range(n_batches)
-    ]
+    data_batches = th.split(validation_data, minibatch_size, dim=0)
+    n_batches = len(data_batches)
 
-    # Split centroids into chunks
-    n_centroid_chunks = math.ceil(n_centroids / centroid_minibatch_size)
-    centroid_chunks = [
-        centroids[i * centroid_minibatch_size : (i + 1) * centroid_minibatch_size]
-        for i in range(n_centroid_chunks)
-    ]
+    # Split centroids into chunks using th.split
+    centroid_chunks = th.split(centroids, centroid_minibatch_size, dim=0)
+    n_centroid_chunks = len(centroid_chunks)
 
     logger.debug(
         f"Split work: {n_batches} data batches x {n_centroid_chunks} centroid chunks "
@@ -193,12 +187,6 @@ def _distributed_kmeans_assignment(
     )
 
     # Assertions for correctness
-    assert len(data_batches) == n_batches, (
-        f"Expected {n_batches} data batches, got {len(data_batches)}"
-    )
-    assert len(centroid_chunks) == n_centroid_chunks, (
-        f"Expected {n_centroid_chunks} centroid chunks, got {len(centroid_chunks)}"
-    )
     assert sum(batch.shape[0] for batch in data_batches) == n_samples, (
         "Data batches don't sum to original sample count"
     )
@@ -216,21 +204,30 @@ def _distributed_kmeans_assignment(
         batch_size = batch_data.shape[0]
 
         # For this batch, compute distances to all centroid chunks
-        batch_distance_chunks = []
+        batch_distance_chunks = [None] * len(centroid_chunks)
 
-        for _chunk_idx, centroid_chunk in enumerate(centroid_chunks):
-            # Select device in round-robin fashion
-            device = devices[device_idx % len(devices)]
-            device_idx += 1
+        with ThreadPoolExecutor(max_workers=len(devices)) as executor:
+            futures = {}
+            for chunk_idx, centroid_chunk in enumerate(centroid_chunks):
+                device = devices[device_idx % len(devices)]
+                device_idx += 1
 
-            # Compute distances for this (batch, centroid_chunk) pair
-            distance_chunk = _compute_batch_centroid_distances(
-                batch_data, centroid_chunk, device
-            )
-            batch_distance_chunks.append(distance_chunk)
+                future = executor.submit(
+                    _compute_batch_centroid_distances,
+                    batch_data,
+                    centroid_chunk,
+                    device,
+                )
+                futures[future] = chunk_idx
 
-            # Clear device cache after each computation
-            if device.type != "cpu":
+            # Collect results in order
+            for future in as_completed(futures):
+                chunk_idx = futures[future]
+                batch_distance_chunks[chunk_idx] = future.result()
+
+        # Clear all device caches after parallel computation
+        if devices[0].type != "cpu":
+            for device in devices:
                 if device_type == "cuda":
                     with th.cuda.device(device):
                         backend.empty_cache()
