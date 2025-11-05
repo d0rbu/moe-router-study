@@ -45,7 +45,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "ruff>=0.1.0",
-    "ty>=0.0.1a16",
+    "mypy>=1.0.0",
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "pre-commit>=3.0.0",
@@ -63,7 +63,7 @@ allow-direct-references = true
 dev = [
     "pytest>=8.4.1",
     "pytest-cov>=6.2.1",
-    "ty>=0.0.1a16",
+    "mypy>=1.0.0",
 ]
 
 [tool.ruff]
@@ -93,6 +93,7 @@ exclude = [
     "venv",
     "output",
     "data",
+    "delphi",
 ]
 
 [tool.ruff.lint]
