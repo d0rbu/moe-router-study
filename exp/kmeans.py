@@ -1478,72 +1478,79 @@ def kmeans_manhattan(
             batch_size=minibatch_size, start_idx=validation_size
         )
 
-        distributed_iterator = islice(
-            minibatch_iterator,
-            rank,
-            None,
-            num_nodes,
-        )
-        logger.trace("Created distributed iterator")
-
-        num_local_minibatches = len(
-            range(
+        try:
+            distributed_iterator = islice(
+                minibatch_iterator,
                 rank,
-                num_gpu_minibatches,
+                None,
                 num_nodes,
             )
-        )
-        distributed_iterator = tqdm(
-            distributed_iterator,
-            desc=f"Rank {rank}",
-            total=num_local_minibatches,
-            leave=False,
-            position=num_nodes + 1,
-        )
+            logger.trace("Created distributed iterator")
 
-        concurrent_minibatch_iterator = batched(distributed_iterator, num_gpus)
-
-        logger.trace("Created concurrent minibatch iterator")
-
-        for distributed_batch_idx, gpu_minibatches in enumerate(
-            concurrent_minibatch_iterator
-        ):
-            logger.trace(f"Running distributed batch {distributed_batch_idx}")
-
-            # Periodic worker health check during long iterations
-            if distributed_batch_idx % 10 == 0:
-                check_worker_health(
-                    workers_dict, context=f"batch {distributed_batch_idx}"
+            num_local_minibatches = len(
+                range(
+                    rank,
+                    num_gpu_minibatches,
+                    num_nodes,
                 )
-
-            should_sync = (distributed_batch_idx % accumulation_size) == (
-                accumulation_size - 1
+            )
+            distributed_iterator = tqdm(
+                distributed_iterator,
+                desc=f"Rank {rank}",
+                total=num_local_minibatches,
+                leave=False,
+                position=num_nodes + 1,
             )
 
-            # compute effective step index and determine if we should save
-            effective_step_idx = distributed_batch_idx // accumulation_size
-            save_idx = effective_step_idx if effective_step_idx in save_steps else None
+            concurrent_minibatch_iterator = batched(distributed_iterator, num_gpus)
 
-            logger.trace(f"Should sync: {should_sync}")
-            logger.trace(f"Accumulation size: {accumulation_size}")
-            logger.trace(f"Distributed batch index: {distributed_batch_idx}")
-            logger.trace(f"Effective step index: {effective_step_idx}")
-            logger.trace(f"Save index: {save_idx}")
+            logger.trace("Created concurrent minibatch iterator")
 
-            for gpu_idx, (gpu_data, gpu_minibatch) in enumerate(
-                zip(all_gpu_data, gpu_minibatches, strict=False)
+            for distributed_batch_idx, gpu_minibatches in enumerate(
+                concurrent_minibatch_iterator
             ):
-                logger.trace(
-                    f"Putting data on GPU {gpu_idx} with queue size {gpu_data.queue.qsize()}"
+                logger.trace(f"Running distributed batch {distributed_batch_idx}")
+
+                # Periodic worker health check during long iterations
+                if distributed_batch_idx % 10 == 0:
+                    check_worker_health(
+                        workers_dict, context=f"batch {distributed_batch_idx}"
+                    )
+
+                should_sync = (distributed_batch_idx % accumulation_size) == (
+                    accumulation_size - 1
                 )
 
-                gpu_data.queue.put(
-                    (
-                        gpu_minibatch[ActivationKeys.ROUTER_LOGITS],
-                        should_sync,
-                        save_idx,
+                # compute effective step index and determine if we should save
+                effective_step_idx = distributed_batch_idx // accumulation_size
+                save_idx = effective_step_idx if effective_step_idx in save_steps else None
+
+                logger.trace(f"Should sync: {should_sync}")
+                logger.trace(f"Accumulation size: {accumulation_size}")
+                logger.trace(f"Distributed batch index: {distributed_batch_idx}")
+                logger.trace(f"Effective step index: {effective_step_idx}")
+                logger.trace(f"Save index: {save_idx}")
+
+                for gpu_idx, (gpu_data, gpu_minibatch) in enumerate(
+                    zip(all_gpu_data, gpu_minibatches, strict=False)
+                ):
+                    logger.trace(
+                        f"Putting data on GPU {gpu_idx} with queue size {gpu_data.queue.qsize()}"
                     )
-                )
+
+                    gpu_data.queue.put(
+                        (
+                            gpu_minibatch[ActivationKeys.ROUTER_LOGITS],
+                            should_sync,
+                            save_idx,
+                        )
+                        )
+        finally:
+            # Explicitly close the generator to clean up the background file-loading process
+            # This prevents process accumulation across k-means iterations
+            logger.trace(f"Closing minibatch_iterator for iteration {iter_idx}")
+            minibatch_iterator.close()
+            logger.trace(f"✅ Minibatch_iterator closed for iteration {iter_idx}")
 
     for gpu_data in all_gpu_data:
         logger.trace(
