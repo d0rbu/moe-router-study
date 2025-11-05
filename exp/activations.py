@@ -185,18 +185,20 @@ class Activations:
             # Allocate files fairly among threads
             for thread_idx, position in enumerate(positions):
                 # First 'extra_files' threads get one extra file
-                num_files_for_thread = base_files_per_thread + (1 if thread_idx < extra_files else 0)
+                num_files_for_thread = base_files_per_thread + (
+                    1 if thread_idx < extra_files else 0
+                )
                 desired_thread_files = set()
-                
+
                 # Add files starting from this thread's position
                 for file_idx in range(position, len(self.activation_filepaths)):
                     if file_idx in desired_files:
                         continue  # Early exit: file already allocated
-                    
+
                     desired_thread_files.add(file_idx)
                     if len(desired_thread_files) >= num_files_for_thread:
                         break
-                
+
                 desired_files.update(desired_thread_files)
 
                 if len(desired_files) >= self.max_cache_size:
