@@ -1,6 +1,3 @@
-import asyncio
-from asyncio import Barrier
-from collections.abc import Awaitable
 from dataclasses import dataclass
 from functools import partial
 import gc
@@ -13,10 +10,10 @@ import arguably
 from loguru import logger
 import torch as th
 import torch.distributed as dist
+import torch.multiprocessing as mp
 from tqdm import tqdm
 import yaml
 
-from core.async_utils import handle_exceptions
 from core.device import (
     DeviceType,
     assert_device_type,
@@ -38,8 +35,9 @@ from exp.training import get_experiment_name
 
 T = TypeVar("T")
 
+GPU_QUEUE_MAXSIZE = 4
 
-def check_worker_health(workers: dict[str, asyncio.Task], *, context: str = "") -> None:
+def check_worker_health(workers: dict[str, mp.Process], *, context: str = "") -> None:
     """Check if any workers have failed and raise appropriate exceptions."""
     for worker_name, worker in workers.items():
         if worker.done():
@@ -53,50 +51,6 @@ def check_worker_health(workers: dict[str, asyncio.Task], *, context: str = "") 
                     f"{worker_name} worker completed unexpectedly{context_str}"
                 )
                 raise RuntimeError(f"{worker_name} worker completed unexpectedly")
-
-
-async def safe_await_with_worker_check[T](
-    awaitable: Awaitable[T],
-    *,
-    workers: dict[str, asyncio.Task] | None = None,
-    timeout: float = 30.0,
-    operation_name: str = "",
-) -> T:
-    """Safely await an operation with timeout and worker health checking on error."""
-    if workers is None:
-        workers = {}
-
-    try:
-        result = await asyncio.wait_for(awaitable, timeout=timeout)
-        if operation_name:
-            logger.trace(f"Successfully completed {operation_name}")
-        else:
-            logger.trace("Successfully completed")
-        return result
-    except TimeoutError:
-        if operation_name:
-            logger.error(f"Timeout during {operation_name} - workers may have failed!")
-        else:
-            logger.error("Operation timed out - workers may have failed!")
-        # Check if any workers have failed
-        for worker_name, worker in workers.items():
-            if worker.done():
-                exception = worker.exception()
-                if exception:
-                    logger.error(
-                        f"{worker_name} worker failed with exception: {exception}"
-                    )
-                else:
-                    logger.error(f"{worker_name} worker completed unexpectedly")
-            else:
-                logger.error(f"{worker_name} worker appears to be hanging")
-        raise
-    except Exception as e:
-        if operation_name:
-            logger.error(f"Unexpected error during {operation_name}: {e}")
-        else:
-            logger.error(f"Unexpected error: {e}")
-        raise
 
 
 @dataclass
@@ -235,10 +189,10 @@ class RunningKMeansData:
 class GPUData:
     synced_data: RunningKMeansData
     dirty_data: RunningKMeansData
-    queue: asyncio.Queue | None = None
+    queue: mp.Queue | None = None
 
 
-async def compute_all_centroids_from_assignments(
+def compute_all_centroids_from_assignments(
     data: th.Tensor,
     assignments: th.Tensor,
     num_centroids: int,
@@ -487,7 +441,7 @@ def validate_gpu_centroid_synchronization(
     return all_synchronized
 
 
-async def kmeans_step(
+def kmeans_step(
     data: th.Tensor,  # (B, L * E)
     centroids: th.Tensor,  # (K, L * E)
     centroid_minibatch_size: int = 65536,
@@ -576,7 +530,7 @@ async def kmeans_step(
     centroid_distances = th.gather(distances, 1, assignments.unsqueeze(1))
     logger.trace(f"Computed centroid distances with shape {centroid_distances.shape}")
 
-    new_centroids, new_weights = await compute_all_centroids_from_assignments(
+    new_centroids, new_weights = compute_all_centroids_from_assignments(
         data=data,
         assignments=assignments,
         num_centroids=centroids.shape[0],
@@ -618,11 +572,11 @@ async def kmeans_step(
     return new_centroids, new_weights, new_loss
 
 
-async def sync(
+def sync(
     gpu_idx: int,
     all_gpu_data: list[GPUData],
     losses_over_time: list[th.Tensor],
-    barrier: Barrier,
+    barrier: mp.Barrier,
     general_gpu_group: dist.ProcessGroup | None = None,
     gpu_specific_group: dist.ProcessGroup | None = None,
     device_type: DeviceType = "cuda",
@@ -705,10 +659,8 @@ async def sync(
             all_weights, weights, group=group, async_op=True
         )
 
-        await asyncio.gather(
-            asyncio.to_thread(centroids_future.wait),
-            asyncio.to_thread(weights_future.wait),
-        )
+        centroids_future.wait()
+        weights_future.wait()
 
         # (K)
         weights_total = all_weights.sum(dim=0)
@@ -811,7 +763,7 @@ async def sync(
             f"🔄 SYNC GPU {gpu_idx} k_idx={k_idx} BEFORE GPU AGGREGATION: Synced centroids zero_norms={zero_norms}/{len(centroid_norms)}, norm_stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}"
         )
 
-    await barrier.wait()
+    barrier.wait()
 
     gpu_data.synced_data += sum(
         (current_gpu_data.dirty_data.to(device) for current_gpu_data in all_gpu_data),
@@ -821,7 +773,7 @@ async def sync(
     backend.empty_cache()
 
     # Wait for all GPUs to finish reading dirty data before resetting
-    await barrier.wait()
+    barrier.wait()
 
     # reset dirty data now that it has been synced
     logger.debug(f"🔄 SYNC GPU {gpu_idx}: Resetting dirty data to zero...")
@@ -865,12 +817,12 @@ async def sync(
     logger.trace(f"✅ SYNC GPU {gpu_idx}: Sync operation fully completed")
 
 
-async def gpu_worker(
+def gpu_worker(
     gpu_idx: int,
     all_gpu_data: list[GPUData],
     top_k: int,
     losses_over_time: list[th.Tensor],
-    barrier: Barrier,
+    barrier: mp.Barrier,
     general_gpu_group: dist.ProcessGroup | None = None,
     gpu_specific_group: dist.ProcessGroup | None = None,
     save_dir: str | None = None,
@@ -899,12 +851,11 @@ async def gpu_worker(
 
     logger.info(f"Starting GPU worker {gpu_idx}")
     gpu_data = all_gpu_data[gpu_idx]
-    sync_iteration = 0
 
     while True:
         logger.trace(f"GPU {gpu_idx} waiting for queue item...")
         try:
-            queue_item = await asyncio.wait_for(gpu_data.queue.get(), timeout=60.0)
+            queue_item = gpu_data.queue.get(timeout=60.0)
             logger.trace(f"GPU {gpu_idx} picked up item from queue")
         except TimeoutError:
             logger.warning(
@@ -953,8 +904,7 @@ async def gpu_worker(
             f"GPU {gpu_idx} running kmeans step with {len(gpu_data.synced_data.centroid_sets)} centroids"
         )
 
-        updates = await asyncio.gather(
-            *[
+        updates = [
                 kmeans_step(
                     data=flat_data,
                     centroids=centroids,
@@ -964,7 +914,6 @@ async def gpu_worker(
                 )
                 for centroids in gpu_data.synced_data.centroid_sets
             ]
-        )
         new_centroid_sets, new_weight_sets, new_losses = zip(*updates, strict=True)
 
         logger.trace(f"GPU {gpu_idx} updated dirty data")
@@ -992,8 +941,7 @@ async def gpu_worker(
 
         logger.trace(f"GPU {gpu_idx} starting sync operation")
 
-        await safe_await_with_worker_check(
-            sync(
+        sync(
                 gpu_idx,
                 all_gpu_data,
                 losses_over_time,
@@ -1001,81 +949,52 @@ async def gpu_worker(
                 general_gpu_group,
                 gpu_specific_group,
                 device_type,
-            ),
-            timeout=300.0,
-            operation_name=f"sync operation for GPU {gpu_idx}",
-        )
-
-        logger.trace(
-            f"✅ GPU {gpu_idx} completed sync operation, proceeding to validation"
-        )
-
-        # Increment sync iteration counter
-        sync_iteration += 1
-        logger.trace(f"GPU {gpu_idx} sync_iteration now at {sync_iteration}")
-
-        # Validate GPU synchronization after sync (only on GPU 0 to avoid redundant checks)
-        # Only validate every validate_every iterations
-        if (
-            gpu_idx == 0
-            and (len(all_gpu_data) > 1 or dist.get_world_size() > 1)
-            and sync_iteration % validate_every == 0
-        ):
-            logger.trace(
-                f"GPU {gpu_idx}: Starting validation at sync_iteration {sync_iteration}"
             )
-            # We need k_values, but it's not available in this scope
-            # For now, we'll infer it from the number of centroid sets
-            k_values = tuple(
-                centroid_set.shape[0]
-                for centroid_set in all_gpu_data[0].synced_data.centroid_sets
-            )
-            sync_ok = validate_gpu_centroid_synchronization(
-                all_gpu_data,
-                k_values,
-                context=f"after sync on GPU {gpu_idx} (iteration {sync_iteration})",
-            )
-            if not sync_ok:
-                raise RuntimeError(
-                    f"GPU centroid synchronization failed after sync on GPU {gpu_idx} at iteration {sync_iteration}. "
-                    f"Check logs for detailed mismatch information."
-                )
-            logger.trace(f"GPU {gpu_idx}: Validation passed")
 
-        # save checkpoint if save_idx is not None and we're on rank 0 gpu 0
-        if (
-            save_idx is not None
-            and dist.get_rank() == 0
-            and gpu_idx == 0
-            and save_dir is not None
-        ):
-            logger.trace(f"GPU {gpu_idx} saving checkpoint")
-
-            checkpoint_data = {
-                "centroids": all_gpu_data[0].synced_data.centroid_sets,
-                "top_k": top_k,
-                "losses": th.stack(losses_over_time, dim=1)
-                if losses_over_time
-                else all_gpu_data[0].synced_data.losses,
-                "iteration": save_idx,
-            }
-            checkpoint_path = os.path.join(
-                save_dir, CHECKPOINT_FILENAME.format(iteration=save_idx)
-            )
-            logger.trace(f"GPU {gpu_idx} saved checkpoint to {checkpoint_path}")
-
-            th.save(checkpoint_data, checkpoint_path)
+        # log avg of last n losses from the last iteration
+        num_losses_to_log = 10
+        if len(losses_over_time) > 0:
+            losses_tensor = th.stack(losses_over_time, dim=1)
+            last_n_losses = losses_tensor[:, -num_losses_to_log:]
+            avg_losses = last_n_losses.mean(dim=1)
+            avg_loss_strings = [
+                f"k={gpu_data.synced_data.centroid_sets[k_idx].shape[0]}: {avg_loss:.6f}"
+                for k_idx, avg_loss in enumerate(avg_losses)
+            ]
             logger.info(
-                f"Saved checkpoint at iteration {save_idx} to {checkpoint_path}"
+                f"Average losses over last {num_losses_to_log} iterations:\n\t{'\n\t'.join(avg_loss_strings)}"
             )
 
-        logger.trace(f"🔄 GPU {gpu_idx} finished iteration, ready for next queue item")
+    for gpu_data in all_gpu_data:
+        logger.trace(
+            f"Putting stop signal on GPU with queue size {gpu_data.queue.qsize()}"
+        )
+
+        gpu_data.queue.put((None, False, None))
 
 
-GPU_QUEUE_MAXSIZE = 4
 
 
-async def kmeans_manhattan(
+def get_top_circuits(
+    centroids: th.Tensor, num_layers: int, top_k: int
+) -> tuple[th.Tensor, th.Tensor]:
+    num_centroids = centroids.shape[0]
+    circuit_centroids = centroids.view(num_centroids, num_layers, -1)
+
+    circuits = th.topk(circuit_centroids, k=top_k, dim=2)
+    circuit_mask = th.zeros_like(circuit_centroids)
+    circuit_mask.scatter_(2, circuits.indices, 1)
+
+    return circuits.indices, circuit_mask
+
+
+KMEANS_TYPE = "kmeans"
+METADATA_FILENAME = "metadata.yaml"
+KMEANS_FILENAME = "kmeans.pt"
+CHECKPOINT_FILENAME = "checkpoint_iter_{iteration}.pt"
+
+
+def kmeans_manhattan(
     activations: Activations,
     activation_dim: int,
     k_values: tuple[int, ...],
@@ -1220,7 +1139,7 @@ async def kmeans_manhattan(
                 ],
                 losses=th.zeros(len(k_values), dtype=th.float32, device=gpu_idx),
             ),
-            queue=asyncio.Queue(maxsize=GPU_QUEUE_MAXSIZE),
+            queue=mp.Queue(maxsize=GPU_QUEUE_MAXSIZE),
         )
         for gpu_idx in range(num_gpus)
     ]
@@ -1439,10 +1358,12 @@ async def kmeans_manhattan(
 
     logger.trace("Created iterator")
 
-    synchronization_barrier = Barrier(num_gpus)
-    workers = [
-        asyncio.create_task(
-            gpu_worker(
+    synchronization_barrier = mp.Barrier(num_gpus)
+    workers = []
+    for gpu_idx in range(num_gpus):
+        p = mp.Process(
+            target=gpu_worker,
+            args=(
                 gpu_idx,
                 all_gpu_data,
                 top_k,
@@ -1454,16 +1375,14 @@ async def kmeans_manhattan(
                 validate_every,
                 centroid_minibatch_size,
                 assignment_minibatch_size,
-                device_type,
             ),
-            name=str(gpu_idx),
+            name=str(gpu_idx)
         )
-        for gpu_idx in range(num_gpus)
-    ]
+        workers.append(p)
 
+    # Start all workers
     for worker in workers:
-        worker.add_done_callback(handle_exceptions)
-
+        worker.start()
     logger.trace(f"Created {len(workers)} workers")
 
     # distributed kmeans
@@ -1545,17 +1464,12 @@ async def kmeans_manhattan(
                     f"Putting data on GPU {gpu_idx} with queue size {gpu_data.queue.qsize()}"
                 )
 
-                await safe_await_with_worker_check(
-                    gpu_data.queue.put(
-                        (
-                            gpu_minibatch[ActivationKeys.ROUTER_LOGITS],
-                            should_sync,
-                            save_idx,
-                        )
-                    ),
-                    workers={f"GPU {gpu_idx}": workers[gpu_idx]},
-                    timeout=3600.0,
-                    operation_name=f"queue put for GPU {gpu_idx}",
+                gpu_data.queue.put(
+                    (
+                        gpu_minibatch[ActivationKeys.ROUTER_LOGITS],
+                        should_sync,
+                        save_idx,
+                    )
                 )
 
         # log avg of last n losses from the last iteration
@@ -1577,7 +1491,7 @@ async def kmeans_manhattan(
             f"Putting stop signal on GPU with queue size {gpu_data.queue.qsize()}"
         )
 
-        await gpu_data.queue.put((None, False, None))
+        gpu_data.queue.put((None, False, None))
 
     if losses_over_time:
         logger.trace("Stacking losses over time")
@@ -1600,26 +1514,7 @@ async def kmeans_manhattan(
     )
 
 
-def get_top_circuits(
-    centroids: th.Tensor, num_layers: int, top_k: int
-) -> tuple[th.Tensor, th.Tensor]:
-    num_centroids = centroids.shape[0]
-    circuit_centroids = centroids.view(num_centroids, num_layers, -1)
-
-    circuits = th.topk(circuit_centroids, k=top_k, dim=2)
-    circuit_mask = th.zeros_like(circuit_centroids)
-    circuit_mask.scatter_(2, circuits.indices, 1)
-
-    return circuits.indices, circuit_mask
-
-
-KMEANS_TYPE = "kmeans"
-METADATA_FILENAME = "metadata.yaml"
-KMEANS_FILENAME = "kmeans.pt"
-CHECKPOINT_FILENAME = "checkpoint_iter_{iteration}.pt"
-
-
-async def cluster_paths_async(
+def cluster_paths_main(
     model_name: str,
     dataset_name: str,
     activations: Activations,
@@ -1663,7 +1558,7 @@ async def cluster_paths_async(
                 f"number of devices ({num_devices})"
             )
 
-    centroids, top_k, losses, num_layers, num_experts = await kmeans_manhattan(
+    centroids, top_k, losses, num_layers, num_experts = kmeans_manhattan(
         activations=activations,
         activation_dim=activation_dim,
         k_values=k,
@@ -1746,18 +1641,16 @@ def cluster_paths(
     log_level_numeric = logger.level(log_level).no
     debug_level_numeric = logger.level("DEBUG").no
 
-    activations, activation_dims, gpu_process_group, gpu_process_groups = asyncio.run(
-        load_activations_and_init_dist(
-            model_name=model_name,
-            dataset_name=dataset_name,
-            tokens_per_file=tokens_per_file,
-            reshuffled_tokens_per_file=reshuffled_tokens_per_file,
-            submodule_names=[ActivationKeys.ROUTER_LOGITS, ActivationKeys.MLP_OUTPUT],
-            context_length=context_length,
-            num_workers=num_workers,
-            debug=log_level_numeric <= debug_level_numeric,
-            device_type=device_type,
-        )
+    activations, activation_dims, gpu_process_group, gpu_process_groups = load_activations_and_init_dist(
+        model_name=model_name,
+        dataset_name=dataset_name,
+        tokens_per_file=tokens_per_file,
+        reshuffled_tokens_per_file=reshuffled_tokens_per_file,
+        submodule_names=[ActivationKeys.ROUTER_LOGITS, ActivationKeys.MLP_OUTPUT],
+        context_length=context_length,
+        num_workers=num_workers,
+        debug=log_level_numeric <= debug_level_numeric,
+        device_type=device_type,
     )
 
     # Verify that gpu_process_groups length matches number of devices if available
@@ -1805,8 +1698,8 @@ def cluster_paths(
 
     logger.info(f"Running with device type: {device_type}")
 
-    asyncio.run(
-        cluster_paths_async(
+
+    cluster_paths_main(
             model_name=model_name,
             dataset_name=dataset_name,
             activations=activations,
@@ -1825,7 +1718,7 @@ def cluster_paths(
             gpu_process_groups=gpu_process_groups,
             device_type=device_type,
         )
-    )
+
 
 
 @arguably.command()
