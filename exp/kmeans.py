@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 from functools import partial
 import gc
 from itertools import batched, islice
 import os
 import sys
-from typing import Any, TypeVar, Union
+from typing import Any, TypeVar
 
 import arguably
 from loguru import logger
@@ -62,21 +64,21 @@ class RunningKMeansData:
     # losses of shape (num_K) for online running updates
     losses: th.Tensor
 
-    def clone(self) -> "RunningKMeansData":
+    def clone(self) -> RunningKMeansData:
         return RunningKMeansData(
             centroid_sets=[centroids.clone() for centroids in self.centroid_sets],
             weight_sets=[weights.clone() for weights in self.weight_sets],
             losses=self.losses.clone(),
         )
 
-    def to(self, device: th.device) -> "RunningKMeansData":
+    def to(self, device: th.device) -> RunningKMeansData:
         return RunningKMeansData(
             centroid_sets=[centroids.to(device) for centroids in self.centroid_sets],
             weight_sets=[weights.to(device) for weights in self.weight_sets],
             losses=self.losses.to(device),
         )
 
-    def __add__(self, other: "RunningKMeansData") -> "RunningKMeansData":
+    def __add__(self, other: RunningKMeansData) -> RunningKMeansData:
         new_data = RunningKMeansData(
             centroid_sets=[
                 th.empty_like(centroids) for centroids in self.centroid_sets
@@ -189,7 +191,7 @@ class RunningKMeansData:
 class GPUData:
     synced_data: RunningKMeansData
     dirty_data: RunningKMeansData
-    queue: Union[mp.Queue, None] = None
+    queue: mp.Queue | None = None
 
 
 def compute_all_centroids_from_assignments(
@@ -446,7 +448,7 @@ def kmeans_step(
     centroids: th.Tensor,  # (K, L * E)
     centroid_minibatch_size: int = 65536,
     assignment_minibatch_size: int = 4096,
-    gpu_idx: Union[int, None] = None,
+    gpu_idx: int | None = None,
 ) -> tuple[th.Tensor, th.Tensor, th.Tensor]:
     logger.trace(
         f"Running kmeans step with {data.shape[0]} data points and {centroids.shape[0]} centroids"
@@ -577,8 +579,8 @@ def sync(
     all_gpu_data: list[GPUData],
     losses_over_time: list[th.Tensor],
     barrier: mp.Barrier,
-    general_gpu_group: Union[dist.ProcessGroup, None] = None,
-    gpu_specific_group: Union[dist.ProcessGroup, None] = None,
+    general_gpu_group: dist.ProcessGroup | None = None,
+    gpu_specific_group: dist.ProcessGroup | None = None,
     device_type: DeviceType = "cuda",
 ) -> None:
     backend = get_backend(device_type)
@@ -823,9 +825,9 @@ def gpu_worker(
     top_k: int,
     losses_over_time: list[th.Tensor],
     barrier: mp.Barrier,
-    general_gpu_group: Union[dist.ProcessGroup, None] = None,
-    gpu_specific_group: Union[dist.ProcessGroup, None] = None,
-    _save_dir: Union[str, None] = None,
+    general_gpu_group: dist.ProcessGroup | None = None,
+    gpu_specific_group: dist.ProcessGroup | None = None,
+    _save_dir: str | None = None,
     _validate_every: int = 64,
     centroid_minibatch_size: int = 65536,
     assignment_minibatch_size: int = 4096,
@@ -998,17 +1000,17 @@ def kmeans_manhattan(
     activations: Activations,
     activation_dim: int,
     k_values: tuple[int, ...],
-    effective_batch_size: Union[int, None] = None,
+    effective_batch_size: int | None = None,
     max_iters: int = 16,
-    minibatch_size: Union[int, None] = None,
+    minibatch_size: int | None = None,
     centroid_minibatch_size: int = 32768,
     assignment_minibatch_size: int = 4096,
     seed: int = 0,
-    save_every: Union[int, None] = None,
-    save_dir: Union[str, None] = None,
+    save_every: int | None = None,
+    save_dir: str | None = None,
     validate_every: int = 64,
-    general_gpu_group: Union[dist.ProcessGroup, None] = None,
-    gpu_process_groups: Union[list[dist.ProcessGroup], None] = None,
+    general_gpu_group: dist.ProcessGroup | None = None,
+    gpu_process_groups: list[dist.ProcessGroup] | None = None,
     device_type: DeviceType = "cuda",
 ) -> tuple[list[th.Tensor], int, th.Tensor, int, int]:
     """
@@ -1527,10 +1529,10 @@ def cluster_paths_main(
     minibatch_size: int,
     centroid_minibatch_size: int = 32768,
     assignment_minibatch_size: int = 4096,
-    save_every: Union[int, None] = None,
+    save_every: int | None = None,
     validate_every: int = 64,
-    general_gpu_group: Union[dist.ProcessGroup, None] = None,
-    gpu_process_groups: Union[list[dist.ProcessGroup], None] = None,
+    general_gpu_group: dist.ProcessGroup | None = None,
+    gpu_process_groups: list[dist.ProcessGroup] | None = None,
     device_type: DeviceType = "cuda",
 ) -> None:
     kmeans_experiment_name = get_experiment_name(
@@ -1614,11 +1616,11 @@ def cluster_paths(
     model_name: str = "olmoe-i",
     dataset_name: str = "lmsys",
     *_args,
-    k: Union[tuple[int, ...], int, None] = None,
-    expansion_factor: Union[tuple[int, ...], int, None] = None,
+    k: tuple[int, ...] | int | None = None,
+    expansion_factor: tuple[int, ...] | int | None = None,
     batch_size: int = 40_000,
     max_iters: int = 16,
-    save_every: Union[int, None] = None,
+    save_every: int | None = None,
     validate_every: int = 64,
     seed: int = 0,
     minibatch_size: int = 100_000,
@@ -1726,11 +1728,11 @@ def main(
     model_name: str = "olmoe-i",
     dataset_name: str = "lmsys",
     *args: Any,
-    k: Union[tuple[int, ...], None] = None,
-    expansion_factor: Union[tuple[int, ...], None] = None,
+    k: tuple[int, ...] | None = None,
+    expansion_factor: tuple[int, ...] | None = None,
     batch_size: int = 40_000,
     max_iters: int = 16,
-    save_every: Union[int, None] = None,
+    save_every: int | None = None,
     validate_every: int = 64,
     seed: int = 0,
     minibatch_size: int = 10_000,
