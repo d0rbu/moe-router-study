@@ -7,7 +7,7 @@ import gc
 from itertools import batched, islice
 import os
 import sys
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import Any, TypeVar
 
 import arguably
 from loguru import logger
@@ -16,9 +16,6 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from tqdm import tqdm
 import yaml
-
-if TYPE_CHECKING:
-    from multiprocessing.synchronize import Barrier
 
 from core.device import (
     DeviceType,
@@ -49,7 +46,7 @@ def check_worker_health(workers: dict[str, mp.Process], *, context: str = "") ->
     for worker_name, worker in workers.items():
         if not worker.is_alive() and worker.exitcode != 0:
             context_str = f" [{context}]" if context else ""
-            logger.error(
+            logger.critical(
                 f"{worker_name} worker failed{context_str} with exit code {worker.exitcode}"
             )
             raise RuntimeError(
@@ -57,7 +54,7 @@ def check_worker_health(workers: dict[str, mp.Process], *, context: str = "") ->
             )
         elif not worker.is_alive() and worker.exitcode == 0:
             context_str = f" [{context}]" if context else ""
-            logger.error(f"{worker_name} worker completed unexpectedly{context_str}")
+            logger.critical(f"{worker_name} worker completed unexpectedly{context_str}")
             raise RuntimeError(f"{worker_name} worker completed unexpectedly")
 
 
@@ -584,7 +581,7 @@ def sync(
     gpu_idx: int,
     all_gpu_data: list[GPUData],
     losses_over_time: list[th.Tensor],
-    barrier: Barrier,
+    barrier: th.multiprocessing.Barrier,
     general_gpu_group: dist.ProcessGroup | None = None,
     gpu_specific_group: dist.ProcessGroup | None = None,
     device_type: DeviceType = "cuda",
@@ -660,15 +657,8 @@ def sync(
         # (N, K)
         all_weights = th.empty_like(weights).unsqueeze(0).repeat(world_size, 1)
 
-        centroids_future = dist.all_gather_into_tensor(
-            all_centroids, centroids, group=group, async_op=True
-        )
-        weights_future = dist.all_gather_into_tensor(
-            all_weights, weights, group=group, async_op=True
-        )
-
-        centroids_future.wait()
-        weights_future.wait()
+        dist.all_gather_into_tensor(all_centroids, centroids, group=group)
+        dist.all_gather_into_tensor(all_weights, weights, group=group)
 
         # (K)
         weights_total = all_weights.sum(dim=0)
@@ -830,11 +820,11 @@ def gpu_worker(
     all_gpu_data: list[GPUData],
     top_k: int,
     losses_over_time: list[th.Tensor],
-    barrier: Barrier,
+    barrier: th.multiprocessing.Barrier,
     general_gpu_group: dist.ProcessGroup | None = None,
     gpu_specific_group: dist.ProcessGroup | None = None,
-    _save_dir: str | None = None,
-    _validate_every: int = 64,
+    save_dir: str | None = None,
+    validate_every: int = 64,
     centroid_minibatch_size: int = 65536,
     assignment_minibatch_size: int = 4096,
     device_type: DeviceType = "cuda",
@@ -850,8 +840,8 @@ def gpu_worker(
         barrier: Synchronization barrier for coordinating workers
         general_gpu_group: Distributed process group for communication (general GPU group)
         gpu_specific_group: GPU-specific process group for this device index (or None)
-        _save_dir: Directory to save checkpoints (if any) [unused]
-        _validate_every: Validate centroid synchronization every N sync operations (default: 1) [unused]
+        save_dir: Directory to save checkpoints (if any)
+        validate_every: Validate centroid synchronization every N sync operations (default: 1)
         centroid_minibatch_size: Size of centroid chunks to avoid device limits (default: 65536)
         device_type: Device type ("cuda" or "xpu", defaults to "cuda")
     """
@@ -859,6 +849,7 @@ def gpu_worker(
 
     logger.info(f"Starting GPU worker {gpu_idx}")
     gpu_data = all_gpu_data[gpu_idx]
+    sync_iteration = 0
 
     while True:
         logger.trace(f"GPU {gpu_idx} waiting for queue item...")
@@ -959,26 +950,70 @@ def gpu_worker(
             device_type,
         )
 
-        # log avg of last n losses from the last iteration
-        num_losses_to_log = 10
-        if len(losses_over_time) > 0:
-            losses_tensor = th.stack(losses_over_time, dim=1)
-            last_n_losses = losses_tensor[:, -num_losses_to_log:]
-            avg_losses = last_n_losses.mean(dim=1)
-            avg_loss_strings = [
-                f"k={gpu_data.synced_data.centroid_sets[k_idx].shape[0]}: {avg_loss:.6f}"
-                for k_idx, avg_loss in enumerate(avg_losses)
-            ]
-            logger.info(
-                f"Average losses over last {num_losses_to_log} iterations:\n\t{'\n\t'.join(avg_loss_strings)}"
-            )
-
-    for gpu_data in all_gpu_data:
         logger.trace(
-            f"Putting stop signal on GPU with queue size {gpu_data.queue.qsize()}"
+            f"✅ GPU {gpu_idx} completed sync operation, proceeding to validation"
         )
 
-        gpu_data.queue.put((None, False, None))
+        # Increment sync iteration counter
+        sync_iteration += 1
+        logger.trace(f"GPU {gpu_idx} sync_iteration now at {sync_iteration}")
+
+        # Validate GPU synchronization after sync (only on GPU 0 to avoid redundant checks)
+        # Only validate every validate_every iterations
+        if (
+            gpu_idx == 0
+            and (len(all_gpu_data) > 1 or dist.get_world_size() > 1)
+            and sync_iteration % validate_every == 0
+        ):
+            logger.trace(
+                f"GPU {gpu_idx}: Starting validation at sync_iteration {sync_iteration}"
+            )
+            # We need k_values, but it's not available in this scope
+            # For now, we'll infer it from the number of centroid sets
+            k_values = tuple(
+                centroid_set.shape[0]
+                for centroid_set in all_gpu_data[0].synced_data.centroid_sets
+            )
+            sync_ok = validate_gpu_centroid_synchronization(
+                all_gpu_data,
+                k_values,
+                context=f"after sync on GPU {gpu_idx} (iteration {sync_iteration})",
+            )
+            if not sync_ok:
+                raise RuntimeError(
+                    f"GPU centroid synchronization failed after sync on GPU {gpu_idx} at iteration {sync_iteration}. "
+                    f"Check logs for detailed mismatch information."
+                )
+            logger.trace(f"GPU {gpu_idx}: Validation passed")
+
+        # save checkpoint if save_idx is not None and we're on rank 0 gpu 0
+        if (
+            save_idx is not None
+            and dist.get_rank() == 0
+            and gpu_idx == 0
+            and save_dir is not None
+        ):
+            logger.trace(f"GPU {gpu_idx} saving checkpoint")
+
+            checkpoint_data = {
+                "centroids": all_gpu_data[0].synced_data.centroid_sets,
+                "top_k": top_k,
+                "losses": th.stack(losses_over_time, dim=1)
+                if losses_over_time
+                else all_gpu_data[0].synced_data.losses,
+                "iteration": save_idx,
+            }
+            checkpoint_path = os.path.join(
+                save_dir, CHECKPOINT_FILENAME.format(iteration=save_idx)
+            )
+            logger.trace(f"GPU {gpu_idx} saved checkpoint to {checkpoint_path}")
+
+            th.save(checkpoint_data, checkpoint_path)
+            logger.info(
+                f"Saved checkpoint at iteration {save_idx} to {checkpoint_path}"
+            )
+
+        logger.trace(f"🔄 GPU {gpu_idx} finished iteration, ready for next queue item")
 
 
 def get_top_circuits(
@@ -1364,10 +1399,9 @@ def kmeans_manhattan(
 
     logger.trace("Created iterator")
 
-    synchronization_barrier = mp.Barrier(num_gpus)
-    workers = []
-    for gpu_idx in range(num_gpus):
-        p = mp.Process(
+    synchronization_barrier = th.multiprocessing.Barrier(num_gpus)
+    workers = [
+        mp.Process(
             target=gpu_worker,
             args=(
                 gpu_idx,
@@ -1381,10 +1415,12 @@ def kmeans_manhattan(
                 validate_every,
                 centroid_minibatch_size,
                 assignment_minibatch_size,
+                device_type,
             ),
             name=str(gpu_idx),
         )
-        workers.append(p)
+        for gpu_idx in range(num_gpus)
+    ]
 
     # Start all workers
     for worker in workers:
