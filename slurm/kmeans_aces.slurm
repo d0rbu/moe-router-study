@@ -34,4 +34,4 @@ module load GCCcore/13.3.0 Python/3.12.3
 cd $SCRATCH/moe-router-study
 
 # Run the distributed job
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/kmeans.py main --log-level DEBUG --expansion-factor 1,2,4,8,16,32,64 --tokens-per-file 100000 --reshuffled-tokens-per-file 100000 --minibatch-size 16384 --batch-size 262144 --validate-every 131072
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/kmeans.py main --log-level INFO --expansion-factor 1,2,4,8,16,32,64 --tokens-per-file 100000 --reshuffled-tokens-per-file 100000 --minibatch-size 16384 --batch-size 262144 --validate-every 131072
