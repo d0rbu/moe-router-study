@@ -4,7 +4,7 @@ import gc
 from itertools import batched, islice
 import os
 import sys
-from typing import Any, TypeVar
+from typing import Any, TypeVar, Union
 
 import arguably
 from loguru import logger
@@ -189,7 +189,7 @@ class RunningKMeansData:
 class GPUData:
     synced_data: RunningKMeansData
     dirty_data: RunningKMeansData
-    queue: mp.Queue | None = None
+    queue: Union[mp.Queue, None] = None
 
 
 def compute_all_centroids_from_assignments(
@@ -446,7 +446,7 @@ def kmeans_step(
     centroids: th.Tensor,  # (K, L * E)
     centroid_minibatch_size: int = 65536,
     assignment_minibatch_size: int = 4096,
-    gpu_idx: int | None = None,
+    gpu_idx: Union[int, None] = None,
 ) -> tuple[th.Tensor, th.Tensor, th.Tensor]:
     logger.trace(
         f"Running kmeans step with {data.shape[0]} data points and {centroids.shape[0]} centroids"
@@ -577,8 +577,8 @@ def sync(
     all_gpu_data: list[GPUData],
     losses_over_time: list[th.Tensor],
     barrier: mp.Barrier,
-    general_gpu_group: dist.ProcessGroup | None = None,
-    gpu_specific_group: dist.ProcessGroup | None = None,
+    general_gpu_group: Union[dist.ProcessGroup, None] = None,
+    gpu_specific_group: Union[dist.ProcessGroup, None] = None,
     device_type: DeviceType = "cuda",
 ) -> None:
     backend = get_backend(device_type)
@@ -823,10 +823,10 @@ def gpu_worker(
     top_k: int,
     losses_over_time: list[th.Tensor],
     barrier: mp.Barrier,
-    general_gpu_group: dist.ProcessGroup | None = None,
-    gpu_specific_group: dist.ProcessGroup | None = None,
-    save_dir: str | None = None,
-    validate_every: int = 64,
+    general_gpu_group: Union[dist.ProcessGroup, None] = None,
+    gpu_specific_group: Union[dist.ProcessGroup, None] = None,
+    _save_dir: Union[str, None] = None,
+    _validate_every: int = 64,
     centroid_minibatch_size: int = 65536,
     assignment_minibatch_size: int = 4096,
     device_type: DeviceType = "cuda",
@@ -842,8 +842,8 @@ def gpu_worker(
         barrier: Synchronization barrier for coordinating workers
         general_gpu_group: Distributed process group for communication (general GPU group)
         gpu_specific_group: GPU-specific process group for this device index (or None)
-        save_dir: Directory to save checkpoints (if any)
-        validate_every: Validate centroid synchronization every N sync operations (default: 1)
+        _save_dir: Directory to save checkpoints (if any) [unused]
+        _validate_every: Validate centroid synchronization every N sync operations (default: 1) [unused]
         centroid_minibatch_size: Size of centroid chunks to avoid device limits (default: 65536)
         device_type: Device type ("cuda" or "xpu", defaults to "cuda")
     """
@@ -998,17 +998,17 @@ def kmeans_manhattan(
     activations: Activations,
     activation_dim: int,
     k_values: tuple[int, ...],
-    effective_batch_size: int | None = None,
+    effective_batch_size: Union[int, None] = None,
     max_iters: int = 16,
-    minibatch_size: int | None = None,
+    minibatch_size: Union[int, None] = None,
     centroid_minibatch_size: int = 32768,
     assignment_minibatch_size: int = 4096,
     seed: int = 0,
-    save_every: int | None = None,
-    save_dir: str | None = None,
+    save_every: Union[int, None] = None,
+    save_dir: Union[str, None] = None,
     validate_every: int = 64,
-    general_gpu_group: dist.ProcessGroup | None = None,
-    gpu_process_groups: list[dist.ProcessGroup] | None = None,
+    general_gpu_group: Union[dist.ProcessGroup, None] = None,
+    gpu_process_groups: Union[list[dist.ProcessGroup], None] = None,
     device_type: DeviceType = "cuda",
 ) -> tuple[list[th.Tensor], int, th.Tensor, int, int]:
     """
@@ -1527,10 +1527,10 @@ def cluster_paths_main(
     minibatch_size: int,
     centroid_minibatch_size: int = 32768,
     assignment_minibatch_size: int = 4096,
-    save_every: int | None = None,
+    save_every: Union[int, None] = None,
     validate_every: int = 64,
-    general_gpu_group: dist.ProcessGroup | None = None,
-    gpu_process_groups: list[dist.ProcessGroup] | None = None,
+    general_gpu_group: Union[dist.ProcessGroup, None] = None,
+    gpu_process_groups: Union[list[dist.ProcessGroup], None] = None,
     device_type: DeviceType = "cuda",
 ) -> None:
     kmeans_experiment_name = get_experiment_name(
@@ -1614,11 +1614,11 @@ def cluster_paths(
     model_name: str = "olmoe-i",
     dataset_name: str = "lmsys",
     *_args,
-    k: tuple[int, ...] | int | None = None,
-    expansion_factor: tuple[int, ...] | int | None = None,
+    k: Union[tuple[int, ...], int, None] = None,
+    expansion_factor: Union[tuple[int, ...], int, None] = None,
     batch_size: int = 40_000,
     max_iters: int = 16,
-    save_every: int | None = None,
+    save_every: Union[int, None] = None,
     validate_every: int = 64,
     seed: int = 0,
     minibatch_size: int = 100_000,
@@ -1726,11 +1726,11 @@ def main(
     model_name: str = "olmoe-i",
     dataset_name: str = "lmsys",
     *args: Any,
-    k: tuple[int, ...] | None = None,
-    expansion_factor: tuple[int, ...] | None = None,
+    k: Union[tuple[int, ...], None] = None,
+    expansion_factor: Union[tuple[int, ...], None] = None,
     batch_size: int = 40_000,
     max_iters: int = 16,
-    save_every: int | None = None,
+    save_every: Union[int, None] = None,
     validate_every: int = 64,
     seed: int = 0,
     minibatch_size: int = 10_000,
