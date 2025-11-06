@@ -6,6 +6,7 @@ import math
 import os
 from queue import PriorityQueue
 import sys
+import time
 from typing import Any
 
 import arguably
@@ -127,26 +128,39 @@ def gpu_worker(
     data_iterator: Callable[[str], Generator[tuple[th.Tensor, list[int]], None, None]],
 ) -> None:
     """Worker thread for training SAE models on a specific GPU."""
-    logger.info(f"[worker {device_idx}]: Starting GPU worker")
+    worker_start_time = time.time()
+    logger.info(f"[PERF] Worker {device_idx} started at {worker_start_time}")
     device = f"cuda:{device_idx}"
 
     for worker_batch_idx in count():
         logger.debug(f"[worker {device_idx}]: Awaiting batch {worker_batch_idx}")
+        queue_wait_start = time.time()
         _priority, _trainer_batch_idx, batch = gpu_queue.get()
+        queue_wait_time = time.time() - queue_wait_start
 
         if batch is None:
-            logger.debug(f"[worker {device_idx}]: Stopping")
+            logger.info(
+                f"[PERF] Worker {device_idx} shutting down after {worker_batch_idx} batches, total time: {time.time() - worker_start_time:.2f}s"
+            )
             gpu_queue.task_done()
             break
 
         batch = assert_type(batch, GPUBatch)
 
-        logger.debug(f"[worker {device_idx}]: Got batch {worker_batch_idx}")
+        logger.info(
+            f"[PERF] Worker {device_idx} batch {worker_batch_idx}: queue_wait={queue_wait_time:.3f}s"
+        )
 
         # Create the data iterator
+        data_iter_start = time.time()
         data_iter = data_iterator(batch.submodule_name)
+        data_iter_time = time.time() - data_iter_start
+        logger.info(
+            f"[PERF] Worker {device_idx} batch {worker_batch_idx}: data_iterator_creation={data_iter_time:.3f}s"
+        )
 
         try:
+            train_start = time.time()
             trainSAE(
                 data=data_iter,
                 trainer_configs=batch.trainer_cfgs,
@@ -162,14 +176,24 @@ def gpu_worker(
                     "position": dist.get_rank() * (num_gpus + 1) + device_idx + 1
                 },
             )
+            train_time = time.time() - train_start
+            logger.info(
+                f"[PERF] Worker {device_idx} batch {worker_batch_idx}: training={train_time:.2f}s"
+            )
         finally:
             # Ensure the data iterator is properly closed to clean up worker processes
+            cleanup_start = time.time()
             data_iter.close()
-            logger.debug(
-                f"[worker {device_idx}]: Closed data iterator for batch {worker_batch_idx}"
+            cleanup_time = time.time() - cleanup_start
+            logger.info(
+                f"[PERF] Worker {device_idx} batch {worker_batch_idx}: cleanup={cleanup_time:.3f}s"
             )
 
         gpu_queue.task_done()
+        batch_total_time = time.time() - queue_wait_start
+        logger.info(
+            f"[PERF] Worker {device_idx} batch {worker_batch_idx}: total_batch_time={batch_total_time:.2f}s"
+        )
 
 
 def run_sae_training(
@@ -450,9 +474,13 @@ def run_sae_training(
         f"Number of iterations: {math.ceil(len(hparam_sweep_iterator) / (trainers_per_gpu * num_gpus * dist.get_world_size()))}"
     )
 
+    main_loop_start = time.time()
+    logger.info(f"[PERF] Main training loop starting at {main_loop_start}")
+
     for trainer_batch_idx, trainer_batch in enumerate(
         concurrent_trainer_batched_iterator
     ):
+        batch_dispatch_start = time.time()
         device_idx, gpu_queue = select_least_loaded_gpu(gpu_queues)
 
         trainer_cfgs = []
@@ -530,7 +558,10 @@ def run_sae_training(
             sae_experiment_name=sae_experiment_name,
             submodule_name=current_submodule_name,
         )
-        logger.debug(f"Putting batch {trainer_batch_idx} into queue {device_idx}")
+        batch_dispatch_time = time.time() - batch_dispatch_start
+        logger.info(
+            f"[PERF] Dispatched batch {trainer_batch_idx} to GPU {device_idx} in {batch_dispatch_time:.3f}s"
+        )
         gpu_queue.put((0, trainer_batch_idx, batch))
 
     # put a sentinel value in the gpu queues to stop the workers
@@ -538,22 +569,30 @@ def run_sae_training(
         logger.debug(f"Putting sentinel value in queue {gpu_idx}")
         gpu_queue.put((1, 0, None))
 
-    logger.debug("Waiting for queues to finish")
+    queue_join_start = time.time()
+    logger.info("[PERF] Waiting for queues to finish")
     for gpu_queue in gpu_queues:
         gpu_queue.join()
+    queue_join_time = time.time() - queue_join_start
+    logger.info(f"[PERF] All queues finished in {queue_join_time:.2f}s")
 
     # Wait for all worker threads to complete
-    logger.debug("Waiting for worker threads to finish")
+    worker_wait_start = time.time()
+    logger.info("[PERF] Waiting for worker threads to finish")
     for future in as_completed(worker_futures):
         try:
             future.result()  # This will re-raise any exceptions from worker threads
         except Exception as e:
             logger.error(f"Worker thread raised an exception: {e}")
             raise
+    worker_wait_time = time.time() - worker_wait_start
+    logger.info(f"[PERF] All worker threads finished in {worker_wait_time:.2f}s")
 
     # Shutdown the executor
     executor.shutdown(wait=True)
 
+    total_time = time.time() - main_loop_start
+    logger.info(f"[PERF] Total training time: {total_time:.2f}s")
     logger.info("done :)")
 
 
