@@ -39,6 +39,7 @@ T = TypeVar("T")
 
 GPU_QUEUE_MAXSIZE = 4
 
+
 def check_worker_health(workers: dict[str, mp.Process], *, context: str = "") -> None:
     """Check if any workers have failed and raise appropriate exceptions."""
     for worker_name, worker in workers.items():
@@ -907,15 +908,15 @@ def gpu_worker(
         )
 
         updates = [
-                kmeans_step(
-                    data=flat_data,
-                    centroids=centroids,
-                    centroid_minibatch_size=centroid_minibatch_size,
-                    assignment_minibatch_size=assignment_minibatch_size,
-                    gpu_idx=gpu_idx,
-                )
-                for centroids in gpu_data.synced_data.centroid_sets
-            ]
+            kmeans_step(
+                data=flat_data,
+                centroids=centroids,
+                centroid_minibatch_size=centroid_minibatch_size,
+                assignment_minibatch_size=assignment_minibatch_size,
+                gpu_idx=gpu_idx,
+            )
+            for centroids in gpu_data.synced_data.centroid_sets
+        ]
         new_centroid_sets, new_weight_sets, new_losses = zip(*updates, strict=True)
 
         logger.trace(f"GPU {gpu_idx} updated dirty data")
@@ -944,14 +945,14 @@ def gpu_worker(
         logger.trace(f"GPU {gpu_idx} starting sync operation")
 
         sync(
-                gpu_idx,
-                all_gpu_data,
-                losses_over_time,
-                barrier,
-                general_gpu_group,
-                gpu_specific_group,
-                device_type,
-            )
+            gpu_idx,
+            all_gpu_data,
+            losses_over_time,
+            barrier,
+            general_gpu_group,
+            gpu_specific_group,
+            device_type,
+        )
 
         # log avg of last n losses from the last iteration
         num_losses_to_log = 10
@@ -973,8 +974,6 @@ def gpu_worker(
         )
 
         gpu_data.queue.put((None, False, None))
-
-
 
 
 def get_top_circuits(
@@ -1378,7 +1377,7 @@ def kmeans_manhattan(
                 centroid_minibatch_size,
                 assignment_minibatch_size,
             ),
-            name=str(gpu_idx)
+            name=str(gpu_idx),
         )
         workers.append(p)
 
@@ -1643,16 +1642,18 @@ def cluster_paths(
     log_level_numeric = logger.level(log_level).no
     debug_level_numeric = logger.level("DEBUG").no
 
-    activations, activation_dims, gpu_process_group, gpu_process_groups = load_activations_and_init_dist(
-        model_name=model_name,
-        dataset_name=dataset_name,
-        tokens_per_file=tokens_per_file,
-        reshuffled_tokens_per_file=reshuffled_tokens_per_file,
-        submodule_names=[ActivationKeys.ROUTER_LOGITS, ActivationKeys.MLP_OUTPUT],
-        context_length=context_length,
-        num_workers=num_workers,
-        debug=log_level_numeric <= debug_level_numeric,
-        device_type=device_type,
+    activations, activation_dims, gpu_process_group, gpu_process_groups = (
+        load_activations_and_init_dist(
+            model_name=model_name,
+            dataset_name=dataset_name,
+            tokens_per_file=tokens_per_file,
+            reshuffled_tokens_per_file=reshuffled_tokens_per_file,
+            submodule_names=[ActivationKeys.ROUTER_LOGITS, ActivationKeys.MLP_OUTPUT],
+            context_length=context_length,
+            num_workers=num_workers,
+            debug=log_level_numeric <= debug_level_numeric,
+            device_type=device_type,
+        )
     )
 
     # Verify that gpu_process_groups length matches number of devices if available
@@ -1700,27 +1701,25 @@ def cluster_paths(
 
     logger.info(f"Running with device type: {device_type}")
 
-
     cluster_paths_main(
-            model_name=model_name,
-            dataset_name=dataset_name,
-            activations=activations,
-            activation_dim=router_activation_dim,
-            k=k,
-            batch_size=batch_size,
-            max_iters=max_iters,
-            seed=seed,
-            tokens_per_file=reshuffled_tokens_per_file,
-            minibatch_size=minibatch_size,
-            centroid_minibatch_size=centroid_minibatch_size,
-            assignment_minibatch_size=assignment_minibatch_size,
-            save_every=save_every,
-            validate_every=validate_every,
-            general_gpu_group=gpu_process_group,
-            gpu_process_groups=gpu_process_groups,
-            device_type=device_type,
-        )
-
+        model_name=model_name,
+        dataset_name=dataset_name,
+        activations=activations,
+        activation_dim=router_activation_dim,
+        k=k,
+        batch_size=batch_size,
+        max_iters=max_iters,
+        seed=seed,
+        tokens_per_file=reshuffled_tokens_per_file,
+        minibatch_size=minibatch_size,
+        centroid_minibatch_size=centroid_minibatch_size,
+        assignment_minibatch_size=assignment_minibatch_size,
+        save_every=save_every,
+        validate_every=validate_every,
+        general_gpu_group=gpu_process_group,
+        gpu_process_groups=gpu_process_groups,
+        device_type=device_type,
+    )
 
 
 @arguably.command()
