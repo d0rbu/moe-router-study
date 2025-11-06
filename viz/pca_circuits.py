@@ -12,7 +12,7 @@ FIGURE_PATH = os.path.join(FIGURE_DIR, "pca_circuits.png")
 
 @arguably.command()
 def pca_figure() -> None:
-    activated_experts, _, top_k = load_activations()
+    activated_experts, _, _top_k = load_activations()
 
     # (B, L, E) -> (B, L * E)
     activated_experts = (

@@ -94,7 +94,7 @@ class Node:
 
 @arguably.command()
 def cluster_circuits() -> None:
-    activated_experts, top_k = load_activations_and_topk()
+    activated_experts, _top_k = load_activations_and_topk()
 
     # (B, L, E) -> (B, L * E)
     activated_experts = activated_experts.view(activated_experts.shape[0], -1).float()

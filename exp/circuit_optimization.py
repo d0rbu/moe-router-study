@@ -94,7 +94,7 @@ def gradient_descent(
     )
     assert data.ndim == 3, "Data must be of shape (B, L, E)"
 
-    batch_size, num_layers, num_experts = data.shape
+    _batch_size, num_layers, num_experts = data.shape
 
     th.manual_seed(seed)
     th.cuda.manual_seed(seed)
@@ -359,7 +359,7 @@ def grid_search_gradient_descent(
             },
         )
 
-        circuits, loss, faithfulness, complexity = gradient_descent(
+        _circuits, loss, faithfulness, complexity = gradient_descent(
             data,
             top_k,
             complexity_importance,

@@ -20,7 +20,7 @@ def kmeans_manhattan(
 
     assert data.ndim == 2, "Data must be of dimensions (B, D)"
 
-    batch_size, dim = data.shape
+    batch_size, _dim = data.shape
 
     # initialize the centroids
     centroids = data[th.randperm(batch_size)[:k]]
@@ -48,7 +48,7 @@ def elbow(
 ) -> None:
     assert data.ndim == 2, "Data must be of dimensions (B, D)"
 
-    batch_size, dim = data.shape
+    _batch_size, _dim = data.shape
 
     total_iters = (stop - start) // step
 
@@ -93,7 +93,7 @@ def get_top_circuits(
 
 def visualize_top_circuits(circuit_mask: th.Tensor) -> None:
     circuit_mask = circuit_mask.cpu()
-    num_centroids, num_layers, num_experts = circuit_mask.shape
+    num_centroids, _num_layers, _num_experts = circuit_mask.shape
 
     # matplotlib interactive mode that lets us scroll through the circuits
     # each circuit will be shown as a num_layers x num_experts matrix
@@ -144,9 +144,9 @@ def visualize_top_circuits(circuit_mask: th.Tensor) -> None:
 
 @arguably.command()
 def cluster_circuits(k: int | None = None, seed: int = 0) -> None:
-    activated_experts, top_k = load_activations_and_topk()
+    activated_experts, _top_k = load_activations_and_topk()
 
-    batch_size, num_layers, num_experts = activated_experts.shape
+    _batch_size, _num_layers, _num_experts = activated_experts.shape
 
     # (B, L, E) -> (B, L * E)
     activated_experts = (
