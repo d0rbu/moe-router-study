@@ -1,9 +1,14 @@
-from collections.abc import Iterable
+from __future__ import annotations
+
 import itertools
+from typing import TYPE_CHECKING
 
 import pytest
 
 from core import data as core_data
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 @pytest.mark.unit

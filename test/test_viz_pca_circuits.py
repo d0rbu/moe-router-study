@@ -16,10 +16,14 @@ def test_pca_figure_saves(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
         activated[:, :, 0] = True
         return activated, 1
 
-    monkeypatch.setattr(pca_mod.act, "load_activations_and_topk", fake_load_activations_and_topk)
+    monkeypatch.setattr(
+        pca_mod.act, "load_activations_and_topk", fake_load_activations_and_topk
+    )
 
     # Patch FIGURE_DIR to tmp by editing pca_mod.FIGURE_PATH
-    monkeypatch.setattr(pca_mod, "FIGURE_PATH", os.path.join(str(tmp_path), "pca_circuits.png"))
+    monkeypatch.setattr(
+        pca_mod, "FIGURE_PATH", os.path.join(str(tmp_path), "pca_circuits.png")
+    )
 
     # Act
     pca_mod.pca_figure()

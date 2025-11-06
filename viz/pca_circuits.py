@@ -13,7 +13,7 @@ FIGURE_PATH = os.path.join(FIGURE_DIR, "pca_circuits.png")
 @arguably.command()
 def pca_figure(device: str = "cpu") -> None:
     # Load activations with explicit device parameter
-    activated_experts, top_k = act.load_activations_and_topk(device=device)
+    activated_experts, _top_k = act.load_activations_and_topk(device=device)
 
     # (B, L, E) -> (B, L * E)
     activated_experts = activated_experts.view(activated_experts.shape[0], -1).float()

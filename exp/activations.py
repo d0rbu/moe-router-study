@@ -68,7 +68,9 @@ def load_activations_and_topk(
     L is the number of layers, and E is the number of experts.
     top_k is the number of experts activated per token.
     """
-    activated_experts, _, _, top_k = load_activations_indices_tokens_and_topk(device=device)
+    activated_experts, _, _, top_k = load_activations_indices_tokens_and_topk(
+        device=device
+    )
     return activated_experts, top_k
 
 

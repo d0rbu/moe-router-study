@@ -48,7 +48,7 @@ def max_iou_and_index(
 
 
 def mean_max_iou(data: th.Tensor, circuits: th.Tensor) -> th.Tensor:
-    max_iou, max_iou_idx = max_iou_and_index(data, circuits)
+    max_iou, _max_iou_idx = max_iou_and_index(data, circuits)
 
     # (..., B) -> (...)
     return max_iou.mean(dim=-1)
@@ -103,7 +103,7 @@ def min_logit_loss_and_index(
     circuit_distances = th.cdist(data_flat, circuits_flat, p=1)
 
     # (..., B, C) -> (..., B)
-    min_distance, min_distance_idx = circuit_distances.min(dim=-1)
+    _min_distance, min_distance_idx = circuit_distances.min(dim=-1)
 
     # (..., C, L, E) -> (..., B, L, E)
     closest_circuit_logits = circuits_logits[min_distance_idx]
@@ -120,7 +120,7 @@ def min_logit_loss(
     data: th.Tensor,
     circuits_logits: th.Tensor,
 ) -> th.Tensor:
-    min_loss, min_loss_idx = min_logit_loss_and_index(data, circuits_logits)
+    min_loss, _min_loss_idx = min_logit_loss_and_index(data, circuits_logits)
 
     # (..., B) -> (...)
     return min_loss.mean(dim=-1)
