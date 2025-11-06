@@ -12,6 +12,8 @@
 #SBATCH --gres=gpu:pvc:8                # Request 8 Intel PVC XPUs per node
 #SBATCH --partition=pvc                 # Request the XPU partition/queue
 
+#SBATCH --nodelist=ac068
+
 ##OPTIONAL JOB SPECIFICATIONS
 ##SBATCH --account=123456               # Set billing account to 123456
 ##SBATCH --mail-type=ALL                # Send email on all job events
