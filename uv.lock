@@ -2461,7 +2461,7 @@ requires-dist = [
     { name = "scikit-learn", specifier = ">=1.7.1" },
     { name = "seaborn", specifier = ">=0.13.2" },
     { name = "streamlit", specifier = ">=1.48.1" },
-    { name = "torch", specifier = ">=2.0.0" },
+    { name = "torch", specifier = ">=2.0.0,<=2.8.0" },
     { name = "torch-pca", specifier = ">=1.1.0" },
     { name = "tornado", specifier = ">=6.5.1" },
     { name = "tqdm", specifier = ">=4.60.0" },
@@ -2727,7 +2727,7 @@ wheels = [
 
 [[package]]
 name = "nnterp"
-version = "0.1.dev203+gcd18608dd"
+version = "0.0.0"
 source = { git = "https://github.com/d0rbu/nnterp.git#cd18608ddd9acb464e42d36b7236861a66e958d7" }
 dependencies = [
     { name = "ipykernel" },
