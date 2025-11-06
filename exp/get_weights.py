@@ -62,11 +62,18 @@ def get_weights(model_name: str = "olmoe", checkpoint_idx: int = -1) -> None:
         ):
             if num_experts <= 0:
                 # not moe
-                down_proj_weights[layer_idx] = model.mlps[layer_idx].down_proj.weight.cpu()
+                down_proj_weights[layer_idx] = model.mlps[
+                    layer_idx
+                ].down_proj.weight.cpu()
             else:
-                expert_down_proj_weights = th.empty(num_experts, *model.mlps[layer_idx].experts[0].down_proj.weight.shape)
+                expert_down_proj_weights = th.empty(
+                    num_experts,
+                    *model.mlps[layer_idx].experts[0].down_proj.weight.shape,
+                )
                 for expert_idx in range(num_experts):
-                    expert_down_proj_weights[expert_idx] = model.mlps[layer_idx].experts[expert_idx].down_proj.weight.cpu()
+                    expert_down_proj_weights[expert_idx] = (
+                        model.mlps[layer_idx].experts[expert_idx].down_proj.weight.cpu()
+                    )
                 down_proj_weights[layer_idx] = expert_down_proj_weights
 
         down_proj_out = {

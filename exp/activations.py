@@ -1,6 +1,5 @@
 from itertools import count
 import os
-from typing import List
 
 import torch as th
 from tqdm import tqdm
@@ -10,7 +9,7 @@ from exp.get_router_activations import ROUTER_LOGITS_DIR
 
 def load_activations_indices_tokens_and_topk(
     device: str = "cuda",
-) -> tuple[th.Tensor, th.Tensor, List[list[str]], int]:
+) -> tuple[th.Tensor, th.Tensor, list[list[str]], int]:
     """Load boolean activation mask, top-k indices, tokens, and top_k.
 
     Returns:
@@ -21,7 +20,7 @@ def load_activations_indices_tokens_and_topk(
     """
     activated_expert_indices_collection: list[th.Tensor] = []
     activated_experts_collection: list[th.Tensor] = []
-    tokens: List[list[str]] = []
+    tokens: list[list[str]] = []
     top_k: int | None = None
 
     for file_idx in tqdm(count(), desc="Loading router logits+tokens"):
@@ -37,14 +36,18 @@ def load_activations_indices_tokens_and_topk(
 
         # Build top-k indices and boolean mask via topk + scatter
         topk_indices = th.topk(router_logits, k=top_k, dim=2).indices  # (B, L, topk)
-        expert_activations = th.zeros_like(router_logits, device=device).bool()  # (B, L, E)
+        expert_activations = th.zeros_like(
+            router_logits, device=device
+        ).bool()  # (B, L, E)
         expert_activations.scatter_(2, topk_indices, True)
 
         activated_expert_indices_collection.append(topk_indices)
         activated_experts_collection.append(expert_activations)
 
     if top_k is None or not activated_experts_collection:
-        raise ValueError("No data files found; ensure exp.get_router_activations has been run")
+        raise ValueError(
+            "No data files found; ensure exp.get_router_activations has been run"
+        )
 
     # (B, L, E)
     activated_experts = th.cat(activated_experts_collection, dim=0)
@@ -53,13 +56,19 @@ def load_activations_indices_tokens_and_topk(
     return activated_experts, activated_expert_indices, tokens, top_k
 
 
-def load_activations_and_indices_and_topk(device: str = "cuda") -> tuple[th.Tensor, th.Tensor, int]:
-    activated_experts, activated_expert_indices, _tokens, top_k = load_activations_indices_tokens_and_topk(device=device)
+def load_activations_and_indices_and_topk(
+    device: str = "cuda",
+) -> tuple[th.Tensor, th.Tensor, int]:
+    activated_experts, activated_expert_indices, _tokens, top_k = (
+        load_activations_indices_tokens_and_topk(device=device)
+    )
     return activated_experts, activated_expert_indices, top_k
 
 
 def load_activations_and_topk(device: str = "cuda") -> tuple[th.Tensor, int]:
-    activated_experts, _indices, top_k = load_activations_and_indices_and_topk(device=device)
+    activated_experts, _indices, top_k = load_activations_and_indices_and_topk(
+        device=device
+    )
     return activated_experts, top_k
 
 
@@ -68,8 +77,12 @@ def load_activations(device: str = "cuda") -> th.Tensor:
     return activated_experts
 
 
-def load_activations_tokens_and_topk(device: str = "cuda") -> tuple[th.Tensor, List[list[str]], int]:
-    activated_experts, _indices, tokens, top_k = load_activations_indices_tokens_and_topk(device=device)
+def load_activations_tokens_and_topk(
+    device: str = "cuda",
+) -> tuple[th.Tensor, list[list[str]], int]:
+    activated_experts, _indices, tokens, top_k = (
+        load_activations_indices_tokens_and_topk(device=device)
+    )
     return activated_experts, tokens, top_k
 
 

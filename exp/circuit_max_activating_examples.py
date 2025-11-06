@@ -1,24 +1,20 @@
-from typing import Callable, Dict, List, Tuple
+import itertools
 
-import arguably
+from matplotlib.axes import Axes
 import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
-from matplotlib.axes import Axes
-from matplotlib.figure import Figure
-from matplotlib.widgets import Slider
 
 # Use the topk+scatter-based loader that builds a boolean activation mask
 from exp.activations import (
     load_activations_and_topk,
-    load_activations_tokens_and_topk,
 )
 
 
 def get_circuit_activations(
     circuits: th.Tensor,
     device: str = "cuda",
-) -> Tuple[th.Tensor, th.Tensor]:
+) -> tuple[th.Tensor, th.Tensor]:
     """Compute circuit activations for every token from top-k activation mask.
 
     Steps:
@@ -36,7 +32,9 @@ def get_circuit_activations(
     return activations, token_topk_mask
 
 
-def _color_for_value(val: float, vmin: float = 0.0, vmax: float = 1.0) -> Tuple[float, float, float]:
+def _color_for_value(
+    val: float, vmin: float = 0.0, vmax: float = 1.0
+) -> tuple[float, float, float]:
     # Map activation value to color (Blues colormap)
     normalized = 0.0 if vmax <= vmin else (val - vmin) / (vmax - vmin)
     cmap = plt.get_cmap("Blues")
@@ -44,7 +42,7 @@ def _color_for_value(val: float, vmin: float = 0.0, vmax: float = 1.0) -> Tuple[
     return (r, g, b)
 
 
-def _render_circuit(ax: Axes, circuit: np.ndarray) -> Tuple:
+def _render_circuit(ax: Axes, circuit: np.ndarray) -> tuple:
     ax.clear()
     im = ax.imshow(circuit, cmap="Greys", aspect="auto", interpolation="nearest")
     ax.set_title("Circuit (L x E)")
@@ -55,7 +53,9 @@ def _render_circuit(ax: Axes, circuit: np.ndarray) -> Tuple:
     return (im,)
 
 
-def _ensure_token_alignment(token_topk_mask: th.Tensor, sequences: List[List[str]]) -> None:
+def _ensure_token_alignment(
+    token_topk_mask: th.Tensor, sequences: list[list[str]]
+) -> None:
     # Best-effort sanity check: make sure token count matches
     total_tokens = sum(len(s) for s in sequences)
     if token_topk_mask.shape[0] != total_tokens:
@@ -65,7 +65,9 @@ def _ensure_token_alignment(token_topk_mask: th.Tensor, sequences: List[List[str
         )
 
 
-def build_sequence_id_tensor(sequences: List[List[str]]) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
+def build_sequence_id_tensor(
+    sequences: list[list[str]],
+) -> tuple[th.Tensor, th.Tensor, th.Tensor]:
     """Map each token to its sequence index and compute lengths/offsets.
 
     Returns:
@@ -86,7 +88,7 @@ def build_sequence_id_tensor(sequences: List[List[str]]) -> Tuple[th.Tensor, th.
         return th.empty(0, dtype=th.long), seq_lengths, seq_offsets
 
     seq_ids = th.empty(B, dtype=th.long)
-    for s, (start, end) in enumerate(zip(seq_offsets[:-1], seq_offsets[1:])):
+    for s, (start, end) in enumerate(itertools.pairwise(seq_offsets)):
         seq_ids[start:end] = s
     return seq_ids, seq_lengths, seq_offsets
 
@@ -106,7 +108,9 @@ def _gather_top_sequences_by_max(
 
     earliest = th.full((S,), B, device=device)
     idx_src = th.arange(B, device=device)
-    earliest = earliest.scatter_reduce(0, seq_sorted, idx_src, reduce="amin", include_self=True)
+    earliest = earliest.scatter_reduce(
+        0, seq_sorted, idx_src, reduce="amin", include_self=True
+    )
 
     assert (earliest < B).all(), "Every sequence must have at least one token"
 
