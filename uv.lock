@@ -17,6 +17,7 @@ members = [
     "eai-delphi",
     "moe-router-study",
 ]
+overrides = [{ name = "vllm", specifier = "==0.10.1" }]
 
 [[package]]
 name = "accelerate"
@@ -1058,7 +1059,7 @@ requires-dist = [
     { name = "simple-parsing" },
     { name = "torch" },
     { name = "transformers", git = "https://github.com/huggingface/transformers.git" },
-    { name = "vllm", specifier = "==0.10.1" },
+    { name = "vllm", specifier = ">=0.10.2" },
 ]
 provides-extras = ["dev", "visualize"]
 
