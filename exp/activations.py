@@ -76,7 +76,10 @@ class Activations:
         # Shared file cache and position tracking
         self._file_cache = {}  # {file_index: file_data}
         self._file_positions = {}  # {thread_id: current_file_index}
-        self._file_ready_events = {}  # {file_index: threading.Event()} for signaling file loads
+        # Pre-create all events to avoid race conditions between threads and worker
+        self._file_ready_events = {
+            i: threading.Event() for i in range(len(activation_filepaths or []))
+        }
         self._positions_lock = threading.Lock()
         self._cache_lock = threading.Lock()
         self._cache_update_event = threading.Event()
@@ -238,8 +241,7 @@ class Activations:
                             value.share_memory_()
                     self._file_cache[file_idx] = file_data
                     # Notify any waiting threads that this file is ready
-                    if file_idx in self._file_ready_events:
-                        self._file_ready_events[file_idx].set()
+                    self._file_ready_events[file_idx].set()
                     logger.trace(
                         f"Loaded file {file_idx}, cache size={len(self._file_cache)}"
                     )
@@ -262,17 +264,13 @@ class Activations:
         try:
             for file_idx in range(len(self.activation_filepaths)):
                 # Check if file is already in cache, otherwise wait for signal
+                file_event = self._file_ready_events[file_idx]
+                
                 with self._cache_lock:
-                    if file_idx not in self._file_cache:
-                        # Create event for this file if it doesn't exist
-                        if file_idx not in self._file_ready_events:
-                            self._file_ready_events[file_idx] = threading.Event()
-                        file_event = self._file_ready_events[file_idx]
-                    else:
-                        file_event = None
+                    file_in_cache = file_idx in self._file_cache
 
                 # If file not in cache, wait for worker to load it
-                if file_event is not None:
+                if not file_in_cache:
                     logger.trace(f"Thread {thread_id} waiting for file {file_idx}")
                     file_event.wait()
                     file_event.clear()  # Reset for potential reuse
