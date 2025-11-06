@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from functools import partial
 import gc
 from itertools import batched, islice
 import os
 import sys
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import arguably
 from loguru import logger
@@ -15,6 +16,9 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from tqdm import tqdm
 import yaml
+
+if TYPE_CHECKING:
+    from multiprocessing.synchronize import Barrier
 
 from core.device import (
     DeviceType,
@@ -43,17 +47,18 @@ GPU_QUEUE_MAXSIZE = 4
 def check_worker_health(workers: dict[str, mp.Process], *, context: str = "") -> None:
     """Check if any workers have failed and raise appropriate exceptions."""
     for worker_name, worker in workers.items():
-        if worker.done():
-            exception = worker.exception()
+        if not worker.is_alive() and worker.exitcode != 0:
             context_str = f" [{context}]" if context else ""
-            if exception:
-                logger.error(f"{worker_name} worker failed{context_str}: {exception}")
-                raise RuntimeError(f"{worker_name} worker failed") from exception
-            else:
-                logger.error(
-                    f"{worker_name} worker completed unexpectedly{context_str}"
-                )
-                raise RuntimeError(f"{worker_name} worker completed unexpectedly")
+            logger.error(
+                f"{worker_name} worker failed{context_str} with exit code {worker.exitcode}"
+            )
+            raise RuntimeError(
+                f"{worker_name} worker failed with exit code {worker.exitcode}"
+            )
+        elif not worker.is_alive() and worker.exitcode == 0:
+            context_str = f" [{context}]" if context else ""
+            logger.error(f"{worker_name} worker completed unexpectedly{context_str}")
+            raise RuntimeError(f"{worker_name} worker completed unexpectedly")
 
 
 @dataclass
@@ -579,7 +584,7 @@ def sync(
     gpu_idx: int,
     all_gpu_data: list[GPUData],
     losses_over_time: list[th.Tensor],
-    barrier: mp.Barrier,
+    barrier: Barrier,
     general_gpu_group: dist.ProcessGroup | None = None,
     gpu_specific_group: dist.ProcessGroup | None = None,
     device_type: DeviceType = "cuda",
@@ -825,7 +830,7 @@ def gpu_worker(
     all_gpu_data: list[GPUData],
     top_k: int,
     losses_over_time: list[th.Tensor],
-    barrier: mp.Barrier,
+    barrier: Barrier,
     general_gpu_group: dist.ProcessGroup | None = None,
     gpu_specific_group: dist.ProcessGroup | None = None,
     _save_dir: str | None = None,
@@ -1642,7 +1647,7 @@ def cluster_paths(
     log_level_numeric = logger.level(log_level).no
     debug_level_numeric = logger.level("DEBUG").no
 
-    activations, activation_dims, gpu_process_group, gpu_process_groups = (
+    activations, activation_dims, gpu_process_group, gpu_process_groups = asyncio.run(
         load_activations_and_init_dist(
             model_name=model_name,
             dataset_name=dataset_name,
