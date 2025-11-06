@@ -1080,7 +1080,7 @@ async def kmeans_manhattan(
     activation_dim: int,
     k_values: tuple[int, ...],
     effective_batch_size: int | None = None,
-    max_iters: int = 128,
+    max_iters: int = 16,
     minibatch_size: int | None = None,
     centroid_minibatch_size: int = 32768,
     assignment_minibatch_size: int = 4096,
@@ -1558,6 +1558,20 @@ async def kmeans_manhattan(
                     operation_name=f"queue put for GPU {gpu_idx}",
                 )
 
+        # log avg of last n losses from the last iteration
+        num_losses_to_log = 10
+        if len(losses_over_time) > 0:
+            losses_tensor = th.stack(losses_over_time, dim=1)
+            last_n_losses = losses_tensor[:, -num_losses_to_log:]
+            avg_losses = last_n_losses.mean(dim=1)
+            avg_loss_strings = [
+                f"k={k_values[k_idx]}: {avg_loss:.6f}"
+                for k_idx, avg_loss in enumerate(avg_losses)
+            ]
+            logger.info(
+                f"Average losses over last {num_losses_to_log} iterations:\n\t{'\n\t'.join(avg_loss_strings)}"
+            )
+
     for gpu_data in all_gpu_data:
         logger.trace(
             f"Putting stop signal on GPU with queue size {gpu_data.queue.qsize()}"
@@ -1708,7 +1722,7 @@ def cluster_paths(
     k: tuple[int, ...] | int | None = None,
     expansion_factor: tuple[int, ...] | int | None = None,
     batch_size: int = 40_000,
-    max_iters: int = 128,
+    max_iters: int = 16,
     save_every: int | None = None,
     validate_every: int = 64,
     seed: int = 0,
@@ -1822,7 +1836,7 @@ def main(
     k: tuple[int, ...] | None = None,
     expansion_factor: tuple[int, ...] | None = None,
     batch_size: int = 40_000,
-    max_iters: int = 128,
+    max_iters: int = 16,
     save_every: int | None = None,
     validate_every: int = 64,
     seed: int = 0,
