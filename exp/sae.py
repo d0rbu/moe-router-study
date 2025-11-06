@@ -148,7 +148,7 @@ async def gpu_worker(
         data_iter = data_iterator(batch.submodule_name)
 
         try:
-            await trainSAE(
+            trainSAE(
                 data=data_iter,
                 trainer_configs=batch.trainer_cfgs,
                 steps=steps * num_epochs,

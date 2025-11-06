@@ -9,7 +9,7 @@
 #SBATCH --mem=256G                      # Request 256GB per node
 #SBATCH --output=kmeans.%j              # Send stdout/err to "kmeans.[jobID]"
 #SBATCH --error=kmeans.%j.err           # Send stderr to separate file
-#SBATCH --gres=gpu:h100:4               # Request 4 H100 GPUs per node
+#SBATCH --gres=gpu:h100:1               # Request 1 H100 GPUs per node
 #SBATCH --partition=gpu                 # Request the GPU partition/queue
 
 ##OPTIONAL JOB SPECIFICATIONS
