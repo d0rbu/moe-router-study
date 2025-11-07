@@ -7,7 +7,7 @@ import gc
 from itertools import batched, islice
 import os
 import sys
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import arguably
 from loguru import logger
@@ -35,6 +35,9 @@ from exp.kmeans_validation import (
     validate_centroid_distribution,
 )
 from exp.training import get_experiment_name
+
+if TYPE_CHECKING:
+    from multiprocessing.synchronize import Barrier as BarrierType
 
 T = TypeVar("T")
 
@@ -581,7 +584,7 @@ def sync(
     gpu_idx: int,
     all_gpu_data: list[GPUData],
     losses_over_time: list[th.Tensor],
-    barrier: th.multiprocessing.Barrier,
+    barrier: BarrierType,
     general_gpu_group: dist.ProcessGroup | None = None,
     gpu_specific_group: dist.ProcessGroup | None = None,
     device_type: DeviceType = "cuda",
@@ -820,7 +823,7 @@ def gpu_worker(
     all_gpu_data: list[GPUData],
     top_k: int,
     losses_over_time: list[th.Tensor],
-    barrier: th.multiprocessing.Barrier,
+    barrier: BarrierType,
     general_gpu_group: dist.ProcessGroup | None = None,
     gpu_specific_group: dist.ProcessGroup | None = None,
     save_dir: str | None = None,
