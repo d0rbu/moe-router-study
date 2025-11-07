@@ -63,6 +63,8 @@ dependencies = [
     "onemkl-sycl-lapack",
     "onemkl-sycl-rng",
     "onemkl-sycl-sparse",
+    "torchvision",
+    "torchaudio",
 ]
 
 [project.optional-dependencies]
