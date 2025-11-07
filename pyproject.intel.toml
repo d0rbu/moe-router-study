@@ -214,6 +214,8 @@ explicit = true
 [tool.uv.sources]
 oneccl-bind-pt = { index = "intel-xpu" }
 torch = { index = "torch-xpu" }
+torchvision = { index = "torch-xpu" }
+torchaudio = { index = "torch-xpu" }
 pytorch-triton-xpu = { index = "torch-xpu" }
 nnterp = { git = "https://github.com/d0rbu/nnterp.git" }
 dictionary-learning = { git = "https://github.com/d0rbu/dictionary_learning" }
