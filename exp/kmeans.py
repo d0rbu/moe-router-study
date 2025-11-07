@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from functools import partial
 import gc
 from itertools import batched, islice
+from multiprocessing.synchronize import Barrier as BarrierType
 import os
 import sys
 from typing import TYPE_CHECKING, Any, TypeVar
