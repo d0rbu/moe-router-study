@@ -7,7 +7,7 @@ import gc
 from itertools import batched, islice
 import os
 import sys
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import Any, TypeVar
 
 import arguably
 from loguru import logger
@@ -36,7 +36,6 @@ from exp.kmeans_validation import (
 )
 from exp.training import get_experiment_name
 
-if TYPE_CHECKING:
 
 T = TypeVar("T")
 
