@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from functools import partial
 import gc
 from itertools import batched, islice
-from multiprocessing.synchronize import Barrier as BarrierType
 import os
 import sys
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -38,7 +37,6 @@ from exp.kmeans_validation import (
 from exp.training import get_experiment_name
 
 if TYPE_CHECKING:
-    from multiprocessing.synchronize import Barrier as BarrierType
 
 T = TypeVar("T")
 
@@ -585,7 +583,7 @@ def sync(
     gpu_idx: int,
     all_gpu_data: list[GPUData],
     losses_over_time: list[th.Tensor],
-    barrier: BarrierType,
+    barrier: th.multiprocessing.Barrier,
     general_gpu_group: dist.ProcessGroup | None = None,
     gpu_specific_group: dist.ProcessGroup | None = None,
     device_type: DeviceType = "cuda",
@@ -824,7 +822,7 @@ def gpu_worker(
     all_gpu_data: list[GPUData],
     top_k: int,
     losses_over_time: list[th.Tensor],
-    barrier: BarrierType,
+    barrier: th.multiprocessing.Barrier,
     general_gpu_group: dist.ProcessGroup | None = None,
     gpu_specific_group: dist.ProcessGroup | None = None,
     save_dir: str | None = None,
