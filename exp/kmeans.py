@@ -1731,6 +1731,11 @@ def cluster_paths(
             )
         case tuple(), None:
             pass
+        case tuple(), tuple(ef_tuple):
+            k = tuple(
+                current_expansion_factor * residual_activation_dim
+                for current_expansion_factor in ef_tuple
+            )
         case _, _:
             raise ValueError("Cannot specify both k and expansion_factor")
 
