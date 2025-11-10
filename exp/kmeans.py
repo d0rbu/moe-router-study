@@ -1724,7 +1724,7 @@ def cluster_paths(
             k = (ef * residual_activation_dim,)
         case int(k_val), None:
             k = (k_val,)
-        case (None | tuple()), tuple(ef_tuple):
+        case ((None | tuple()), tuple(ef_tuple)):
             k = tuple(
                 current_expansion_factor * residual_activation_dim
                 for current_expansion_factor in ef_tuple
