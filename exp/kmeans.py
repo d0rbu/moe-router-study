@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from dataclasses import dataclass
 from functools import partial
 import gc
@@ -1076,6 +1077,11 @@ def kmeans_manhattan(
         num_layers: Number of layers with routers
         num_experts: Number of experts per layer
     """
+    # Set multiprocessing start method to 'spawn' for CUDA compatibility
+    # CUDA contexts cannot be forked, so we must use spawn
+    with contextlib.suppress(RuntimeError):
+        mp.set_start_method("spawn", force=True)
+
     # Get backend once and reuse throughout the function
     backend = get_backend(device_type)
 
