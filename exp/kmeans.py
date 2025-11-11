@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 from dataclasses import dataclass
 from functools import partial
 import gc
@@ -1079,8 +1078,11 @@ def kmeans_manhattan(
     """
     # Set multiprocessing start method to 'spawn' for CUDA compatibility
     # CUDA contexts cannot be forked, so we must use spawn
-    with contextlib.suppress(RuntimeError):
+    try:
         mp.set_start_method("spawn", force=True)
+    except RuntimeError as e:
+        # Start method already set, which is fine
+        logger.debug(f"Multiprocessing start method already set: {e}")
 
     # Get backend once and reuse throughout the function
     backend = get_backend(device_type)
