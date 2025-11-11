@@ -1177,23 +1177,33 @@ def kmeans_manhattan(
         GPUData(
             synced_data=RunningKMeansData(
                 centroid_sets=[
-                    th.empty(k, activation_dim, dtype=th.float32, device="cpu")
+                    th.empty(
+                        k, activation_dim, dtype=th.float32, device=th.device("cpu")
+                    )
                     for k in k_values
                 ],
                 weight_sets=[
-                    th.zeros(k, dtype=th.int64, device="cpu") for k in k_values
+                    th.zeros(k, dtype=th.int64, device=th.device("cpu"))
+                    for k in k_values
                 ],
-                losses=th.zeros(len(k_values), dtype=th.float32, device="cpu"),
+                losses=th.zeros(
+                    len(k_values), dtype=th.float32, device=th.device("cpu")
+                ),
             ),
             dirty_data=RunningKMeansData(
                 centroid_sets=[
-                    th.empty(k, activation_dim, dtype=th.float32, device="cpu")
+                    th.empty(
+                        k, activation_dim, dtype=th.float32, device=th.device("cpu")
+                    )
                     for k in k_values
                 ],
                 weight_sets=[
-                    th.zeros(k, dtype=th.int64, device="cpu") for k in k_values
+                    th.zeros(k, dtype=th.int64, device=th.device("cpu"))
+                    for k in k_values
                 ],
-                losses=th.zeros(len(k_values), dtype=th.float32, device="cpu"),
+                losses=th.zeros(
+                    len(k_values), dtype=th.float32, device=th.device("cpu")
+                ),
             ),
             queue=mp.Queue(maxsize=GPU_QUEUE_MAXSIZE),
         )
@@ -1295,12 +1305,12 @@ def kmeans_manhattan(
     validation_data = (
         convert_router_logits_to_paths(validation_router_logits, top_k)
         .view(validation_router_logits.shape[0], -1)
-        .to(dtype=th.float32, device="cpu")
+        .to(dtype=th.float32, device=th.device("cpu"))
     )
     init_activation_data = (
         convert_router_logits_to_paths(init_activation_logits, top_k)
         .view(init_activation_logits.shape[0], -1)
-        .to(dtype=th.float32, device="cpu")
+        .to(dtype=th.float32, device=th.device("cpu"))
     )
 
     logger.debug(
