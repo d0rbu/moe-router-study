@@ -1076,6 +1076,14 @@ def kmeans_manhattan(
         num_layers: Number of layers with routers
         num_experts: Number of experts per layer
     """
+    # Set multiprocessing start method to 'spawn' for CUDA compatibility
+    # CUDA contexts cannot be forked, so we must use spawn
+    try:
+        mp.set_start_method("spawn", force=True)
+    except RuntimeError as e:
+        # Start method already set, which is fine
+        logger.debug(f"Multiprocessing start method already set: {e}")
+
     # Get backend once and reuse throughout the function
     backend = get_backend(device_type)
 
