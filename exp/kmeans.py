@@ -849,6 +849,7 @@ def gpu_worker(
 
     logger.info(f"Starting GPU worker {gpu_idx}")
     gpu_data = all_gpu_data[gpu_idx]
+
     sync_iteration = 0
 
     while True:
@@ -911,7 +912,7 @@ def gpu_worker(
                 assignment_minibatch_size=assignment_minibatch_size,
                 gpu_idx=gpu_idx,
             )
-            for centroids in gpu_data.synced_data.centroid_sets
+            for centroids in (c.to(device) for c in gpu_data.synced_data.centroid_sets)
         ]
         new_centroid_sets, new_weight_sets, new_losses = zip(*updates, strict=True)
 
@@ -1170,23 +1171,33 @@ def kmeans_manhattan(
         GPUData(
             synced_data=RunningKMeansData(
                 centroid_sets=[
-                    th.empty(k, activation_dim, dtype=th.float32, device=gpu_idx)
+                    th.empty(
+                        k, activation_dim, dtype=th.float32, device=th.device("cpu")
+                    )
                     for k in k_values
                 ],
                 weight_sets=[
-                    th.zeros(k, dtype=th.int64, device=gpu_idx) for k in k_values
+                    th.zeros(k, dtype=th.int64, device=th.device("cpu"))
+                    for k in k_values
                 ],
-                losses=th.zeros(len(k_values), dtype=th.float32, device=gpu_idx),
+                losses=th.zeros(
+                    len(k_values), dtype=th.float32, device=th.device("cpu")
+                ),
             ),
             dirty_data=RunningKMeansData(
                 centroid_sets=[
-                    th.empty(k, activation_dim, dtype=th.float32, device=gpu_idx)
+                    th.empty(
+                        k, activation_dim, dtype=th.float32, device=th.device("cpu")
+                    )
                     for k in k_values
                 ],
                 weight_sets=[
-                    th.zeros(k, dtype=th.int64, device=gpu_idx) for k in k_values
+                    th.zeros(k, dtype=th.int64, device=th.device("cpu"))
+                    for k in k_values
                 ],
-                losses=th.zeros(len(k_values), dtype=th.float32, device=gpu_idx),
+                losses=th.zeros(
+                    len(k_values), dtype=th.float32, device=th.device("cpu")
+                ),
             ),
             queue=mp.Queue(maxsize=GPU_QUEUE_MAXSIZE),
         )
@@ -1194,6 +1205,18 @@ def kmeans_manhattan(
     ]
 
     for gpu_idx, gpu_data in enumerate(all_gpu_data):
+        # Mark tensors for shared memory across processes (required for spawn method)
+        for centroids in gpu_data.synced_data.centroid_sets:
+            centroids.share_memory_()
+        for weights in gpu_data.synced_data.weight_sets:
+            weights.share_memory_()
+        gpu_data.synced_data.losses.share_memory_()
+
+        for centroids in gpu_data.dirty_data.centroid_sets:
+            centroids.share_memory_()
+        for weights in gpu_data.dirty_data.weight_sets:
+            weights.share_memory_()
+        gpu_data.dirty_data.losses.share_memory_()
         logger.trace(
             f"GPU {gpu_idx} synced centroid sets {type(gpu_data.synced_data.centroid_sets)} {gpu_data.synced_data.centroid_sets[0].shape} {gpu_data.synced_data.centroid_sets[0].dtype} {gpu_data.synced_data.centroid_sets[0].device}"
         )
@@ -1288,12 +1311,12 @@ def kmeans_manhattan(
     validation_data = (
         convert_router_logits_to_paths(validation_router_logits, top_k)
         .view(validation_router_logits.shape[0], -1)
-        .to(dtype=th.float32, device="cpu")
+        .to(dtype=th.float32, device=th.device("cpu"))
     )
     init_activation_data = (
         convert_router_logits_to_paths(init_activation_logits, top_k)
         .view(init_activation_logits.shape[0], -1)
-        .to(dtype=th.float32, device="cpu")
+        .to(dtype=th.float32, device=th.device("cpu"))
     )
 
     logger.debug(
