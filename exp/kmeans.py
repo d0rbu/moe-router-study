@@ -850,12 +850,6 @@ def gpu_worker(
     logger.info(f"Starting GPU worker {gpu_idx}")
     gpu_data = all_gpu_data[gpu_idx]
 
-    # Move tensors from CPU to GPU device for this worker
-    # Tensors are created on CPU to support spawn-based multiprocessing
-    device = get_device(device_type, gpu_idx)
-    gpu_data.synced_data = gpu_data.synced_data.to(device)
-    gpu_data.dirty_data = gpu_data.dirty_data.to(device)
-    logger.debug(f"GPU worker {gpu_idx} moved tensors to {device}")
     sync_iteration = 0
 
     while True:
@@ -918,7 +912,7 @@ def gpu_worker(
                 assignment_minibatch_size=assignment_minibatch_size,
                 gpu_idx=gpu_idx,
             )
-            for centroids in gpu_data.synced_data.centroid_sets
+            for centroids in (c.to(device) for c in gpu_data.synced_data.centroid_sets)
         ]
         new_centroid_sets, new_weight_sets, new_losses = zip(*updates, strict=True)
 
@@ -1211,6 +1205,18 @@ def kmeans_manhattan(
     ]
 
     for gpu_idx, gpu_data in enumerate(all_gpu_data):
+        # Mark tensors for shared memory across processes (required for spawn method)
+        for centroids in gpu_data.synced_data.centroid_sets:
+            centroids.share_memory_()
+        for weights in gpu_data.synced_data.weight_sets:
+            weights.share_memory_()
+        gpu_data.synced_data.losses.share_memory_()
+
+        for centroids in gpu_data.dirty_data.centroid_sets:
+            centroids.share_memory_()
+        for weights in gpu_data.dirty_data.weight_sets:
+            weights.share_memory_()
+        gpu_data.dirty_data.losses.share_memory_()
         logger.trace(
             f"GPU {gpu_idx} synced centroid sets {type(gpu_data.synced_data.centroid_sets)} {gpu_data.synced_data.centroid_sets[0].shape} {gpu_data.synced_data.centroid_sets[0].dtype} {gpu_data.synced_data.centroid_sets[0].device}"
         )
