@@ -849,6 +849,13 @@ def gpu_worker(
 
     logger.info(f"Starting GPU worker {gpu_idx}")
     gpu_data = all_gpu_data[gpu_idx]
+
+    # Move tensors from CPU to GPU device for this worker
+    # Tensors are created on CPU to support spawn-based multiprocessing
+    device = get_device(device_type, gpu_idx)
+    gpu_data.synced_data = gpu_data.synced_data.to(device)
+    gpu_data.dirty_data = gpu_data.dirty_data.to(device)
+    logger.debug(f"GPU worker {gpu_idx} moved tensors to {device}")
     sync_iteration = 0
 
     while True:
@@ -1170,23 +1177,23 @@ def kmeans_manhattan(
         GPUData(
             synced_data=RunningKMeansData(
                 centroid_sets=[
-                    th.empty(k, activation_dim, dtype=th.float32, device=gpu_idx)
+                    th.empty(k, activation_dim, dtype=th.float32, device="cpu")
                     for k in k_values
                 ],
                 weight_sets=[
-                    th.zeros(k, dtype=th.int64, device=gpu_idx) for k in k_values
+                    th.zeros(k, dtype=th.int64, device="cpu") for k in k_values
                 ],
-                losses=th.zeros(len(k_values), dtype=th.float32, device=gpu_idx),
+                losses=th.zeros(len(k_values), dtype=th.float32, device="cpu"),
             ),
             dirty_data=RunningKMeansData(
                 centroid_sets=[
-                    th.empty(k, activation_dim, dtype=th.float32, device=gpu_idx)
+                    th.empty(k, activation_dim, dtype=th.float32, device="cpu")
                     for k in k_values
                 ],
                 weight_sets=[
-                    th.zeros(k, dtype=th.int64, device=gpu_idx) for k in k_values
+                    th.zeros(k, dtype=th.int64, device="cpu") for k in k_values
                 ],
-                losses=th.zeros(len(k_values), dtype=th.float32, device=gpu_idx),
+                losses=th.zeros(len(k_values), dtype=th.float32, device="cpu"),
             ),
             queue=mp.Queue(maxsize=GPU_QUEUE_MAXSIZE),
         )
