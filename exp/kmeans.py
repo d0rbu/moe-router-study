@@ -813,6 +813,7 @@ def gpu_worker(
     top_k: int,
     losses_over_time: list[th.Tensor],
     barrier,
+    rank: int,
     world_size: int,
     save_dir: str | None = None,
     validate_every: int = 64,
@@ -829,6 +830,7 @@ def gpu_worker(
         top_k: Number of top experts to consider
         losses_over_time: Shared list to store losses over time
         barrier: Synchronization barrier for coordinating workers
+        rank: Rank of this process in the distributed group (must be passed as argument)
         world_size: Number of distributed nodes (must be passed as argument for serialization)
         save_dir: Directory to save checkments (if any)
         validate_every: Validate centroid synchronization every N sync operations (default: 1)
@@ -842,17 +844,17 @@ def gpu_worker(
 
     # Initialize distributed process group in this worker process
     # Each spawned process needs its own init_process_group call
-    rank = int(os.environ.get("RANK", "0"))
-    if not dist.is_initialized():
-        dist.init_process_group(
-            backend=backend_name,
-            rank=rank,
-            world_size=world_size,
-        )
-        logger.debug(
-            f"GPU worker {gpu_idx} initialized process group (rank={rank}, world_size={world_size})"
-        )
-
+    assert not dist.is_initialized(), (
+        "Distributed should not be initialized in worker process"
+    )
+    dist.init_process_group(
+        backend=backend_name,
+        rank=rank,
+        world_size=world_size,
+    )
+    logger.debug(
+        f"GPU worker {gpu_idx} initialized process group (rank={rank}, world_size={world_size})"
+    )
     gpu_data = all_gpu_data[gpu_idx]
 
     # Recreate process groups in worker (cannot pickle ProcessGroup objects for spawn)
@@ -1450,6 +1452,7 @@ def kmeans_manhattan(
                 top_k,
                 losses_over_time,
                 synchronization_barrier,
+                rank,  # rank
                 num_nodes,  # world_size
                 save_dir,
                 validate_every,
