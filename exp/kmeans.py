@@ -22,6 +22,7 @@ from core.device import (
     assert_device_type,
     get_backend,
     get_device,
+    get_distributed_backend,
 )
 from core.moe import convert_router_logits_to_paths
 from core.training import exponential_to_linear_save_steps
@@ -821,8 +822,6 @@ def gpu_worker(
     top_k: int,
     losses_over_time: list[th.Tensor],
     barrier,
-    general_gpu_group: dist.ProcessGroup | None = None,
-    gpu_specific_group: dist.ProcessGroup | None = None,
     save_dir: str | None = None,
     validate_every: int = 64,
     centroid_minibatch_size: int = 65536,
@@ -838,9 +837,7 @@ def gpu_worker(
         top_k: Number of top experts to consider
         losses_over_time: Shared list to store losses over time
         barrier: Synchronization barrier for coordinating workers
-        general_gpu_group: Distributed process group for communication (general GPU group)
-        gpu_specific_group: GPU-specific process group for this device index (or None)
-        save_dir: Directory to save checkpoints (if any)
+        save_dir: Directory to save checkments (if any)
         validate_every: Validate centroid synchronization every N sync operations (default: 1)
         centroid_minibatch_size: Size of centroid chunks to avoid device limits (default: 65536)
         device_type: Device type ("cuda" or "xpu", defaults to "cuda")
@@ -849,6 +846,23 @@ def gpu_worker(
 
     logger.info(f"Starting GPU worker {gpu_idx}")
     gpu_data = all_gpu_data[gpu_idx]
+
+    # Recreate process groups in worker (cannot pickle ProcessGroup objects for spawn)
+    world_size = dist.get_world_size()
+    backend_name = get_distributed_backend(device_type)
+
+    general_gpu_group: dist.ProcessGroup | None = None
+    gpu_specific_group: dist.ProcessGroup | None = None
+
+    if world_size > 1:
+        general_gpu_group = dist.new_group(
+            ranks=list(range(world_size)), backend=backend_name
+        )
+        # Create GPU-specific group for this worker's device index
+        gpu_specific_group = dist.new_group(
+            ranks=list(range(world_size)), backend=backend_name
+        )
+        logger.debug(f"GPU worker {gpu_idx} recreated {backend_name} process groups")
 
     sync_iteration = 0
 
@@ -1440,8 +1454,6 @@ def kmeans_manhattan(
                 top_k,
                 losses_over_time,
                 synchronization_barrier,
-                general_gpu_group,
-                gpu_process_groups[gpu_idx] if gpu_process_groups is not None else None,
                 save_dir,
                 validate_every,
                 centroid_minibatch_size,
