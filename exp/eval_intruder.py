@@ -7,22 +7,6 @@ from pathlib import Path
 import sys
 
 import arguably
-from delphi.__main__ import non_redundant_hookpoints  # type: ignore
-from delphi.__main__ import populate_cache as sae_populate_cache  # type: ignore
-from delphi.clients import Offline  # type: ignore
-from delphi.config import (  # type: ignore
-    CacheConfig,
-    ConstructorConfig,
-    RunConfig,
-    SamplerConfig,
-)
-from delphi.latents import LatentDataset, LatentRecord  # type: ignore
-from delphi.latents.cache import InMemoryCache, LatentCache  # type: ignore
-from delphi.log.result_analysis import log_results  # type: ignore
-from delphi.pipeline import Pipe, Pipeline  # type: ignore
-from delphi.scorers.classifier.intruder import IntruderScorer  # type: ignore
-from delphi.scorers.scorer import ScorerResult  # type: ignore
-from delphi.utils import load_tokenized_data  # type: ignore
 from dictionary_learning.utils import load_dictionary
 from loguru import logger
 from nnterp import StandardizedTransformer
@@ -40,6 +24,22 @@ from core.device import DeviceType, get_backend
 from core.dtype import get_dtype
 from core.model import get_model_config
 from core.type import assert_type
+from delphi.__main__ import non_redundant_hookpoints  # type: ignore
+from delphi.__main__ import populate_cache as sae_populate_cache  # type: ignore
+from delphi.clients import Offline  # type: ignore
+from delphi.config import (  # type: ignore
+    CacheConfig,
+    ConstructorConfig,
+    RunConfig,
+    SamplerConfig,
+)
+from delphi.latents import LatentDataset, LatentRecord  # type: ignore
+from delphi.latents.cache import InMemoryCache, LatentCache  # type: ignore
+from delphi.log.result_analysis import log_results  # type: ignore
+from delphi.pipeline import Pipe, Pipeline  # type: ignore
+from delphi.scorers.classifier.intruder import IntruderScorer  # type: ignore
+from delphi.scorers.scorer import ScorerResult  # type: ignore
+from delphi.utils import load_tokenized_data  # type: ignore
 from exp import OUTPUT_DIR
 from exp.get_activations import ActivationKeys
 from exp.kmeans import KMEANS_FILENAME
