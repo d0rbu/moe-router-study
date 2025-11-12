@@ -68,6 +68,15 @@ class RunningKMeansData:
     # losses of shape (num_K) for online running updates
     losses: th.Tensor
 
+    def clear(self, clear_losses: bool = False) -> None:
+        for centroids in self.centroid_sets:
+            centroids.zero_()
+        for weights in self.weight_sets:
+            weights.zero_()
+
+        if clear_losses:
+            self.losses.zero_()
+
     def clone(self) -> RunningKMeansData:
         return RunningKMeansData(
             centroid_sets=[centroids.clone() for centroids in self.centroid_sets],
@@ -81,6 +90,21 @@ class RunningKMeansData:
             weight_sets=[weights.to(device) for weights in self.weight_sets],
             losses=self.losses.to(device),
         )
+
+    def copy_(self, other: RunningKMeansData) -> None:
+        self.centroid_sets = [
+            centroids.copy_(other_centroids)
+            for centroids, other_centroids in zip(
+                self.centroid_sets, other.centroid_sets, strict=True
+            )
+        ]
+        self.weight_sets = [
+            weights.copy_(other_weights)
+            for weights, other_weights in zip(
+                self.weight_sets, other.weight_sets, strict=True
+            )
+        ]
+        self.losses.copy_(other.losses)
 
     def __add__(self, other: RunningKMeansData) -> RunningKMeansData:
         new_data = RunningKMeansData(
@@ -196,6 +220,17 @@ class GPUData:
     synced_data: RunningKMeansData
     dirty_data: RunningKMeansData
     queue: mp.Queue | None = None
+
+    def copy_(self, other: GPUData) -> None:
+        self.synced_data.copy_(other.synced_data)
+        self.dirty_data.copy_(other.dirty_data)
+
+    def to(self, device: th.device) -> GPUData:
+        return GPUData(
+            synced_data=self.synced_data.to(device),
+            dirty_data=self.dirty_data.to(device),
+            queue=self.queue,
+        )
 
 
 def compute_all_centroids_from_assignments(
@@ -581,6 +616,7 @@ def kmeans_step(
 def sync(
     gpu_idx: int,
     all_gpu_data: list[GPUData],
+    gpu_data: GPUData,
     losses_over_time: list[th.Tensor],
     barrier,
     group: dist.ProcessGroup | None = None,
@@ -591,7 +627,6 @@ def sync(
 
     rank = dist.get_rank()
     world_size = dist.get_world_size()
-    gpu_data = all_gpu_data[gpu_idx]
 
     # Use gpu_specific_group for synchronization
 
@@ -735,6 +770,7 @@ def sync(
         backend.empty_cache()
 
     # now do an all-gather along gpus (among entries in all_gpu_data)
+    # note thtat shared memory is only on cpu, so all_gpu_data is actually on cpu
     empty_data = RunningKMeansData(
         centroid_sets=[
             th.zeros_like(centroids) for centroids in gpu_data.synced_data.centroid_sets
@@ -744,6 +780,9 @@ def sync(
         ],
         losses=th.zeros_like(gpu_data.synced_data.losses),
     )
+
+    shared_gpu_data = all_gpu_data[gpu_idx]
+    shared_gpu_data.copy_(gpu_data)
 
     # Debug: Log synced data before update
     for k_idx, centroids in enumerate(gpu_data.synced_data.centroid_sets):
@@ -767,11 +806,7 @@ def sync(
 
     # reset dirty data now that it has been synced
     logger.debug(f"🔄 SYNC GPU {gpu_idx}: Resetting dirty data to zero...")
-    for weights in gpu_data.dirty_data.weight_sets:
-        weights.zero_()
-
-    for centroids in gpu_data.dirty_data.centroid_sets:
-        centroids.zero_()
+    gpu_data.dirty_data.clear()
 
     # Log synced data state after sync
     for k_idx, centroids in enumerate(gpu_data.synced_data.centroid_sets):
@@ -837,6 +872,7 @@ def gpu_worker(
         centroid_minibatch_size: Size of centroid chunks to avoid device limits (default: 65536)
         device_type: Device type ("cuda" or "xpu", defaults to "cuda")
     """
+    device = get_device(device_type, gpu_idx)
     backend = get_backend(device_type)
     backend_name = get_distributed_backend(device_type)
 
@@ -855,9 +891,9 @@ def gpu_worker(
     logger.debug(
         f"GPU worker {gpu_idx} initialized process group (rank={rank}, world_size={world_size})"
     )
-    gpu_data = all_gpu_data[gpu_idx]
 
-    # Recreate process groups in worker (cannot pickle ProcessGroup objects for spawn)
+    shared_gpu_data = all_gpu_data[gpu_idx]
+    local_gpu_data = shared_gpu_data.to(device)
 
     # Set unique port for this GPU worker to avoid conflicts
     base_port = int(os.environ.get("MASTER_PORT", "29500"))
@@ -877,7 +913,7 @@ def gpu_worker(
     while True:
         logger.trace(f"GPU {gpu_idx} waiting for queue item...")
         try:
-            queue_item = gpu_data.queue.get(timeout=60.0)
+            queue_item = shared_gpu_data.queue.get(timeout=60.0)
             logger.trace(f"GPU {gpu_idx} picked up item from queue")
         except TimeoutError:
             logger.warning(
@@ -923,7 +959,7 @@ def gpu_worker(
         backend.empty_cache()
 
         logger.trace(
-            f"GPU {gpu_idx} running kmeans step with {len(gpu_data.synced_data.centroid_sets)} centroids"
+            f"GPU {gpu_idx} running kmeans step with {len(shared_gpu_data.synced_data.centroid_sets)} centroids"
         )
 
         updates = [
@@ -934,7 +970,7 @@ def gpu_worker(
                 assignment_minibatch_size=assignment_minibatch_size,
                 gpu_idx=gpu_idx,
             )
-            for centroids in (c.to(device) for c in gpu_data.synced_data.centroid_sets)
+            for centroids in local_gpu_data.synced_data.centroid_sets
         ]
         new_centroid_sets, new_weight_sets, new_losses = zip(*updates, strict=True)
 
@@ -949,7 +985,7 @@ def gpu_worker(
             f"New losses: {len(new_losses)} {type(new_losses)} {new_losses[0].shape} {new_losses[0].dtype} {new_losses[0].device}"
         )
 
-        gpu_data.dirty_data += RunningKMeansData(
+        local_gpu_data.dirty_data += RunningKMeansData(
             centroid_sets=list(new_centroid_sets),
             weight_sets=list(new_weight_sets),
             losses=th.stack(new_losses),
@@ -962,10 +998,14 @@ def gpu_worker(
             continue
 
         logger.trace(f"GPU {gpu_idx} starting sync operation")
+        logger.trace(f"GPU {gpu_idx} copying from local to shared data")
+        shared_gpu_data.synced_data.copy_(local_gpu_data.synced_data)
+        shared_gpu_data.dirty_data.copy_(local_gpu_data.dirty_data)
 
         sync(
             gpu_idx,
             all_gpu_data,
+            local_gpu_data,
             losses_over_time,
             barrier,
             gpu_specific_group,
