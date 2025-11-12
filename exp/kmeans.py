@@ -842,6 +842,12 @@ def gpu_worker(
 
     logger.info(f"Starting GPU worker {gpu_idx}")
 
+    # Set unique port for this GPU worker to avoid conflicts
+    # MUST be done BEFORE init_process_group() to prevent port conflicts
+    base_port = int(os.environ.get("MASTER_PORT", "29500"))
+    worker_port = base_port + gpu_idx + 1
+    os.environ["MASTER_PORT"] = str(worker_port)
+
     # Initialize distributed process group in this worker process
     # Each spawned process needs its own init_process_group call
     assert not dist.is_initialized(), (
@@ -858,11 +864,6 @@ def gpu_worker(
     gpu_data = all_gpu_data[gpu_idx]
 
     # Recreate process groups in worker (cannot pickle ProcessGroup objects for spawn)
-
-    # Set unique port for this GPU worker to avoid conflicts
-    base_port = int(os.environ.get("MASTER_PORT", "29500"))
-    worker_port = base_port + gpu_idx + 1
-    os.environ["MASTER_PORT"] = str(worker_port)
 
     # Create GPU-specific group for this worker (always, regardless of world_size)
     gpu_specific_group = dist.new_group(
