@@ -12,7 +12,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from tqdm import tqdm
 
-from core.device import DeviceType, get_backend, get_distributed_backend
+from core.device import DeviceType, get_backend
 from core.logging import init_distributed_logging
 from core.memory import clear_memory
 from core.type import assert_type
@@ -787,7 +787,6 @@ async def load_activations_and_init_dist(
 ) -> tuple[
     Activations,
     dict[str, int],
-    dist.ProcessGroup | None,
     list[dist.ProcessGroup] | None,
 ]:
     """
@@ -796,7 +795,6 @@ async def load_activations_and_init_dist(
     Returns:
         activations: Activations object
         activation_dims: Dimensionality of the activations for each submodule as a dictionary
-        gpu_process_group: General GPU process group (or None if GPU not available)
         gpu_process_groups: List of GPU-specific process groups, one per device (or None if GPU not available)
     """
     activations_experiment_name = get_experiment_name(
@@ -809,7 +807,6 @@ async def load_activations_and_init_dist(
 
     rank = int(os.environ.get("SLURM_PROCID", 0))
     world_size = int(os.environ.get("SLURM_NTASKS", 1))
-    gloo_port = int(os.environ.get("MASTER_PORT", 10000))
 
     logger.debug("Initializing distributed process group")
     dist.init_process_group(backend="gloo", rank=rank, world_size=world_size)
@@ -823,21 +820,10 @@ async def load_activations_and_init_dist(
         num_devices = backend.device_count()
         logger.debug(f"Number of devices: {num_devices}")
 
-        nccl_port = gloo_port + 1
-        os.environ["MASTER_PORT"] = str(nccl_port)
-
-        backend_name = get_distributed_backend(device_type)
-        gpu_process_group = dist.new_group(
-            ranks=list(range(world_size)), backend=backend_name
-        )
-        logger.info(f"Rank {rank} initialized {backend_name} group")
-
-        gpu_process_groups = [
-            dist.new_group(ranks=list(range(world_size)), backend=backend_name)
-            for _ in range(num_devices)
-        ]
+        # Process groups are now created per-worker inside gpu_worker()
+        # Return None for compatibility, but groups will be recreated in workers
+        gpu_process_groups = None
     else:
-        gpu_process_group = None
         gpu_process_groups = None
 
     init_distributed_logging()
@@ -904,4 +890,4 @@ async def load_activations_and_init_dist(
     # clean up the background worker and queue
     data_iterable.close()
 
-    return activations, activation_dims, gpu_process_group, gpu_process_groups
+    return activations, activation_dims, gpu_process_groups
