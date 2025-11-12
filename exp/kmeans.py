@@ -813,6 +813,8 @@ def gpu_worker(
     top_k: int,
     losses_over_time: list[th.Tensor],
     barrier,
+    rank: int,
+    world_size: int,
     save_dir: str | None = None,
     validate_every: int = 64,
     centroid_minibatch_size: int = 65536,
@@ -828,19 +830,34 @@ def gpu_worker(
         top_k: Number of top experts to consider
         losses_over_time: Shared list to store losses over time
         barrier: Synchronization barrier for coordinating workers
+        rank: Rank of this process in the distributed group (must be passed as argument)
+        world_size: Number of distributed nodes (must be passed as argument for serialization)
         save_dir: Directory to save checkments (if any)
         validate_every: Validate centroid synchronization every N sync operations (default: 1)
         centroid_minibatch_size: Size of centroid chunks to avoid device limits (default: 65536)
         device_type: Device type ("cuda" or "xpu", defaults to "cuda")
     """
     backend = get_backend(device_type)
+    backend_name = get_distributed_backend(device_type)
 
     logger.info(f"Starting GPU worker {gpu_idx}")
+
+    # Initialize distributed process group in this worker process
+    # Each spawned process needs its own init_process_group call
+    assert not dist.is_initialized(), (
+        "Distributed should not be initialized in worker process"
+    )
+    dist.init_process_group(
+        backend=backend_name,
+        rank=rank,
+        world_size=world_size,
+    )
+    logger.debug(
+        f"GPU worker {gpu_idx} initialized process group (rank={rank}, world_size={world_size})"
+    )
     gpu_data = all_gpu_data[gpu_idx]
 
     # Recreate process groups in worker (cannot pickle ProcessGroup objects for spawn)
-    world_size = dist.get_world_size()
-    backend_name = get_distributed_backend(device_type)
 
     # Set unique port for this GPU worker to avoid conflicts
     base_port = int(os.environ.get("MASTER_PORT", "29500"))
@@ -1435,6 +1452,8 @@ def kmeans_manhattan(
                 top_k,
                 losses_over_time,
                 synchronization_barrier,
+                rank,  # rank
+                num_nodes,  # world_size
                 save_dir,
                 validate_every,
                 centroid_minibatch_size,
