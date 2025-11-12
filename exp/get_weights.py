@@ -1,4 +1,5 @@
 import os
+from typing import Any, cast
 
 import arguably
 from nnterp import StandardizedTransformer
@@ -26,7 +27,7 @@ def get_weights(model_name: str = "olmoe", checkpoint_idx: int = -1) -> None:
         model_config.hf_name, device_map="cpu", revision=str(checkpoint)
     )
     router_layers: list[int] = model.layers_with_routers
-    num_layers = len(model.layers)
+    num_layers = len(cast(Any, model.layers))
     num_experts = 0
 
     with th.no_grad():
@@ -68,11 +69,11 @@ def get_weights(model_name: str = "olmoe", checkpoint_idx: int = -1) -> None:
             else:
                 expert_down_proj_weights = th.empty(
                     num_experts,
-                    *model.mlps[layer_idx].experts[0].down_proj.weight.shape,
+                    *cast(Any, model.mlps)[layer_idx].experts[0].down_proj.weight.shape,
                 )
                 for expert_idx in range(num_experts):
                     expert_down_proj_weights[expert_idx] = (
-                        model.mlps[layer_idx].experts[expert_idx].down_proj.weight.cpu()
+                        cast(Any, model.mlps)[layer_idx].experts[expert_idx].down_proj.weight.cpu()
                     )
                 down_proj_weights[layer_idx] = expert_down_proj_weights
 
@@ -89,7 +90,7 @@ def get_weights(model_name: str = "olmoe", checkpoint_idx: int = -1) -> None:
             total=num_layers,
             leave=False,
         ):
-            o_proj_weights[layer_idx] = model.self_attn[layer_idx].out_proj.weight.cpu()
+            o_proj_weights[layer_idx] = cast(Any, model.self_attn)[layer_idx].out_proj.weight.cpu()
 
         o_proj_out = {
             **base_out,

@@ -1,19 +1,19 @@
 from collections.abc import Callable
-from typing import cast
+from typing import Any, cast
 
-from datasets import IterableColumn, load_dataset
+from datasets import IterableDataset, load_dataset
 from tqdm import tqdm
 
 
-def fineweb_10bt_text() -> IterableColumn:
+def fineweb_10bt_text() -> Any:
     fineweb = load_dataset(
         "HuggingFaceFW/fineweb", name="sample-10BT", split="train", streaming=True
     )
 
-    return cast("IterableColumn", fineweb["text"])
+    return cast(Any, fineweb["text"])
 
 
-DATASETS: dict[str, Callable[[], IterableColumn]] = {
+DATASETS: dict[str, Callable[[], Any]] = {
     "fw": fineweb_10bt_text,
 }
 
