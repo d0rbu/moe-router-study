@@ -594,7 +594,6 @@ def sync(
     gpu_data = all_gpu_data[gpu_idx]
 
     # Use gpu_specific_group for synchronization
-    # group is now passed as parameter
 
     # Clear cache at start to prevent memory fragmentation
     backend.empty_cache()
@@ -952,7 +951,7 @@ def gpu_worker(
             all_gpu_data,
             losses_over_time,
             barrier,
-            gpu_specific_group,  # passed as group
+            gpu_specific_group,
             device_type,
         )
 
