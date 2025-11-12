@@ -25,6 +25,12 @@ import sys
 from typing import Any, cast
 
 import arguably
+from delphi.config import (  # type: ignore
+    CacheConfig,
+    ConstructorConfig,
+    RunConfig,
+    SamplerConfig,
+)
 from loguru import logger
 from nnterp import StandardizedTransformer
 import torch as th
@@ -41,12 +47,6 @@ from core.data import get_dataset_fn
 from core.dtype import get_dtype
 from core.model import get_model_config
 from core.type import assert_type
-from delphi.config import (  # type: ignore
-    CacheConfig,
-    ConstructorConfig,
-    RunConfig,
-    SamplerConfig,
-)
 from exp import OUTPUT_DIR
 from exp.eval_intruder import (
     load_hookpoints,

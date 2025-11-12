@@ -1063,7 +1063,6 @@ def kmeans_manhattan(
     save_every: int | None = None,
     save_dir: str | None = None,
     validate_every: int = 64,
-    general_gpu_group: dist.ProcessGroup | None = None,
     gpu_process_groups: list[dist.ProcessGroup] | None = None,
     device_type: DeviceType = "cuda",
 ) -> tuple[list[th.Tensor], int, th.Tensor, int, int]:
@@ -1614,7 +1613,6 @@ def cluster_paths_main(
     assignment_minibatch_size: int = 4096,
     save_every: int | None = None,
     validate_every: int = 64,
-    general_gpu_group: dist.ProcessGroup | None = None,
     gpu_process_groups: list[dist.ProcessGroup] | None = None,
     device_type: DeviceType = "cuda",
 ) -> None:
@@ -1656,7 +1654,6 @@ def cluster_paths_main(
         save_every=save_every,
         save_dir=save_dir,
         validate_every=validate_every,
-        general_gpu_group=general_gpu_group,
         gpu_process_groups=gpu_process_groups,
         device_type=device_type,
     )
@@ -1726,7 +1723,7 @@ def cluster_paths(
     log_level_numeric = logger.level(log_level).no
     debug_level_numeric = logger.level("DEBUG").no
 
-    activations, activation_dims, gpu_process_group, gpu_process_groups = asyncio.run(
+    activations, activation_dims, _, gpu_process_groups = asyncio.run(
         load_activations_and_init_dist(
             model_name=model_name,
             dataset_name=dataset_name,
@@ -1800,7 +1797,6 @@ def cluster_paths(
         assignment_minibatch_size=assignment_minibatch_size,
         save_every=save_every,
         validate_every=validate_every,
-        general_gpu_group=gpu_process_group,
         gpu_process_groups=gpu_process_groups,
         device_type=device_type,
     )
