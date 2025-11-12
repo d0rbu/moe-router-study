@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from typing import Any, cast
 
-from datasets import IterableDataset, load_dataset
+from datasets import load_dataset
 from tqdm import tqdm
 
 
@@ -10,7 +10,7 @@ def fineweb_10bt_text() -> Any:
         "HuggingFaceFW/fineweb", name="sample-10BT", split="train", streaming=True
     )
 
-    return cast(Any, fineweb["text"])
+    return cast("Any", fineweb["text"])
 
 
 DATASETS: dict[str, Callable[[], Any]] = {
