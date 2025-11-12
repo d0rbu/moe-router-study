@@ -787,7 +787,6 @@ async def load_activations_and_init_dist(
 ) -> tuple[
     Activations,
     dict[str, int],
-    list[dist.ProcessGroup] | None,
 ]:
     """
     Load activations and initialize the distributed process group.
@@ -795,7 +794,6 @@ async def load_activations_and_init_dist(
     Returns:
         activations: Activations object
         activation_dims: Dimensionality of the activations for each submodule as a dictionary
-        gpu_process_groups: List of GPU-specific process groups, one per device (or None if GPU not available)
     """
     activations_experiment_name = get_experiment_name(
         model_name=model_name,
@@ -819,12 +817,6 @@ async def load_activations_and_init_dist(
     if backend.is_available():
         num_devices = backend.device_count()
         logger.debug(f"Number of devices: {num_devices}")
-
-        # Process groups are now created per-worker inside gpu_worker()
-        # Return None for compatibility, but groups will be recreated in workers
-        gpu_process_groups = None
-    else:
-        gpu_process_groups = None
 
     init_distributed_logging()
 
@@ -890,4 +882,4 @@ async def load_activations_and_init_dist(
     # clean up the background worker and queue
     data_iterable.close()
 
-    return activations, activation_dims, gpu_process_groups
+    return activations, activation_dims

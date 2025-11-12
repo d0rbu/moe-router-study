@@ -583,7 +583,7 @@ def sync(
     all_gpu_data: list[GPUData],
     losses_over_time: list[th.Tensor],
     barrier,
-    gpu_specific_group: dist.ProcessGroup | None = None,
+    group: dist.ProcessGroup | None = None,
     device_type: DeviceType = "cuda",
 ) -> None:
     backend = get_backend(device_type)
@@ -594,7 +594,7 @@ def sync(
     gpu_data = all_gpu_data[gpu_idx]
 
     # Use gpu_specific_group for synchronization
-    group = gpu_specific_group
+    # group is now passed as parameter
 
     # Clear cache at start to prevent memory fragmentation
     backend.empty_cache()
@@ -952,7 +952,7 @@ def gpu_worker(
             all_gpu_data,
             losses_over_time,
             barrier,
-            gpu_specific_group,
+            gpu_specific_group,  # passed as group
             device_type,
         )
 
@@ -1694,7 +1694,7 @@ def cluster_paths(
     log_level_numeric = logger.level(log_level).no
     debug_level_numeric = logger.level("DEBUG").no
 
-    activations, activation_dims, _ = asyncio.run(
+    activations, activation_dims = asyncio.run(
         load_activations_and_init_dist(
             model_name=model_name,
             dataset_name=dataset_name,
