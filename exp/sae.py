@@ -247,8 +247,6 @@ async def run_sae_training(
     (
         activations,
         activation_dims,
-        _gpu_process_group,
-        _gpu_process_groups,
     ) = await load_activations_and_init_dist(
         model_name=model_name,
         dataset_name=dataset_name,
