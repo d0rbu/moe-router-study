@@ -22,6 +22,7 @@ from core.device import (
     assert_device_type,
     get_backend,
     get_device,
+    get_distributed_backend,
 )
 from core.moe import convert_router_logits_to_paths
 from core.training import exponential_to_linear_save_steps
@@ -582,8 +583,7 @@ def sync(
     all_gpu_data: list[GPUData],
     losses_over_time: list[th.Tensor],
     barrier,
-    general_gpu_group: dist.ProcessGroup | None = None,
-    gpu_specific_group: dist.ProcessGroup | None = None,
+    group: dist.ProcessGroup | None = None,
     device_type: DeviceType = "cuda",
 ) -> None:
     backend = get_backend(device_type)
@@ -593,15 +593,7 @@ def sync(
     world_size = dist.get_world_size()
     gpu_data = all_gpu_data[gpu_idx]
 
-    # prioritize process group: GPU-specific > general GPU > default None
-    if gpu_specific_group is not None:
-        group = gpu_specific_group
-    else:
-        # assert there is only one gpu/device per rank
-        assert backend.device_count() == 1, (
-            "No GPU-specific process group found, but there is more than one device per rank"
-        )
-        group = general_gpu_group
+    # Use gpu_specific_group for synchronization
 
     # Clear cache at start to prevent memory fragmentation
     backend.empty_cache()
@@ -821,8 +813,6 @@ def gpu_worker(
     top_k: int,
     losses_over_time: list[th.Tensor],
     barrier,
-    general_gpu_group: dist.ProcessGroup | None = None,
-    gpu_specific_group: dist.ProcessGroup | None = None,
     save_dir: str | None = None,
     validate_every: int = 64,
     centroid_minibatch_size: int = 65536,
@@ -838,9 +828,7 @@ def gpu_worker(
         top_k: Number of top experts to consider
         losses_over_time: Shared list to store losses over time
         barrier: Synchronization barrier for coordinating workers
-        general_gpu_group: Distributed process group for communication (general GPU group)
-        gpu_specific_group: GPU-specific process group for this device index (or None)
-        save_dir: Directory to save checkpoints (if any)
+        save_dir: Directory to save checkments (if any)
         validate_every: Validate centroid synchronization every N sync operations (default: 1)
         centroid_minibatch_size: Size of centroid chunks to avoid device limits (default: 65536)
         device_type: Device type ("cuda" or "xpu", defaults to "cuda")
@@ -849,6 +837,24 @@ def gpu_worker(
 
     logger.info(f"Starting GPU worker {gpu_idx}")
     gpu_data = all_gpu_data[gpu_idx]
+
+    # Recreate process groups in worker (cannot pickle ProcessGroup objects for spawn)
+    world_size = dist.get_world_size()
+    backend_name = get_distributed_backend(device_type)
+
+    # Set unique port for this GPU worker to avoid conflicts
+    base_port = int(os.environ.get("MASTER_PORT", "29500"))
+    worker_port = base_port + gpu_idx + 1
+    os.environ["MASTER_PORT"] = str(worker_port)
+
+    # Create GPU-specific group for this worker (always, regardless of world_size)
+    gpu_specific_group = dist.new_group(
+        ranks=list(range(world_size)), backend=backend_name
+    )
+    logger.debug(
+        f"GPU worker {gpu_idx} created {backend_name} process group on port {worker_port}"
+    )
+
     sync_iteration = 0
 
     while True:
@@ -911,7 +917,7 @@ def gpu_worker(
                 assignment_minibatch_size=assignment_minibatch_size,
                 gpu_idx=gpu_idx,
             )
-            for centroids in gpu_data.synced_data.centroid_sets
+            for centroids in (c.to(device) for c in gpu_data.synced_data.centroid_sets)
         ]
         new_centroid_sets, new_weight_sets, new_losses = zip(*updates, strict=True)
 
@@ -945,7 +951,6 @@ def gpu_worker(
             all_gpu_data,
             losses_over_time,
             barrier,
-            general_gpu_group,
             gpu_specific_group,
             device_type,
         )
@@ -1048,8 +1053,6 @@ def kmeans_manhattan(
     save_every: int | None = None,
     save_dir: str | None = None,
     validate_every: int = 64,
-    general_gpu_group: dist.ProcessGroup | None = None,
-    gpu_process_groups: list[dist.ProcessGroup] | None = None,
     device_type: DeviceType = "cuda",
 ) -> tuple[list[th.Tensor], int, th.Tensor, int, int]:
     """
@@ -1076,6 +1079,14 @@ def kmeans_manhattan(
         num_layers: Number of layers with routers
         num_experts: Number of experts per layer
     """
+    # Set multiprocessing start method to 'spawn' for CUDA compatibility
+    # CUDA contexts cannot be forked, so we must use spawn
+    try:
+        mp.set_start_method("spawn", force=True)
+    except RuntimeError as e:
+        # Start method already set, which is fine
+        logger.debug(f"Multiprocessing start method already set: {e}")
+
     # Get backend once and reuse throughout the function
     backend = get_backend(device_type)
 
@@ -1095,13 +1106,6 @@ def kmeans_manhattan(
     assert backend.is_available() and num_gpus > 0, (
         f"CPU-only not supported yet :( Device {device_type} not available."
     )
-
-    # Verify that gpu_process_groups length matches number of devices if available
-    if gpu_process_groups is not None:
-        assert len(gpu_process_groups) == num_gpus, (
-            f"gpu_process_groups length ({len(gpu_process_groups)}) must match "
-            f"number of devices ({num_gpus})"
-        )
 
     if effective_batch_size is None:
         effective_batch_size = (len(activations) // total_gpus) * total_gpus
@@ -1162,23 +1166,33 @@ def kmeans_manhattan(
         GPUData(
             synced_data=RunningKMeansData(
                 centroid_sets=[
-                    th.empty(k, activation_dim, dtype=th.float32, device=gpu_idx)
+                    th.empty(
+                        k, activation_dim, dtype=th.float32, device=th.device("cpu")
+                    )
                     for k in k_values
                 ],
                 weight_sets=[
-                    th.zeros(k, dtype=th.int64, device=gpu_idx) for k in k_values
+                    th.zeros(k, dtype=th.int64, device=th.device("cpu"))
+                    for k in k_values
                 ],
-                losses=th.zeros(len(k_values), dtype=th.float32, device=gpu_idx),
+                losses=th.zeros(
+                    len(k_values), dtype=th.float32, device=th.device("cpu")
+                ),
             ),
             dirty_data=RunningKMeansData(
                 centroid_sets=[
-                    th.empty(k, activation_dim, dtype=th.float32, device=gpu_idx)
+                    th.empty(
+                        k, activation_dim, dtype=th.float32, device=th.device("cpu")
+                    )
                     for k in k_values
                 ],
                 weight_sets=[
-                    th.zeros(k, dtype=th.int64, device=gpu_idx) for k in k_values
+                    th.zeros(k, dtype=th.int64, device=th.device("cpu"))
+                    for k in k_values
                 ],
-                losses=th.zeros(len(k_values), dtype=th.float32, device=gpu_idx),
+                losses=th.zeros(
+                    len(k_values), dtype=th.float32, device=th.device("cpu")
+                ),
             ),
             queue=mp.Queue(maxsize=GPU_QUEUE_MAXSIZE),
         )
@@ -1186,6 +1200,18 @@ def kmeans_manhattan(
     ]
 
     for gpu_idx, gpu_data in enumerate(all_gpu_data):
+        # Mark tensors for shared memory across processes (required for spawn method)
+        for centroids in gpu_data.synced_data.centroid_sets:
+            centroids.share_memory_()
+        for weights in gpu_data.synced_data.weight_sets:
+            weights.share_memory_()
+        gpu_data.synced_data.losses.share_memory_()
+
+        for centroids in gpu_data.dirty_data.centroid_sets:
+            centroids.share_memory_()
+        for weights in gpu_data.dirty_data.weight_sets:
+            weights.share_memory_()
+        gpu_data.dirty_data.losses.share_memory_()
         logger.trace(
             f"GPU {gpu_idx} synced centroid sets {type(gpu_data.synced_data.centroid_sets)} {gpu_data.synced_data.centroid_sets[0].shape} {gpu_data.synced_data.centroid_sets[0].dtype} {gpu_data.synced_data.centroid_sets[0].device}"
         )
@@ -1280,12 +1306,12 @@ def kmeans_manhattan(
     validation_data = (
         convert_router_logits_to_paths(validation_router_logits, top_k)
         .view(validation_router_logits.shape[0], -1)
-        .to(dtype=th.float32, device="cpu")
+        .to(dtype=th.float32, device=th.device("cpu"))
     )
     init_activation_data = (
         convert_router_logits_to_paths(init_activation_logits, top_k)
         .view(init_activation_logits.shape[0], -1)
-        .to(dtype=th.float32, device="cpu")
+        .to(dtype=th.float32, device=th.device("cpu"))
     )
 
     logger.debug(
@@ -1409,8 +1435,6 @@ def kmeans_manhattan(
                 top_k,
                 losses_over_time,
                 synchronization_barrier,
-                general_gpu_group,
-                gpu_process_groups[gpu_idx] if gpu_process_groups is not None else None,
                 save_dir,
                 validate_every,
                 centroid_minibatch_size,
@@ -1571,8 +1595,6 @@ def cluster_paths_main(
     assignment_minibatch_size: int = 4096,
     save_every: int | None = None,
     validate_every: int = 64,
-    general_gpu_group: dist.ProcessGroup | None = None,
-    gpu_process_groups: list[dist.ProcessGroup] | None = None,
     device_type: DeviceType = "cuda",
 ) -> None:
     kmeans_experiment_name = get_experiment_name(
@@ -1590,16 +1612,6 @@ def cluster_paths_main(
 
     logger.trace(f"Save directory: {save_dir}")
 
-    # Verify that gpu_process_groups length matches number of devices if available
-    backend = get_backend(device_type)
-    if backend.is_available():
-        num_devices = backend.device_count()
-        if gpu_process_groups is not None:
-            assert len(gpu_process_groups) == num_devices, (
-                f"gpu_process_groups length ({len(gpu_process_groups)}) must match "
-                f"number of devices ({num_devices})"
-            )
-
     centroids, top_k, losses, num_layers, num_experts = kmeans_manhattan(
         activations=activations,
         activation_dim=activation_dim,
@@ -1613,8 +1625,6 @@ def cluster_paths_main(
         save_every=save_every,
         save_dir=save_dir,
         validate_every=validate_every,
-        general_gpu_group=general_gpu_group,
-        gpu_process_groups=gpu_process_groups,
         device_type=device_type,
     )
 
@@ -1683,7 +1693,7 @@ def cluster_paths(
     log_level_numeric = logger.level(log_level).no
     debug_level_numeric = logger.level("DEBUG").no
 
-    activations, activation_dims, gpu_process_group, gpu_process_groups = asyncio.run(
+    activations, activation_dims = asyncio.run(
         load_activations_and_init_dist(
             model_name=model_name,
             dataset_name=dataset_name,
@@ -1697,15 +1707,6 @@ def cluster_paths(
         )
     )
 
-    # Verify that gpu_process_groups length matches number of devices if available
-    backend = get_backend(device_type)
-    if backend.is_available():
-        num_devices = backend.device_count()
-        if gpu_process_groups is not None:
-            assert len(gpu_process_groups) == num_devices, (
-                f"gpu_process_groups length ({len(gpu_process_groups)}) must match "
-                f"number of devices ({num_devices})"
-            )
     residual_activation_dim = activation_dims[ActivationKeys.MLP_OUTPUT]
     router_activation_dim = activation_dims[ActivationKeys.ROUTER_LOGITS]
 
@@ -1724,7 +1725,7 @@ def cluster_paths(
             k = (ef * residual_activation_dim,)
         case int(k_val), None:
             k = (k_val,)
-        case None, tuple(ef_tuple):
+        case ((None | tuple()), tuple(ef_tuple)):
             k = tuple(
                 current_expansion_factor * residual_activation_dim
                 for current_expansion_factor in ef_tuple
@@ -1757,8 +1758,6 @@ def cluster_paths(
         assignment_minibatch_size=assignment_minibatch_size,
         save_every=save_every,
         validate_every=validate_every,
-        general_gpu_group=gpu_process_group,
-        gpu_process_groups=gpu_process_groups,
         device_type=device_type,
     )
 
