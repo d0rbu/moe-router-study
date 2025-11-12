@@ -1070,6 +1070,7 @@ def kmeans_manhattan(
     save_every: int | None = None,
     save_dir: str | None = None,
     validate_every: int = 64,
+    log_level_numeric: int | None = None,
     device_type: DeviceType = "cuda",
 ) -> tuple[list[th.Tensor], int, th.Tensor, int, int]:
     """
@@ -1087,6 +1088,7 @@ def kmeans_manhattan(
         save_every: Save checkpoints every N iterations. If None, no checkpoints are saved.
         save_dir: Directory to save checkpoints. Required if save_every is specified.
         validate_every: Run centroid validation every N iterations. If None, only validate at the end.
+        log_level_numeric: Numeric log level for conditional validation (if None, always run validation)
         device_type: Device type ("cuda" or "xpu", defaults to "cuda")
 
     Returns:
@@ -1390,12 +1392,16 @@ def kmeans_manhattan(
                     f"Centroid norm stats: min={centroid_norms.min():.6f}, max={centroid_norms.max():.6f}, mean={centroid_norms.mean():.6f}"
                 )
 
-    logger.debug("🔍 VALIDATION: Checking centroids AFTER initialization...")
-    for k_idx, centroid_set in enumerate(all_gpu_data[0].dirty_data.centroid_sets):
-        _is_valid, _stats = validate_centroids(centroid_set.cpu())
-        logger.debug(
-            f"📊 POST-INIT VALIDATION k_idx={k_idx}: Empty={_stats.num_empty_centroids}, Norms: min={_stats.min_norm:.6f}, max={_stats.max_norm:.6f}, mean={_stats.mean_norm:.6f}"
-        )
+    trace_level_numeric = logger.level("TRACE").no
+
+    # Only run detailed validation at TRACE level
+    if log_level_numeric is None or log_level_numeric <= trace_level_numeric:
+        logger.debug("🔍 VALIDATION: Checking centroids AFTER initialization...")
+        for k_idx, centroid_set in enumerate(all_gpu_data[0].dirty_data.centroid_sets):
+            _is_valid, _stats = validate_centroids(centroid_set.cpu())
+            logger.debug(
+                f"📊 POST-INIT VALIDATION k_idx={k_idx}: Empty={_stats.num_empty_centroids}, Norms: min={_stats.min_norm:.6f}, max={_stats.max_norm:.6f}, mean={_stats.mean_norm:.6f}"
+            )
 
     logger.trace(f"Initialized centroids for {len(k_values)} clusters")
 
@@ -1406,13 +1412,14 @@ def kmeans_manhattan(
                 gpu_data.dirty_data.centroid_sets[k_idx]
             )
 
-    # Validate that synced_data now has proper centroids
-    logger.debug("🔍 VALIDATION: Checking synced_data after initial sync...")
-    for k_idx, centroid_set in enumerate(all_gpu_data[0].synced_data.centroid_sets):
-        _is_valid, _stats = validate_centroids(centroid_set.cpu())
-        logger.debug(
-            f"📊 POST-SYNC VALIDATION k_idx={k_idx}: Empty={_stats.num_empty_centroids}, Norms: min={_stats.min_norm:.6f}, max={_stats.max_norm:.6f}, mean={_stats.mean_norm:.6f}"
-        )
+    # Validate that synced_data now has proper centroids (only at TRACE level)
+    if log_level_numeric is None or log_level_numeric <= trace_level_numeric:
+        logger.debug("🔍 VALIDATION: Checking synced_data after initial sync...")
+        for k_idx, centroid_set in enumerate(all_gpu_data[0].synced_data.centroid_sets):
+            _is_valid, _stats = validate_centroids(centroid_set.cpu())
+            logger.debug(
+                f"📊 POST-SYNC VALIDATION k_idx={k_idx}: Empty={_stats.num_empty_centroids}, Norms: min={_stats.min_norm:.6f}, max={_stats.max_norm:.6f}, mean={_stats.mean_norm:.6f}"
+            )
 
     # clean up the background workers and queue
     backend.empty_cache()
@@ -1614,6 +1621,7 @@ def cluster_paths_main(
     assignment_minibatch_size: int = 4096,
     save_every: int | None = None,
     validate_every: int = 64,
+    log_level_numeric: int | None = None,
     device_type: DeviceType = "cuda",
 ) -> None:
     kmeans_experiment_name = get_experiment_name(
@@ -1644,6 +1652,7 @@ def cluster_paths_main(
         save_every=save_every,
         save_dir=save_dir,
         validate_every=validate_every,
+        log_level_numeric=log_level_numeric,
         device_type=device_type,
     )
 
@@ -1777,6 +1786,7 @@ def cluster_paths(
         assignment_minibatch_size=assignment_minibatch_size,
         save_every=save_every,
         validate_every=validate_every,
+        log_level_numeric=log_level_numeric,
         device_type=device_type,
     )
 
