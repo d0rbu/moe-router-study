@@ -41,8 +41,6 @@ async def _router_jaccard_distance_async(
     (
         activations,
         _activation_dims,
-        _gpu_process_group,
-        _gpu_process_groups,
     ) = await load_activations_and_init_dist(
         model_name=model_name,
         dataset_name=dataset_name,
