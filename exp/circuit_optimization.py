@@ -210,7 +210,7 @@ def load_and_gradient_descent(
     seed: int = 0,
     device: str = "cuda",
 ) -> tuple[th.Tensor, th.Tensor, th.Tensor, th.Tensor]:
-    data = load_activations(device=device)
+    data, _, _ = load_activations(device=device)
 
     wandb_run = wandb.init(
         project="circuit-optimization",
@@ -279,7 +279,7 @@ def grid_search_gradient_descent(
         # num_cooldown_epochses = [512]
         num_cooldown_epochses = [1024]
 
-    data = load_activations(device=device)
+    data, _, _ = load_activations(device=device)
     loss_landscape = th.empty(
         num_seeds,
         len(complexity_importances),

@@ -24,7 +24,7 @@ def load_activations_indices_tokens_and_topk(
     activated_experts_list = []
     indices_list = []
     tokens_list = []
-    top_k: int | None = None
+    top_k = None
 
     for file_idx in tqdm(count(), desc="Loading router logits+tokens"):
         file_path = os.path.join(ROUTER_LOGITS_DIR, f"{file_idx}.pt")
@@ -55,6 +55,7 @@ def load_activations_indices_tokens_and_topk(
     activated_experts = th.cat(activated_experts_list, dim=0).to(device)
     indices = th.cat(indices_list, dim=0).to(device)
 
+    assert top_k is not None, "top_k should be set by now"
     return activated_experts, indices, tokens_list, top_k
 
 
