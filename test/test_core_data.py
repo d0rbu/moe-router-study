@@ -16,7 +16,8 @@ def test_toy_text_yields_expected_samples() -> None:
     # toy_text may not exist; if so, skip this test to keep PR minimal
     if not hasattr(core_data, "toy_text"):
         pytest.skip("toy_text not available in core.data; skipping fast dataset test")
-    toy_text_fn = cast(Callable[[], Iterable[str]], getattr(core_data, "toy_text"))
+    # Use getattr since toy_text is conditional and may not exist
+    toy_text_fn = cast("Callable[[], Iterable[str]]", getattr(core_data, "toy_text"))  # noqa: B009
     it: Iterable[str] = toy_text_fn()
     samples = list(itertools.islice(it, 10))
     assert samples[:4] == [
