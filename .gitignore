@@ -201,3 +201,6 @@ checkpoints/
 ehthumbs.db
 Thumbs.db
 
+# Temporary dependency directories (may be created during CI runs)
+delphi/
+
