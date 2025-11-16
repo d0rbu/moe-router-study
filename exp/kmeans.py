@@ -6,6 +6,7 @@ from functools import partial
 import gc
 from itertools import batched, islice
 import os
+import queue
 import sys
 from typing import Any, TypeVar
 
@@ -916,7 +917,7 @@ def gpu_worker(
         try:
             queue_item = shared_gpu_data.queue.get(timeout=60.0)
             logger.trace(f"GPU {gpu_idx} picked up item from queue")
-        except TimeoutError:
+        except queue.Empty:
             logger.warning(
                 f"GPU {gpu_idx} timed out waiting for queue item - may indicate main loop hang"
             )
