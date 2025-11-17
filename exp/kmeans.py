@@ -148,9 +148,39 @@ class RunningKMeansData:
 
             # Avoid division by zero when weights are zero
             mask = new_weights > 0
-            base_weight_proportion = th.ones_like(base_weights, dtype=th.float32)
+            base_weight_proportion = th.zeros_like(base_weights, dtype=th.float32)
+            other_weight_proportion = th.zeros_like(base_weights, dtype=th.float32)
+
+            # For centroids with non-zero weights, compute normal proportions
             base_weight_proportion[mask] = base_weights[mask] / new_weights[mask]
-            other_weight_proportion = 1 - base_weight_proportion
+            other_weight_proportion[mask] = other_weights[mask] / new_weights[mask]
+
+            # For centroids with zero weights in both operands, preserve non-zero centroids
+            # Compute norms to determine which centroids are non-zero
+            zero_weight_mask = ~mask
+            if zero_weight_mask.any():
+                base_norms = th.norm(base_centroids, dim=1)
+                other_norms = th.norm(other_centroids, dim=1)
+
+                # Case 1: base is non-zero, other is zero -> use base
+                base_nonzero_mask = (
+                    zero_weight_mask & (base_norms > 0) & (other_norms == 0)
+                )
+                base_weight_proportion[base_nonzero_mask] = 1.0
+                other_weight_proportion[base_nonzero_mask] = 0.0
+
+                # Case 2: other is non-zero, base is zero -> use other
+                other_nonzero_mask = (
+                    zero_weight_mask & (base_norms == 0) & (other_norms > 0)
+                )
+                base_weight_proportion[other_nonzero_mask] = 0.0
+                other_weight_proportion[other_nonzero_mask] = 1.0
+
+                # Case 3: both are zero or both are non-zero -> average them
+                # (This should be rare but handles edge cases)
+                both_mask = zero_weight_mask & ~base_nonzero_mask & ~other_nonzero_mask
+                base_weight_proportion[both_mask] = 0.5
+                other_weight_proportion[both_mask] = 0.5
 
             # Debug: Check for problematic weight proportions
             if (
