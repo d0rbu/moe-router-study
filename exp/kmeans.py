@@ -233,6 +233,11 @@ class GPUData:
             queue=self.queue,
         )
 
+    def reset_dirty_data(self) -> None:
+        self.dirty_data.copy_(self.synced_data)
+        for centroid_weights in self.dirty_data.weight_sets:
+            centroid_weights.zero_()
+
 
 def compute_all_centroids_from_assignments(
     data: th.Tensor,
@@ -703,6 +708,14 @@ def sync(
                 f"Empty centroids are not equal: {empty_centroids} != {empty_centroids_rolled}"
             )
 
+            # make sure the centroids themselves are not zero
+            empty_centroids_norms = th.norm(empty_centroids, dim=-1)
+            num_zero_norms = (empty_centroids_norms < 1e-6).sum().item()
+
+            assert num_zero_norms == 0, (
+                f"Found {num_zero_norms} empty centroids with zero norm out of {num_empty_centroids} empty centroids"
+            )
+
         # (N, K) - handle division by zero for empty centroids
         weights_proportion = th.where(
             weights_total.unsqueeze(0) > 0,
@@ -806,8 +819,8 @@ def sync(
     barrier.wait()
 
     # reset dirty data now that it has been synced
-    logger.debug(f"🔄 SYNC GPU {gpu_idx}: Resetting dirty data to zero...")
-    gpu_data.dirty_data.clear()
+    logger.debug(f"🔄 SYNC GPU {gpu_idx}: Resetting dirty data...")
+    gpu_data.reset_dirty_data()
 
     # Log synced data state after sync
     for k_idx, centroids in enumerate(gpu_data.synced_data.centroid_sets):
@@ -998,11 +1011,6 @@ def gpu_worker(
         if not should_sync:
             logger.trace(f"GPU {gpu_idx} skipping sync, continuing to next item")
             continue
-
-        logger.trace(f"GPU {gpu_idx} starting sync operation")
-        logger.trace(f"GPU {gpu_idx} copying from local to shared data")
-        shared_gpu_data.synced_data.copy_(local_gpu_data.synced_data)
-        shared_gpu_data.dirty_data.copy_(local_gpu_data.dirty_data)
 
         sync(
             gpu_idx,
