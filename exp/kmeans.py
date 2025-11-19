@@ -25,6 +25,7 @@ from core.device import (
     get_device,
     get_distributed_backend,
 )
+from core.dist import get_rank, get_world_size
 from core.moe import convert_router_logits_to_paths
 from core.training import exponential_to_linear_save_steps
 from exp import OUTPUT_DIR
@@ -349,7 +350,7 @@ def validate_gpu_centroid_synchronization(
     Returns:
         True if all centroids are synchronized, False otherwise
     """
-    world_size = dist.get_world_size() if dist.is_initialized() else 1
+    world_size = get_world_size()
     if len(all_gpu_data) <= 1 and world_size <= 1:
         logger.trace(
             f"Only {len(all_gpu_data)} GPU(s) and {dist.get_world_size()} rank(s), skipping synchronization validation"
@@ -630,8 +631,8 @@ def sync(
     backend = get_backend(device_type)
     device = get_device(device_type, gpu_idx)
 
-    rank = dist.get_rank() if dist.is_initialized() else 0
-    world_size = dist.get_world_size() if dist.is_initialized() else 1
+    rank = get_rank()
+    world_size = get_world_size()
 
     # Use gpu_specific_group for synchronization
 
@@ -1049,7 +1050,7 @@ def gpu_worker(
 
         # Validate GPU synchronization after sync (only on GPU 0 to avoid redundant checks)
         # Only validate every validate_every iterations
-        current_world_size = dist.get_world_size() if dist.is_initialized() else 1
+        current_world_size = get_world_size()
         if (
             gpu_idx == 0
             and (len(all_gpu_data) > 1 or current_world_size > 1)
@@ -1077,7 +1078,7 @@ def gpu_worker(
             logger.trace(f"GPU {gpu_idx}: Validation passed")
 
         # save checkpoint if save_idx is not None and we're on rank 0 gpu 0
-        current_rank = dist.get_rank() if dist.is_initialized() else 0
+        current_rank = get_rank()
         if (
             save_idx is not None
             and current_rank == 0
@@ -1182,8 +1183,8 @@ def kmeans_manhattan(
     backend.manual_seed(seed)
 
     num_gpus = backend.device_count()
-    rank = dist.get_rank() if dist.is_initialized() else 0
-    num_nodes = dist.get_world_size() if dist.is_initialized() else 1
+    rank = get_rank()
+    num_nodes = get_world_size()
     total_gpus = num_gpus * num_nodes
 
     logger.debug(f"Running kmeans with device type: {device_type}")
@@ -1725,7 +1726,7 @@ def cluster_paths_main(
         device_type=device_type,
     )
 
-    current_rank = dist.get_rank() if dist.is_initialized() else 0
+    current_rank = get_rank()
     if current_rank == 0:
         logger.info("Saving...")
 
