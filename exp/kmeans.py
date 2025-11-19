@@ -878,7 +878,7 @@ def save_checkpoint(
     """
     # Collect centroid statistics
     centroid_stats = []
-    for _k_idx, centroids in enumerate(gpu_data.synced_data.centroid_sets):
+    for centroids in gpu_data.synced_data.centroid_sets:
         centroid_norms = th.norm(centroids, dim=1)
         stats = {
             "k_value": centroids.shape[0],
