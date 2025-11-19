@@ -27,7 +27,6 @@ from core.device import (
     get_distributed_backend,
 )
 from core.moe import convert_router_logits_to_paths
-
 from exp import OUTPUT_DIR
 from exp.activations import Activations, load_activations_and_init_dist
 from exp.get_activations import ActivationKeys
@@ -1243,18 +1242,17 @@ CHECKPOINT_FILENAME = "checkpoint_iter_{iteration}.pt"
 LATEST_CHECKPOINT_FILENAME = "checkpoint_latest.pt"
 
 
-
 def should_save_checkpoint(step: int, save_every: int) -> bool:
     """
     Determine if we should save a checkpoint at the given step.
-    
+
     Args:
         step: Current step/batch number (0-indexed)
         save_every: Save frequency (every N steps after warmup)
-        
+
     Returns:
         True if we should save at this step
-        
+
     Logic:
         - For step 0: Always save (initial checkpoint)
         - For 0 < step < save_every: Save if step is a power of 2 (exponential warmup)
@@ -1749,7 +1747,9 @@ def kmeans_manhattan(
 
             # Determine if we should save at this batch
             # save_idx is the batch number if we should save, None otherwise
-            if save_every is not None and should_save_checkpoint(distributed_batch_idx, save_every):
+            if save_every is not None and should_save_checkpoint(
+                distributed_batch_idx, save_every
+            ):
                 save_idx = distributed_batch_idx
             else:
                 save_idx = None
