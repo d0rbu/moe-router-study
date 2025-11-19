@@ -417,7 +417,6 @@ def validate_gpu_centroid_synchronization(
 
     # Now check across-rank synchronization using allgather
     if world_size > 1:
-
         for k_idx, k in enumerate(k_values):
             # Get centroids from GPU 0 on this rank and move to CPU
             local_centroids = all_gpu_data[0].synced_data.centroid_sets[k_idx].cpu()
@@ -691,7 +690,9 @@ def sync(
     ):
         if world_size > 1:
             # (N, K, D)
-            all_centroids = th.empty_like(centroids).unsqueeze(0).repeat(world_size, 1, 1)
+            all_centroids = (
+                th.empty_like(centroids).unsqueeze(0).repeat(world_size, 1, 1)
+            )
             # (N, K)
             all_weights = th.empty_like(weights).unsqueeze(0).repeat(world_size, 1)
 
