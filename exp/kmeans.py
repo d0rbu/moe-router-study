@@ -859,7 +859,7 @@ def sync(
 def save_checkpoint(
     save_dir: str,
     iteration: int,
-    all_gpu_data: list[GPUData],
+    gpu_data: GPUData,
     losses_over_time: list[th.Tensor],
     top_k: int,
     tokens_seen: int = 0,
@@ -870,7 +870,7 @@ def save_checkpoint(
     Args:
         save_dir: Directory to save the checkpoint
         iteration: Current iteration number
-        all_gpu_data: List of GPU data containing centroids
+        gpu_data: GPU data containing synced centroids
         losses_over_time: List of loss tensors over time
         top_k: Top-k value for the model
         tokens_seen: Total number of tokens processed so far
@@ -878,7 +878,7 @@ def save_checkpoint(
     """
     # Collect centroid statistics
     centroid_stats = []
-    for _k_idx, centroids in enumerate(all_gpu_data[0].synced_data.centroid_sets):
+    for _k_idx, centroids in enumerate(gpu_data.synced_data.centroid_sets):
         centroid_norms = th.norm(centroids, dim=1)
         stats = {
             "k_value": centroids.shape[0],
@@ -906,10 +906,8 @@ def save_checkpoint(
     # Create checkpoint data
     checkpoint_data = {
         # Model state
-        "centroids": [
-            c.cpu().clone() for c in all_gpu_data[0].synced_data.centroid_sets
-        ],
-        "weights": [w.cpu().clone() for w in all_gpu_data[0].synced_data.weight_sets],
+        "centroids": [c.cpu().clone() for c in gpu_data.synced_data.centroid_sets],
+        "weights": [w.cpu().clone() for w in gpu_data.synced_data.weight_sets],
         # Training state
         "iteration": iteration,
         "tokens_seen": tokens_seen,
@@ -1214,7 +1212,7 @@ def gpu_worker(
             save_checkpoint(
                 save_dir=save_dir,
                 iteration=save_idx,
-                all_gpu_data=all_gpu_data,
+                gpu_data=all_gpu_data[gpu_idx],
                 losses_over_time=losses_over_time,
                 top_k=top_k,
             )
