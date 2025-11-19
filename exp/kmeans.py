@@ -1212,7 +1212,7 @@ def gpu_worker(
             save_checkpoint(
                 save_dir=save_dir,
                 iteration=save_idx,
-                gpu_data=all_gpu_data[gpu_idx],
+                gpu_data=local_gpu_data,
                 losses_over_time=losses_over_time,
                 top_k=top_k,
             )
