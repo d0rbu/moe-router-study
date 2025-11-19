@@ -1256,7 +1256,7 @@ def get_top_circuits(
 KMEANS_TYPE = "kmeans"
 METADATA_FILENAME = "metadata.yaml"
 KMEANS_FILENAME = "kmeans.pt"
-CHECKPOINT_FILENAME = "checkpoint_iter_{iteration}.pt"
+CHECKPOINT_FILENAME = "checkpoint_step_{iteration}.pt"
 LATEST_CHECKPOINT_FILENAME = "checkpoint_latest.pt"
 
 
@@ -1701,6 +1701,8 @@ def kmeans_manhattan(
         worker.start()
     logger.trace(f"Created {len(workers)} workers")
 
+    step_idx = 0
+
     # distributed kmeans
     for iter_idx in iterator:
         # process data in batches, parallelized over devices and nodes
@@ -1751,7 +1753,6 @@ def kmeans_manhattan(
         for distributed_batch_idx, gpu_minibatches in enumerate(
             concurrent_minibatch_iterator
         ):
-            effective_batch_idx = distributed_batch_idx // accumulation_size
             logger.trace(f"Running distributed batch {distributed_batch_idx}")
 
             # Periodic worker health check during long iterations
@@ -1764,16 +1765,14 @@ def kmeans_manhattan(
                 accumulation_size - 1
             )
 
-            # Determine if we should save at this batch
-            # save_idx is the batch number if we should save, None otherwise
-            if (
-                save_every is not None
-                and should_sync
-                and should_save_checkpoint(effective_batch_idx, save_every)
-            ):
-                save_idx = effective_batch_idx
-            else:
-                save_idx = None
+            save_idx = None
+            if should_sync:
+                if save_every is not None and should_save_checkpoint(
+                    step_idx, save_every
+                ):
+                    save_idx = step_idx
+
+                step_idx += 1
 
             logger.trace(f"Should sync: {should_sync}")
             logger.trace(f"Accumulation size: {accumulation_size}")
