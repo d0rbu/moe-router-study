@@ -1751,6 +1751,7 @@ def kmeans_manhattan(
         for distributed_batch_idx, gpu_minibatches in enumerate(
             concurrent_minibatch_iterator
         ):
+            effective_batch_idx = distributed_batch_idx // accumulation_size
             logger.trace(f"Running distributed batch {distributed_batch_idx}")
 
             # Periodic worker health check during long iterations
@@ -1766,9 +1767,9 @@ def kmeans_manhattan(
             # Determine if we should save at this batch
             # save_idx is the batch number if we should save, None otherwise
             if save_every is not None and should_save_checkpoint(
-                distributed_batch_idx, save_every
+                effective_batch_idx, save_every
             ):
-                save_idx = distributed_batch_idx
+                save_idx = effective_batch_idx
             else:
                 save_idx = None
 
