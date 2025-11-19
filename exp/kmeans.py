@@ -27,7 +27,7 @@ from core.device import (
     get_distributed_backend,
 )
 from core.moe import convert_router_logits_to_paths
-from core.training import exponential_to_linear_save_steps
+
 from exp import OUTPUT_DIR
 from exp.activations import Activations, load_activations_and_init_dist
 from exp.get_activations import ActivationKeys
@@ -1243,6 +1243,33 @@ CHECKPOINT_FILENAME = "checkpoint_iter_{iteration}.pt"
 LATEST_CHECKPOINT_FILENAME = "checkpoint_latest.pt"
 
 
+
+def should_save_checkpoint(step: int, save_every: int) -> bool:
+    """
+    Determine if we should save a checkpoint at the given step.
+    
+    Args:
+        step: Current step/batch number (0-indexed)
+        save_every: Save frequency (every N steps after warmup)
+        
+    Returns:
+        True if we should save at this step
+        
+    Logic:
+        - For step 0: Always save (initial checkpoint)
+        - For 0 < step < save_every: Save if step is a power of 2 (exponential warmup)
+        - For step >= save_every: Save if step % save_every == 0 (linear schedule)
+    """
+    if step == 0:
+        return True
+    elif 0 < step < save_every:
+        # Check if step is a power of 2
+        return (step & (step - 1)) == 0
+    else:
+        # Linear schedule: save every save_every steps
+        return step % save_every == 0
+
+
 def kmeans_manhattan(
     activations: Activations,
     activation_dim: int,
@@ -1615,17 +1642,12 @@ def kmeans_manhattan(
     # track losses for each iteration
     losses_over_time = []
 
-    # calculate save steps for checkpointing
-    save_steps = set()
+    # Validate save_every parameter
     if save_every is not None:
         assert save_dir is not None, (
             "save_dir must be specified if save_every is provided"
         )
-        save_steps = exponential_to_linear_save_steps(
-            total_steps=max_iters, save_every=save_every
-        )
-
-    logger.trace(f"Save steps: {save_steps}")
+        logger.info(f"Checkpointing enabled: saving every {save_every} batches")
 
     iterator = range(max_iters)
     if dist.get_rank() == 0:
@@ -1725,14 +1747,16 @@ def kmeans_manhattan(
                 accumulation_size - 1
             )
 
-            # compute effective step index and determine if we should save
-            effective_step_idx = distributed_batch_idx // accumulation_size
-            save_idx = effective_step_idx if effective_step_idx in save_steps else None
+            # Determine if we should save at this batch
+            # save_idx is the batch number if we should save, None otherwise
+            if save_every is not None and should_save_checkpoint(distributed_batch_idx, save_every):
+                save_idx = distributed_batch_idx
+            else:
+                save_idx = None
 
             logger.trace(f"Should sync: {should_sync}")
             logger.trace(f"Accumulation size: {accumulation_size}")
             logger.trace(f"Distributed batch index: {distributed_batch_idx}")
-            logger.trace(f"Effective step index: {effective_step_idx}")
             logger.trace(f"Save index: {save_idx}")
 
             for gpu_idx, (gpu_data, gpu_minibatch) in enumerate(
