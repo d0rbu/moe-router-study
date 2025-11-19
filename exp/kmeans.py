@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime
 from functools import partial
 import gc
 from itertools import batched, islice
@@ -27,7 +28,6 @@ from core.device import (
 )
 from core.dist import get_rank, get_world_size
 from core.moe import convert_router_logits_to_paths
-from core.training import exponential_to_linear_save_steps
 from exp import OUTPUT_DIR
 from exp.activations import Activations, load_activations_and_init_dist
 from exp.get_activations import ActivationKeys
@@ -867,6 +867,149 @@ def sync(
     logger.trace(f"✅ SYNC GPU {gpu_idx}: Sync operation fully completed")
 
 
+def save_checkpoint(
+    save_dir: str,
+    iteration: int,
+    gpu_data: GPUData,
+    losses_over_time: list[th.Tensor],
+    top_k: int,
+    tokens_seen: int = 0,
+    hyperparams: dict[str, Any] | None = None,
+) -> None:
+    """
+    Save a checkpoint with comprehensive metadata.
+    Args:
+        save_dir: Directory to save the checkpoint
+        iteration: Current iteration number
+        gpu_data: GPU data containing synced centroids
+        losses_over_time: List of loss tensors over time
+        top_k: Top-k value for the model
+        tokens_seen: Total number of tokens processed so far
+        hyperparams: Optional dictionary of hyperparameters
+    """
+    # Collect centroid statistics
+    centroid_stats = []
+    for centroids in gpu_data.synced_data.centroid_sets:
+        centroid_norms = th.norm(centroids, dim=1)
+        stats = {
+            "k_value": centroids.shape[0],
+            "num_centroids": centroids.shape[0],
+            "embedding_dim": centroids.shape[1],
+            "zero_norm_count": (centroid_norms == 0).sum().item(),
+            "min_norm": centroid_norms.min().item(),
+            "max_norm": centroid_norms.max().item(),
+            "mean_norm": centroid_norms.mean().item(),
+            "std_norm": centroid_norms.std().item(),
+        }
+        centroid_stats.append(stats)
+    # Prepare loss statistics
+    if losses_over_time:
+        losses_tensor = th.stack(losses_over_time, dim=1)
+        loss_stats = {
+            "num_iterations": losses_tensor.shape[1],
+            "current_losses": losses_tensor[:, -1].tolist(),
+            "mean_losses": losses_tensor.mean(dim=1).tolist(),
+            "min_losses": losses_tensor.min(dim=1).values.tolist(),
+            "max_losses": losses_tensor.max(dim=1).values.tolist(),
+        }
+    else:
+        loss_stats = {"num_iterations": 0}
+    # Create checkpoint data
+    checkpoint_data = {
+        # Model state
+        "centroids": [c.cpu().clone() for c in gpu_data.synced_data.centroid_sets],
+        "weights": [w.cpu().clone() for w in gpu_data.synced_data.weight_sets],
+        # Training state
+        "iteration": iteration,
+        "tokens_seen": tokens_seen,
+        "losses": th.stack(losses_over_time, dim=1).cpu()
+        if losses_over_time
+        else th.empty(0),
+        # Model config
+        "top_k": top_k,
+        # Metadata
+        "metadata": {
+            "timestamp": datetime.now().isoformat(),
+            "iteration": iteration,
+            "tokens_seen": tokens_seen,
+            "centroid_stats": centroid_stats,
+            "loss_stats": loss_stats,
+            "hyperparams": hyperparams or {},
+        },
+    }
+    # Save numbered checkpoint
+    checkpoint_path = os.path.join(
+        save_dir, CHECKPOINT_FILENAME.format(iteration=iteration)
+    )
+    th.save(checkpoint_data, checkpoint_path)
+    logger.info(
+        f"Saved checkpoint at iteration {iteration} ({tokens_seen:,} tokens) to {checkpoint_path}"
+    )
+    # Also save as latest checkpoint for easy resumption
+    latest_checkpoint_path = os.path.join(save_dir, LATEST_CHECKPOINT_FILENAME)
+    th.save(checkpoint_data, latest_checkpoint_path)
+    logger.debug(f"Updated latest checkpoint: {latest_checkpoint_path}")
+
+
+def load_checkpoint(
+    checkpoint_path: str,
+    all_gpu_data: list[GPUData],
+    device_type: DeviceType = "cuda",  # noqa: ARG001
+) -> tuple[int, int, list[th.Tensor], int]:
+    """
+    Load a checkpoint and restore training state.
+    Args:
+        checkpoint_path: Path to the checkpoint file
+        all_gpu_data: List of GPU data to populate with loaded centroids
+        device_type: Device type ("cuda" or "xpu")
+    Returns:
+        Tuple of (start_iteration, tokens_seen, losses_over_time, top_k)
+    """
+    logger.info(f"Loading checkpoint from {checkpoint_path}")
+    checkpoint_data = th.load(checkpoint_path, map_location="cpu")
+    # Restore centroids and weights to all GPUs
+    for gpu_data in all_gpu_data:
+        for k_idx, (loaded_centroids, loaded_weights) in enumerate(
+            zip(checkpoint_data["centroids"], checkpoint_data["weights"], strict=True)
+        ):
+            gpu_data.synced_data.centroid_sets[k_idx].copy_(loaded_centroids)
+            gpu_data.synced_data.weight_sets[k_idx].copy_(loaded_weights)
+            gpu_data.dirty_data.centroid_sets[k_idx].copy_(loaded_centroids)
+            gpu_data.dirty_data.weight_sets[k_idx].zero_()
+    # Restore training state
+    start_iteration = checkpoint_data["iteration"] + 1
+    tokens_seen = checkpoint_data.get("tokens_seen", 0)
+    top_k = checkpoint_data["top_k"]
+    # Restore loss history
+    losses_tensor = checkpoint_data["losses"]
+    losses_over_time = (
+        [losses_tensor[:, i] for i in range(losses_tensor.shape[1])]
+        if losses_tensor.numel() > 0
+        else []
+    )
+    # Log checkpoint metadata if available
+    if "metadata" in checkpoint_data:
+        metadata = checkpoint_data["metadata"]
+        logger.info("Checkpoint metadata:")
+        logger.info(f"  Saved at: {metadata.get('timestamp', 'unknown')}")
+        logger.info(f"  Iteration: {metadata.get('iteration', 'unknown')}")
+        logger.info(f"  Tokens seen: {metadata.get('tokens_seen', 'unknown'):,}")
+        if "centroid_stats" in metadata:
+            logger.info("  Centroid statistics:")
+            for stats in metadata["centroid_stats"]:
+                logger.info(
+                    f"    k={stats['k_value']}: "
+                    f"zero_norms={stats['zero_norm_count']}/{stats['num_centroids']}, "
+                    f"norm_stats: min={stats['min_norm']:.6f}, "
+                    f"max={stats['max_norm']:.6f}, mean={stats['mean_norm']:.6f}"
+                )
+    logger.info(
+        f"Resumed from iteration {checkpoint_data['iteration']}, "
+        f"starting at iteration {start_iteration} with {tokens_seen:,} tokens seen"
+    )
+    return start_iteration, tokens_seen, losses_over_time, top_k
+
+
 def gpu_worker(
     gpu_idx: int,
     all_gpu_data: list[GPUData],
@@ -1086,23 +1229,12 @@ def gpu_worker(
             and save_dir is not None
         ):
             logger.trace(f"GPU {gpu_idx} saving checkpoint")
-
-            checkpoint_data = {
-                "centroids": all_gpu_data[0].synced_data.centroid_sets,
-                "top_k": top_k,
-                "losses": th.stack(losses_over_time, dim=1)
-                if losses_over_time
-                else all_gpu_data[0].synced_data.losses,
-                "iteration": save_idx,
-            }
-            checkpoint_path = os.path.join(
-                save_dir, CHECKPOINT_FILENAME.format(iteration=save_idx)
-            )
-            logger.trace(f"GPU {gpu_idx} saved checkpoint to {checkpoint_path}")
-
-            th.save(checkpoint_data, checkpoint_path)
-            logger.info(
-                f"Saved checkpoint at iteration {save_idx} to {checkpoint_path}"
+            save_checkpoint(
+                save_dir=save_dir,
+                iteration=save_idx,
+                gpu_data=local_gpu_data,
+                losses_over_time=losses_over_time,
+                top_k=top_k,
             )
 
         logger.trace(f"🔄 GPU {gpu_idx} finished iteration, ready for next queue item")
@@ -1125,6 +1257,33 @@ KMEANS_TYPE = "kmeans"
 METADATA_FILENAME = "metadata.yaml"
 KMEANS_FILENAME = "kmeans.pt"
 CHECKPOINT_FILENAME = "checkpoint_iter_{iteration}.pt"
+LATEST_CHECKPOINT_FILENAME = "checkpoint_latest.pt"
+
+
+def should_save_checkpoint(step: int, save_every: int) -> bool:
+    """
+    Determine if we should save a checkpoint at the given step.
+
+    Args:
+        step: Current step/batch number (0-indexed)
+        save_every: Save frequency (every N steps after warmup)
+
+    Returns:
+        True if we should save at this step
+
+    Logic:
+        - For step 0: Always save (initial checkpoint)
+        - For 0 < step < save_every: Save if step is a power of 2 (exponential warmup)
+        - For step >= save_every: Save if step % save_every == 0 (linear schedule)
+    """
+    if step == 0:
+        return True
+    elif 0 < step < save_every:
+        # Check if step is a power of 2
+        return (step & (step - 1)) == 0
+    else:
+        # Linear schedule: save every save_every steps
+        return step % save_every == 0
 
 
 def kmeans_manhattan(
@@ -1499,17 +1658,12 @@ def kmeans_manhattan(
     # track losses for each iteration
     losses_over_time = []
 
-    # calculate save steps for checkpointing
-    save_steps = set()
+    # Validate save_every parameter
     if save_every is not None:
         assert save_dir is not None, (
             "save_dir must be specified if save_every is provided"
         )
-        save_steps = exponential_to_linear_save_steps(
-            total_steps=max_iters, save_every=save_every
-        )
-
-    logger.trace(f"Save steps: {save_steps}")
+        logger.info(f"Checkpointing enabled: saving every {save_every} batches")
 
     iterator = range(max_iters)
     if rank == 0:
@@ -1609,14 +1763,18 @@ def kmeans_manhattan(
                 accumulation_size - 1
             )
 
-            # compute effective step index and determine if we should save
-            effective_step_idx = distributed_batch_idx // accumulation_size
-            save_idx = effective_step_idx if effective_step_idx in save_steps else None
+            # Determine if we should save at this batch
+            # save_idx is the batch number if we should save, None otherwise
+            if save_every is not None and should_save_checkpoint(
+                distributed_batch_idx, save_every
+            ):
+                save_idx = distributed_batch_idx
+            else:
+                save_idx = None
 
             logger.trace(f"Should sync: {should_sync}")
             logger.trace(f"Accumulation size: {accumulation_size}")
             logger.trace(f"Distributed batch index: {distributed_batch_idx}")
-            logger.trace(f"Effective step index: {effective_step_idx}")
             logger.trace(f"Save index: {save_idx}")
 
             for gpu_idx, (gpu_data, gpu_minibatch) in enumerate(
