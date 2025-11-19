@@ -868,7 +868,6 @@ def save_checkpoint(
 ) -> None:
     """
     Save a checkpoint with comprehensive metadata.
-    
     Args:
         save_dir: Directory to save the checkpoint
         iteration: Current iteration number
@@ -880,7 +879,7 @@ def save_checkpoint(
     """
     # Collect centroid statistics
     centroid_stats = []
-    for k_idx, centroids in enumerate(all_gpu_data[0].synced_data.centroid_sets):
+    for _k_idx, centroids in enumerate(all_gpu_data[0].synced_data.centroid_sets):
         centroid_norms = th.norm(centroids, dim=1)
         stats = {
             "k_value": centroids.shape[0],
@@ -893,7 +892,6 @@ def save_checkpoint(
             "std_norm": centroid_norms.std().item(),
         }
         centroid_stats.append(stats)
-    
     # Prepare loss statistics
     if losses_over_time:
         losses_tensor = th.stack(losses_over_time, dim=1)
@@ -906,21 +904,21 @@ def save_checkpoint(
         }
     else:
         loss_stats = {"num_iterations": 0}
-    
     # Create checkpoint data
     checkpoint_data = {
         # Model state
-        "centroids": [c.cpu().clone() for c in all_gpu_data[0].synced_data.centroid_sets],
+        "centroids": [
+            c.cpu().clone() for c in all_gpu_data[0].synced_data.centroid_sets
+        ],
         "weights": [w.cpu().clone() for w in all_gpu_data[0].synced_data.weight_sets],
-        
         # Training state
         "iteration": iteration,
         "tokens_seen": tokens_seen,
-        "losses": th.stack(losses_over_time, dim=1).cpu() if losses_over_time else th.empty(0),
-        
+        "losses": th.stack(losses_over_time, dim=1).cpu()
+        if losses_over_time
+        else th.empty(0),
         # Model config
         "top_k": top_k,
-        
         # Metadata
         "metadata": {
             "timestamp": datetime.now().isoformat(),
@@ -931,7 +929,6 @@ def save_checkpoint(
             "hyperparams": hyperparams or {},
         },
     }
-    
     # Save numbered checkpoint
     checkpoint_path = os.path.join(
         save_dir, CHECKPOINT_FILENAME.format(iteration=iteration)
@@ -940,7 +937,6 @@ def save_checkpoint(
     logger.info(
         f"Saved checkpoint at iteration {iteration} ({tokens_seen:,} tokens) to {checkpoint_path}"
     )
-    
     # Also save as latest checkpoint for easy resumption
     latest_checkpoint_path = os.path.join(save_dir, LATEST_CHECKPOINT_FILENAME)
     th.save(checkpoint_data, latest_checkpoint_path)
@@ -950,23 +946,19 @@ def save_checkpoint(
 def load_checkpoint(
     checkpoint_path: str,
     all_gpu_data: list[GPUData],
-    device_type: DeviceType = "cuda",
+    device_type: DeviceType = "cuda",  # noqa: ARG001
 ) -> tuple[int, int, list[th.Tensor], int]:
     """
     Load a checkpoint and restore training state.
-    
     Args:
         checkpoint_path: Path to the checkpoint file
         all_gpu_data: List of GPU data to populate with loaded centroids
         device_type: Device type ("cuda" or "xpu")
-        
     Returns:
         Tuple of (start_iteration, tokens_seen, losses_over_time, top_k)
     """
     logger.info(f"Loading checkpoint from {checkpoint_path}")
-    
     checkpoint_data = th.load(checkpoint_path, map_location="cpu")
-    
     # Restore centroids and weights to all GPUs
     for gpu_data in all_gpu_data:
         for k_idx, (loaded_centroids, loaded_weights) in enumerate(
@@ -976,12 +968,10 @@ def load_checkpoint(
             gpu_data.synced_data.weight_sets[k_idx].copy_(loaded_weights)
             gpu_data.dirty_data.centroid_sets[k_idx].copy_(loaded_centroids)
             gpu_data.dirty_data.weight_sets[k_idx].zero_()
-    
     # Restore training state
     start_iteration = checkpoint_data["iteration"] + 1
     tokens_seen = checkpoint_data.get("tokens_seen", 0)
     top_k = checkpoint_data["top_k"]
-    
     # Restore loss history
     losses_tensor = checkpoint_data["losses"]
     losses_over_time = (
@@ -989,17 +979,15 @@ def load_checkpoint(
         if losses_tensor.numel() > 0
         else []
     )
-    
     # Log checkpoint metadata if available
     if "metadata" in checkpoint_data:
         metadata = checkpoint_data["metadata"]
-        logger.info(f"Checkpoint metadata:")
+        logger.info("Checkpoint metadata:")
         logger.info(f"  Saved at: {metadata.get('timestamp', 'unknown')}")
         logger.info(f"  Iteration: {metadata.get('iteration', 'unknown')}")
         logger.info(f"  Tokens seen: {metadata.get('tokens_seen', 'unknown'):,}")
-        
         if "centroid_stats" in metadata:
-            logger.info(f"  Centroid statistics:")
+            logger.info("  Centroid statistics:")
             for stats in metadata["centroid_stats"]:
                 logger.info(
                     f"    k={stats['k_value']}: "
@@ -1007,12 +995,10 @@ def load_checkpoint(
                     f"norm_stats: min={stats['min_norm']:.6f}, "
                     f"max={stats['max_norm']:.6f}, mean={stats['mean_norm']:.6f}"
                 )
-    
     logger.info(
         f"Resumed from iteration {checkpoint_data['iteration']}, "
         f"starting at iteration {start_iteration} with {tokens_seen:,} tokens seen"
     )
-    
     return start_iteration, tokens_seen, losses_over_time, top_k
 
 
