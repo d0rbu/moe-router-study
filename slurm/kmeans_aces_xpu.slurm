@@ -90,4 +90,4 @@ echo "Final Python version: $(python --version)"
 echo "Final Python path: $(which python)"
 
 # Checkpoint every 4 iterations (set to smaller value like 1 for more frequent checkpoints)
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/kmeans.py main --log-level DEBUG --device-type xpu --expansion-factor 1,2,4,8,16,32,64 --tokens-per-file 100000 --reshuffled-tokens-per-file 100000 --minibatch-size 4000 --centroid-minibatch-size 16384 --batch-size 256000 --validate-every 128000 --save-every 4
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/kmeans.py main --log-level DEBUG --device-type xpu --expansion-factor 1,2,4,8,16,32,64 --tokens-per-file 100000 --reshuffled-tokens-per-file 100000 --minibatch-size 4000 --centroid-minibatch-size 16384 --batch-size 256000 --validate-every 128000 --save-every 256
