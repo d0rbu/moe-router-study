@@ -604,7 +604,7 @@ def kmeans_step(
     update_norms = th.norm(new_centroids, dim=1)
     zero_update_norms = (update_norms == 0).sum().item()
     total_weight = new_weights.sum().item()
-    logger.debug(
+    logger.trace(
         f"[GPU {gpu_idx}] 📊 UPDATE: Computed updates - zero_norms={zero_update_norms}/{len(update_norms)}, norm_stats: min={update_norms.min():.6f}, max={update_norms.max():.6f}, mean={update_norms.mean():.6f}, total_weight={total_weight}"
     )
 
