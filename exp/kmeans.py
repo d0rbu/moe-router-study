@@ -349,7 +349,8 @@ def validate_gpu_centroid_synchronization(
     Returns:
         True if all centroids are synchronized, False otherwise
     """
-    if len(all_gpu_data) <= 1 and dist.get_world_size() <= 1:
+    world_size = dist.get_world_size() if dist.is_initialized() else 1
+    if len(all_gpu_data) <= 1 and world_size <= 1:
         logger.trace(
             f"Only {len(all_gpu_data)} GPU(s) and {dist.get_world_size()} rank(s), skipping synchronization validation"
         )
@@ -357,7 +358,7 @@ def validate_gpu_centroid_synchronization(
 
     context_str = f" {context}" if context else ""
     logger.debug(
-        f"🔍 SYNC VALIDATION{context_str}: Checking centroid synchronization across {len(all_gpu_data)} GPUs and {dist.get_world_size()} ranks"
+        f"🔍 SYNC VALIDATION{context_str}: Checking centroid synchronization across {len(all_gpu_data)} GPUs and {world_size} ranks"
     )
 
     all_synchronized = True
@@ -415,8 +416,7 @@ def validate_gpu_centroid_synchronization(
                     )
 
     # Now check across-rank synchronization using allgather
-    if dist.get_world_size() > 1:
-        world_size = dist.get_world_size()
+    if world_size > 1:
 
         for k_idx, k in enumerate(k_values):
             # Get centroids from GPU 0 on this rank and move to CPU
@@ -631,8 +631,8 @@ def sync(
     backend = get_backend(device_type)
     device = get_device(device_type, gpu_idx)
 
-    rank = dist.get_rank()
-    world_size = dist.get_world_size()
+    rank = dist.get_rank() if dist.is_initialized() else 0
+    world_size = dist.get_world_size() if dist.is_initialized() else 1
 
     # Use gpu_specific_group for synchronization
 
@@ -659,10 +659,14 @@ def sync(
 
     # gather across nodes
     # (N, num_K)
-    all_losses = (
-        th.empty_like(gpu_data.dirty_data.losses).unsqueeze(0).repeat(world_size, 1)
-    )
-    dist.all_gather_into_tensor(all_losses, gpu_data.dirty_data.losses, group=group)
+    if world_size > 1:
+        all_losses = (
+            th.empty_like(gpu_data.dirty_data.losses).unsqueeze(0).repeat(world_size, 1)
+        )
+        dist.all_gather_into_tensor(all_losses, gpu_data.dirty_data.losses, group=group)
+    else:
+        # Non-distributed: just use local losses
+        all_losses = gpu_data.dirty_data.losses.unsqueeze(0)
 
     logger.trace(
         f"All losses: {all_losses.shape} {all_losses.dtype} {all_losses.device} {all_losses}"
@@ -685,13 +689,18 @@ def sync(
             strict=True,
         )
     ):
-        # (N, K, D)
-        all_centroids = th.empty_like(centroids).unsqueeze(0).repeat(world_size, 1, 1)
-        # (N, K)
-        all_weights = th.empty_like(weights).unsqueeze(0).repeat(world_size, 1)
+        if world_size > 1:
+            # (N, K, D)
+            all_centroids = th.empty_like(centroids).unsqueeze(0).repeat(world_size, 1, 1)
+            # (N, K)
+            all_weights = th.empty_like(weights).unsqueeze(0).repeat(world_size, 1)
 
-        dist.all_gather_into_tensor(all_centroids, centroids, group=group)
-        dist.all_gather_into_tensor(all_weights, weights, group=group)
+            dist.all_gather_into_tensor(all_centroids, centroids, group=group)
+            dist.all_gather_into_tensor(all_weights, weights, group=group)
+        else:
+            # Non-distributed: just use local data
+            all_centroids = centroids.unsqueeze(0)
+            all_weights = weights.unsqueeze(0)
 
         # (K)
         weights_total = all_weights.sum(dim=0)
@@ -892,36 +901,43 @@ def gpu_worker(
 
     logger.info(f"Starting GPU worker {gpu_idx}")
 
-    # Set unique port for this GPU worker to avoid conflicts
-    # MUST be done BEFORE init_process_group() to prevent port conflicts
-    base_port = int(os.environ.get("MASTER_PORT", "29500"))
-    worker_port = base_port + gpu_idx + 1
-    os.environ["MASTER_PORT"] = str(worker_port)
+    # Only initialize distributed if world_size > 1
+    gpu_specific_group = None
+    if world_size > 1:
+        # Set unique port for this GPU worker to avoid conflicts
+        # MUST be done BEFORE init_process_group() to prevent port conflicts
+        base_port = int(os.environ.get("MASTER_PORT", "29500"))
+        worker_port = base_port + gpu_idx + 1
+        os.environ["MASTER_PORT"] = str(worker_port)
 
-    # Initialize distributed process group in this worker process
-    # Each spawned process needs its own init_process_group call
-    assert not dist.is_initialized(), (
-        "Distributed should not be initialized in worker process"
-    )
-    dist.init_process_group(
-        backend=backend_name,
-        rank=rank,
-        world_size=world_size,
-    )
-    logger.debug(
-        f"GPU worker {gpu_idx} initialized process group (rank={rank}, world_size={world_size})"
-    )
+        # Initialize distributed process group in this worker process
+        # Each spawned process needs its own init_process_group call
+        assert not dist.is_initialized(), (
+            "Distributed should not be initialized in worker process"
+        )
+        dist.init_process_group(
+            backend=backend_name,
+            rank=rank,
+            world_size=world_size,
+        )
+        logger.debug(
+            f"GPU worker {gpu_idx} initialized process group (rank={rank}, world_size={world_size})"
+        )
+
+        # Create GPU-specific group for this worker
+        gpu_specific_group = dist.new_group(
+            ranks=list(range(world_size)), backend=backend_name
+        )
+        logger.debug(
+            f"GPU worker {gpu_idx} created {backend_name} process group on port {worker_port}"
+        )
+    else:
+        logger.debug(
+            f"GPU worker {gpu_idx} running in non-distributed mode (world_size=1)"
+        )
 
     shared_gpu_data = all_gpu_data[gpu_idx]
     local_gpu_data = shared_gpu_data.to(device)
-
-    # Create GPU-specific group for this worker (always, regardless of world_size)
-    gpu_specific_group = dist.new_group(
-        ranks=list(range(world_size)), backend=backend_name
-    )
-    logger.debug(
-        f"GPU worker {gpu_idx} created {backend_name} process group on port {worker_port}"
-    )
 
     sync_iteration = 0
 
@@ -1032,9 +1048,10 @@ def gpu_worker(
 
         # Validate GPU synchronization after sync (only on GPU 0 to avoid redundant checks)
         # Only validate every validate_every iterations
+        current_world_size = dist.get_world_size() if dist.is_initialized() else 1
         if (
             gpu_idx == 0
-            and (len(all_gpu_data) > 1 or dist.get_world_size() > 1)
+            and (len(all_gpu_data) > 1 or current_world_size > 1)
             and sync_iteration % validate_every == 0
         ):
             logger.trace(
@@ -1059,9 +1076,10 @@ def gpu_worker(
             logger.trace(f"GPU {gpu_idx}: Validation passed")
 
         # save checkpoint if save_idx is not None and we're on rank 0 gpu 0
+        current_rank = dist.get_rank() if dist.is_initialized() else 0
         if (
             save_idx is not None
-            and dist.get_rank() == 0
+            and current_rank == 0
             and gpu_idx == 0
             and save_dir is not None
         ):
@@ -1163,8 +1181,8 @@ def kmeans_manhattan(
     backend.manual_seed(seed)
 
     num_gpus = backend.device_count()
-    rank = dist.get_rank()
-    num_nodes = dist.get_world_size()
+    rank = dist.get_rank() if dist.is_initialized() else 0
+    num_nodes = dist.get_world_size() if dist.is_initialized() else 1
     total_gpus = num_gpus * num_nodes
 
     logger.debug(f"Running kmeans with device type: {device_type}")
@@ -1492,7 +1510,7 @@ def kmeans_manhattan(
     logger.trace(f"Save steps: {save_steps}")
 
     iterator = range(max_iters)
-    if dist.get_rank() == 0:
+    if rank == 0:
         iterator = tqdm(
             iterator, desc="Kmeans iterations", leave=False, total=max_iters, position=0
         )
@@ -1706,7 +1724,8 @@ def cluster_paths_main(
         device_type=device_type,
     )
 
-    if dist.get_rank() == 0:
+    current_rank = dist.get_rank() if dist.is_initialized() else 0
+    if current_rank == 0:
         logger.info("Saving...")
 
         out = {
@@ -1784,6 +1803,12 @@ def cluster_paths(
             device_type=device_type,
         )
     )
+
+    # Log whether we're running in distributed mode or not
+    if dist.is_initialized():
+        logger.info(f"Running in distributed mode with {dist.get_world_size()} nodes")
+    else:
+        logger.info("Running in non-distributed mode (world_size=1)")
 
     residual_activation_dim = activation_dims[ActivationKeys.MLP_OUTPUT]
     router_activation_dim = activation_dims[ActivationKeys.ROUTER_LOGITS]
