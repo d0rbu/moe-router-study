@@ -1766,8 +1766,10 @@ def kmeans_manhattan(
 
             # Determine if we should save at this batch
             # save_idx is the batch number if we should save, None otherwise
-            if save_every is not None and should_save_checkpoint(
-                effective_batch_idx, save_every
+            if (
+                save_every is not None
+                and should_sync
+                and should_save_checkpoint(effective_batch_idx, save_every)
             ):
                 save_idx = effective_batch_idx
             else:
