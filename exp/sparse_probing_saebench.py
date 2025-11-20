@@ -1,12 +1,13 @@
-from dataclasses import asdict
-from datetime import datetime
 import gc
 import os
 import random
 import shutil
 import sys
+from dataclasses import asdict
+from datetime import datetime
 from typing import Any
 
+import torch as th
 from loguru import logger
 from nnterp import StandardizedTransformer
 from sae_bench.evals.sparse_probing.eval_config import SparseProbingEvalConfig
@@ -35,7 +36,6 @@ from sae_bench.sae_bench_utils.dataset_utils import (
     get_multi_label_train_test_data,
     tokenize_data_dictionary,
 )
-import torch as th
 from tqdm import tqdm
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 

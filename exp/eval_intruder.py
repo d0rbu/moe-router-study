@@ -1,18 +1,18 @@
 import asyncio
+import json
+import sys
 from collections.abc import Callable
 from functools import partial
-import json
 from multiprocessing import cpu_count
 from pathlib import Path
-import sys
 
 import arguably
-from dictionary_learning.utils import load_dictionary
-from loguru import logger
-from nnterp import StandardizedTransformer
 import orjson
 import torch as th
 import torch.nn as nn
+from dictionary_learning.utils import load_dictionary
+from loguru import logger
+from nnterp import StandardizedTransformer
 from tqdm import tqdm
 from transformers import (
     BitsAndBytesConfig,
@@ -283,7 +283,6 @@ class LatentPathsCache(LatentCache):
                     router_paths.append(logits)
 
             router_paths = th.stack(router_paths, dim=-2)  # (B, T, L, E)
-            
             sparse_paths = convert_router_logits_to_paths(router_paths, top_k).to(dtype=dtype)
             del router_paths
 
