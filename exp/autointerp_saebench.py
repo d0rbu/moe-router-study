@@ -24,6 +24,9 @@ from sae_bench.sae_bench_utils import (
     get_sae_lens_version,
 )
 from sae_bench.sae_bench_utils.activation_collection import get_bos_pad_eos_mask
+from sae_bench.sae_bench_utils.dataset_utils import (
+    load_and_tokenize_dataset,
+)
 from tabulate import tabulate
 import torch as th
 from tqdm import tqdm
@@ -468,10 +471,6 @@ def run_eval_paths(
     if os.path.exists(tokens_path):
         tokenized_dataset = th.load(tokens_path).to(device)
     else:
-        from sae_bench.sae_bench_utils.dataset_utils import (
-            load_and_tokenize_dataset,
-        )
-
         tokenized_dataset = load_and_tokenize_dataset(
             config.dataset_name,
             config.llm_context_size,
