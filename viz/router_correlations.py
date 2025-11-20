@@ -6,6 +6,10 @@ from loguru import logger
 import matplotlib.pyplot as plt
 import torch as th
 
+from core.moe import (
+    RouterLogitsPostprocessor,
+    get_postprocessor,
+)
 from exp.activations import load_activations_and_init_dist
 from exp.get_activations import ActivationKeys
 from viz import FIGURE_DIR
@@ -20,6 +24,7 @@ async def _router_correlations_async(
     reshuffled_tokens_per_file: int = 100000,
     num_workers: int = 8,
     debug: bool = False,
+    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> None:
     """Async implementation of router correlation analysis."""
     logger.info(f"Loading activations for model: {model_name}, dataset: {dataset_name}")
@@ -32,6 +37,8 @@ async def _router_correlations_async(
     )
     assert context_length > 0, f"Context length must be positive, got {context_length}"
     assert batch_size > 0, f"Batch size must be positive, got {batch_size}"
+
+    postprocessor_fn = get_postprocessor(postprocessor)
 
     logger.debug("Loading activations and initializing distributed...")
     (
@@ -65,9 +72,7 @@ async def _router_correlations_async(
                 f"Router configuration: {num_layers} layers, {num_experts} experts per layer, top-k={top_k}"
             )
 
-        top_k_indices = th.topk(router_logits, k=top_k, dim=2).indices
-        activated_experts = th.zeros_like(router_logits)
-        activated_experts.scatter_(2, top_k_indices, 1)
+        activated_experts = postprocessor_fn(router_logits, top_k)
 
         # (B, L, E) -> (L * E, B)
         activated_experts_collection.append(
@@ -209,6 +214,7 @@ def router_correlations(
     reshuffled_tokens_per_file: int = 100000,
     num_workers: int = 8,
     debug: bool = False,
+    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> None:
     """Generate router correlation plots for an experiment.
 
@@ -238,6 +244,7 @@ def router_correlations(
             reshuffled_tokens_per_file=reshuffled_tokens_per_file,
             num_workers=num_workers,
             debug=debug,
+            postprocessor=postprocessor,
         )
     )
 

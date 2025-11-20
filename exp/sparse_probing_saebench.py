@@ -41,6 +41,10 @@ from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from core.memory import clear_memory
 from core.model import get_model_config
+from core.moe import (
+    RouterLogitsPostprocessor,
+    get_postprocessor,
+)
 from core.type import assert_type
 from exp import MODEL_DIRNAME
 from exp.autointerp_saebench import Paths
@@ -54,10 +58,12 @@ def get_llm_activations(
     top_k: int,
     mask_bos_pad_eos_tokens: bool = False,
     show_progress: bool = True,
+    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> th.Tensor:  # (B, T, P)
     """Collects activations for an LLM model from a given layer for a given set of tokens.
     VERY IMPORTANT NOTE: If mask_bos_pad_eos_tokens is True, we zero out activations for BOS, PAD, and EOS tokens.
     Later, we ignore zeroed activations."""
+    postprocessor_fn = get_postprocessor(postprocessor)
 
     logger.trace(f"Collecting activations for model: {model}")
     logger.trace(f"Batch size: {batch_size}")
@@ -102,10 +108,8 @@ def get_llm_activations(
                 acts_BTE_list.append(logits)
 
         acts_BTLE = th.stack(acts_BTE_list, dim=-2)
-        sparse_paths = th.topk(acts_BTLE, k=top_k, dim=-1).indices
-        acts_BTLE.zero_()
-        acts_BTLE.scatter_(-1, sparse_paths, 1)
-        del sparse_paths
+
+        acts_BTLE = postprocessor_fn(acts_BTLE, top_k)
 
         acts_BTP = acts_BTLE.view(*tokens_BT.shape, -1)
         del acts_BTLE
@@ -128,6 +132,7 @@ def get_all_llm_activations(
     batch_size: int,
     top_k: int,
     mask_bos_pad_eos_tokens: bool = False,
+    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> dict[str, th.Tensor]:  # (B, T, P)
     """If we have a dictionary of tokenized inputs for different classes, this function collects activations for all classes.
     We assume that the tokenized inputs have both the input_ids and attention_mask keys.
@@ -143,6 +148,7 @@ def get_all_llm_activations(
             batch_size=batch_size,
             top_k=top_k,
             mask_bos_pad_eos_tokens=mask_bos_pad_eos_tokens,
+            postprocessor=postprocessor,
         )
 
         all_classes_acts_BTP[class_name] = acts_BTP
@@ -157,6 +163,7 @@ def get_dataset_activations(
     llm_batch_size: int,
     top_k: int,
     device: str,
+    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> tuple[dict[str, th.Tensor], dict[str, th.Tensor]]:
     train_data, test_data = get_multi_label_train_test_data(
         dataset_name,
@@ -192,6 +199,7 @@ def get_dataset_activations(
         batch_size=llm_batch_size,
         top_k=top_k,
         mask_bos_pad_eos_tokens=True,
+        postprocessor=postprocessor,
     )
     all_test_acts_BTP = get_all_llm_activations(
         test_data,
@@ -199,6 +207,7 @@ def get_dataset_activations(
         batch_size=llm_batch_size,
         top_k=top_k,
         mask_bos_pad_eos_tokens=True,
+        postprocessor=postprocessor,
     )
 
     return all_train_acts_BTP, all_test_acts_BTP
@@ -253,6 +262,7 @@ def run_eval_single_dataset(
     device: str,
     artifacts_folder: str,
     save_activations: bool,
+    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> tuple[dict[str, float], dict[str, dict[str, float]]]:
     """
     config: eval_config.EvalConfig contains all hyperparameters to reproduce the evaluation.
@@ -277,6 +287,7 @@ def run_eval_single_dataset(
             batch_size,
             paths.top_k,
             device,
+            postprocessor,
         )
         if config.lower_vram_usage:
             model = model.to(th.device("cpu"))
@@ -383,6 +394,7 @@ def run_eval_paths(
     device: str,
     artifacts_folder: str,
     save_activations: bool = True,
+    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> tuple[dict[str, float | dict[str, float]], dict[str, dict[str, float]]]:
     """
     By default, we save activations for all datasets, and then reuse them for each set of paths.
@@ -411,6 +423,7 @@ def run_eval_paths(
             device,
             artifacts_folder,
             save_activations,
+            postprocessor,
         )
 
     averaged_results: dict[str, float] = general_utils.average_results_dictionaries(
@@ -440,6 +453,7 @@ def run_eval(
     save_activations: bool = True,
     artifacts_path: str = "artifacts",
     log_level: str = "INFO",
+    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> dict[str, Any]:
     """
     If clean_up_activations is True, which means that the activations are deleted after the evaluation is done.
@@ -500,6 +514,7 @@ def run_eval(
             device,
             artifacts_folder,
             save_activations=save_activations,
+            postprocessor=postprocessor,
         )
 
         eval_output = SparseProbingEvalOutput(
