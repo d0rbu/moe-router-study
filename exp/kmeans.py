@@ -1118,13 +1118,7 @@ def gpu_worker(
         router_logits = router_logits.to(device)
 
         # convert from logits to paths
-        # Apply logits postprocessor (default: convert to masks)
-        from core.moe import convert_router_logits_to_paths
-
-        logits_postprocessor = (
-            convert_router_logits_to_paths  # Can be made configurable later
-        )
-        router_paths = logits_postprocessor(router_logits, top_k)
+        router_paths = convert_router_logits_to_paths(router_logits, top_k)
         del router_logits
 
         logger.trace(f"GPU {gpu_idx} flattened router paths")

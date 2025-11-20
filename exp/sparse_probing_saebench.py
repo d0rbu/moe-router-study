@@ -40,6 +40,7 @@ from tqdm import tqdm
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from core.memory import clear_memory
+from core.moe import convert_router_logits_to_paths
 from core.model import get_model_config
 from core.type import assert_type
 from exp import MODEL_DIRNAME
@@ -103,13 +104,7 @@ def get_llm_activations(
 
         acts_BTLE = th.stack(acts_BTE_list, dim=-2)
 
-        # Apply logits postprocessor (default: convert to masks)
-        from core.moe import convert_router_logits_to_paths
-
-        logits_postprocessor = (
-            convert_router_logits_to_paths  # Can be made configurable later
-        )
-        acts_BTLE = logits_postprocessor(acts_BTLE, top_k)
+        acts_BTLE = convert_router_logits_to_paths(acts_BTLE, top_k)
 
         acts_BTP = acts_BTLE.view(*tokens_BT.shape, -1)
         del acts_BTLE

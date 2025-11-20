@@ -78,17 +78,17 @@ def router_logits_top_k_softmax_unnormalized(
     Returns:
         Tensor of shape (*, L, E) with top-k softmaxed probabilities, others zeroed
     """
-    # Get top-k indices from raw logits
-    _, topk_indices = th.topk(router_logits, k=top_k, dim=-1)
-
-    # Create tensor with -inf everywhere
-    masked_logits = th.full_like(router_logits, float("-inf"))
-
-    # Scatter original logits at top-k positions
-    masked_logits.scatter_(-1, topk_indices, router_logits.gather(-1, topk_indices))
-
-    # Apply softmax (this will zero out -inf positions)
-    return router_logits_softmax(masked_logits)
+    # Apply softmax first
+    probs = router_logits_softmax(router_logits)
+    
+    # Get top-k indices
+    topk_values, topk_indices = th.topk(probs, k=top_k, dim=-1)
+    
+    # Create output with zeros everywhere except top-k positions
+    result = th.zeros_like(probs)
+    result.scatter_(-1, topk_indices, topk_values)
+    
+    return result
 
 
 def router_logits_top_k_softmax(router_logits: th.Tensor, top_k: int) -> th.Tensor:
@@ -120,6 +120,16 @@ class RouterLogitsPostprocessor(StrEnum):
     TOP_K_SOFTMAX = "top_k_softmax"
 
 
+# Mapping from enum to postprocessor functions
+_POSTPROCESSOR_MAPPING = {
+    RouterLogitsPostprocessor.MASKS: convert_router_logits_to_paths,
+    RouterLogitsPostprocessor.IDENTITY: router_logits_identity,
+    RouterLogitsPostprocessor.SOFTMAX: router_logits_softmax,
+    RouterLogitsPostprocessor.TOP_K_SOFTMAX_UNNORMALIZED: router_logits_top_k_softmax_unnormalized,
+    RouterLogitsPostprocessor.TOP_K_SOFTMAX: router_logits_top_k_softmax,
+}
+
+
 def get_postprocessor(
     postprocessor: RouterLogitsPostprocessor,
 ) -> Callable[[th.Tensor, int], th.Tensor]:
@@ -132,11 +142,4 @@ def get_postprocessor(
     Returns:
         The corresponding postprocessor function
     """
-    mapping = {
-        RouterLogitsPostprocessor.MASKS: convert_router_logits_to_paths,
-        RouterLogitsPostprocessor.IDENTITY: router_logits_identity,
-        RouterLogitsPostprocessor.SOFTMAX: router_logits_softmax,
-        RouterLogitsPostprocessor.TOP_K_SOFTMAX_UNNORMALIZED: router_logits_top_k_softmax_unnormalized,
-        RouterLogitsPostprocessor.TOP_K_SOFTMAX: router_logits_top_k_softmax,
-    }
-    return mapping[postprocessor]
+    return _POSTPROCESSOR_MAPPING[postprocessor]

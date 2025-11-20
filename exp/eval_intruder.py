@@ -22,6 +22,7 @@ from transformers import (
 
 from core.device import DeviceType, get_backend
 from core.dtype import get_dtype
+from core.moe import convert_router_logits_to_paths
 from core.model import get_model_config
 from core.type import assert_type
 from delphi.__main__ import non_redundant_hookpoints  # type: ignore
@@ -282,14 +283,8 @@ class LatentPathsCache(LatentCache):
                     router_paths.append(logits)
 
             router_paths = th.stack(router_paths, dim=-2)  # (B, T, L, E)
-
-            # Apply logits postprocessor (default: convert to masks)
-            from core.moe import convert_router_logits_to_paths
-
-            logits_postprocessor = (
-                convert_router_logits_to_paths  # Can be made configurable later
-            )
-            sparse_paths = logits_postprocessor(router_paths, top_k).to(dtype=dtype)
+            
+            sparse_paths = convert_router_logits_to_paths(router_paths, top_k).to(dtype=dtype)
             del router_paths
 
             router_paths_BTP = sparse_paths.view(*batch.shape, -1)  # (B, T, L * E)

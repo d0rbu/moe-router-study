@@ -6,6 +6,7 @@ from loguru import logger
 import matplotlib.pyplot as plt
 import torch as th
 
+from core.moe import convert_router_logits_to_paths
 from exp.activations import load_activations_and_init_dist
 from exp.get_activations import ActivationKeys
 from viz import FIGURE_DIR
@@ -65,13 +66,7 @@ async def _router_correlations_async(
                 f"Router configuration: {num_layers} layers, {num_experts} experts per layer, top-k={top_k}"
             )
 
-        # Apply logits postprocessor (default: convert to masks)
-        from core.moe import convert_router_logits_to_paths
-
-        logits_postprocessor = (
-            convert_router_logits_to_paths  # Can be made configurable later
-        )
-        activated_experts = logits_postprocessor(router_logits, top_k)
+        activated_experts = convert_router_logits_to_paths(router_logits, top_k)
 
         # (B, L, E) -> (L * E, B)
         activated_experts_collection.append(
