@@ -67,6 +67,7 @@ async def _router_correlations_async(
 
         # Apply logits postprocessor (default: convert to masks)
         from core.moe import router_logits_to_masks
+
         logits_postprocessor = router_logits_to_masks  # Can be made configurable later
         activated_experts = logits_postprocessor(router_logits, top_k)
 

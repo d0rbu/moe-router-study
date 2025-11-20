@@ -282,10 +282,13 @@ class LatentPathsCache(LatentCache):
                     router_paths.append(logits)
 
             router_paths = th.stack(router_paths, dim=-2)  # (B, T, L, E)
-            
+
             # Apply logits postprocessor (default: convert to masks)
             from core.moe import router_logits_to_masks
-            logits_postprocessor = router_logits_to_masks  # Can be made configurable later
+
+            logits_postprocessor = (
+                router_logits_to_masks  # Can be made configurable later
+            )
             sparse_paths = logits_postprocessor(router_paths, top_k).to(dtype=dtype)
             del router_paths
 

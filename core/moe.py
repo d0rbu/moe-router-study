@@ -44,7 +44,9 @@ def router_logits_to_masks(router_logits: th.Tensor, top_k: int) -> th.Tensor:
     return convert_router_logits_to_paths(router_logits, top_k)
 
 
-def router_logits_identity(router_logits: th.Tensor, top_k: int | None = None) -> th.Tensor:
+def router_logits_identity(
+    router_logits: th.Tensor, top_k: int | None = None
+) -> th.Tensor:
     """
     Identity function for router logits (no-op postprocessor).
     Returns raw logits unchanged.
@@ -56,10 +58,13 @@ def router_logits_identity(router_logits: th.Tensor, top_k: int | None = None) -
     Returns:
         Tensor of shape (*, L, E) containing raw router logits
     """
+    del top_k  # Silence unused argument warning
     return router_logits
 
 
-def router_logits_softmax(router_logits: th.Tensor, top_k: int | None = None) -> th.Tensor:
+def router_logits_softmax(
+    router_logits: th.Tensor, top_k: int | None = None
+) -> th.Tensor:
     """
     Apply softmax to router logits across experts dimension.
 
@@ -70,10 +75,13 @@ def router_logits_softmax(router_logits: th.Tensor, top_k: int | None = None) ->
     Returns:
         Tensor of shape (*, L, E) containing softmaxed probabilities
     """
+    del top_k  # Silence unused argument warning
     return F.softmax(router_logits, dim=-1)
 
 
-def router_logits_top_k_softmax_unnormalized(router_logits: th.Tensor, top_k: int) -> th.Tensor:
+def router_logits_top_k_softmax_unnormalized(
+    router_logits: th.Tensor, top_k: int
+) -> th.Tensor:
     """
     Apply softmax to router logits, then keep only top-k values without renormalization.
 
@@ -86,14 +94,14 @@ def router_logits_top_k_softmax_unnormalized(router_logits: th.Tensor, top_k: in
     """
     # Apply softmax
     probs = F.softmax(router_logits, dim=-1)
-    
+
     # Get top-k indices
     topk_values, topk_indices = th.topk(probs, k=top_k, dim=-1)
-    
+
     # Create output with zeros everywhere except top-k positions
     result = th.zeros_like(probs)
     result.scatter_(-1, topk_indices, topk_values)
-    
+
     return result
 
 
@@ -111,15 +119,15 @@ def router_logits_top_k_softmax(router_logits: th.Tensor, top_k: int) -> th.Tens
     """
     # Apply softmax
     probs = F.softmax(router_logits, dim=-1)
-    
+
     # Get top-k indices
     topk_values, topk_indices = th.topk(probs, k=top_k, dim=-1)
-    
+
     # Create output with zeros everywhere except top-k positions
     result = th.zeros_like(probs)
     result.scatter_(-1, topk_indices, topk_values)
-    
+
     # Renormalize to sum to 1
     result = result / result.sum(dim=-1, keepdim=True)
-    
+
     return result
