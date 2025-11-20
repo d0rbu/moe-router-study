@@ -97,14 +97,14 @@ def eval_raw_activations_saebench(
     if layers is None or len(layers) == 0:
         num_layers = len(model.layers_with_routers)
         layers = set(range(num_layers))
-    
+
     layers_sorted = sorted(layers)
 
     # Get the activation dimension (hidden size) from the model config
-    activation_dim = model.model.config.hidden_size
+    activation_dim = int(model.model.config.hidden_size)
     # Total dimension across all layers
     total_activation_dim = activation_dim * len(layers_sorted)
-    
+
     # Clean up model to free memory
     del model
     th.cuda.empty_cache() if th.cuda.is_available() else None

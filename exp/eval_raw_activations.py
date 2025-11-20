@@ -45,7 +45,7 @@ def run_raw_activations_eval_saebench(
             skip_autointerp=skip_autointerp,
             skip_sparse_probing=skip_sparse_probing,
         )
-        logger.debug(f"✅ SAEBench evaluation completed for raw activations")
+        logger.debug("✅ SAEBench evaluation completed for raw activations")
         return True
     except Exception as exception:
         traceback_lines = traceback.format_tb(exception.__traceback__)
@@ -123,7 +123,7 @@ def run_raw_activations_eval_intruder(
             log_level=log_level,
             device_type=device_type,
         )
-        logger.debug(f"✅ Intruder evaluation completed for raw activations")
+        logger.debug("✅ Intruder evaluation completed for raw activations")
         return True
     except Exception as exception:
         traceback_lines = traceback.format_tb(exception.__traceback__)
