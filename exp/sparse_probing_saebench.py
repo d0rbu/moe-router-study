@@ -1,13 +1,12 @@
+from dataclasses import asdict
+from datetime import datetime
 import gc
 import os
 import random
 import shutil
 import sys
-from dataclasses import asdict
-from datetime import datetime
 from typing import Any
 
-import torch as th
 from loguru import logger
 from nnterp import StandardizedTransformer
 from sae_bench.evals.sparse_probing.eval_config import SparseProbingEvalConfig
@@ -36,12 +35,13 @@ from sae_bench.sae_bench_utils.dataset_utils import (
     get_multi_label_train_test_data,
     tokenize_data_dictionary,
 )
+import torch as th
 from tqdm import tqdm
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from core.memory import clear_memory
-from core.moe import convert_router_logits_to_paths
 from core.model import get_model_config
+from core.moe import convert_router_logits_to_paths
 from core.type import assert_type
 from exp import MODEL_DIRNAME
 from exp.autointerp_saebench import Paths
