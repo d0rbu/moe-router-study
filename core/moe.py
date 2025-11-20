@@ -80,14 +80,11 @@ def router_logits_top_k_softmax_unnormalized(
     """
     # Apply softmax first
     probs = router_logits_softmax(router_logits)
-    
     # Get top-k indices
     topk_values, topk_indices = th.topk(probs, k=top_k, dim=-1)
-    
     # Create output with zeros everywhere except top-k positions
     result = th.zeros_like(probs)
     result.scatter_(-1, topk_indices, topk_values)
-    
     return result
 
 
