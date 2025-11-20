@@ -30,8 +30,8 @@ from tqdm import tqdm
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from core.memory import clear_memory
-from core.moe import RouterLogitsPostprocessor, get_postprocessor
 from core.model import get_model_config
+from core.moe import RouterLogitsPostprocessor, get_postprocessor
 from core.type import assert_type
 from exp import MODEL_DIRNAME
 
@@ -123,7 +123,7 @@ def collect_path_activations(
 
         # (B, T, L, E)
         router_logits = th.cat(router_logits_set, dim=-2)
-        
+
         # Apply configurable logits postprocessor
         router_paths = logits_postprocessor(router_logits, top_k)
 
@@ -203,7 +203,7 @@ def get_feature_activation_sparsity(
                 router_logits_set.append(logits)
 
         router_logits = th.cat(router_logits_set, dim=-2)
-        
+
         # Apply configurable logits postprocessor
         router_paths = logits_postprocessor(router_logits, top_k)
 

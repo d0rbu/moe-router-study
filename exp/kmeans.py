@@ -1119,9 +1119,11 @@ def gpu_worker(
 
         # convert from logits to paths
         # Apply logits postprocessor (default: convert to masks)
-        from core.moe import router_logits_to_masks
+        from core.moe import convert_router_logits_to_paths
 
-        logits_postprocessor = router_logits_to_masks  # Can be made configurable later
+        logits_postprocessor = (
+            convert_router_logits_to_paths  # Can be made configurable later
+        )
         router_paths = logits_postprocessor(router_logits, top_k)
         del router_logits
 

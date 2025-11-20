@@ -104,9 +104,11 @@ def get_llm_activations(
         acts_BTLE = th.stack(acts_BTE_list, dim=-2)
 
         # Apply logits postprocessor (default: convert to masks)
-        from core.moe import router_logits_to_masks
+        from core.moe import convert_router_logits_to_paths
 
-        logits_postprocessor = router_logits_to_masks  # Can be made configurable later
+        logits_postprocessor = (
+            convert_router_logits_to_paths  # Can be made configurable later
+        )
         acts_BTLE = logits_postprocessor(acts_BTLE, top_k)
 
         acts_BTP = acts_BTLE.view(*tokens_BT.shape, -1)
