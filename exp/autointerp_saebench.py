@@ -124,7 +124,6 @@ def collect_path_activations(
         # (B, T, L, E)
         router_logits = th.cat(router_logits_set, dim=-2)
 
-        # Apply configurable logits postprocessor
         router_paths = logits_postprocessor(router_logits, top_k)
 
         # (B, T, L, E) -> (B, T, L * E)
