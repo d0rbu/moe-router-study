@@ -203,7 +203,6 @@ def get_feature_activation_sparsity(
 
         router_logits = th.cat(router_logits_set, dim=-2)
 
-        # Apply configurable logits postprocessor
         router_paths = logits_postprocessor(router_logits, top_k)
 
         router_paths_BTP = router_paths.view(*tokens_BT.shape, -1)
