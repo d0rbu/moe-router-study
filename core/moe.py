@@ -5,6 +5,9 @@ This module contains helper functions for working with MoE models,
 particularly for router logits and path conversions.
 """
 
+from enum import StrEnum
+from typing import Callable
+
 import torch as th
 import torch.nn.functional as F
 
@@ -29,59 +32,36 @@ def convert_router_logits_to_paths(router_logits: th.Tensor, top_k: int) -> th.T
     return router_paths
 
 
-def router_logits_to_masks(router_logits: th.Tensor, top_k: int) -> th.Tensor:
-    """
-    Convert router logits to sparse binary masks indicating which experts were chosen.
-    This is the default hardcoded operation that was used throughout the codebase.
-
-    Args:
-        router_logits: Tensor of shape (*, L, E) containing router logits
-        top_k: Number of top experts to select
-
-    Returns:
-        Tensor of shape (*, L, E) containing binary masks (0 or 1)
-    """
-    return convert_router_logits_to_paths(router_logits, top_k)
-
-
-def router_logits_identity(
-    router_logits: th.Tensor, top_k: int | None = None
-) -> th.Tensor:
+def router_logits_identity(router_logits: th.Tensor, _top_k: int | None = None) -> th.Tensor:
     """
     Identity function for router logits (no-op postprocessor).
     Returns raw logits unchanged.
 
     Args:
         router_logits: Tensor of shape (*, L, E) containing router logits
-        top_k: Unused, kept for API compatibility
+        _top_k: Unused, kept for API compatibility
 
     Returns:
         Tensor of shape (*, L, E) containing raw router logits
     """
-    del top_k  # Silence unused argument warning
     return router_logits
 
 
-def router_logits_softmax(
-    router_logits: th.Tensor, top_k: int | None = None
-) -> th.Tensor:
+def router_logits_softmax(router_logits: th.Tensor, _top_k: int | None = None) -> th.Tensor:
     """
     Apply softmax to router logits across experts dimension.
 
     Args:
         router_logits: Tensor of shape (*, L, E) containing router logits
-        top_k: Unused, kept for API compatibility
+        _top_k: Unused, kept for API compatibility
 
     Returns:
         Tensor of shape (*, L, E) containing softmaxed probabilities
     """
-    del top_k  # Silence unused argument warning
     return F.softmax(router_logits, dim=-1)
 
 
-def router_logits_top_k_softmax_unnormalized(
-    router_logits: th.Tensor, top_k: int
-) -> th.Tensor:
+def router_logits_top_k_softmax_unnormalized(router_logits: th.Tensor, top_k: int) -> th.Tensor:
     """
     Apply softmax to router logits, then keep only top-k values without renormalization.
 
@@ -92,17 +72,17 @@ def router_logits_top_k_softmax_unnormalized(
     Returns:
         Tensor of shape (*, L, E) with top-k softmaxed probabilities, others zeroed
     """
-    # Apply softmax
-    probs = F.softmax(router_logits, dim=-1)
-
-    # Get top-k indices
-    topk_values, topk_indices = th.topk(probs, k=top_k, dim=-1)
-
-    # Create output with zeros everywhere except top-k positions
-    result = th.zeros_like(probs)
-    result.scatter_(-1, topk_indices, topk_values)
-
-    return result
+    # Get top-k indices from raw logits
+    _, topk_indices = th.topk(router_logits, k=top_k, dim=-1)
+    
+    # Create tensor with -inf everywhere
+    masked_logits = th.full_like(router_logits, float('-inf'))
+    
+    # Scatter original logits at top-k positions
+    masked_logits.scatter_(-1, topk_indices, router_logits.gather(-1, topk_indices))
+    
+    # Apply softmax (this will zero out -inf positions)
+    return router_logits_softmax(masked_logits)
 
 
 def router_logits_top_k_softmax(router_logits: th.Tensor, top_k: int) -> th.Tensor:
@@ -117,17 +97,37 @@ def router_logits_top_k_softmax(router_logits: th.Tensor, top_k: int) -> th.Tens
     Returns:
         Tensor of shape (*, L, E) with renormalized top-k softmax probabilities
     """
-    # Apply softmax
-    probs = F.softmax(router_logits, dim=-1)
-
-    # Get top-k indices
-    topk_values, topk_indices = th.topk(probs, k=top_k, dim=-1)
-
-    # Create output with zeros everywhere except top-k positions
-    result = th.zeros_like(probs)
-    result.scatter_(-1, topk_indices, topk_values)
-
+    # Get unnormalized top-k softmax
+    result = router_logits_top_k_softmax_unnormalized(router_logits, top_k)
+    
     # Renormalize to sum to 1
-    result = result / result.sum(dim=-1, keepdim=True)
+    return result / result.sum(dim=-1, keepdim=True)
 
-    return result
+
+class RouterLogitsPostprocessor(StrEnum):
+    """Enum for different router logits postprocessing options."""
+    MASKS = "masks"
+    IDENTITY = "identity" 
+    SOFTMAX = "softmax"
+    TOP_K_SOFTMAX_UNNORMALIZED = "top_k_softmax_unnormalized"
+    TOP_K_SOFTMAX = "top_k_softmax"
+
+
+def get_postprocessor(postprocessor: RouterLogitsPostprocessor) -> Callable[[th.Tensor, int], th.Tensor]:
+    """
+    Get the postprocessor function for a given enum value.
+    
+    Args:
+        postprocessor: The postprocessor enum value
+        
+    Returns:
+        The corresponding postprocessor function
+    """
+    mapping = {
+        RouterLogitsPostprocessor.MASKS: convert_router_logits_to_paths,
+        RouterLogitsPostprocessor.IDENTITY: router_logits_identity,
+        RouterLogitsPostprocessor.SOFTMAX: router_logits_softmax,
+        RouterLogitsPostprocessor.TOP_K_SOFTMAX_UNNORMALIZED: router_logits_top_k_softmax_unnormalized,
+        RouterLogitsPostprocessor.TOP_K_SOFTMAX: router_logits_top_k_softmax,
+    }
+    return mapping[postprocessor]

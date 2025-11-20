@@ -30,6 +30,7 @@ from tqdm import tqdm
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from core.memory import clear_memory
+from core.moe import RouterLogitsPostprocessor, get_postprocessor
 from core.model import get_model_config
 from core.type import assert_type
 from exp import MODEL_DIRNAME
@@ -81,9 +82,11 @@ def collect_path_activations(
     mask_bos_pad_eos_tokens: bool = False,
     selected_paths: list[int] | None = None,
     activation_dtype: th.dtype | None = None,
+    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> th.Tensor:
     """Collects path activations for a given set of tokens."""
     path_acts = []
+    logits_postprocessor = get_postprocessor(postprocessor)
 
     for batch_idx, tokens_BT in tqdm(
         enumerate(th.split(tokenized_dataset, llm_batch_size, dim=0)),
@@ -119,13 +122,10 @@ def collect_path_activations(
                 router_logits_set.append(logits)
 
         # (B, T, L, E)
-        router_paths = th.cat(router_logits_set, dim=-2)
-
-        # Apply logits postprocessor (default: convert to masks)
-        from core.moe import router_logits_to_masks
-
-        logits_postprocessor = router_logits_to_masks  # Can be made configurable later
-        router_paths = logits_postprocessor(router_paths, top_k)
+        router_logits = th.cat(router_logits_set, dim=-2)
+        
+        # Apply configurable logits postprocessor
+        router_paths = logits_postprocessor(router_logits, top_k)
 
         # (B, T, L, E) -> (B, T, L * E)
         router_paths_BTP = router_paths.view(*tokens_BT.shape, -1)
@@ -163,11 +163,13 @@ def get_feature_activation_sparsity(
     top_k: int,
     batch_size: int,
     mask_bos_pad_eos_tokens: bool = False,
+    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> th.Tensor:  # num_paths
     """Get the activation sparsity for each path."""
     device = paths.device
     running_sum_F = th.zeros(paths.shape[0], dtype=th.float32, device=device)
     total_tokens = 0
+    logits_postprocessor = get_postprocessor(postprocessor)
 
     for batch_idx, tokens_BT in tqdm(
         enumerate(th.split(tokens, batch_size, dim=0)),
@@ -200,13 +202,10 @@ def get_feature_activation_sparsity(
 
                 router_logits_set.append(logits)
 
-        router_paths = th.cat(router_logits_set, dim=-2)
-
-        # Apply logits postprocessor (default: convert to masks)
-        from core.moe import router_logits_to_masks
-
-        logits_postprocessor = router_logits_to_masks  # Can be made configurable later
-        router_paths = logits_postprocessor(router_paths, top_k)
+        router_logits = th.cat(router_logits_set, dim=-2)
+        
+        # Apply configurable logits postprocessor
+        router_paths = logits_postprocessor(router_logits, top_k)
 
         router_paths_BTP = router_paths.view(*tokens_BT.shape, -1)
 
