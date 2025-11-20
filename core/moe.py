@@ -108,7 +108,7 @@ def router_logits_top_k_softmax(router_logits: th.Tensor, top_k: int) -> th.Tens
     masked_logits.scatter_(-1, topk_indices, router_logits.gather(-1, topk_indices))
     
     # Apply softmax (automatically normalizes due to -inf masking)
-    return F.softmax(masked_logits, dim=-1)
+    return router_logits_softmax(masked_logits)
 
 
 class RouterLogitsPostprocessor(StrEnum):
