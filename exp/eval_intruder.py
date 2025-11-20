@@ -7,9 +7,6 @@ from multiprocessing import cpu_count
 from pathlib import Path
 
 import arguably
-import orjson
-import torch as th
-import torch.nn as nn
 from delphi.__main__ import non_redundant_hookpoints  # type: ignore
 from delphi.__main__ import populate_cache as sae_populate_cache  # type: ignore
 from delphi.clients import Offline  # type: ignore
@@ -29,7 +26,10 @@ from delphi.utils import load_tokenized_data  # type: ignore
 from dictionary_learning.utils import load_dictionary
 from loguru import logger
 from nnterp import StandardizedTransformer
+import orjson
 from tqdm import tqdm
+import torch as th
+import torch.nn as nn
 from transformers import (
     BitsAndBytesConfig,
     PreTrainedTokenizer,
