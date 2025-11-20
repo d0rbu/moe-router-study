@@ -149,7 +149,7 @@ def eval_all_paths(
     intruder_num_non_activating: int = 50,
     intruder_num_examples: int = 50,
     intruder_n_quantiles: int = 10,
-    intruder_explainer_model: str = "hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4",
+    intruder_explainer_model: str = "ibnzterrell/Meta-Llama-3.3-70B-Instruct-AWQ-INT4",
     intruder_explainer_model_max_len: int = 5120,
     intruder_explainer_provider: str = "offline",
     intruder_explainer: str = "default",
