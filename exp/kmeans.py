@@ -27,7 +27,10 @@ from core.device import (
     get_distributed_backend,
 )
 from core.dist import get_rank, get_world_size
-from core.moe import RouterLogitsPostprocessor, convert_router_logits_to_paths, get_postprocessor
+from core.moe import (
+    RouterLogitsPostprocessor,
+    get_postprocessor,
+)
 from exp import OUTPUT_DIR
 from exp.activations import Activations, load_activations_and_init_dist
 from exp.get_activations import ActivationKeys
@@ -1553,7 +1556,7 @@ def kmeans_manhattan(
 
     # Get postprocessor function
     postprocessor_fn = get_postprocessor(postprocessor)
-    
+
     # Convert validation data to flat paths format (same as training data)
     validation_data = (
         postprocessor_fn(validation_router_logits, top_k)

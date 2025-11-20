@@ -6,7 +6,10 @@ from loguru import logger
 import matplotlib.pyplot as plt
 import torch as th
 
-from core.moe import RouterLogitsPostprocessor, convert_router_logits_to_paths, get_postprocessor
+from core.moe import (
+    RouterLogitsPostprocessor,
+    get_postprocessor,
+)
 from exp.activations import load_activations_and_init_dist
 from exp.get_activations import ActivationKeys
 from viz import FIGURE_DIR
@@ -34,7 +37,7 @@ async def _router_correlations_async(
     )
     assert context_length > 0, f"Context length must be positive, got {context_length}"
     assert batch_size > 0, f"Batch size must be positive, got {batch_size}"
-    
+
     postprocessor_fn = get_postprocessor(postprocessor)
 
     logger.debug("Loading activations and initializing distributed...")

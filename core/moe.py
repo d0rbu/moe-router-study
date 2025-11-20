@@ -102,11 +102,11 @@ def router_logits_top_k_softmax(router_logits: th.Tensor, top_k: int) -> th.Tens
     """
     # Get top-k indices
     topk_indices = th.topk(router_logits, k=top_k, dim=-1).indices
-    
+
     # Create tensor with -inf everywhere, then scatter top-k logits
-    masked_logits = th.full_like(router_logits, float('-inf'))
+    masked_logits = th.full_like(router_logits, float("-inf"))
     masked_logits.scatter_(-1, topk_indices, router_logits.gather(-1, topk_indices))
-    
+
     # Apply softmax (automatically normalizes due to -inf masking)
     return router_logits_softmax(masked_logits)
 

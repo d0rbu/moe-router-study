@@ -41,7 +41,10 @@ from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from core.memory import clear_memory
 from core.model import get_model_config
-from core.moe import RouterLogitsPostprocessor, convert_router_logits_to_paths, get_postprocessor
+from core.moe import (
+    RouterLogitsPostprocessor,
+    get_postprocessor,
+)
 from core.type import assert_type
 from exp import MODEL_DIRNAME
 from exp.autointerp_saebench import Paths
