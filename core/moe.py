@@ -100,11 +100,15 @@ def router_logits_top_k_softmax(router_logits: th.Tensor, top_k: int) -> th.Tens
     Returns:
         Tensor of shape (*, L, E) with renormalized top-k softmax probabilities
     """
-    # Get unnormalized top-k softmax
-    result = router_logits_top_k_softmax_unnormalized(router_logits, top_k)
-
-    # Renormalize to sum to 1
-    return result / result.sum(dim=-1, keepdim=True)
+    # Get top-k indices
+    topk_indices = th.topk(router_logits, k=top_k, dim=-1).indices
+    
+    # Create tensor with -inf everywhere, then scatter top-k logits
+    masked_logits = th.full_like(router_logits, float('-inf'))
+    masked_logits.scatter_(-1, topk_indices, router_logits.gather(-1, topk_indices))
+    
+    # Apply softmax (automatically normalizes due to -inf masking)
+    return F.softmax(masked_logits, dim=-1)
 
 
 class RouterLogitsPostprocessor(StrEnum):

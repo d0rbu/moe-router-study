@@ -14,6 +14,7 @@ import arguably
 from loguru import logger
 
 from core.device import DeviceType, get_backend
+from core.moe import RouterLogitsPostprocessor
 from exp.eval_intruder import eval_intruder
 from exp.path_eval_saebench import path_eval_saebench
 
@@ -82,6 +83,7 @@ def run_intruder_eval(
     seed: int,
     hf_token: str,
     log_level: str = "INFO",
+    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> bool:
     """Run intruder evaluation on a k-means path experiment."""
     logger.info(f"Running intruder evaluation on {experiment_name}")
@@ -114,6 +116,7 @@ def run_intruder_eval(
             seed=seed,
             hf_token=hf_token,
             log_level=log_level,
+            postprocessor=postprocessor,
         )
         logger.debug(f"✅ Intruder evaluation completed for {experiment_name}")
         return True
@@ -162,6 +165,7 @@ def eval_all_paths(
     seed: int = 0,
     log_level: str = "INFO",
     device_type: DeviceType = "cuda",
+    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> None:
     """
     Evaluate a k-means path experiment using both SAEBench and intruder evaluations.
@@ -263,6 +267,7 @@ def eval_all_paths(
             seed,
             intruder_hf_token,
             log_level,
+            postprocessor,
         )
         if not intruder_success:
             logger.error("Intruder evaluation failed!")
