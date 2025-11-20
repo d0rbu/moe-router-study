@@ -65,9 +65,10 @@ async def _router_correlations_async(
                 f"Router configuration: {num_layers} layers, {num_experts} experts per layer, top-k={top_k}"
             )
 
-        top_k_indices = th.topk(router_logits, k=top_k, dim=2).indices
-        activated_experts = th.zeros_like(router_logits)
-        activated_experts.scatter_(2, top_k_indices, 1)
+        # Apply logits postprocessor (default: convert to masks)
+        from core.moe import router_logits_to_masks
+        logits_postprocessor = router_logits_to_masks  # Can be made configurable later
+        activated_experts = logits_postprocessor(router_logits, top_k)
 
         # (B, L, E) -> (L * E, B)
         activated_experts_collection.append(

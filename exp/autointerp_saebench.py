@@ -120,12 +120,11 @@ def collect_path_activations(
 
         # (B, T, L, E)
         router_paths = th.cat(router_logits_set, dim=-2)
-        sparse_paths = th.topk(router_paths, k=top_k, dim=-1).indices
-
-        router_paths.zero_()
-        router_paths.scatter_(-1, sparse_paths, 1)
-
-        del sparse_paths
+        
+        # Apply logits postprocessor (default: convert to masks)
+        from core.moe import router_logits_to_masks
+        logits_postprocessor = router_logits_to_masks  # Can be made configurable later
+        router_paths = logits_postprocessor(router_paths, top_k)
 
         # (B, T, L, E) -> (B, T, L * E)
         router_paths_BTP = router_paths.view(*tokens_BT.shape, -1)
@@ -201,12 +200,11 @@ def get_feature_activation_sparsity(
                 router_logits_set.append(logits)
 
         router_paths = th.cat(router_logits_set, dim=-2)
-        sparse_paths = th.topk(router_paths, k=top_k, dim=-1).indices
-
-        router_paths.zero_()
-        router_paths.scatter_(-1, sparse_paths, 1)
-
-        del sparse_paths
+        
+        # Apply logits postprocessor (default: convert to masks)
+        from core.moe import router_logits_to_masks
+        logits_postprocessor = router_logits_to_masks  # Can be made configurable later
+        router_paths = logits_postprocessor(router_paths, top_k)
 
         router_paths_BTP = router_paths.view(*tokens_BT.shape, -1)
 
