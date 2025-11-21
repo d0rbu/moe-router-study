@@ -160,9 +160,7 @@ async def gpu_worker(
                 normalize_activations=True,
                 device=device,
                 autocast_dtype=dtype,
-                tqdm_kwargs={
-                    "position": get_rank() * (num_gpus + 1) + device_idx + 1
-                },
+                tqdm_kwargs={"position": get_rank() * (num_gpus + 1) + device_idx + 1},
             )
         finally:
             # Ensure the data iterator is properly closed to clean up worker processes
@@ -432,9 +430,7 @@ async def run_sae_training(
         logger.error(f"Hparam sweep iterator is empty:\n{hparam_reprs}")
         return
 
-    distributed_iterator = hparam_sweep_iterator[
-        get_rank() :: get_world_size()
-    ]
+    distributed_iterator = hparam_sweep_iterator[get_rank() :: get_world_size()]
 
     # assign a subset of the hparam sweep to each rank
     tqdm_distributed_iterator = tqdm(

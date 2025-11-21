@@ -855,21 +855,27 @@ def sync(
         if wandb.run is not None:
             # Get current iteration number from length of losses_over_time
             current_iteration = len(losses_over_time) - 1
-            
+
             # Log losses for each k value
             wandb_log_dict = {"iteration": current_iteration}
             for k_idx, loss_value in enumerate(gpu_data.synced_data.losses):
                 wandb_log_dict[f"loss/k_idx_{k_idx}"] = loss_value.item()
-            
+
             # Log centroid statistics for each k value
             for k_idx, centroids in enumerate(gpu_data.synced_data.centroid_sets):
                 centroid_norms = th.norm(centroids, dim=1)
                 zero_norms = (centroid_norms == 0).sum().item()
                 wandb_log_dict[f"centroids/k_idx_{k_idx}/zero_norm_count"] = zero_norms
-                wandb_log_dict[f"centroids/k_idx_{k_idx}/min_norm"] = centroid_norms.min().item()
-                wandb_log_dict[f"centroids/k_idx_{k_idx}/max_norm"] = centroid_norms.max().item()
-                wandb_log_dict[f"centroids/k_idx_{k_idx}/mean_norm"] = centroid_norms.mean().item()
-            
+                wandb_log_dict[f"centroids/k_idx_{k_idx}/min_norm"] = (
+                    centroid_norms.min().item()
+                )
+                wandb_log_dict[f"centroids/k_idx_{k_idx}/max_norm"] = (
+                    centroid_norms.max().item()
+                )
+                wandb_log_dict[f"centroids/k_idx_{k_idx}/mean_norm"] = (
+                    centroid_norms.mean().item()
+                )
+
             wandb.log(wandb_log_dict)
             logger.trace(f"Logged to wandb: {wandb_log_dict}")
 
@@ -1923,7 +1929,9 @@ def cluster_paths_main(
                 "save_every": save_every,
                 "validate_every": validate_every,
                 "device_type": device_type,
-                "postprocessor": postprocessor.value if hasattr(postprocessor, "value") else str(postprocessor),
+                "postprocessor": postprocessor.value
+                if hasattr(postprocessor, "value")
+                else str(postprocessor),
             },
         )
         logger.info(f"Initialized wandb with run name: {kmeans_experiment_name}")

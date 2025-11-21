@@ -819,7 +819,9 @@ async def load_activations_and_init_dist(
         dist.init_process_group(backend="gloo", rank=rank, world_size=world_size)
         logger.info(f"Rank {rank} initialized gloo group")
     else:
-        logger.debug("Running in non-distributed mode (world_size=1), gloo group not initialized")
+        logger.debug(
+            "Running in non-distributed mode (world_size=1), gloo group not initialized"
+        )
 
     backend = get_backend(device_type)
     logger.debug(f"Backend: {backend}")
