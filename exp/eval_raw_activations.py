@@ -44,6 +44,7 @@ from delphi.scorers.classifier.intruder import IntruderScorer
 from delphi.scorers.scorer import ScorerResult
 from delphi.utils import load_tokenized_data
 from exp import OUTPUT_DIR
+from exp.eval_intruder import dataset_postprocess, save_scorer_result_to_file
 from exp.get_activations import ActivationKeys
 
 
@@ -54,17 +55,6 @@ ACTIVATION_KEYS_TO_HOOKPOINT = {
     ActivationKeys.ATTN_OUTPUT: "model.model.layers.{layer}.self_attn",
     ActivationKeys.LAYER_OUTPUT: "model.model.layers.{layer}",
 }
-
-
-def dataset_postprocess(record: LatentRecord) -> LatentRecord:
-    return record
-
-
-def save_scorer_result_to_file(result: ScorerResult, score_dir: Path) -> None:
-    """Saves the score to a file"""
-    safe_latent_name = str(result.record.latent).replace("/", "--")
-    with open(score_dir / f"{safe_latent_name}.txt", "wb") as f:
-        f.write(orjson.dumps(result.score))
 
 
 async def process_cache(
@@ -159,16 +149,17 @@ class RawActivationsCache(LatentCache):
                     hookpoint_name = hookpoint_template.format(layer=layer_idx)
                     
                     # Extract activation based on type
-                    if self.activation_key == ActivationKeys.LAYER_OUTPUT:
-                        activation = getattr(self.model.model.layers[layer_idx], "output").save()
-                    elif self.activation_key == ActivationKeys.MLP_OUTPUT:
-                        activation = getattr(self.model.model.layers[layer_idx].mlp, "output").save()
-                    elif self.activation_key == ActivationKeys.ATTN_OUTPUT:
-                        activation = getattr(self.model.model.layers[layer_idx].self_attn, "output").save()
-                    elif self.activation_key == ActivationKeys.ROUTER_LOGITS:
-                        activation = getattr(self.model.model.layers[layer_idx].mlp.gate, "output").save()
-                    else:
-                        raise ValueError(f"Unsupported activation key: {self.activation_key}")
+                    match self.activation_key:
+                        case ActivationKeys.LAYER_OUTPUT:
+                            activation = getattr(self.model.model.layers[layer_idx], "output").save()
+                        case ActivationKeys.MLP_OUTPUT:
+                            activation = getattr(self.model.model.layers[layer_idx].mlp, "output").save()
+                        case ActivationKeys.ATTN_OUTPUT:
+                            activation = getattr(self.model.model.layers[layer_idx].self_attn, "output").save()
+                        case ActivationKeys.ROUTER_LOGITS:
+                            activation = getattr(self.model.model.layers[layer_idx].mlp.gate, "output").save()
+                        case _:
+                            raise ValueError(f"Unsupported activation key: {self.activation_key}")
                     
                     layer_activations.append(activation)
                 
@@ -257,8 +248,8 @@ def populate_cache(
 def eval_raw_activations(
     *,
     model_name: str = "olmoe-i",
-    activation_key: str = "layer_output",
-    layers: list[int] = [0, 1, 2, 3, 4, 5, 6, 7],
+    activation_key: ActivationKeys = ActivationKeys.LAYER_OUTPUT,
+    layers: list[int] | None = None,
     model_step_ckpt: int | None = None,
     model_dtype: str = "bf16",
     dtype: str = "bf16",
@@ -291,7 +282,7 @@ def eval_raw_activations(
     Args:
         model_name: Model name to evaluate
         activation_key: Type of activation (layer_output, attn_output, mlp_output, router_logits)
-        layers: List of layer indices to evaluate
+        layers: List of layer indices to evaluate (if None or empty, uses all layers)
         model_step_ckpt: Model checkpoint step
         model_dtype: Model data type
         dtype: Activation data type
@@ -321,17 +312,30 @@ def eval_raw_activations(
     logger.remove()
     logger.add(sys.stderr, level=log_level)
 
+    # Get model config to determine number of layers if not specified
+    model_config = get_model_config(model_name)
+    
+    # Load model temporarily to get layer count if needed
+    if layers is None or len(layers) == 0:
+        model_dtype_torch = get_dtype(model_dtype)
+        temp_model = StandardizedTransformer(
+            model_config.hf_name,
+            check_attn_probs_with_trace=False,
+            check_renaming=False,
+            device_map="cuda",
+            torch_dtype=model_dtype_torch,
+        )
+        num_layers = len(temp_model.layers_with_routers)
+        layers = list(range(num_layers))
+        del temp_model
+        th.cuda.empty_cache() if th.cuda.is_available() else None
+        logger.info(f"No layers specified, using all {num_layers} layers")
+    
     # Validate and convert layers
-    layers_set = set(layers)
-    if len(layers_set) != len(layers):
+    layers_sorted: set[int] = set(layers)
+    if len(layers_sorted) != len(layers):
         raise ValueError(f"Duplicate layers found in {layers}")
-    layers = sorted(list(layers_set))
-
-    # Validate activation key
-    try:
-        activation_key_enum = ActivationKeys(activation_key)
-    except ValueError:
-        raise ValueError(f"Invalid activation key: {activation_key}. Valid options: {list(ActivationKeys)}")
+    layers = sorted(list(layers_sorted))
 
     # Set GPU count dynamically
     if num_gpus is None:
@@ -341,7 +345,6 @@ def eval_raw_activations(
     logger.info(f"Evaluating raw activations: {activation_key} from layers {layers} on {model_name}")
 
     # Get model config and setup
-    model_config = get_model_config(model_name)
     model_ckpt = model_config.get_checkpoint_strict(step=model_step_ckpt)
     model_dtype_torch = get_dtype(model_dtype)
     dtype_torch = get_dtype(dtype)
@@ -350,8 +353,11 @@ def eval_raw_activations(
     if load_in_8bit:
         quantization_config = BitsAndBytesConfig(load_in_8bit=load_in_8bit)
 
+    # Create synthetic hookpoint name for the concatenated activations
+    hookpoint = f"raw_{activation_key}_layers_{'_'.join(map(str, layers))}"
+
     # Setup paths
-    experiment_name = f"raw_{activation_key}_layers_{'_'.join(map(str, layers))}_{model_name}"
+    experiment_name = f"{hookpoint}_{model_name}"
     root_dir = Path(OUTPUT_DIR) / experiment_name
     base_path = root_dir / "delphi"
     latents_path = base_path / "latents"
@@ -375,8 +381,6 @@ def eval_raw_activations(
 
     logger.trace("Model and tokenizer initialized")
 
-    # Create synthetic hookpoint name for the concatenated activations
-    hookpoint = f"raw_{activation_key}_layers_{'_'.join(map(str, layers))}"
     hookpoints = [hookpoint]
 
     latent_range = th.arange(n_latents) if n_latents else None
@@ -428,7 +432,7 @@ def eval_raw_activations(
         populate_cache(
             run_cfg,
             model,
-            activation_key_enum,
+            activation_key,
             layers,
             root_dir,
             latents_path,
