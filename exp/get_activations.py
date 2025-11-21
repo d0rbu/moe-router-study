@@ -945,7 +945,11 @@ def get_router_activations(
     rank = int(os.environ.get("SLURM_PROCID", 0))
     world_size = int(os.environ.get("SLURM_NTASKS", 1))
 
-    dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
+    if world_size > 1:
+        dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
+        logger.debug(f"Initialized NCCL process group (rank={rank}, world_size={world_size})")
+    else:
+        logger.debug(f"Running in non-distributed mode (world_size=1)")
 
     # Start tokenizer worker
     logger.info("Starting tokenizer worker")
