@@ -13,6 +13,7 @@ import torch.multiprocessing as mp
 from tqdm import tqdm
 
 from core.device import DeviceType, get_backend
+from core.dist import get_rank, get_world_size
 from core.logging import init_distributed_logging
 from core.memory import clear_memory
 from core.type import assert_type
@@ -30,9 +31,13 @@ def broadcast_variable_length_list[T](
     if kwargs is None:
         kwargs = {}
 
+    # In non-distributed mode, just call the function directly
+    if not dist.is_initialized():
+        return list_fn(*args, **kwargs)
+
     # Broadcast the number of items first
     num_items = [None]
-    if dist.get_rank() == 0:
+    if get_rank() == 0:
         items = list_fn(*args, **kwargs)
         num_items[0] = len(items)
 
@@ -46,7 +51,7 @@ def broadcast_variable_length_list[T](
         return []
 
     # Now broadcast the actual items
-    if dist.get_rank() != 0:
+    if get_rank() != 0:
         items = [None] * num_items
 
     dist.broadcast_object_list(items, src=src)
@@ -78,6 +83,7 @@ class Activations:
     async def load(
         cls,
         experiment_name: str,
+        world_size: int,
         device: str = "cpu",
         tokens_per_file_in_reshuffled: int = 10_000,
         shuffle_batch_size: int = 10,
@@ -87,7 +93,7 @@ class Activations:
         debug: bool = False,
         device_type: DeviceType = "cuda",
     ) -> "Activations":
-        if not (dist.is_available() and dist.is_initialized()):
+        if world_size > 1 and not (dist.is_available() and dist.is_initialized()):
             raise RuntimeError(
                 "PyTorch distributed training is not initialized. "
                 "Ensure that PyTorch distributed training is initialized with "
@@ -125,16 +131,17 @@ class Activations:
         num_tokens = th.zeros(1, dtype=th.int32)
         local_activation_filepath_iterator = islice(
             self.activation_filepaths,
-            dist.get_rank(),  # start
+            get_rank(),  # start
             len(self.activation_filepaths),  # stop
-            dist.get_world_size(),  # step
+            get_world_size(),  # step
         )
 
         for filepath in local_activation_filepath_iterator:
             activations = th.load(filepath, weights_only=False)
             num_tokens += activations[ActivationKeys.MLP_OUTPUT].shape[0]
 
-        dist.all_reduce(num_tokens, op=dist.ReduceOp.SUM)
+        if dist.is_initialized():
+            dist.all_reduce(num_tokens, op=dist.ReduceOp.SUM)
         self._total_tokens = num_tokens.item()
 
         return self._total_tokens
@@ -342,9 +349,10 @@ class Activations:
             f"reshuffled-seed={seed}-tokens_per_file={tokens_per_file_in_reshuffled}"
         )
         activation_files_dir = os.path.join(activation_dir, shuffle_dirname)
-        if dist.get_rank() == 0:
+        if get_rank() == 0:
             os.makedirs(activation_files_dir, exist_ok=True)
-        dist.barrier()
+        if dist.is_initialized():
+            dist.barrier()
 
         activation_filepaths = cls.get_activation_filepaths(
             activation_files_dir, debug=debug
@@ -445,14 +453,14 @@ class Activations:
         # Get backend for device operations
         backend = get_backend(device_type)
 
-        # Set rank and world_size based on cpu_only mode
-        if cpu_only:
+        # Set rank and world_size based on cpu_only mode or distributed initialization
+        if cpu_only or not dist.is_initialized():
             rank = 0
             world_size = 1
             activation_filepaths = cls.get_activation_filepaths(activation_dir, debug)
         else:
-            rank = dist.get_rank()
-            world_size = dist.get_world_size()
+            rank = get_rank()
+            world_size = get_world_size()
             activation_filepaths = broadcast_variable_length_list(
                 cls.get_activation_filepaths,
                 args=(activation_dir, debug),
@@ -495,7 +503,7 @@ class Activations:
                 del data
                 del future
 
-        if not cpu_only:
+        if not cpu_only and dist.is_initialized():
             dist.all_reduce(all_batch_sizes, op=dist.ReduceOp.SUM)
 
         current_batch = defaultdict(list)
@@ -615,7 +623,7 @@ class Activations:
         total_tokens += num_batch_tokens
         total_tokens = th.tensor(total_tokens, dtype=th.int32)
 
-        if cpu_only:
+        if cpu_only or not dist.is_initialized():
             remaining_stacked_batches = [cls._stack_batch_for_gather(current_batch)]
             logger.debug(f"Total tokens: {total_tokens.item()}")
         else:
@@ -705,7 +713,7 @@ class Activations:
         else:
             renamed_activation_filepaths = []
 
-        if not cpu_only:
+        if not cpu_only and dist.is_initialized():
             renamed_activation_filepaths = broadcast_variable_length_list(
                 lambda: renamed_activation_filepaths,
                 src=0,
@@ -806,10 +814,12 @@ async def load_activations_and_init_dist(
     rank = int(os.environ.get("SLURM_PROCID", 0))
     world_size = int(os.environ.get("SLURM_NTASKS", 1))
 
-    logger.debug("Initializing distributed process group")
-    dist.init_process_group(backend="gloo", rank=rank, world_size=world_size)
-
-    logger.info(f"Rank {rank} initialized gloo group")
+    if world_size > 1:
+        logger.debug("Initializing distributed process group")
+        dist.init_process_group(backend="gloo", rank=rank, world_size=world_size)
+        logger.info(f"Rank {rank} initialized gloo group")
+    else:
+        logger.debug("Running in non-distributed mode (world_size=1), gloo group not initialized")
 
     backend = get_backend(device_type)
     logger.debug(f"Backend: {backend}")
@@ -818,11 +828,19 @@ async def load_activations_and_init_dist(
         num_devices = backend.device_count()
         logger.debug(f"Number of devices: {num_devices}")
 
-    init_distributed_logging()
+    if dist.is_initialized():
+        init_distributed_logging()
+
+    # Log whether we're running in distributed mode or not
+    if dist.is_initialized():
+        logger.info(f"Running in distributed mode with {get_world_size()} nodes")
+    else:
+        logger.info("Running in non-distributed mode (world_size=1)")
 
     logger.debug(f"Initializing activations with seed {seed}")
     activations = await Activations.load(
         experiment_name=activations_experiment_name,
+        world_size=world_size,
         tokens_per_file_in_reshuffled=reshuffled_tokens_per_file,
         seed=seed,
         num_workers=num_workers,

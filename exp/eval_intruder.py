@@ -7,27 +7,6 @@ from pathlib import Path
 import sys
 
 import arguably
-from dictionary_learning.utils import load_dictionary
-from loguru import logger
-from nnterp import StandardizedTransformer
-import orjson
-import torch as th
-import torch.nn as nn
-from tqdm import tqdm
-from transformers import (
-    BitsAndBytesConfig,
-    PreTrainedTokenizer,
-    PreTrainedTokenizerFast,
-)
-
-from core.device import DeviceType, get_backend
-from core.dtype import get_dtype
-from core.model import get_model_config
-from core.moe import (
-    RouterLogitsPostprocessor,
-    get_postprocessor,
-)
-from core.type import assert_type
 from delphi.__main__ import non_redundant_hookpoints  # type: ignore
 from delphi.__main__ import populate_cache as sae_populate_cache  # type: ignore
 from delphi.clients import Offline  # type: ignore
@@ -44,6 +23,27 @@ from delphi.pipeline import Pipe, Pipeline  # type: ignore
 from delphi.scorers.classifier.intruder import IntruderScorer  # type: ignore
 from delphi.scorers.scorer import ScorerResult  # type: ignore
 from delphi.utils import load_tokenized_data  # type: ignore
+from dictionary_learning.utils import load_dictionary
+from loguru import logger
+from nnterp import StandardizedTransformer
+import orjson
+import torch as th
+import torch.nn as nn
+from tqdm import tqdm
+from transformers import (
+    BitsAndBytesConfig,
+    PreTrainedTokenizer,
+    PreTrainedTokenizerFast,
+)
+
+from core.device import get_backend
+from core.dtype import get_dtype
+from core.model import get_model_config
+from core.moe import (
+    RouterLogitsPostprocessor,
+    get_postprocessor,
+)
+from core.type import assert_type
 from exp import OUTPUT_DIR
 from exp.get_activations import ActivationKeys
 from exp.kmeans import KMEANS_FILENAME
@@ -138,7 +138,7 @@ def load_hookpoints_and_saes(
         with open(config_path) as f:
             config = json.load(f)
 
-        ae, _ = load_dictionary(sae_dirpath, device="cuda")
+        ae, _ = load_dictionary(str(sae_dirpath), device="cuda")
         ae = ae.to(dtype)
         trainer_config = config.get("trainer")
         if trainer_config is None:
@@ -232,7 +232,7 @@ class LatentPathsCache(LatentCache):
             log_path: Path to save logging output.
             postprocessor: Router logits postprocessing method to use.
         """
-        self.model = model
+        self.model: StandardizedTransformer = model
         self.hookpoint_to_sparse_encode = hookpoint_to_sparse_encode
         self.batch_size = batch_size
         self.widths = {}
@@ -426,7 +426,7 @@ def eval_intruder(
     seed: int = 0,
     hf_token: str = "",
     log_level: str = "INFO",
-    device_type: DeviceType = "cuda",
+    device_type: str = "cuda",
     postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> None:
     logger.remove()

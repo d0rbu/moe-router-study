@@ -224,7 +224,7 @@ class RunningKMeansData:
 class GPUData:
     synced_data: RunningKMeansData
     dirty_data: RunningKMeansData
-    queue: mp.Queue | None = None
+    queue: mp.Queue
 
     def copy_(self, other: GPUData) -> None:
         self.synced_data.copy_(other.synced_data)
@@ -1448,7 +1448,7 @@ def kmeans_manhattan(
             ),
             queue=mp.Queue(maxsize=GPU_QUEUE_MAXSIZE),
         )
-        for gpu_idx in range(num_gpus)
+        for _gpu_idx in range(num_gpus)
     ]
 
     for gpu_idx, gpu_data in enumerate(all_gpu_data):
@@ -1821,7 +1821,7 @@ def kmeans_manhattan(
             f"Putting stop signal on GPU with queue size {gpu_data.queue.qsize()}"
         )
 
-        gpu_data.queue.put((None, False, None))
+        gpu_data.queue.put(None)
 
     if losses_over_time:
         logger.trace("Stacking losses over time")
