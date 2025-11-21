@@ -6,19 +6,27 @@ by collecting activations directly and running intruder detection on them.
 """
 
 import asyncio
-from collections.abc import Callable
-from functools import partial
 from multiprocessing import cpu_count
 from pathlib import Path
 import sys
 
 import arguably
+from delphi.__main__ import non_redundant_hookpoints
+from delphi.config import (
+    CacheConfig,
+    ConstructorConfig,
+    RunConfig,
+    SamplerConfig,
+)
+from delphi.latents.cache import InMemoryCache, LatentCache
+from delphi.log.result_analysis import log_results
+from delphi.utils import load_tokenized_data
 from loguru import logger
 from nnterp import StandardizedTransformer
-import orjson
 import torch as th
 from tqdm import tqdm
 from transformers import (
+    AutoConfig,
     BitsAndBytesConfig,
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
@@ -28,34 +36,17 @@ from core.device import DeviceType, get_backend
 from core.dtype import get_dtype
 from core.model import get_model_config
 from core.type import assert_type
-from delphi.__main__ import non_redundant_hookpoints
-from delphi.clients import Offline
-from delphi.config import (
-    CacheConfig,
-    ConstructorConfig,
-    RunConfig,
-    SamplerConfig,
-)
-from delphi.latents import LatentDataset, LatentRecord
-from delphi.latents.cache import InMemoryCache, LatentCache
-from delphi.log.result_analysis import log_results
-from delphi.pipeline import Pipe, Pipeline
-from delphi.scorers.classifier.intruder import IntruderScorer
-from delphi.scorers.scorer import ScorerResult
-from delphi.utils import load_tokenized_data
 from exp import OUTPUT_DIR
 from exp.eval_intruder import (
     ACTIVATION_KEYS_TO_HOOKPOINT,
-    dataset_postprocess,
     process_cache,
-    save_scorer_result_to_file,
 )
 from exp.get_activations import ActivationKeys
 
 
 class RawActivationsCache(LatentCache):
     """Custom cache for raw model activations."""
-    
+
     def __init__(
         self,
         model: StandardizedTransformer,
@@ -64,7 +55,7 @@ class RawActivationsCache(LatentCache):
         batch_size: int,
         log_path: Path | None = None,
     ):
-        self.model = model
+        self.model: StandardizedTransformer = model
         self.activation_key = activation_key
         self.layers_sorted = sorted(layers)  # Ensure consistent ordering
         self.batch_size = batch_size
@@ -75,47 +66,51 @@ class RawActivationsCache(LatentCache):
     def run(self, n_tokens: int, tokens: th.Tensor, dtype: th.dtype):
         """Run the activation caching process."""
         token_batches = self.load_token_batches(n_tokens, tokens)
-        
+
         total_tokens = 0
         total_batches = len(token_batches)
         tokens_per_batch = token_batches[0].numel()
-        
+
         for batch_idx, batch in tqdm(
             enumerate(token_batches),
             total=total_batches,
             desc="Caching raw activations",
         ):
             total_tokens += tokens_per_batch
-            
+
             with self.model.trace(batch):
                 layer_activations = []
-                
+
                 for layer_idx in self.layers_sorted:
                     # Get the hookpoint for this layer and activation type
-                    hookpoint_template = ACTIVATION_KEYS_TO_HOOKPOINT[self.activation_key]
+                    hookpoint_template = ACTIVATION_KEYS_TO_HOOKPOINT[
+                        self.activation_key
+                    ]
                     hookpoint_name = hookpoint_template.format(layer=layer_idx)
 
                     # Extract activation based on type
                     match self.activation_key:
                         case ActivationKeys.LAYER_OUTPUT:
-                            activation = getattr(self.model.model.layers[layer_idx], "output").save()
+                            activation = self.model.layers_output[layer_idx].save()
                         case ActivationKeys.MLP_OUTPUT:
-                            activation = getattr(self.model.model.layers[layer_idx].mlp, "output").save()
+                            activation = self.model.mlps_output[layer_idx].save()
                         case ActivationKeys.ATTN_OUTPUT:
-                            activation = getattr(self.model.model.layers[layer_idx].self_attn, "output").save()
+                            activation = self.model.attentions_output[layer_idx].save()
                         case ActivationKeys.ROUTER_LOGITS:
-                            activation = getattr(self.model.model.layers[layer_idx].mlp.gate, "output").save()
+                            activation = self.model.routers_output[layer_idx].save()
                         case _:
-                            raise ValueError(f"Unsupported activation key: {self.activation_key}")
-                    
+                            raise ValueError(
+                                f"Unsupported activation key: {self.activation_key}"
+                            )
+
                     layer_activations.append(activation)
-                
+
                 # Concatenate activations across layers: (B, T, sum(hidden_sizes))
                 concat_activations = th.cat(layer_activations, dim=-1)
-                
+
                 # Create a synthetic hookpoint name for the concatenated activations
                 hookpoint = f"raw_{self.activation_key}_layers_{'_'.join(map(str, self.layers_sorted))}"
-                
+
                 self.cache.add(concat_activations, batch, batch_idx, hookpoint)
                 self.widths[hookpoint] = concat_activations.shape[2]
 
@@ -135,11 +130,11 @@ def populate_cache(
 ) -> None:
     """Populate cache with raw activations."""
     latents_path.mkdir(parents=True, exist_ok=True)
-    
+
     # Create log path
     log_path = latents_path.parent / "log"
     log_path.mkdir(parents=True, exist_ok=True)
-    
+
     cache_cfg = run_cfg.cache_cfg
     tokens = load_tokenized_data(
         cache_cfg.cache_ctx_len,
@@ -196,7 +191,7 @@ def eval_raw_activations(
     *,
     model_name: str = "olmoe-i",
     activation_key: ActivationKeys = ActivationKeys.LAYER_OUTPUT,
-    layers: set[int] | None = None,
+    layers: list[int] | None = None,
     model_step_ckpt: int | None = None,
     model_dtype: str = "bf16",
     dtype: str = "bf16",
@@ -264,12 +259,14 @@ def eval_raw_activations(
 
     # Set default layers to all layers if None or empty
     if layers is None or len(layers) == 0:
-        layers = set(range(model_config.num_layers))
-    
-    # Validate layers
-    if not isinstance(layers, set):
-        layers = set(layers)
-    
+        hf_config = AutoConfig.from_pretrained(model_config.hf_name)
+        num_layers = hf_config.num_hidden_layers
+
+        layers = list(range(num_layers))
+
+    layers_unique = set(layers)
+    assert len(layers_unique) == len(layers), "Duplicate layers found in layers list"
+
     layers_sorted = sorted(layers)
 
     # Set GPU count dynamically
@@ -277,7 +274,9 @@ def eval_raw_activations(
         backend = get_backend(device_type)
         num_gpus = backend.device_count() if backend.is_available() else 0
 
-    logger.info(f"Evaluating raw activations: {activation_key} from layers {layers_sorted} on {model_name}")
+    logger.info(
+        f"Evaluating raw activations: {activation_key} from layers {layers_sorted} on {model_name}"
+    )
     model_ckpt = model_config.get_checkpoint_strict(step=model_step_ckpt)
     model_dtype_torch = get_dtype(model_dtype)
     dtype_torch = get_dtype(dtype)
@@ -299,7 +298,9 @@ def eval_raw_activations(
 
     th.manual_seed(seed)
 
-    logger.debug(f"Loading model from {model_config.hf_name} with revision {model_ckpt}")
+    logger.debug(
+        f"Loading model from {model_config.hf_name} with revision {model_ckpt}"
+    )
 
     # Load model
     model = StandardizedTransformer(
@@ -357,16 +358,20 @@ def eval_raw_activations(
 
     # Check if we need to populate cache
     nrh = assert_type(
-        non_redundant_hookpoints({hookpoint: lambda x: x}, latents_path, overwrite=False),
+        non_redundant_hookpoints(
+            {hookpoint: lambda x: x}, latents_path, overwrite=False
+        ),
         dict,
     )
     if nrh:
-        logger.info(f"Populating cache for {activation_key} activations from layers {layers_sorted}")
+        logger.info(
+            f"Populating cache for {activation_key} activations from layers {layers_sorted}"
+        )
         populate_cache(
             run_cfg,
             model,
             activation_key,
-            layers,
+            layers_unique,
             root_dir,
             latents_path,
             tokenizer,
@@ -401,7 +406,9 @@ def eval_raw_activations(
         logger.debug("Logging results")
         log_results(scores_path, visualize_path, run_cfg.hookpoints, run_cfg.scorers)
 
-    logger.success(f"🎉 Raw activations evaluation complete for {activation_key} layers {layers_sorted}!")
+    logger.success(
+        f"🎉 Raw activations evaluation complete for {activation_key} layers {layers_sorted}!"
+    )
 
 
 if __name__ == "__main__":
