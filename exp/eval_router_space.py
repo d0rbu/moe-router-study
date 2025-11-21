@@ -14,6 +14,7 @@ import torch as th
 import yaml
 
 from core.dtype import get_dtype
+from core.moe import RouterLogitsPostprocessor
 from core.model import get_model_config
 from exp import OUTPUT_DIR
 from exp.eval_all_paths import eval_all_paths
@@ -110,6 +111,7 @@ def eval_router_space(
         "num_layers": num_layers,
         "num_experts": num_experts,
         "top_k": top_k,
+        "postprocessor": RouterLogitsPostprocessor.IDENTITY,
     }
     metadata_path = os.path.join(experiment_dir, METADATA_FILENAME)
     with open(metadata_path, "w") as f:
