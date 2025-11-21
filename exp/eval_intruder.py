@@ -462,6 +462,7 @@ def eval_intruder(
 
     model = StandardizedTransformer(
         model_config.hf_name,
+        check_attn_probs_with_trace=False,
         revision=str(model_ckpt),
         device_map={"": "cuda"},
         quantization_config=quantization_config,

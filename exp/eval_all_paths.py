@@ -13,7 +13,7 @@ import traceback
 import arguably
 from loguru import logger
 
-from core.device import DeviceType, get_backend
+from core.device import get_backend
 from core.moe import RouterLogitsPostprocessor
 from exp.eval_intruder import eval_intruder
 from exp.path_eval_saebench import path_eval_saebench
@@ -164,7 +164,7 @@ def eval_all_paths(
     dtype: str = "bf16",
     seed: int = 0,
     log_level: str = "INFO",
-    device_type: DeviceType = "cuda",
+    device_type: str = "cuda",
     postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> None:
     """

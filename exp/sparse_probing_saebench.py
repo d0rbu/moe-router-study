@@ -20,7 +20,6 @@ from sae_bench.evals.sparse_probing.eval_output import (
 )
 from sae_bench.evals.sparse_probing.probe_training import train_probe_on_activations
 from sae_bench.sae_bench_utils import (
-    general_utils,
     get_eval_uuid,
     get_sae_bench_version,
     get_sae_lens_version,
@@ -34,6 +33,10 @@ from sae_bench.sae_bench_utils.dataset_utils import (
     filter_dataset,
     get_multi_label_train_test_data,
     tokenize_data_dictionary,
+)
+from sae_bench.sae_bench_utils.general_utils import (
+    average_results_dictionaries,
+    str_to_dtype,
 )
 import torch as th
 from tqdm import tqdm
@@ -251,6 +254,8 @@ def get_paths_meaned_activations(
     return all_sae_activations_BF
 
 
+DatasetResults = dict[str, int | float]
+
 LLM_DEFAULT_BATCH_SIZE = 32
 
 
@@ -263,7 +268,7 @@ def run_eval_single_dataset(
     artifacts_folder: str,
     save_activations: bool,
     postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
-) -> tuple[dict[str, float], dict[str, dict[str, float]]]:
+) -> tuple[DatasetResults, dict[str, DatasetResults]]:
     """
     config: eval_config.EvalConfig contains all hyperparameters to reproduce the evaluation.
     It is saved in the results_dict for reproducibility.
@@ -395,7 +400,7 @@ def run_eval_paths(
     artifacts_folder: str,
     save_activations: bool = True,
     postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
-) -> tuple[dict[str, float | dict[str, float]], dict[str, dict[str, float]]]:
+) -> tuple[dict[str, int | float | DatasetResults], dict[str, dict[str, DatasetResults]]]:
     """
     By default, we save activations for all datasets, and then reuse them for each set of paths.
     This is important to avoid recomputing activations for each set of paths, and to ensure that the same activations are used for all sets of paths.
@@ -406,10 +411,10 @@ def run_eval_paths(
     th.manual_seed(config.random_seed)
     os.makedirs(artifacts_folder, exist_ok=True)
 
-    results_dict: dict[str, float | dict[str, float]] = {}
+    results_dict: dict[str, int | float | DatasetResults] = {}
 
-    dataset_results: dict[str, dict[str, float]] = {}
-    per_class_dict: dict[str, dict[str, float]] = {}
+    dataset_results: dict[str, DatasetResults] = {}
+    per_class_dict: dict[str, dict[str, DatasetResults]] = {}
     for dataset_name in config.dataset_names:
         results_key = f"{dataset_name}_results"
         (
@@ -426,12 +431,10 @@ def run_eval_paths(
             postprocessor,
         )
 
-    averaged_results: dict[str, float] = general_utils.average_results_dictionaries(
+    averaged_results: DatasetResults = average_results_dictionaries(
         dataset_results, config.dataset_names
     )
-    results_dict: dict[str, float | dict[str, float]] = dict(averaged_results)
-
-    results_dict: dict[str, float | dict[str, float]] = {}
+    results_dict: dict[str, int | float | DatasetResults] = {}
     results_dict.update(averaged_results)
 
     for dataset_name, dataset_result in dataset_results.items():
@@ -471,7 +474,7 @@ def run_eval(
 
     logger.trace(f"Using config: {config}")
 
-    llm_dtype = general_utils.str_to_dtype(config.llm_dtype)
+    llm_dtype = str_to_dtype(config.llm_dtype)
 
     logger.remove()
     logger.add(sys.stderr, level=log_level)
