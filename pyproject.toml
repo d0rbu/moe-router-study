@@ -29,7 +29,7 @@ dependencies = [
     "torch>=2.0.0",
     "transformers>=4.55.1",
     "nnsight>=0.5.0.dev13",
-    "datasets==3.6.0",
+    "datasets",
     "accelerate>=0.20.0",
     "einops>=0.6.0",
     "tqdm>=4.60.0",

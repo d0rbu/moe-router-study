@@ -13,7 +13,8 @@ import traceback
 import arguably
 from loguru import logger
 
-from core.device import DeviceType, get_backend
+from core.device import get_backend
+from core.moe import RouterLogitsPostprocessor
 from exp.eval_intruder import eval_intruder
 from exp.path_eval_saebench import path_eval_saebench
 
@@ -82,6 +83,7 @@ def run_intruder_eval(
     seed: int,
     hf_token: str,
     log_level: str = "INFO",
+    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> bool:
     """Run intruder evaluation on a k-means path experiment."""
     logger.info(f"Running intruder evaluation on {experiment_name}")
@@ -114,6 +116,7 @@ def run_intruder_eval(
             seed=seed,
             hf_token=hf_token,
             log_level=log_level,
+            postprocessor=postprocessor,
         )
         logger.debug(f"✅ Intruder evaluation completed for {experiment_name}")
         return True
@@ -149,7 +152,7 @@ def eval_all_paths(
     intruder_num_non_activating: int = 50,
     intruder_num_examples: int = 50,
     intruder_n_quantiles: int = 10,
-    intruder_explainer_model: str = "hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4",
+    intruder_explainer_model: str = "ibnzterrell/Meta-Llama-3.3-70B-Instruct-AWQ-INT4",
     intruder_explainer_model_max_len: int = 5120,
     intruder_explainer_provider: str = "offline",
     intruder_explainer: str = "default",
@@ -161,7 +164,8 @@ def eval_all_paths(
     dtype: str = "bf16",
     seed: int = 0,
     log_level: str = "INFO",
-    device_type: DeviceType = "cuda",
+    device_type: str = "cuda",
+    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> None:
     """
     Evaluate a k-means path experiment using both SAEBench and intruder evaluations.
@@ -263,6 +267,7 @@ def eval_all_paths(
             seed,
             intruder_hf_token,
             log_level,
+            postprocessor,
         )
         if not intruder_success:
             logger.error("Intruder evaluation failed!")

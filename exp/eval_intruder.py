@@ -7,23 +7,6 @@ from pathlib import Path
 import sys
 
 import arguably
-from dictionary_learning.utils import load_dictionary
-from loguru import logger
-from nnterp import StandardizedTransformer
-import orjson
-import torch as th
-import torch.nn as nn
-from tqdm import tqdm
-from transformers import (
-    BitsAndBytesConfig,
-    PreTrainedTokenizer,
-    PreTrainedTokenizerFast,
-)
-
-from core.device import DeviceType, get_backend
-from core.dtype import get_dtype
-from core.model import get_model_config
-from core.type import assert_type
 from delphi.__main__ import non_redundant_hookpoints  # type: ignore
 from delphi.__main__ import populate_cache as sae_populate_cache  # type: ignore
 from delphi.clients import Offline  # type: ignore
@@ -40,6 +23,27 @@ from delphi.pipeline import Pipe, Pipeline  # type: ignore
 from delphi.scorers.classifier.intruder import IntruderScorer  # type: ignore
 from delphi.scorers.scorer import ScorerResult  # type: ignore
 from delphi.utils import load_tokenized_data  # type: ignore
+from dictionary_learning.utils import load_dictionary
+from loguru import logger
+from nnterp import StandardizedTransformer
+import orjson
+import torch as th
+import torch.nn as nn
+from tqdm import tqdm
+from transformers import (
+    BitsAndBytesConfig,
+    PreTrainedTokenizer,
+    PreTrainedTokenizerFast,
+)
+
+from core.device import get_backend
+from core.dtype import get_dtype
+from core.model import get_model_config
+from core.moe import (
+    RouterLogitsPostprocessor,
+    get_postprocessor,
+)
+from core.type import assert_type
 from exp import OUTPUT_DIR
 from exp.get_activations import ActivationKeys
 from exp.kmeans import KMEANS_FILENAME
@@ -134,7 +138,7 @@ def load_hookpoints_and_saes(
         with open(config_path) as f:
             config = json.load(f)
 
-        ae, _ = load_dictionary(sae_dirpath, device="cuda")
+        ae, _ = load_dictionary(str(sae_dirpath), device="cuda")
         ae = ae.to(dtype)
         trainer_config = config.get("trainer")
         if trainer_config is None:
@@ -216,6 +220,7 @@ class LatentPathsCache(LatentCache):
         hookpoint_to_sparse_encode: dict[str, Callable],
         batch_size: int,
         log_path: Path | None = None,
+        postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
     ):
         """
         Initialize the LatentCache.
@@ -225,14 +230,16 @@ class LatentPathsCache(LatentCache):
             hookpoint_to_sparse_encode: Dictionary of sparse encoding functions.
             batch_size: Size of batches for processing.
             log_path: Path to save logging output.
+            postprocessor: Router logits postprocessing method to use.
         """
-        self.model = model
+        self.model: StandardizedTransformer = model
         self.hookpoint_to_sparse_encode = hookpoint_to_sparse_encode
         self.batch_size = batch_size
         self.widths = {}
         self.cache = InMemoryCache(filters=None, batch_size=batch_size)
 
         self.log_path = log_path
+        self.postprocessor_fn = get_postprocessor(postprocessor)
 
     def run(self, n_tokens: int, tokens: th.Tensor, top_k: int, dtype: th.dtype):
         """
@@ -282,13 +289,8 @@ class LatentPathsCache(LatentCache):
                     router_paths.append(logits)
 
             router_paths = th.stack(router_paths, dim=-2)  # (B, T, L, E)
-            path_indices = th.topk(router_paths, k=top_k, dim=-1).indices
-
-            sparse_paths = th.zeros(
-                router_paths.shape, device=router_paths.device, dtype=dtype
-            )
-            sparse_paths.scatter_(-1, path_indices, 1)
-            del path_indices, router_paths
+            sparse_paths = self.postprocessor_fn(router_paths, top_k).to(dtype=dtype)
+            del router_paths
 
             router_paths_BTP = sparse_paths.view(*batch.shape, -1)  # (B, T, L * E)
 
@@ -311,6 +313,7 @@ def populate_cache(
     tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast,
     top_k: int,
     dtype: th.dtype,
+    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> None:
     """
     Populates an on-disk cache in `latents_path` with latent activations.
@@ -377,6 +380,7 @@ def populate_cache(
         hookpoint_to_sparse_encode,
         batch_size=cache_cfg.batch_size,
         log_path=log_path,
+        postprocessor=postprocessor,
     )
     cache.run(cache_cfg.n_tokens, tokens, top_k=top_k, dtype=dtype)
 
@@ -411,7 +415,7 @@ def eval_intruder(
     num_non_activating: int = 50,
     num_examples: int = 50,
     n_quantiles: int = 10,
-    explainer_model: str = "hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4",
+    explainer_model: str = "ibnzterrell/Meta-Llama-3.3-70B-Instruct-AWQ-INT4",
     explainer_model_max_len: int = 5120,
     explainer_provider: str = "offline",
     explainer: str = "default",
@@ -422,7 +426,8 @@ def eval_intruder(
     seed: int = 0,
     hf_token: str = "",
     log_level: str = "INFO",
-    device_type: DeviceType = "cuda",
+    device_type: str = "cuda",
+    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> None:
     logger.remove()
     logger.add(sys.stderr, level=log_level)
@@ -457,6 +462,7 @@ def eval_intruder(
 
     model = StandardizedTransformer(
         model_config.hf_name,
+        check_attn_probs_with_trace=False,
         revision=str(model_ckpt),
         device_map={"": "cuda"},
         quantization_config=quantization_config,
@@ -527,6 +533,7 @@ def eval_intruder(
             tokenizer,
             top_k=top_k,
             dtype=dtype_torch,
+            postprocessor=postprocessor,
         )
     else:
         logger.debug("No non-redundant hookpoints found, skipping cache population")

@@ -734,7 +734,7 @@ def eval_causal_routing(
     num_non_activating: int = 50,
     num_examples: int = 50,
     n_quantiles: int = 10,
-    explainer_model: str = "hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4",
+    explainer_model: str = "ibnzterrell/Meta-Llama-3.3-70B-Instruct-AWQ-INT4",
     explainer_model_max_len: int = 5120,
     filter_bos: bool = False,
     pipeline_num_proc: int = cpu_count() // 2,
@@ -820,6 +820,7 @@ def eval_causal_routing(
     # Load model
     model = StandardizedTransformer(
         model_config.hf_name,
+        check_attn_probs_with_trace=False,
         revision=str(model_ckpt),
         device_map={"": "cuda"},
         quantization_config=quantization_config,

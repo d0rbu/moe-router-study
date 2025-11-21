@@ -40,6 +40,7 @@ def expert_importance(
 
     model = StandardizedTransformer(
         model_config.hf_name,
+        check_attn_probs_with_trace=False,
         device_map=device,
         revision=revision,
     )

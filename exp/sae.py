@@ -28,6 +28,7 @@ from tqdm import tqdm
 
 from core.async_utils import handle_exceptions
 from core.device import DeviceType, assert_device_type, get_backend
+from core.dist import get_rank, get_world_size
 from core.dtype import get_dtype
 from core.training import exponential_to_linear_save_steps
 from core.type import assert_type
@@ -160,7 +161,7 @@ async def gpu_worker(
                 device=device,
                 autocast_dtype=dtype,
                 tqdm_kwargs={
-                    "position": dist.get_rank() * (num_gpus + 1) + device_idx + 1
+                    "position": get_rank() * (num_gpus + 1) + device_idx + 1
                 },
             )
         finally:
@@ -258,6 +259,12 @@ async def run_sae_training(
         debug=debug,
         device_type=device_type,
     )
+
+    # Log whether we're running in distributed mode or not
+    if dist.is_initialized():
+        logger.info(f"Running in distributed mode with {get_world_size()} nodes")
+    else:
+        logger.info("Running in non-distributed mode (world_size=1)")
 
     sae_experiment_name = get_experiment_name(
         model_name=model_name,
@@ -426,16 +433,16 @@ async def run_sae_training(
         return
 
     distributed_iterator = hparam_sweep_iterator[
-        dist.get_rank() :: dist.get_world_size()
+        get_rank() :: get_world_size()
     ]
 
     # assign a subset of the hparam sweep to each rank
     tqdm_distributed_iterator = tqdm(
         distributed_iterator,
-        desc=f"Rank {dist.get_rank()}",
+        desc=f"Rank {get_rank()}",
         total=len(distributed_iterator),
         leave=True,
-        position=dist.get_rank() * (num_gpus + 1),
+        position=get_rank() * (num_gpus + 1),
     )
     # batch it based on how many trainers will be on each gpu
     concurrent_trainer_batched_iterator = batched(
@@ -443,11 +450,11 @@ async def run_sae_training(
     )
 
     logger.info(f"Total size of sweep: {len(hparam_sweep_iterator)}")
-    logger.info(f"Number of nodes: {dist.get_world_size()}")
+    logger.info(f"Number of nodes: {get_world_size()}")
     logger.info(f"Number of GPUs per node: {num_gpus}")
     logger.info(f"Number of trainers per GPU: {trainers_per_gpu}")
     logger.info(
-        f"Number of iterations: {math.ceil(len(hparam_sweep_iterator) / (trainers_per_gpu * num_gpus * dist.get_world_size()))}"
+        f"Number of iterations: {math.ceil(len(hparam_sweep_iterator) / (trainers_per_gpu * num_gpus * get_world_size()))}"
     )
 
     for trainer_batch_idx, trainer_batch in enumerate(

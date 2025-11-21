@@ -1,0 +1,1 @@
+uv run exp/get_activations.py --minibatch-size 1 --gpus-per-worker 1 --tokens-per-file 10000

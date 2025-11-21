@@ -27,7 +27,10 @@ from core.device import (
     get_distributed_backend,
 )
 from core.dist import get_rank, get_world_size
-from core.moe import convert_router_logits_to_paths
+from core.moe import (
+    RouterLogitsPostprocessor,
+    get_postprocessor,
+)
 from exp import OUTPUT_DIR
 from exp.activations import Activations, load_activations_and_init_dist
 from exp.get_activations import ActivationKeys
@@ -221,7 +224,7 @@ class RunningKMeansData:
 class GPUData:
     synced_data: RunningKMeansData
     dirty_data: RunningKMeansData
-    queue: mp.Queue | None = None
+    queue: mp.Queue
 
     def copy_(self, other: GPUData) -> None:
         self.synced_data.copy_(other.synced_data)
@@ -1023,6 +1026,7 @@ def gpu_worker(
     centroid_minibatch_size: int = 65536,
     assignment_minibatch_size: int = 4096,
     device_type: DeviceType = "cuda",
+    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> None:
     """
     GPU worker for distributed k-means clustering.
@@ -1043,6 +1047,7 @@ def gpu_worker(
     device = get_device(device_type, gpu_idx)
     backend = get_backend(device_type)
     backend_name = get_distributed_backend(device_type)
+    postprocessor_fn = get_postprocessor(postprocessor)
 
     logger.info(f"Starting GPU worker {gpu_idx}")
 
@@ -1118,10 +1123,8 @@ def gpu_worker(
         router_logits = router_logits.to(device)
 
         # convert from logits to paths
-        paths_sparse = th.topk(router_logits, k=top_k, dim=-1).indices
-        router_paths = th.zeros_like(router_logits)
-        router_paths.scatter_(-1, paths_sparse, 1)
-        del router_logits, paths_sparse
+        router_paths = postprocessor_fn(router_logits, top_k)
+        del router_logits
 
         logger.trace(f"GPU {gpu_idx} flattened router paths")
 
@@ -1301,6 +1304,7 @@ def kmeans_manhattan(
     validate_every: int = 64,
     log_level_numeric: int | None = None,
     device_type: DeviceType = "cuda",
+    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> tuple[list[th.Tensor], int, th.Tensor, int, int]:
     """
     Perform k-means clustering with Manhattan distance.
@@ -1444,7 +1448,7 @@ def kmeans_manhattan(
             ),
             queue=mp.Queue(maxsize=GPU_QUEUE_MAXSIZE),
         )
-        for gpu_idx in range(num_gpus)
+        for _gpu_idx in range(num_gpus)
     ]
 
     for gpu_idx, gpu_data in enumerate(all_gpu_data):
@@ -1550,14 +1554,17 @@ def kmeans_manhattan(
         f"Std: {validation_router_logits.std()}"
     )
 
+    # Get postprocessor function
+    postprocessor_fn = get_postprocessor(postprocessor)
+
     # Convert validation data to flat paths format (same as training data)
     validation_data = (
-        convert_router_logits_to_paths(validation_router_logits, top_k)
+        postprocessor_fn(validation_router_logits, top_k)
         .view(validation_router_logits.shape[0], -1)
         .to(dtype=th.float32, device=th.device("cpu"))
     )
     init_activation_data = (
-        convert_router_logits_to_paths(init_activation_logits, top_k)
+        postprocessor_fn(init_activation_logits, top_k)
         .view(init_activation_logits.shape[0], -1)
         .to(dtype=th.float32, device=th.device("cpu"))
     )
@@ -1690,6 +1697,7 @@ def kmeans_manhattan(
                 centroid_minibatch_size,
                 assignment_minibatch_size,
                 device_type,
+                postprocessor,
             ),
             name=str(gpu_idx),
         )
@@ -1813,7 +1821,7 @@ def kmeans_manhattan(
             f"Putting stop signal on GPU with queue size {gpu_data.queue.qsize()}"
         )
 
-        gpu_data.queue.put((None, False, None))
+        gpu_data.queue.put(None)
 
     if losses_over_time:
         logger.trace("Stacking losses over time")
@@ -1853,6 +1861,7 @@ def cluster_paths_main(
     validate_every: int = 64,
     log_level_numeric: int | None = None,
     device_type: DeviceType = "cuda",
+    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> None:
     kmeans_experiment_name = get_experiment_name(
         model_name=model_name,
@@ -1884,6 +1893,7 @@ def cluster_paths_main(
         validate_every=validate_every,
         log_level_numeric=log_level_numeric,
         device_type=device_type,
+        postprocessor=postprocessor,
     )
 
     current_rank = get_rank()
@@ -1941,6 +1951,7 @@ def cluster_paths(
     log_level: str = "INFO",
     num_workers: int = 64,
     device_type: DeviceType = "cuda",
+    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> None:
     print(f"Running with log level: {log_level}")
 
@@ -2025,6 +2036,7 @@ def cluster_paths(
         validate_every=validate_every,
         log_level_numeric=log_level_numeric,
         device_type=device_type,
+        postprocessor=postprocessor,
     )
 
 
@@ -2049,6 +2061,7 @@ def main(
     log_level: str = "INFO",
     num_workers: int = 64,
     device_type: str = "cuda",
+    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> None:
     cluster_paths(
         model_name,
@@ -2070,6 +2083,7 @@ def main(
         log_level=log_level,
         num_workers=num_workers,
         device_type=assert_device_type(device_type),
+        postprocessor=postprocessor,
     )
 
 
