@@ -304,6 +304,44 @@ class LatentPathsCache(LatentCache):
         self.cache.save()
 
 
+def load_and_filter_tokens(
+    tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast,
+    cache_cfg: CacheConfig,
+    run_cfg: RunConfig,
+) -> th.Tensor:
+    tokens = load_tokenized_data(
+        cache_cfg.cache_ctx_len,
+        tokenizer,
+        cache_cfg.dataset_repo,
+        cache_cfg.dataset_split,
+        cache_cfg.dataset_name,
+        cache_cfg.dataset_column,
+        run_cfg.seed,
+    )
+
+    if run_cfg.filter_bos:
+        if tokenizer.bos_token_id is None:
+            logger.debug("Tokenizer does not have a BOS token, skipping BOS filtering")
+        else:
+            flattened_tokens = tokens.flatten()
+            mask = ~(flattened_tokens == tokenizer.bos_token_id)
+            masked_tokens = flattened_tokens[mask]
+
+            num_non_bos_tokens = masked_tokens.shape[0]
+            extra_tokens = num_non_bos_tokens % cache_cfg.cache_ctx_len
+
+            if extra_tokens > 0:
+                logger.debug(
+                    f"Warning: {extra_tokens} extra tokens after BOS filtering, truncating to {num_non_bos_tokens - extra_tokens}"
+                )
+                truncated_tokens = masked_tokens[:-extra_tokens]
+                tokens = truncated_tokens.reshape(-1, cache_cfg.cache_ctx_len)
+            else:
+                tokens = masked_tokens.reshape(-1, cache_cfg.cache_ctx_len)
+
+    return tokens
+
+
 def populate_cache(
     run_cfg: RunConfig,
     model: StandardizedTransformer,
@@ -345,35 +383,7 @@ def populate_cache(
     log_path.mkdir(parents=True, exist_ok=True)
 
     cache_cfg = run_cfg.cache_cfg
-    tokens = load_tokenized_data(
-        cache_cfg.cache_ctx_len,
-        tokenizer,
-        cache_cfg.dataset_repo,
-        cache_cfg.dataset_split,
-        cache_cfg.dataset_name,
-        cache_cfg.dataset_column,
-        run_cfg.seed,
-    )
-
-    if run_cfg.filter_bos:
-        if tokenizer.bos_token_id is None:
-            logger.debug("Tokenizer does not have a BOS token, skipping BOS filtering")
-        else:
-            flattened_tokens = tokens.flatten()
-            mask = ~(flattened_tokens == tokenizer.bos_token_id)
-            masked_tokens = flattened_tokens[mask]
-
-            num_non_bos_tokens = masked_tokens.shape[0]
-            extra_tokens = num_non_bos_tokens % cache_cfg.cache_ctx_len
-
-            if extra_tokens > 0:
-                logger.debug(
-                    f"Warning: {extra_tokens} extra tokens after BOS filtering, truncating to {num_non_bos_tokens - extra_tokens}"
-                )
-                truncated_tokens = masked_tokens[:-extra_tokens]
-                tokens = truncated_tokens.reshape(-1, cache_cfg.cache_ctx_len)
-            else:
-                tokens = masked_tokens.reshape(-1, cache_cfg.cache_ctx_len)
+    tokens = load_and_filter_tokens(tokenizer, cache_cfg, run_cfg)
 
     cache = LatentPathsCache(
         model,
@@ -388,8 +398,6 @@ def populate_cache(
         cache.generate_statistics_cache()
 
     cache.save_splits(
-        # Split the activation and location indices into different files to make
-        # loading faster
         n_splits=cache_cfg.n_splits,
         save_dir=latents_path,
     )
