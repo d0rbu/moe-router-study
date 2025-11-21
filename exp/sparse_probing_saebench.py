@@ -400,7 +400,9 @@ def run_eval_paths(
     artifacts_folder: str,
     save_activations: bool = True,
     postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
-) -> tuple[dict[str, int | float | DatasetResults], dict[str, dict[str, DatasetResults]]]:
+) -> tuple[
+    dict[str, int | float | DatasetResults], dict[str, dict[str, DatasetResults]]
+]:
     """
     By default, we save activations for all datasets, and then reuse them for each set of paths.
     This is important to avoid recomputing activations for each set of paths, and to ensure that the same activations are used for all sets of paths.

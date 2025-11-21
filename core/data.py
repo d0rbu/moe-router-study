@@ -1,8 +1,8 @@
 from collections.abc import Callable, Iterable
 import os
-from typing import Any
+from typing import Any, cast
 
-from datasets import Dataset, load_dataset
+from datasets import Dataset, IterableDataset, load_dataset
 from loguru import logger
 from tqdm import tqdm
 from transformers import AutoTokenizer, PreTrainedTokenizer
@@ -20,9 +20,11 @@ def fineweb_10bt_text(
 
     # Handle both real IterableDataset and test mocks (dict)
     if isinstance(fineweb, dict):
-        return fineweb["text"]
+        return cast("Iterable[str]", fineweb["text"])
     else:
-        return (sample["text"] for sample in fineweb)
+        # Cast to IterableDataset to satisfy type checker
+        dataset = cast("IterableDataset", fineweb)
+        return (cast("str", sample["text"]) for sample in dataset)
 
 
 def toy_text(
