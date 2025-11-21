@@ -17,6 +17,7 @@ import torch as th
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from tqdm import tqdm
+import wandb
 import yaml
 
 from core.device import (
@@ -849,6 +850,28 @@ def sync(
     if rank == 0 and gpu_idx == 0:
         logger.trace(f"GPU {gpu_idx}: Appending losses to history")
         losses_over_time.append(gpu_data.synced_data.losses.detach().cpu().clone())
+
+        # Log to wandb only from rank 0, device 0
+        if wandb.run is not None:
+            # Get current iteration number from length of losses_over_time
+            current_iteration = len(losses_over_time) - 1
+            
+            # Log losses for each k value
+            wandb_log_dict = {"iteration": current_iteration}
+            for k_idx, loss_value in enumerate(gpu_data.synced_data.losses):
+                wandb_log_dict[f"loss/k_idx_{k_idx}"] = loss_value.item()
+            
+            # Log centroid statistics for each k value
+            for k_idx, centroids in enumerate(gpu_data.synced_data.centroid_sets):
+                centroid_norms = th.norm(centroids, dim=1)
+                zero_norms = (centroid_norms == 0).sum().item()
+                wandb_log_dict[f"centroids/k_idx_{k_idx}/zero_norm_count"] = zero_norms
+                wandb_log_dict[f"centroids/k_idx_{k_idx}/min_norm"] = centroid_norms.min().item()
+                wandb_log_dict[f"centroids/k_idx_{k_idx}/max_norm"] = centroid_norms.max().item()
+                wandb_log_dict[f"centroids/k_idx_{k_idx}/mean_norm"] = centroid_norms.mean().item()
+            
+            wandb.log(wandb_log_dict)
+            logger.trace(f"Logged to wandb: {wandb_log_dict}")
 
         # Check for monotonically increasing loss windows
         if (
@@ -1862,6 +1885,7 @@ def cluster_paths_main(
     log_level_numeric: int | None = None,
     device_type: DeviceType = "cuda",
     postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
+    use_wandb: bool = True,
 ) -> None:
     kmeans_experiment_name = get_experiment_name(
         model_name=model_name,
@@ -1877,6 +1901,32 @@ def cluster_paths_main(
     os.makedirs(save_dir, exist_ok=True)
 
     logger.trace(f"Save directory: {save_dir}")
+
+    # Initialize wandb only from rank 0
+    current_rank = get_rank()
+    if use_wandb and current_rank == 0:
+        wandb.init(
+            project="moe-router-study-kmeans",
+            name=kmeans_experiment_name,
+            config={
+                "model_name": model_name,
+                "dataset_name": dataset_name,
+                "activation_dim": activation_dim,
+                "k_values": k,
+                "batch_size": batch_size,
+                "max_iters": max_iters,
+                "seed": seed,
+                "tokens_per_file": tokens_per_file,
+                "minibatch_size": minibatch_size,
+                "centroid_minibatch_size": centroid_minibatch_size,
+                "assignment_minibatch_size": assignment_minibatch_size,
+                "save_every": save_every,
+                "validate_every": validate_every,
+                "device_type": device_type,
+                "postprocessor": postprocessor.value if hasattr(postprocessor, "value") else str(postprocessor),
+            },
+        )
+        logger.info(f"Initialized wandb with run name: {kmeans_experiment_name}")
 
     centroids, top_k, losses, num_layers, num_experts = kmeans_manhattan(
         activations=activations,
@@ -1928,6 +1978,11 @@ def cluster_paths_main(
         with open(out_metadata_path, "w") as f:
             yaml.dump(out_metadata, f)
 
+        # Finish wandb run
+        if use_wandb and wandb.run is not None:
+            wandb.finish()
+            logger.info("Finished wandb run")
+
         logger.info("done :)")
 
 
@@ -1952,6 +2007,7 @@ def cluster_paths(
     num_workers: int = 64,
     device_type: DeviceType = "cuda",
     postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
+    use_wandb: bool = True,
 ) -> None:
     print(f"Running with log level: {log_level}")
 
@@ -2037,6 +2093,7 @@ def cluster_paths(
         log_level_numeric=log_level_numeric,
         device_type=device_type,
         postprocessor=postprocessor,
+        use_wandb=use_wandb,
     )
 
 
@@ -2062,6 +2119,7 @@ def main(
     num_workers: int = 64,
     device_type: str = "cuda",
     postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
+    use_wandb: bool = True,
 ) -> None:
     cluster_paths(
         model_name,
@@ -2084,6 +2142,7 @@ def main(
         num_workers=num_workers,
         device_type=assert_device_type(device_type),
         postprocessor=postprocessor,
+        use_wandb=use_wandb,
     )
 
 
