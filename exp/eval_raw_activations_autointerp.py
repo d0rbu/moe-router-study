@@ -1,11 +1,19 @@
+"""
+SAEBench autointerp evaluation for raw model activations.
+
+This script evaluates raw model activations from specified layers and activation types
+by collecting activations directly from layers and running autointerp evaluation on them.
+Based on exp/autointerp_saebench.py but adapted for raw activations instead of router paths.
+"""
+
 import asyncio
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from datetime import datetime
 import gc
 import os
 import random
 import sys
-from typing import Any
+from typing import Any, cast
 
 from loguru import logger
 from nnterp import StandardizedTransformer
@@ -30,246 +38,192 @@ from sae_bench.sae_bench_utils.dataset_utils import (
 from tabulate import tabulate
 import torch as th
 from tqdm import tqdm
-from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
+from transformers import PretrainedConfig, PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from core.memory import clear_memory
 from core.model import get_model_config
-from core.moe import RouterLogitsPostprocessor, get_postprocessor
 from core.type import assert_type
 from exp import MODEL_DIRNAME
+from exp.autointerp_saebench import Example
+from exp.get_activations import ActivationKeys
 
 
-@dataclass
-class Paths:
-    data: th.Tensor  # (num_centroids, num_layers * num_experts)
-    top_k: int
-    name: str
-    metadata: dict[str, Any]
-
-    @classmethod
-    def expert_aligned_paths(
-        cls,
-        top_k: int,
-        name: int,
-        num_total_experts: int,
-        metadata: dict[str, Any] | None = None,
-    ) -> "Paths":
-        if metadata is None:
-            metadata = {}
-
-        metadata.update(
-            {
-                "num_paths": num_total_experts,
-                "top_k": top_k,
-            },
-        )
-        return cls(
-            data=th.eye(num_total_experts),
-            top_k=top_k,
-            name=name,
-            metadata=metadata,
-        )
-
-
-@dataclass
-class PathsWithSparsity(Paths):
-    sparsity: th.Tensor  # (num_centroids)
-
-
-def collect_path_activations(
+def collect_raw_activations(
     tokenized_dataset: th.Tensor,
     model: StandardizedTransformer,
-    paths: Paths | PathsWithSparsity,
-    top_k: int,
+    activation_key: ActivationKeys,
+    layers: list[int],
     llm_batch_size: int,
     mask_bos_pad_eos_tokens: bool = False,
-    selected_paths: list[int] | None = None,
+    selected_features: list[int] | None = None,
     activation_dtype: th.dtype | None = None,
-    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> th.Tensor:
-    """Collects path activations for a given set of tokens."""
-    path_acts = []
-    logits_postprocessor = get_postprocessor(postprocessor)
+    """Collects raw activations for a given set of tokens.
+
+    Args:
+        tokenized_dataset: Tokenized dataset (B, T)
+        model: Model to extract activations from
+        activation_key: Type of activation to extract
+        layers: List of layer indices to extract from
+        llm_batch_size: Batch size for processing
+        mask_bos_pad_eos_tokens: Whether to mask BOS/PAD/EOS tokens
+        selected_features: Optional list of feature indices to select
+        activation_dtype: Optional dtype to cast activations to
+
+    Returns:
+        Tensor of shape (B, T, F) where F is the total activation dimension
+    """
+    raw_acts = []
+    layers_sorted = sorted(layers)
 
     for batch_idx, tokens_BT in tqdm(
         enumerate(th.split(tokenized_dataset, llm_batch_size, dim=0)),
         total=tokenized_dataset.shape[0] // llm_batch_size,
-        desc="Collecting path activations",
+        desc="Collecting raw activations",
         leave=False,
     ):
-        router_logits_set = []
+        layer_activations = []
 
-        # use trace context manager to capture router outputs
+        # Use trace context manager to capture activations
         with model.trace(tokens_BT):
-            # extract activations for each layer
+            # Extract activations for each specified layer
             for layer_idx in tqdm(
-                model.layers_with_routers,
+                layers_sorted,
                 desc=f"Batch {batch_idx}",
-                total=len(model.layers_with_routers),
+                total=len(layers_sorted),
                 leave=False,
             ):
-                router_output = model.routers_output[layer_idx]
-
-                # Handle different router output formats
-                if isinstance(router_output, tuple):
-                    if len(router_output) == 2:
-                        router_scores, _router_indices = router_output
-                    else:
+                # Extract activation based on type
+                match activation_key:
+                    case ActivationKeys.LAYER_OUTPUT:
+                        activation = model.layers_output[layer_idx].save()
+                    case ActivationKeys.MLP_OUTPUT:
+                        activation = model.mlps_output[layer_idx].save()
+                    case ActivationKeys.ATTN_OUTPUT:
+                        activation = model.attentions_output[layer_idx].save()
+                    case _:
                         raise ValueError(
-                            f"Found tuple of length {len(router_output)} for router output at layer {layer_idx}"
+                            f"Unsupported activation key: {activation_key}"
                         )
-                else:
-                    router_scores = router_output
-                logits = router_scores.save()
 
-                router_logits_set.append(logits)
+                layer_activations.append(activation)
 
-        # (B, T, L, E)
-        router_logits = th.cat(router_logits_set, dim=-2)
+        # Concatenate activations across layers: (B, T, sum(hidden_sizes))
+        concat_activations = th.cat(layer_activations, dim=-1)
 
-        router_paths = logits_postprocessor(router_logits, top_k)
-
-        # (B, T, L, E) -> (B, T, L * E)
-        router_paths_BTP = router_paths.view(*tokens_BT.shape, -1)
-
-        # (B, T, L * E) @ (L * E, F) -> (B, T, F)
-        router_paths_BTF = router_paths_BTP @ paths.data.T
-
-        del router_paths, router_paths_BTP
-
-        if selected_paths is not None:
-            router_paths_BTF = router_paths_BTF[:, :, selected_paths]
+        if selected_features is not None:
+            concat_activations = concat_activations[:, :, selected_features]
 
         if mask_bos_pad_eos_tokens:
             attn_mask_BT = get_bos_pad_eos_mask(tokens_BT, model.tokenizer)
         else:
             attn_mask_BT = th.ones_like(tokens_BT, dtype=th.bool)
 
-        attn_mask_BT = attn_mask_BT.to(device=router_paths_BTF.device)
+        attn_mask_BT = attn_mask_BT.to(device=concat_activations.device)
 
-        router_paths_BTF = router_paths_BTF * attn_mask_BT[:, :, None]
+        concat_activations = concat_activations * attn_mask_BT[:, :, None]
 
         if activation_dtype is not None:
-            router_paths_BTF = router_paths_BTF.to(dtype=activation_dtype)
+            concat_activations = concat_activations.to(dtype=activation_dtype)
 
-        path_acts.append(router_paths_BTF)
+        raw_acts.append(concat_activations)
 
-    all_path_acts_BTF = th.cat(path_acts, dim=0)
-    return all_path_acts_BTF
+    all_raw_acts_BTF = th.cat(raw_acts, dim=0)
+    return all_raw_acts_BTF
 
 
 def get_feature_activation_sparsity(
     tokens: th.Tensor,  # dataset_size x seq_len
     model: StandardizedTransformer,
-    paths: th.Tensor,
-    top_k: int,
+    activation_key: ActivationKeys,
+    layers: list[int],
     batch_size: int,
     mask_bos_pad_eos_tokens: bool = False,
-    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
-) -> th.Tensor:  # num_paths
-    """Get the activation sparsity for each path."""
-    device = paths.device
-    running_sum_F = th.zeros(paths.shape[0], dtype=th.float32, device=device)
+) -> th.Tensor:  # num_features
+    """Get the activation sparsity for each feature dimension."""
+    device = tokens.device
+
+    # Get total feature dimension by doing a dummy forward pass
+    dummy_tokens = tokens[:1, :1]
+    with th.no_grad(), model.trace(dummy_tokens):
+        layer_activations = []
+        for layer_idx in sorted(layers):
+            match activation_key:
+                case ActivationKeys.LAYER_OUTPUT:
+                    activation = model.layers_output[layer_idx].save()
+                case ActivationKeys.MLP_OUTPUT:
+                    activation = model.mlps_output[layer_idx].save()
+                case ActivationKeys.ATTN_OUTPUT:
+                    activation = model.attentions_output[layer_idx].save()
+                case _:
+                    raise ValueError(f"Unsupported activation key: {activation_key}")
+            layer_activations.append(activation)
+        concat_activations = th.cat(layer_activations, dim=-1)
+        num_features = concat_activations.shape[-1]
+
+    running_sum_F = th.zeros(num_features, dtype=th.float32, device=device)
     total_tokens = 0
-    logits_postprocessor = get_postprocessor(postprocessor)
 
     for batch_idx, tokens_BT in tqdm(
         enumerate(th.split(tokens, batch_size, dim=0)),
         total=tokens.shape[0] // batch_size,
-        desc="Getting path activation sparsity",
+        desc="Getting activation sparsity",
         leave=False,
     ):
-        router_logits_set = []
+        layer_activations = []
 
         with model.trace(tokens_BT):
             for layer_idx in tqdm(
-                model.layers_with_routers,
+                sorted(layers),
                 desc=f"Batch {batch_idx}",
-                total=len(model.layers_with_routers),
+                total=len(layers),
                 leave=False,
             ):
-                router_output = model.routers_output[layer_idx]
-
-                # Handle different router output formats
-                if isinstance(router_output, tuple):
-                    if len(router_output) == 2:
-                        router_scores, _router_indices = router_output
-                    else:
+                match activation_key:
+                    case ActivationKeys.LAYER_OUTPUT:
+                        activation = model.layers_output[layer_idx].save()
+                    case ActivationKeys.MLP_OUTPUT:
+                        activation = model.mlps_output[layer_idx].save()
+                    case ActivationKeys.ATTN_OUTPUT:
+                        activation = model.attentions_output[layer_idx].save()
+                    case _:
                         raise ValueError(
-                            f"Found tuple of length {len(router_output)} for router output at layer {layer_idx}"
+                            f"Unsupported activation key: {activation_key}"
                         )
-                else:
-                    router_scores = router_output
-                logits = router_scores.save()
+                layer_activations.append(activation)
 
-                router_logits_set.append(logits)
-
-        router_logits = th.cat(router_logits_set, dim=-2)
-
-        router_paths = logits_postprocessor(router_logits, top_k)
-
-        router_paths_BTP = router_paths.view(*tokens_BT.shape, -1)
-
-        # one-hot encode the closest path to each token
-        # (B, T, L * E) . (F, L * E) -> (B, T, F)
-        distances = th.cdist(router_paths_BTP.float(), paths.float(), p=1)
-        # (B, T, F) -> (B, T, 1)
-        closest_paths = th.argmin(distances, dim=-1, keepdim=True)
-        router_paths_BTF = th.zeros_like(distances)
-        router_paths_BTF.scatter_(-1, closest_paths, 1)
-
-        del distances, closest_paths
+        concat_activations_BTF = th.cat(layer_activations, dim=-1)
 
         if mask_bos_pad_eos_tokens:
             attn_mask_BT = get_bos_pad_eos_mask(tokens_BT, model.tokenizer)
         else:
             attn_mask_BT = th.ones_like(tokens_BT, dtype=th.bool)
 
-        attn_mask_BT = attn_mask_BT.to(device=router_paths_BTF.device)
+        attn_mask_BT = attn_mask_BT.to(device=concat_activations_BTF.device)
 
-        router_paths_BTF = router_paths_BTF * attn_mask_BT[:, :, None]
+        concat_activations_BTF = concat_activations_BTF * attn_mask_BT[:, :, None]
         total_tokens += attn_mask_BT.sum().item()
 
-        running_sum_F += th.sum(router_paths_BTF, dim=(0, 1))
+        # Count non-zero activations
+        running_sum_F += (concat_activations_BTF != 0).float().sum(dim=(0, 1))
 
     return running_sum_F / total_tokens
 
 
-class Example(autointerp.Example):
-    def __init__(
-        self,
-        toks: list[int],
-        str_toks: list[str],
-        acts: list[float],
-        act_threshold: float,
-    ):
-        assert len(toks) == len(str_toks) and len(toks) == len(acts), (
-            f"Lengths of toks, str_toks, and acts must match: {len(toks)}, {len(str_toks)}, {len(acts)}"
-        )
-
-        self.toks = toks
-        self.str_toks = str_toks
-        self.acts = acts
-        self.act_threshold = act_threshold
-        self.toks_are_active = [act > act_threshold for act in self.acts]
-        self.is_active = any(
-            self.toks_are_active
-        )  # this is what we predict in the scoring phase
-
-
-class PathAutoInterp(autointerp.AutoInterp):
+class RawActivationsAutoInterp(autointerp.AutoInterp):
     """
-    This is a start-to-end class for generating explanations and optionally scores. It's easiest to implement it as a
-    single class for the time being because there's data we'll need to fetch that'll be used in both the generation and
-    scoring phases.
+    AutoInterp implementation for raw activations.
+
+    This collects raw activations from the model and generates explanations
+    for individual feature dimensions in the concatenated activation space.
     """
 
     def __init__(
         self,
         cfg: AutoInterpEvalConfig,
         model: StandardizedTransformer,
-        paths: Paths,
-        top_k: int,
+        activation_key: ActivationKeys,
+        layers: list[int],
         tokenized_dataset: th.Tensor,
         sparsity: th.Tensor,
         device: str,
@@ -277,11 +231,12 @@ class PathAutoInterp(autointerp.AutoInterp):
     ):
         self.cfg = cfg
         self.model: StandardizedTransformer = model
-        self.paths: Paths = paths
-        self.top_k = top_k
+        self.activation_key = activation_key
+        self.layers = layers
         self.tokenized_dataset = tokenized_dataset
         self.device = device
         self.api_key = api_key
+
         if cfg.latents is not None:
             self.latents = cfg.latents
         else:
@@ -309,16 +264,16 @@ class PathAutoInterp(autointerp.AutoInterp):
         """
         dataset_size, seq_len = self.tokenized_dataset.shape
 
-        # (B, L * E)
-        acts = collect_path_activations(
+        # Collect raw activations (B, T, F)
+        acts = collect_raw_activations(
             self.tokenized_dataset,
             self.model,
-            self.paths,
-            self.top_k,
+            self.activation_key,
+            self.layers,
             self.cfg.llm_batch_size,
             mask_bos_pad_eos_tokens=True,
-            selected_paths=self.latents,
-            activation_dtype=th.bfloat16,  # reduce memory usage, we don't need full precision when sampling activations
+            selected_features=self.latents,
+            activation_dtype=th.bfloat16,  # reduce memory usage
         )
 
         generation_examples = {}
@@ -447,9 +402,10 @@ class PathAutoInterp(autointerp.AutoInterp):
         return generation_examples, scoring_examples
 
 
-def run_eval_paths(
+def run_eval_raw_activations(
     config: AutoInterpEvalConfig,
-    paths: Paths | PathsWithSparsity,
+    activation_key: ActivationKeys,
+    layers: list[int],
     model: StandardizedTransformer,
     device: str,
     artifacts_folder: str,
@@ -478,30 +434,22 @@ def run_eval_paths(
 
     print(f"Loaded tokenized dataset of shape {tokenized_dataset.shape}")
 
-    if isinstance(paths, Paths):
-        sparsity = get_feature_activation_sparsity(
-            tokenized_dataset,
-            model,
-            paths.data,
-            paths.top_k,
-            config.llm_batch_size,
-            mask_bos_pad_eos_tokens=True,
-        )
-        paths = PathsWithSparsity(
-            data=paths.data,
-            top_k=paths.top_k,
-            name=paths.name,
-            metadata=paths.metadata,
-            sparsity=sparsity,
-        )
+    sparsity = get_feature_activation_sparsity(
+        tokenized_dataset,
+        model,
+        activation_key,
+        layers,
+        config.llm_batch_size,
+        mask_bos_pad_eos_tokens=True,
+    )
 
-    autointerp_runner = PathAutoInterp(
+    autointerp_runner = RawActivationsAutoInterp(
         cfg=config,
         model=model,
-        paths=paths,
-        top_k=paths.top_k,
+        activation_key=activation_key,
+        layers=layers,
         tokenized_dataset=tokenized_dataset,
-        sparsity=paths.sparsity,
+        sparsity=sparsity,
         api_key=api_key,
         device=device,
     )
@@ -512,7 +460,8 @@ def run_eval_paths(
 
 def run_eval(
     config: AutoInterpEvalConfig,
-    selected_paths_set: list[Paths | PathsWithSparsity],
+    activation_key: ActivationKeys,
+    layers: list[int],
     device: str,
     api_key: str,
     output_path: str,
@@ -553,81 +502,84 @@ def run_eval(
         torch_dtype=llm_dtype,
     )
 
-    for paths_with_metadata in tqdm(
-        selected_paths_set,
-        total=len(selected_paths_set),
-        desc="Autointerp",
-    ):
-        sae_result_path = os.path.join(
-            output_path, f"{paths_with_metadata.name}_eval_results.json"
+    layers_str = "_".join(map(str, sorted(layers)))
+    name = f"raw_{activation_key}_layers_{layers_str}"
+
+    # Get total feature dimension
+    total_dim = layers * cast("PretrainedConfig", model.config).d_model
+
+    sae_result_path = os.path.join(output_path, f"{name}_eval_results.json")
+
+    if os.path.exists(sae_result_path) and not force_rerun:
+        print(f"Skipping {name} as results already exist")
+        return results_dict
+
+    artifacts_folder = os.path.join(artifacts_path, EVAL_TYPE_ID_AUTOINTERP)
+
+    raw_eval_result = run_eval_raw_activations(
+        config, activation_key, layers, model, device, artifacts_folder, api_key, None
+    )
+
+    # Save nicely formatted logs to a text file, helpful for debugging.
+    if save_logs_path is not None:
+        # Get summary results for all latents, as well logs for the best and worst-scoring latents
+        headers = [
+            "latent",
+            "explanation",
+            "predictions",
+            "correct seqs",
+            "score",
+        ]
+        logs = "Summary table:\n" + tabulate(
+            [
+                [raw_eval_result[latent][h] for h in headers]
+                for latent in raw_eval_result
+            ],
+            headers=headers,
+            tablefmt="simple_outline",
         )
+        worst_result = min(raw_eval_result.values(), key=lambda x: x["score"])
+        best_result = max(raw_eval_result.values(), key=lambda x: x["score"])
+        logs += f"\n\nWorst scoring idx {worst_result['latent']}, score = {worst_result['score']}\n{worst_result['logs']}"
+        logs += f"\n\nBest scoring idx {best_result['latent']}, score = {best_result['score']}\n{best_result['logs']}"
+        # Save the results to a file
+        with open(save_logs_path, "a") as f:
+            f.write(logs)
 
-        if os.path.exists(sae_result_path) and not force_rerun:
-            print(f"Skipping {paths_with_metadata.name} as results already exist")
-            continue
+    # Put important results into the results dict
+    all_scores = [r["score"] for r in raw_eval_result.values()]
 
-        artifacts_folder = os.path.join(artifacts_path, EVAL_TYPE_ID_AUTOINTERP)
+    all_scores_tensor = th.tensor(all_scores)
+    score = all_scores_tensor.mean().item()
+    std_dev = all_scores_tensor.std().item()
 
-        paths_eval_result = run_eval_paths(
-            config, paths_with_metadata, model, device, artifacts_folder, api_key, None
-        )
-
-        # Save nicely formatted logs to a text file, helpful for debugging.
-        if save_logs_path is not None:
-            # Get summary results for all latents, as well logs for the best and worst-scoring latents
-            headers = [
-                "latent",
-                "explanation",
-                "predictions",
-                "correct seqs",
-                "score",
-            ]
-            logs = "Summary table:\n" + tabulate(
-                [
-                    [paths_eval_result[latent][h] for h in headers]
-                    for latent in paths_eval_result
-                ],
-                headers=headers,
-                tablefmt="simple_outline",
+    eval_output = AutoInterpEvalOutput(
+        eval_config=config,
+        eval_id=eval_instance_id,
+        datetime_epoch_millis=int(datetime.now().timestamp() * 1000),
+        eval_result_metrics=AutoInterpMetricCategories(
+            autointerp=AutoInterpMetrics(
+                autointerp_score=score, autointerp_std_dev=std_dev
             )
-            worst_result = min(paths_eval_result.values(), key=lambda x: x["score"])
-            best_result = max(paths_eval_result.values(), key=lambda x: x["score"])
-            logs += f"\n\nWorst scoring idx {worst_result['latent']}, score = {worst_result['score']}\n{worst_result['logs']}"
-            logs += f"\n\nBest scoring idx {best_result['latent']}, score = {best_result['score']}\n{best_result['logs']}"
-            # Save the results to a file
-            with open(save_logs_path, "a") as f:
-                f.write(logs)
+        ),
+    )
+    eval_output.eval_result_details = []
+    eval_output.eval_result_unstructured = raw_eval_result
+    eval_output.sae_bench_commit_hash = sae_bench_commit_hash
+    eval_output.sae_lens_id = "raw_activations"
+    eval_output.sae_lens_release_id = name
+    eval_output.sae_lens_version = sae_lens_version
+    eval_output.sae_cfg_dict = {
+        "activation_key": str(activation_key),
+        "layers": sorted(layers),
+        "total_dim": total_dim,
+    }
 
-        # Put important results into the results dict
-        all_scores = [r["score"] for r in paths_eval_result.values()]
+    results_dict[name] = asdict(eval_output)
 
-        all_scores_tensor = th.tensor(all_scores)
-        score = all_scores_tensor.mean().item()
-        std_dev = all_scores_tensor.std().item()
+    eval_output.to_json_file(sae_result_path, indent=2)
 
-        eval_output = AutoInterpEvalOutput(
-            eval_config=config,
-            eval_id=eval_instance_id,
-            datetime_epoch_millis=int(datetime.now().timestamp() * 1000),
-            eval_result_metrics=AutoInterpMetricCategories(
-                autointerp=AutoInterpMetrics(
-                    autointerp_score=score, autointerp_std_dev=std_dev
-                )
-            ),
-        )
-        eval_output.eval_result_details = []
-        eval_output.eval_result_unstructured = paths_eval_result
-        eval_output.sae_bench_commit_hash = sae_bench_commit_hash
-        eval_output.sae_lens_id = "paths"
-        eval_output.sae_lens_release_id = paths_with_metadata.name
-        eval_output.sae_lens_version = sae_lens_version
-        eval_output.sae_cfg_dict = paths_with_metadata.metadata
-
-        results_dict[f"{paths_with_metadata.name}"] = asdict(eval_output)
-
-        eval_output.to_json_file(sae_result_path, indent=2)
-
-        gc.collect()
-        clear_memory()
+    gc.collect()
+    clear_memory()
 
     return results_dict
