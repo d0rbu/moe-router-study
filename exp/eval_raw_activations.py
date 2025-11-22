@@ -64,7 +64,9 @@ def run_intruder_eval(
 ) -> bool:
     """Run intruder evaluation on raw activations."""
     layers_str = "_".join(map(str, sorted(layers)))
-    logger.info(f"Running intruder evaluation on raw_{activation_key}_layers_{layers_str}")
+    logger.info(
+        f"Running intruder evaluation on raw_{activation_key}_layers_{layers_str}"
+    )
 
     cmd = [
         "uv",
@@ -359,7 +361,9 @@ def eval_raw_activations(
             device = general_utils.setup_environment()
             sparse_probing_eval_dir = EVAL_DIRS["sparse_probing"]
             sparse_probing_eval_dir = os.path.join(OUTPUT_DIR, sparse_probing_eval_dir)
-            logger.trace(f"Running sparse probing evaluation in {sparse_probing_eval_dir}")
+            logger.trace(
+                f"Running sparse probing evaluation in {sparse_probing_eval_dir}"
+            )
             run_sparse_probing_eval(
                 config=SparseProbingEvalConfig(
                     model_name=model_name,

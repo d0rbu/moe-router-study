@@ -947,7 +947,9 @@ def get_router_activations(
 
     if world_size > 1:
         dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
-        logger.debug(f"Initialized NCCL process group (rank={rank}, world_size={world_size})")
+        logger.debug(
+            f"Initialized NCCL process group (rank={rank}, world_size={world_size})"
+        )
     else:
         logger.debug("Running in non-distributed mode (world_size=1)")
 

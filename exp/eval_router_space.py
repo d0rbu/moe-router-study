@@ -79,7 +79,9 @@ def eval_router_space(
     activation_dim = num_layers * num_experts
     top_k = model.model.config.num_experts_per_tok
 
-    logger.info(f"Architecture: {num_layers} layers, {num_experts} experts, top_k={top_k}")
+    logger.info(
+        f"Architecture: {num_layers} layers, {num_experts} experts, top_k={top_k}"
+    )
 
     # Clean up model
     del model

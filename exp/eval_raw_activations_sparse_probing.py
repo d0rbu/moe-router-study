@@ -243,7 +243,11 @@ def run_eval_single_dataset(
     per_class_results_dict = {}
 
     layers_str = "_".join(map(str, sorted(layers)))
-    activations_filename = f"{dataset_name}_{activation_key}_layers_{layers_str}_activations.pt".replace("/", "_")
+    activations_filename = (
+        f"{dataset_name}_{activation_key}_layers_{layers_str}_activations.pt".replace(
+            "/", "_"
+        )
+    )
 
     activations_path = os.path.join(artifacts_folder, activations_filename)
 
@@ -335,7 +339,9 @@ def run_eval_raw_activations(
     device: str,
     artifacts_folder: str,
     save_activations: bool = True,
-) -> tuple[dict[str, int | float | DatasetResults], dict[str, dict[str, DatasetResults]]]:
+) -> tuple[
+    dict[str, int | float | DatasetResults], dict[str, dict[str, DatasetResults]]
+]:
     """
     By default, we save activations for all datasets, and then reuse them for different evaluations.
     This is important to avoid recomputing activations, and to ensure that the same activations
@@ -433,9 +439,7 @@ def run_eval(
     layers_str = "_".join(map(str, sorted(layers)))
     name = f"raw_{activation_key}_layers_{layers_str}"
 
-    sae_result_path = os.path.join(
-        output_path, f"{name}_eval_results.json"
-    )
+    sae_result_path = os.path.join(output_path, f"{name}_eval_results.json")
 
     if os.path.exists(sae_result_path) and not force_rerun:
         print(f"Skipping {name} as results already exist")
