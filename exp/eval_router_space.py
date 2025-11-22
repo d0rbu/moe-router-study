@@ -7,11 +7,13 @@ and runs eval_all_paths on it to evaluate the raw MoE router output space.
 
 import os
 import sys
+from typing import cast
 
 import arguably
 from loguru import logger
 from nnterp import StandardizedTransformer
 import torch as th
+from transformers import PretrainedConfig
 import yaml
 
 from core.dtype import get_dtype
@@ -75,9 +77,15 @@ def eval_router_space(
 
     # Get architecture info
     num_layers = len(model.layers_with_routers)
-    num_experts = model.model.config.num_experts
+    model_config = cast("PretrainedConfig", model.config)
+    num_experts = model_config.num_experts
+
+    assert isinstance(num_experts, int), f"num_experts must be an integer, got {type(num_experts)}"
+
     activation_dim = num_layers * num_experts
-    top_k = model.model.config.num_experts_per_tok
+    top_k = model_config.num_experts_per_tok
+
+    assert isinstance(top_k, int), f"top_k must be an integer, got {type(top_k)}"
 
     logger.info(
         f"Architecture: {num_layers} layers, {num_experts} experts, top_k={top_k}"

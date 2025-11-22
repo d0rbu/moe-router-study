@@ -26,7 +26,7 @@ from transformers import AutoConfig
 from core.dtype import get_dtype
 from core.model import get_model_config
 from exp import OUTPUT_DIR
-from exp.eval_raw_activations_saebench import run_eval as run_autointerp_eval
+from exp.eval_raw_activations_autointerp import run_eval as run_autointerp_eval
 from exp.eval_raw_activations_sparse_probing import run_eval as run_sparse_probing_eval
 from exp.get_activations import ActivationKeys
 
