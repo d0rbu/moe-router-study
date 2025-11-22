@@ -30,7 +30,9 @@ from delphi.utils import load_tokenized_data  # type: ignore
 from dictionary_learning.utils import load_dictionary
 from loguru import logger
 from nnterp import StandardizedTransformer
+import numpy as np
 import orjson
+from safetensors.numpy import save_file
 import torch as th
 import torch.nn as nn
 from tqdm import tqdm
@@ -306,6 +308,80 @@ class LatentPathsCache(LatentCache):
 
         logger.info(f"Total tokens processed: {total_tokens:,}")
         self.cache.save()
+
+    def _generate_split_indices(self, n_splits: int) -> dict[str, list[tuple[th.Tensor, th.Tensor]]]:
+        """
+        Generate indices for splitting the latent space.
+
+        Args:
+            n_splits: Number of splits to generate.
+
+        Returns:
+            list[tuple[int, int]]: list of start and end indices for each split.
+        """
+        width_splits: dict[str, list[tuple[th.Tensor, th.Tensor]]] = {}
+
+        for hookpoint in self.cache.latent_locations:
+            width = self.widths[hookpoint]
+            boundaries = th.linspace(0, width, steps=n_splits + 1).long()
+            width_splits[hookpoint] = list(zip(boundaries[:-1], boundaries[1:] - 1, strict=True))
+
+        return width_splits
+
+    def save_splits(self, n_splits: int, save_dir: Path, save_tokens: bool = True):
+        """
+        Save the cached non-zero latent activations and locations in splits.
+
+        Args:
+            n_splits: Number of splits to generate.
+            save_dir: Directory to save the splits.
+            save_tokens: Whether to save the dataset tokens used to generate the cache.
+            Defaults to True.
+        """
+        width_splits = self._generate_split_indices(n_splits)
+        for hookpoint in self.cache.latent_locations:
+            latent_locations = self.cache.latent_locations[hookpoint]
+            latent_activations = self.cache.latent_activations[hookpoint]
+            tokens = self.cache.tokens[hookpoint].numpy()
+            split_indices = width_splits[hookpoint]
+
+            latent_indices = latent_locations[:, 2]
+
+            for start, end in split_indices:
+                mask = (latent_indices >= start) & (latent_indices <= end)
+
+                masked_activations = latent_activations[mask].half().numpy()
+
+                masked_locations = latent_locations[mask].numpy()
+
+                # Optimization to reduce the max value to enable a smaller dtype
+                masked_locations[:, 2] = masked_locations[:, 2] - start.item()
+
+                if (
+                    masked_locations[:, 2].max() < 2**16
+                    and masked_locations[:, 0].max() < 2**16
+                ):
+                    masked_locations = masked_locations.astype(np.uint16)
+                else:
+                    masked_locations = masked_locations.astype(np.uint32)
+                    logger.warning(
+                        "Increasing the number of splits might reduce the"
+                        "memory usage of the cache."
+                    )
+
+                hookpoint_dir = save_dir / hookpoint
+                hookpoint_dir.mkdir(parents=True, exist_ok=True)
+
+                output_file = hookpoint_dir / f"{start}_{end}.safetensors"
+
+                split_data = {
+                    "locations": masked_locations,
+                    "activations": masked_activations,
+                }
+                if save_tokens:
+                    split_data["tokens"] = tokens
+
+                save_file(split_data, output_file)
 
     def generate_statistics_cache(self):
         """
