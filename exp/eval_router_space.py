@@ -39,6 +39,7 @@ def eval_router_space(
     intruder_n_tokens: int = 10_000_000,
     dtype: str = "bf16",
     seed: int = 0,
+    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.IDENTITY,
     log_level: str = "INFO",
 ) -> None:
     """
@@ -127,7 +128,7 @@ def eval_router_space(
         "top_k": top_k,
         "k": (activation_dim,),
         "kmeans_experiment_name": experiment_name,
-        "postprocessor": str(RouterLogitsPostprocessor.IDENTITY),
+        "postprocessor": postprocessor.value,
     }
     metadata_path = os.path.join(experiment_dir, METADATA_FILENAME)
     with open(metadata_path, "w") as f:
