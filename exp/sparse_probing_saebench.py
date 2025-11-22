@@ -267,7 +267,6 @@ def run_eval_single_dataset(
     device: str,
     artifacts_folder: str,
     save_activations: bool,
-    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> tuple[DatasetResults, dict[str, DatasetResults]]:
     """
     config: eval_config.EvalConfig contains all hyperparameters to reproduce the evaluation.
@@ -292,7 +291,7 @@ def run_eval_single_dataset(
             batch_size,
             paths.top_k,
             device,
-            postprocessor,
+            paths.postprocessor,
         )
         if config.lower_vram_usage:
             model = model.to(th.device("cpu"))
@@ -399,7 +398,6 @@ def run_eval_paths(
     device: str,
     artifacts_folder: str,
     save_activations: bool = True,
-    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> tuple[
     dict[str, int | float | DatasetResults], dict[str, dict[str, DatasetResults]]
 ]:
@@ -430,7 +428,6 @@ def run_eval_paths(
             device,
             artifacts_folder,
             save_activations,
-            postprocessor,
         )
 
     averaged_results: DatasetResults = average_results_dictionaries(
@@ -458,7 +455,6 @@ def run_eval(
     save_activations: bool = True,
     artifacts_path: str = "artifacts",
     log_level: str = "INFO",
-    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> dict[str, Any]:
     """
     If clean_up_activations is True, which means that the activations are deleted after the evaluation is done.
@@ -519,7 +515,6 @@ def run_eval(
             device,
             artifacts_folder,
             save_activations=save_activations,
-            postprocessor=postprocessor,
         )
 
         eval_output = SparseProbingEvalOutput(

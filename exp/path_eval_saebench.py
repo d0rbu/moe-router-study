@@ -14,6 +14,7 @@ import torch as th
 import yaml
 
 from core.dtype import get_dtype
+from core.moe import RouterLogitsPostprocessor
 from exp import OUTPUT_DIR
 from exp.autointerp_saebench import Paths
 from exp.autointerp_saebench import run_eval as run_autointerp_eval
@@ -69,6 +70,8 @@ def path_eval_saebench(
     with open(config_path) as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
 
+    postprocessor = RouterLogitsPostprocessor(config.get("postprocessor", RouterLogitsPostprocessor.MASKS))
+
     assert config["type"] == KMEANS_TYPE, (
         f"Experiment is not a kmeans experiment, type={config['type']}"
     )
@@ -97,6 +100,7 @@ def path_eval_saebench(
             data=centroids,
             top_k=top_k,
             name=f"paths_{centroids.shape[0]}_set_{i}",
+            postprocessor=postprocessor,
             metadata={
                 "num_paths": centroids.shape[0],
                 "top_k": top_k,

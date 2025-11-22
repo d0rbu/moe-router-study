@@ -125,7 +125,9 @@ def eval_router_space(
         "num_layers": num_layers,
         "num_experts": num_experts,
         "top_k": top_k,
-        "postprocessor": RouterLogitsPostprocessor.IDENTITY,
+        "k": (activation_dim,),
+        "kmeans_experiment_name": experiment_name,
+        "postprocessor": str(RouterLogitsPostprocessor.IDENTITY),
     }
     metadata_path = os.path.join(experiment_dir, METADATA_FILENAME)
     with open(metadata_path, "w") as f:

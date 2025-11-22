@@ -45,6 +45,7 @@ class Paths:
     top_k: int
     name: str
     metadata: dict[str, Any]
+    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS
 
     @classmethod
     def expert_aligned_paths(
@@ -53,6 +54,7 @@ class Paths:
         name: int,
         num_total_experts: int,
         metadata: dict[str, Any] | None = None,
+        postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
     ) -> "Paths":
         if metadata is None:
             metadata = {}
@@ -68,6 +70,7 @@ class Paths:
             top_k=top_k,
             name=name,
             metadata=metadata,
+            postprocessor=postprocessor,
         )
 
 
@@ -79,17 +82,16 @@ class PathsWithSparsity(Paths):
 def collect_path_activations(
     tokenized_dataset: th.Tensor,
     model: StandardizedTransformer,
-    paths: Paths | PathsWithSparsity,
+    paths: Paths,
     top_k: int,
     llm_batch_size: int,
     mask_bos_pad_eos_tokens: bool = False,
     selected_paths: list[int] | None = None,
     activation_dtype: th.dtype | None = None,
-    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> th.Tensor:
     """Collects path activations for a given set of tokens."""
     path_acts = []
-    logits_postprocessor = get_postprocessor(postprocessor)
+    logits_postprocessor = get_postprocessor(paths.postprocessor)
 
     for batch_idx, tokens_BT in tqdm(
         enumerate(th.split(tokenized_dataset, llm_batch_size, dim=0)),
