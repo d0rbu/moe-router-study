@@ -10,4 +10,5 @@ uv run python -m exp.eval_router_space eval-router-space \
     --intruder-n-tokens 1000000 \
     --postprocessor identity \
     --skip-autointerp \
+    --skip-sparse-probing \
     --log-level TRACE
