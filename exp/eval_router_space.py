@@ -7,13 +7,12 @@ and runs eval_all_paths on it to evaluate the raw MoE router output space.
 
 import os
 import sys
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import arguably
 from loguru import logger
 from nnterp import StandardizedTransformer
 import torch as th
-from transformers import PretrainedConfig
 import yaml
 
 from core.dtype import get_dtype
@@ -23,6 +22,8 @@ from exp import OUTPUT_DIR
 from exp.eval_all_paths import eval_all_paths
 from exp.kmeans import KMEANS_FILENAME, KMEANS_TYPE, METADATA_FILENAME
 
+if TYPE_CHECKING:
+    from transformers import PretrainedConfig
 
 @arguably.command()
 def eval_router_space(
