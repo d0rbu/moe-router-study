@@ -25,6 +25,7 @@ from exp.kmeans import KMEANS_FILENAME, KMEANS_TYPE, METADATA_FILENAME
 if TYPE_CHECKING:
     from transformers import PretrainedConfig
 
+
 @arguably.command()
 def eval_router_space(
     *,
@@ -81,7 +82,9 @@ def eval_router_space(
     model_config = cast("PretrainedConfig", model.config)
     num_experts = model_config.num_experts
 
-    assert isinstance(num_experts, int), f"num_experts must be an integer, got {type(num_experts)}"
+    assert isinstance(num_experts, int), (
+        f"num_experts must be an integer, got {type(num_experts)}"
+    )
 
     activation_dim = num_layers * num_experts
     top_k = model_config.num_experts_per_tok
