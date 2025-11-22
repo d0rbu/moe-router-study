@@ -8,7 +8,6 @@ types in a single script.
 
 from multiprocessing import cpu_count
 import os
-from pathlib import Path
 import subprocess
 import sys
 import traceback
@@ -22,7 +21,6 @@ from sae_bench.custom_saes.run_all_evals_dictionary_learning_saes import (
 from sae_bench.evals.autointerp.eval_config import AutoInterpEvalConfig
 from sae_bench.evals.sparse_probing.eval_config import SparseProbingEvalConfig
 from sae_bench.sae_bench_utils import general_utils
-import torch as th
 from transformers import AutoConfig
 
 from core.dtype import get_dtype
@@ -139,15 +137,15 @@ def run_intruder_eval(
             check=True,
             timeout=7200,  # 2 hour timeout
         )
-        logger.debug(f"✅ Intruder evaluation completed")
+        logger.debug("✅ Intruder evaluation completed")
         return True
     except subprocess.TimeoutExpired:
-        logger.error(f"❌ Intruder evaluation timed out (2 hour limit)")
+        logger.error("❌ Intruder evaluation timed out (2 hour limit)")
         return False
     except subprocess.CalledProcessError as exception:
         traceback_lines = traceback.format_tb(exception.__traceback__)
         traceback_str = "".join(traceback_lines)
-        logger.error(f"❌ Intruder evaluation failed")
+        logger.error("❌ Intruder evaluation failed")
         logger.error(f"Command: {' '.join(cmd)}")
         logger.error(f"Return code: {exception.returncode}")
         return False
@@ -197,12 +195,12 @@ def eval_raw_activations(
 ) -> None:
     """
     Evaluate raw model activations using all three evaluation types.
-    
+
     This unified script runs:
     1. Intruder detection evaluation
     2. SAEBench autointerp evaluation
     3. SAEBench sparse probing evaluation
-    
+
     Args:
         model_name: Model name to evaluate
         activation_key: Type of activation (layer_output, attn_output, mlp_output)

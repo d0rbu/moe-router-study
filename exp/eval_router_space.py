@@ -10,16 +10,16 @@ import sys
 
 import arguably
 from loguru import logger
+from nnterp import StandardizedTransformer
 import torch as th
 import yaml
 
 from core.dtype import get_dtype
-from core.moe import RouterLogitsPostprocessor
 from core.model import get_model_config
+from core.moe import RouterLogitsPostprocessor
 from exp import OUTPUT_DIR
 from exp.eval_all_paths import eval_all_paths
-from exp.kmeans import KMEANS_FILENAME, METADATA_FILENAME, KMEANS_TYPE
-from nnterp import StandardizedTransformer
+from exp.kmeans import KMEANS_FILENAME, KMEANS_TYPE, METADATA_FILENAME
 
 
 @arguably.command()
@@ -63,7 +63,7 @@ def eval_router_space(
     # Load model to get architecture info
     model_config = get_model_config(model_name)
     hf_name = model_config.hf_name
-    
+
     logger.info(f"Loading model {hf_name} to extract architecture info")
     model = StandardizedTransformer(
         hf_name,

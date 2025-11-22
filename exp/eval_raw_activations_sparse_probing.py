@@ -54,7 +54,6 @@ from core.memory import clear_memory
 from core.model import get_model_config
 from core.type import assert_type
 from exp import MODEL_DIRNAME
-from exp.autointerp_saebench import Paths
 from exp.get_activations import ActivationKeys
 
 
@@ -69,8 +68,8 @@ def get_raw_activations(
     show_progress: bool = True,
 ) -> th.Tensor:  # (B, T, F)
     """Collects raw activations from specified layers for a given set of tokens.
-    
-    VERY IMPORTANT NOTE: If mask_bos_pad_eos_tokens is True, we zero out activations 
+
+    VERY IMPORTANT NOTE: If mask_bos_pad_eos_tokens is True, we zero out activations
     for BOS, PAD, and EOS tokens. Later, we ignore zeroed activations.
     """
     logger.trace(f"Collecting raw activations for model: {model}")
@@ -138,11 +137,11 @@ def get_all_raw_activations(
     batch_size: int,
     mask_bos_pad_eos_tokens: bool = False,
 ) -> dict[str, th.Tensor]:  # (B, T, F)
-    """If we have a dictionary of tokenized inputs for different classes, 
+    """If we have a dictionary of tokenized inputs for different classes,
     this function collects activations for all classes.
-    
+
     We assume that the tokenized inputs have both the input_ids and attention_mask keys.
-    VERY IMPORTANT NOTE: We zero out masked token activations in this function. 
+    VERY IMPORTANT NOTE: We zero out masked token activations in this function.
     Later, we ignore zeroed activations.
     """
     all_classes_acts_BTF = {}
@@ -339,7 +338,7 @@ def run_eval_raw_activations(
 ) -> tuple[dict[str, int | float | DatasetResults], dict[str, dict[str, DatasetResults]]]:
     """
     By default, we save activations for all datasets, and then reuse them for different evaluations.
-    This is important to avoid recomputing activations, and to ensure that the same activations 
+    This is important to avoid recomputing activations, and to ensure that the same activations
     are used consistently. However, it can use 10s of GBs of disk space.
     """
 
@@ -433,7 +432,7 @@ def run_eval(
 
     layers_str = "_".join(map(str, sorted(layers)))
     name = f"raw_{activation_key}_layers_{layers_str}"
-    
+
     sae_result_path = os.path.join(
         output_path, f"{name}_eval_results.json"
     )

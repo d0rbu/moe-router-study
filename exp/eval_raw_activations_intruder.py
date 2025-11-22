@@ -11,15 +11,6 @@ from pathlib import Path
 import sys
 
 import arguably
-from delphi.__main__ import non_redundant_hookpoints
-from delphi.config import (
-    CacheConfig,
-    ConstructorConfig,
-    RunConfig,
-    SamplerConfig,
-)
-from delphi.latents.cache import InMemoryCache, LatentCache
-from delphi.log.result_analysis import log_results
 from loguru import logger
 from nnterp import StandardizedTransformer
 import torch as th
@@ -35,6 +26,15 @@ from core.device import DeviceType, get_backend
 from core.dtype import get_dtype
 from core.model import get_model_config
 from core.type import assert_type
+from delphi.__main__ import non_redundant_hookpoints
+from delphi.config import (
+    CacheConfig,
+    ConstructorConfig,
+    RunConfig,
+    SamplerConfig,
+)
+from delphi.latents.cache import InMemoryCache, LatentCache
+from delphi.log.result_analysis import log_results
 from exp import OUTPUT_DIR
 from exp.eval_intruder import (
     ACTIVATION_KEYS_TO_HOOKPOINT,
@@ -86,7 +86,7 @@ class RawActivationsCache(LatentCache):
                     hookpoint_template = ACTIVATION_KEYS_TO_HOOKPOINT[
                         self.activation_key
                     ]
-                    hookpoint_name = hookpoint_template.format(layer=layer_idx)
+                    hookpoint_template.format(layer=layer_idx)
 
                     # Extract activation based on type
                     match self.activation_key:
