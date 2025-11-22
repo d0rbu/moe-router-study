@@ -45,7 +45,7 @@ class Paths:
     top_k: int
     name: str
     metadata: dict[str, Any]
-    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS
+    postprocessor: RouterLogitsPostprocessor
 
     @classmethod
     def expert_aligned_paths(
@@ -494,6 +494,7 @@ def run_eval_paths(
             top_k=paths.top_k,
             name=paths.name,
             metadata=paths.metadata,
+            postprocessor=paths.postprocessor,
             sparsity=sparsity,
         )
 

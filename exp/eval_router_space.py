@@ -109,7 +109,7 @@ def eval_router_space(
     centroids_data = {
         "centroids": [identity_centroids],  # List with single identity matrix
         "top_k": top_k,
-        "losses": [0.0],  # No clustering loss for identity
+        "losses": th.tensor([0.0]),  # No clustering loss for identity
     }
 
     # Save centroids file

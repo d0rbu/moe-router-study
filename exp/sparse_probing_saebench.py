@@ -142,7 +142,7 @@ def get_all_llm_activations(
     VERY IMPORTANT NOTE: We zero out masked token activations in this function. Later, we ignore zeroed activations."""
     all_classes_acts_BTP = {}
 
-    for class_name in tokenized_inputs_dict:
+    for class_name in tqdm(tokenized_inputs_dict, desc="Collecting activations for all classes", total=len(tokenized_inputs_dict), leave=False):
         tokens = tokenized_inputs_dict[class_name]["input_ids"]
 
         acts_BTP = get_llm_activations(
