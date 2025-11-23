@@ -32,4 +32,4 @@ export WORLD_SIZE=$SLURM_NTASKS
 cd $SCRATCH/moe-router-study
 
 # Run the evaluation pipeline
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run python -m exp.eval_router_space eval-router-space --model-name olmoe-i --saebench-batchsize 64 --intruder-batchsize 16 --intruder-n-tokens 10000000 --log-level DEBUG
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run --active python -m exp.eval_router_space eval-router-space --model-name olmoe-i --saebench-batchsize 64 --intruder-batchsize 16 --intruder-n-tokens 10000000 --postprocessor identity --log-level DEBUG
