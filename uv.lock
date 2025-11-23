@@ -2408,6 +2408,7 @@ dependencies = [
     { name = "trackio" },
     { name = "transformer-lens" },
     { name = "transformers" },
+    { name = "triton" },
     { name = "wandb" },
 ]
 
@@ -2468,6 +2469,7 @@ requires-dist = [
     { name = "trackio", specifier = ">=0.1.0" },
     { name = "transformer-lens", git = "https://github.com/d0rbu/TransformerLens?branch=OLMo" },
     { name = "transformers", git = "https://github.com/huggingface/transformers.git" },
+    { name = "triton", specifier = ">=3.4.0" },
     { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.1a16" },
     { name = "wandb", specifier = ">=0.21.3" },
 ]
@@ -5114,7 +5116,7 @@ name = "triton"
 version = "3.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "setuptools", marker = "platform_machine != 'aarch64' and sys_platform == 'linux'" },
+    { name = "setuptools" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d0/66/b1eb52839f563623d185f0927eb3530ee4d5ffe9d377cdaf5346b306689e/triton-3.4.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:31c1d84a5c0ec2c0f8e8a072d7fd150cab84a9c239eaddc6706c081bfae4eb04", size = 155560068, upload-time = "2025-07-30T19:58:37.081Z" },
