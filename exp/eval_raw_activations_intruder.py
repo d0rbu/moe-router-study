@@ -78,16 +78,10 @@ class RawActivationsCache(LatentCache):
         ):
             total_tokens += tokens_per_batch
 
+            layer_activations: list[th.Tensor] = []
+
             with self.model.trace(batch):
-                layer_activations = []
-
                 for layer_idx in self.layers_sorted:
-                    # Get the hookpoint for this layer and activation type
-                    hookpoint_template = ACTIVATION_KEYS_TO_HOOKPOINT[
-                        self.activation_key
-                    ]
-                    hookpoint_template.format(layer=layer_idx)
-
                     # Extract activation based on type
                     match self.activation_key:
                         case ActivationKeys.LAYER_OUTPUT:
@@ -105,14 +99,14 @@ class RawActivationsCache(LatentCache):
 
                     layer_activations.append(activation)
 
-                # Concatenate activations across layers: (B, T, sum(hidden_sizes))
-                concat_activations = th.cat(layer_activations, dim=-1)
+            # Concatenate activations across layers: (B, T, sum(hidden_sizes))
+            concat_activations = th.cat(layer_activations, dim=-1)
 
-                # Create a synthetic hookpoint name for the concatenated activations
-                hookpoint = f"raw_{self.activation_key}_layers_{'_'.join(map(str, self.layers_sorted))}"
+            # Create a synthetic hookpoint name for the concatenated activations
+            hookpoint = f"raw_{self.activation_key}_layers_{'_'.join(map(str, self.layers_sorted))}"
 
-                self.cache.add(concat_activations, batch, batch_idx, hookpoint)
-                self.widths[hookpoint] = concat_activations.shape[2]
+            self.cache.add(concat_activations, batch, batch_idx, hookpoint)
+            self.widths[hookpoint] = concat_activations.shape[2]
 
         logger.info(f"Total tokens processed: {total_tokens:,}")
         self.cache.save()
@@ -187,7 +181,7 @@ def eval_raw_activations(
     seed: int = 0,
     hf_token: str = "",
     log_level: str = "INFO",
-    device_type: DeviceType = "cuda",
+    device_type: str = "cuda",
 ) -> None:
     """
     Evaluate raw model activations using intruder detection.

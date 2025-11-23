@@ -74,10 +74,13 @@ def run_intruder_eval(
         "python",
         "-m",
         "exp.eval_raw_activations_intruder",
+        "eval-raw-activations",
         "--model-name",
         model_name,
+        "--layers",
+        ",".join(map(str, layers)),
         "--activation-key",
-        str(activation_key),
+        str(activation_key).replace("_", "-"),
         "--model-dtype",
         model_dtype,
         "--dtype",
@@ -115,10 +118,6 @@ def run_intruder_eval(
         "--log-level",
         log_level,
     ]
-
-    # Add layers
-    for layer in layers:
-        cmd.extend(["--layers", str(layer)])
 
     # Add optional flags
     if load_in_8bit:
@@ -171,6 +170,8 @@ def eval_raw_activations(
     dtype: str = "bf16",
     ctxlen: int = 256,
     load_in_8bit: bool = False,
+    saebench_batchsize: int = 16,
+    lower_sparse_probing_vram_usage: bool = False,
     n_tokens: int = 10_000_000,
     batchsize: int = 512,
     n_latents: int = 1000,
@@ -205,7 +206,7 @@ def eval_raw_activations(
 
     Args:
         model_name: Model name to evaluate
-        activation_key: Type of activation (layer_output, attn_output, mlp_output)
+        activation_key: Type of activation (layer-output, attn-output, mlp-output)
         layers: List of layer indices to evaluate (if None, uses all layers)
         model_dtype: Model data type
         dtype: Activation data type
@@ -332,7 +333,7 @@ def eval_raw_activations(
                 config=AutoInterpEvalConfig(
                     model_name=model_name,
                     random_seed=seed,
-                    llm_batch_size=batchsize,
+                    llm_batch_size=saebench_batchsize,
                     llm_dtype=str_dtype,
                 ),
                 activation_key=activation_key,
@@ -369,6 +370,7 @@ def eval_raw_activations(
                     model_name=model_name,
                     random_seed=seed,
                     llm_dtype=str_dtype,
+                    lower_vram_usage=lower_sparse_probing_vram_usage,
                 ),
                 activation_key=activation_key,
                 layers=layers_sorted,

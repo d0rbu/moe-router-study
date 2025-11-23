@@ -66,6 +66,7 @@ def get_raw_activations(
     batch_size: int,
     mask_bos_pad_eos_tokens: bool = False,
     show_progress: bool = True,
+    lower_vram_usage: bool = False,
 ) -> th.Tensor:  # (B, T, F)
     """Collects raw activations from specified layers for a given set of tokens.
 
@@ -112,7 +113,7 @@ def get_raw_activations(
                             f"Unsupported activation key: {activation_key}"
                         )
 
-                layer_acts_list.append(activation)
+                layer_acts_list.append(activation.save())
 
         # Concatenate across layers: (B, T, sum(hidden_sizes))
         acts_BTF = th.cat(layer_acts_list, dim=-1)
@@ -120,6 +121,9 @@ def get_raw_activations(
         if mask_bos_pad_eos_tokens:
             attn_mask_BT = get_bos_pad_eos_mask(tokens_BT, model.tokenizer)
             acts_BTF *= attn_mask_BT[:, :, None]
+
+        if lower_vram_usage:
+            acts_BTF = acts_BTF.cpu()
 
         all_acts_BTF.append(acts_BTF)
 
@@ -136,6 +140,7 @@ def get_all_raw_activations(
     layers: list[int],
     batch_size: int,
     mask_bos_pad_eos_tokens: bool = False,
+    lower_vram_usage: bool = False,
 ) -> dict[str, th.Tensor]:  # (B, T, F)
     """If we have a dictionary of tokenized inputs for different classes,
     this function collects activations for all classes.
@@ -156,6 +161,7 @@ def get_all_raw_activations(
             layers=layers,
             batch_size=batch_size,
             mask_bos_pad_eos_tokens=mask_bos_pad_eos_tokens,
+            lower_vram_usage=lower_vram_usage,
         )
 
         all_classes_acts_BTF[class_name] = acts_BTF
@@ -171,6 +177,7 @@ def get_dataset_activations(
     layers: list[int],
     llm_batch_size: int,
     device: str,
+    lower_vram_usage: bool = False,
 ) -> tuple[dict[str, th.Tensor], dict[str, th.Tensor]]:
     train_data, test_data = get_multi_label_train_test_data(
         dataset_name,
@@ -207,6 +214,7 @@ def get_dataset_activations(
         layers=layers,
         batch_size=llm_batch_size,
         mask_bos_pad_eos_tokens=True,
+        lower_vram_usage=lower_vram_usage,
     )
     all_test_acts_BTF = get_all_raw_activations(
         test_data,
@@ -215,6 +223,7 @@ def get_dataset_activations(
         layers=layers,
         batch_size=llm_batch_size,
         mask_bos_pad_eos_tokens=True,
+        lower_vram_usage=lower_vram_usage,
     )
 
     return all_train_acts_BTF, all_test_acts_BTF
@@ -264,9 +273,8 @@ def run_eval_single_dataset(
             layers,
             batch_size,
             device,
+            lower_vram_usage=config.lower_vram_usage,
         )
-        if config.lower_vram_usage:
-            model = model.to(th.device("cpu"))
 
         all_train_acts_BF = create_meaned_model_activations(all_train_acts_BTF)
         all_test_acts_BF = create_meaned_model_activations(all_test_acts_BTF)
