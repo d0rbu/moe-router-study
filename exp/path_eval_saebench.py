@@ -70,7 +70,9 @@ def path_eval_saebench(
     with open(config_path) as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
 
-    postprocessor = RouterLogitsPostprocessor(config.get("postprocessor", RouterLogitsPostprocessor.MASKS))
+    postprocessor = RouterLogitsPostprocessor(
+        config.get("postprocessor", RouterLogitsPostprocessor.MASKS)
+    )
 
     assert config["type"] == KMEANS_TYPE, (
         f"Experiment is not a kmeans experiment, type={config['type']}"

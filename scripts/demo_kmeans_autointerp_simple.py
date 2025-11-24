@@ -100,21 +100,51 @@ def demo_validation_examples():
         {
             "text": "The quick brown fox jumps over the lazy dog.",
             "tokens": [464, 2068, 7586, 21831, 18045, 625, 262, 16931, 3290, 13],
-            "token_strings": ["The", " quick", " brown", " fox", " jumps", " over", " the", " lazy", " dog", "."],
+            "token_strings": [
+                "The",
+                " quick",
+                " brown",
+                " fox",
+                " jumps",
+                " over",
+                " the",
+                " lazy",
+                " dog",
+                ".",
+            ],
             "activation": 0.95,
             "token_position": 4,  # "jumps"
         },
         {
             "text": "She sells seashells by the seashore.",
             "tokens": [3347, 16417, 37127, 71, 416, 262, 40256, 13],
-            "token_strings": ["She", " sells", " seash", "ells", " by", " the", " seashore", "."],
+            "token_strings": [
+                "She",
+                " sells",
+                " seash",
+                "ells",
+                " by",
+                " the",
+                " seashore",
+                ".",
+            ],
             "activation": 0.87,
             "token_position": 1,  # "sells"
         },
         {
             "text": "Birds fly south for the winter.",
             "tokens": [33, 343, 82, 6574, 5366, 329, 262, 7374, 13],
-            "token_strings": ["B", "ir", "ds", " fly", " south", " for", " the", " winter", "."],
+            "token_strings": [
+                "B",
+                "ir",
+                "ds",
+                " fly",
+                " south",
+                " for",
+                " the",
+                " winter",
+                ".",
+            ],
             "activation": 0.82,
             "token_position": 3,  # "fly"
         },
@@ -125,7 +155,9 @@ def demo_validation_examples():
         activated_token = ex["token_strings"][ex["token_position"]]
         print(f"Example {i} (activation={ex['activation']:.2f}):")
         print(f"  Text: {ex['text']}")
-        print(f"  Activated token: '{activated_token}' at position {ex['token_position']}")
+        print(
+            f"  Activated token: '{activated_token}' at position {ex['token_position']}"
+        )
         print()
 
 
@@ -139,7 +171,18 @@ def demo_sentence_analysis_pipeline():
     print(f"Input sentence: {sentence}\n")
 
     print("Step 1: Tokenize the sentence")
-    tokens = ["The", " quick", " brown", " fox", " jumps", " over", " the", " lazy", " dog", "."]
+    tokens = [
+        "The",
+        " quick",
+        " brown",
+        " fox",
+        " jumps",
+        " over",
+        " the",
+        " lazy",
+        " dog",
+        ".",
+    ]
     print(f"  Tokens: {tokens}\n")
 
     print("Step 2: Run through model and extract activations")
@@ -162,7 +205,9 @@ def demo_sentence_analysis_pipeline():
     ]
 
     for i, assignment in enumerate(assignments):
-        print(f"  Token {i}: '{assignment['token']:10s}' → Centroid {assignment['centroid']} (dist={assignment['distance']:.2f})")
+        print(
+            f"  Token {i}: '{assignment['token']:10s}' → Centroid {assignment['centroid']} (dist={assignment['distance']:.2f})"
+        )
 
     print("\nStep 4: Get or generate explanations for unique centroids")
     unique_centroids = {0, 1, 2, 3, 5, 7, 8}
@@ -268,7 +313,9 @@ def demo_sentence_analysis_pipeline():
     ]
 
     print("\n" + "-" * 80)
-    print(f"{'Pos':<4} {'Token':<12} {'C-ID':<5} {'Conf':<6} {'Act':<7} {'Explanation'}")
+    print(
+        f"{'Pos':<4} {'Token':<12} {'C-ID':<5} {'Conf':<6} {'Act':<7} {'Explanation'}"
+    )
     print("-" * 80)
     for result in results:
         print(

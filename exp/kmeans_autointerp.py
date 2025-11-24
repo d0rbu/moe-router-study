@@ -125,7 +125,8 @@ class KMeansAutoInterp:
         cache_dir: str | Path,
         model: StandardizedTransformer,
         centroids: th.Tensor,  # (num_centroids, hidden_dim)
-        validation_activations: th.Tensor | None = None,  # (num_samples, seq_len, hidden_dim)
+        validation_activations: th.Tensor
+        | None = None,  # (num_samples, seq_len, hidden_dim)
         validation_tokens: th.Tensor | None = None,  # (num_samples, seq_len)
         layer_idx: int | None = None,
         activation_type: str = "layer_output",
@@ -261,10 +262,10 @@ class KMeansAutoInterp:
             highlighted_text = "".join(highlighted_tokens)
 
             example_texts.append(
-                f"Example {i+1} (activation={ex.activation:.3f}):\n{highlighted_text}"
+                f"Example {i + 1} (activation={ex.activation:.3f}):\n{highlighted_text}"
             )
 
-# TODO: Implement LLM-based explanation generation using the examples above
+        # TODO: Implement LLM-based explanation generation using the examples above
 
         # If no LLM client provided, return a simple heuristic explanation
         if llm_client is None:
@@ -301,9 +302,7 @@ class KMeansAutoInterp:
         # For now, returning heuristic explanation
         logger.warning("LLM client not fully implemented, using heuristic explanation")
 
-        explanation = (
-            f"Feature {centroid_id} activates on specific patterns in layer {self.layer_idx}"
-        )
+        explanation = f"Feature {centroid_id} activates on specific patterns in layer {self.layer_idx}"
         confidence = 0.5
 
         return CentroidExplanation(
@@ -485,7 +484,9 @@ class KMeansAutoInterp:
             Natural language interpretation of how the model processes this sentence
         """
         # Get token-level explanations
-        token_analyses = await self.analyze_sentence(sentence, k=k, llm_client=llm_client)
+        token_analyses = await self.analyze_sentence(
+            sentence, k=k, llm_client=llm_client
+        )
 
         # Format the analysis for the meta-model
         analysis_text = f"Sentence: {sentence}\n\nToken-by-token analysis:\n"
@@ -527,9 +528,7 @@ Provide a clear, concise interpretation (2-3 paragraphs).
 
             if len(centroid_counts) > 1:
                 most_used = max(centroid_counts.items(), key=lambda x: x[1])
-                summary += (
-                    f"Feature {most_used[0]} is most prominent, activating on {most_used[1]} tokens. "
-                )
+                summary += f"Feature {most_used[0]} is most prominent, activating on {most_used[1]} tokens. "
 
             avg_confidence = sum(a["confidence"] for a in token_analyses) / len(
                 token_analyses
@@ -547,6 +546,7 @@ Provide a clear, concise interpretation (2-3 paragraphs).
 
 
 # Utility functions for loading k-means results
+
 
 def load_kmeans_centroids(
     kmeans_path: str | Path,
@@ -608,7 +608,7 @@ async def run_sentence_analysis_example(
         hidden_dim = model.config.hidden_size
         num_centroids = 100
         centroids = th.randn(num_centroids, hidden_dim)
-# metadata = {"num_centroids": num_centroids, "hidden_dim": hidden_dim}  # unused for now
+    # metadata = {"num_centroids": num_centroids, "hidden_dim": hidden_dim}  # unused for now
 
     # Initialize autointerp system
     logger.info("Initializing KMeansAutoInterp")
