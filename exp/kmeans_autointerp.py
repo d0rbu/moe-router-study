@@ -15,9 +15,8 @@ import asyncio
 from dataclasses import asdict, dataclass
 from datetime import datetime
 import json
-import os
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from loguru import logger
 from nnterp import StandardizedTransformer
@@ -203,7 +202,7 @@ class KMeansAutoInterp:
         flat_indices = th.topk(-distances, k=min(k, distances.numel())).indices
 
         # Convert flat indices back to (sample_idx, token_idx)
-        num_samples, seq_len = validation_tokens.shape
+        _num_samples, seq_len = validation_tokens.shape
         sample_indices = flat_indices // seq_len
         token_indices = flat_indices % seq_len
 
@@ -265,20 +264,7 @@ class KMeansAutoInterp:
                 f"Example {i+1} (activation={ex.activation:.3f}):\n{highlighted_text}"
             )
 
-        prompt = f"""You are analyzing activations in a neural network. Below are the top examples where a specific feature (centroid {centroid_id}) activates most strongly. The activated token in each example is marked with **.
-
-{chr(10).join(example_texts)}
-
-Based on these examples, provide:
-1. A concise description (1-2 sentences) of what this feature represents
-2. A confidence score (0.0-1.0) indicating how confident you are in this explanation
-
-Respond in JSON format:
-{{
-    "explanation": "your explanation here",
-    "confidence": 0.8
-}}
-"""
+# TODO: Implement LLM-based explanation generation using the examples above
 
         # If no LLM client provided, return a simple heuristic explanation
         if llm_client is None:
@@ -604,7 +590,6 @@ async def run_sentence_analysis_example(
         centroids_path: Path to saved k-means centroids
         layer_idx: Which layer to analyze
     """
-    from core.model import get_model_config
 
     # Load model
     logger.info(f"Loading model: {model_name}")
@@ -616,14 +601,14 @@ async def run_sentence_analysis_example(
     # Load or create dummy centroids
     if centroids_path is not None:
         logger.info(f"Loading centroids from {centroids_path}")
-        centroids, metadata = load_kmeans_centroids(centroids_path)
+        centroids, _metadata = load_kmeans_centroids(centroids_path)
     else:
         logger.warning("No centroids provided, creating dummy centroids for demo")
         # Create dummy centroids for demonstration
         hidden_dim = model.config.hidden_size
         num_centroids = 100
         centroids = th.randn(num_centroids, hidden_dim)
-        metadata = {"num_centroids": num_centroids, "hidden_dim": hidden_dim}
+# metadata = {"num_centroids": num_centroids, "hidden_dim": hidden_dim}  # unused for now
 
     # Initialize autointerp system
     logger.info("Initializing KMeansAutoInterp")

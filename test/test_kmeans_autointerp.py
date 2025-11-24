@@ -1,6 +1,5 @@
 """Tests for k-means autointerpretability experiment."""
 
-import asyncio
 from pathlib import Path
 import shutil
 import tempfile

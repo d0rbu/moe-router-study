@@ -24,7 +24,7 @@ def demo_explanation_structure():
             "The cat sat on the mat.",
             "Hello, world!",
             "Is this working?",
-            "She said, \"Hello there!\"",
+            'She said, "Hello there!"',
             "What time is it?",
         ],
         "timestamp": "2024-01-01T12:00:00",
@@ -289,7 +289,7 @@ Meta-Interpretation:
 The model processes this sentence by activating distinct feature patterns for different
 linguistic categories:
 
-1. SYNTACTIC STRUCTURE: The sentence is clearly bounded by punctuation features 
+1. SYNTACTIC STRUCTURE: The sentence is clearly bounded by punctuation features
    (centroid 0, 0.95 confidence). Determiners "the" consistently activate centroid 2
    (0.88 confidence), showing stable article recognition.
 
