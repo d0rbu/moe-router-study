@@ -7,6 +7,7 @@ from sae_bench.custom_saes import run_all_evals_dictionary_learning_saes
 from sae_bench.sae_bench_utils import general_utils
 
 from core.dtype import get_dtype
+from core.model import get_model_config
 from exp import OUTPUT_DIR
 
 load_dotenv()
@@ -50,9 +51,13 @@ def main(
     logger.debug(f"Experiment directory path: {experiment_dir_path}")
     logger.debug(f"Eval types: {eval_types}")
 
+    model_config = get_model_config(model_name)
+    logger.debug(f"Model config: {model_config}")
+    logger.info(f"Using model: {model_config.hf_name}")
+
     run_all_evals_dictionary_learning_saes.run_evals(
         repo_id=experiment_dir,
-        model_name=model_name,
+        model_name=model_config.hf_name,
         sae_locations=sae_locations,
         llm_batch_size=batchsize,
         llm_dtype=str_dtype,
