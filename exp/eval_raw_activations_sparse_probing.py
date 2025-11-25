@@ -310,9 +310,9 @@ def run_eval_single_dataset(
         if save_activations:
             th.save(acts, activations_path)
     else:
-        if config.lower_vram_usage:
+        if config.lower_vram_usage and model.device != th.device("meta"):
             model = model.to(th.device("cpu"))
-        print(f"Loading activations from {activations_path}")
+        logger.info(f"Loading activations from {activations_path}")
         acts = th.load(activations_path)
         all_train_acts_BTF = acts["train"]
         all_test_acts_BTF = acts["test"]
@@ -450,7 +450,7 @@ def run_eval(
     sae_result_path = os.path.join(output_path, f"{name}_eval_results.json")
 
     if os.path.exists(sae_result_path) and not force_rerun:
-        print(f"Skipping {name} as results already exist")
+        logger.info(f"Skipping {name} as results already exist")
         return results_dict
 
     artifacts_folder = os.path.join(artifacts_path, EVAL_TYPE_ID_SPARSE_PROBING)
