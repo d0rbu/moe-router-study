@@ -14,6 +14,7 @@ import torch as th
 import yaml
 
 from core.dtype import get_dtype
+from core.model import get_model_config
 from core.moe import RouterLogitsPostprocessor
 from exp import OUTPUT_DIR
 from exp.autointerp_saebench import Paths
@@ -70,7 +71,9 @@ def path_eval_saebench(
     with open(config_path) as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
 
-    postprocessor = RouterLogitsPostprocessor(config.get("postprocessor", RouterLogitsPostprocessor.MASKS))
+    postprocessor = RouterLogitsPostprocessor(
+        config.get("postprocessor", RouterLogitsPostprocessor.MASKS)
+    )
 
     assert config["type"] == KMEANS_TYPE, (
         f"Experiment is not a kmeans experiment, type={config['type']}"
@@ -82,6 +85,10 @@ def path_eval_saebench(
         "Cannot skip both autointerp and sparse probing"
     )
     logger.trace(f"Using config: {config}")
+
+    model_config = get_model_config(model_name)
+    hf_name = model_config.hf_name
+    logger.debug(f"Using model hf_name: {hf_name}")
 
     paths_set = []
     kmeans_data = th.load(kmeans_data_path)
@@ -122,7 +129,7 @@ def path_eval_saebench(
         logger.trace(f"Running autointerp evaluation in {autointerp_eval_dir}")
         run_autointerp_eval(
             config=AutoInterpEvalConfig(
-                model_name=model_name,
+                model_name=hf_name,
                 random_seed=seed,
                 llm_batch_size=batchsize,
                 llm_dtype=str_dtype,
@@ -145,7 +152,7 @@ def path_eval_saebench(
         logger.trace(f"Running sparse probing evaluation in {sparse_probing_eval_dir}")
         run_sparse_probing_eval(
             config=SparseProbingEvalConfig(
-                model_name=model_name,
+                model_name=hf_name,
                 random_seed=seed,
                 llm_dtype=str_dtype,
             ),
