@@ -127,15 +127,15 @@ class ModelConfig:
     def get_checkpoint(
         self, step: int | None = None, num_tokens: int | None = None
     ) -> Checkpoint | None:
+        if step is None and num_tokens is None:
+            logger.warning(
+                "No step or num_tokens provided, returning latest checkpoint"
+            )
+            return self.latest_checkpoint
+
         # if we haven't fetched the checkpoints, do so now
         if not self.checkpoints and not self.eager_fetch:
             self.checkpoints = self.fetch_checkpoints()
-
-        if step is None and num_tokens is None:
-            logger.warning(
-                "No step or num_tokens provided, returning latest checkpoint or None"
-            )
-            return self.checkpoints[-1] if self.checkpoints else None
 
         if step is not None:
             checkpoints_matching_step = {
