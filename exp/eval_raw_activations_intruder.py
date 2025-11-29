@@ -22,7 +22,7 @@ from transformers import (
     PreTrainedTokenizerFast,
 )
 
-from core.device import DeviceType, get_backend
+from core.device import get_backend
 from core.dtype import get_dtype
 from core.model import get_model_config
 from core.type import assert_type
@@ -37,7 +37,6 @@ from delphi.latents.cache import InMemoryCache, LatentCache
 from delphi.log.result_analysis import log_results
 from exp import OUTPUT_DIR
 from exp.eval_intruder import (
-    ACTIVATION_KEYS_TO_HOOKPOINT,
     load_and_filter_tokens,
     process_cache,
 )

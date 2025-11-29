@@ -3,11 +3,13 @@ from collections.abc import Callable
 from functools import partial
 import json
 from multiprocessing import cpu_count
+import os
 from pathlib import Path
 import sys
 
 import arguably
 from dictionary_learning.utils import load_dictionary
+from dotenv import load_dotenv
 from loguru import logger
 from nnterp import StandardizedTransformer
 import numpy as np
@@ -53,6 +55,15 @@ from delphi.utils import load_tokenized_data  # type: ignore
 from exp import OUTPUT_DIR
 from exp.get_activations import ActivationKeys
 from exp.kmeans import KMEANS_FILENAME
+
+load_dotenv()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+
+
+if not OPENAI_API_KEY:
+    logger.error(
+        "OPENAI_API_KEY is not set, please set it as an environment variable or in a .env file"
+    )
 
 
 def dataset_postprocess(record: LatentRecord) -> LatentRecord:
