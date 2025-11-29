@@ -7,6 +7,7 @@ import random
 import sys
 from typing import Any
 
+from dotenv import load_dotenv
 from loguru import logger
 from nnterp import StandardizedTransformer
 from sae_bench.evals.autointerp import main as autointerp
@@ -37,6 +38,15 @@ from core.model import get_model_config
 from core.moe import RouterLogitsPostprocessor, get_postprocessor
 from core.type import assert_type
 from exp import MODEL_DIRNAME
+
+load_dotenv()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+
+
+if not OPENAI_API_KEY:
+    logger.error(
+        "OPENAI_API_KEY is not set, please set it as an environment variable or in a .env file if using autointerp"
+    )
 
 
 @dataclass
