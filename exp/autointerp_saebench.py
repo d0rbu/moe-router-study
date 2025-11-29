@@ -33,6 +33,7 @@ from tqdm import tqdm
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from core.memory import clear_memory
+from core.model import get_model_config
 from core.moe import RouterLogitsPostprocessor, get_postprocessor
 from core.type import assert_type
 from exp import MODEL_DIRNAME
@@ -538,7 +539,10 @@ def run_eval(
     logger.remove()
     logger.add(sys.stderr, level=log_level)
 
-    hf_name = config.model_name
+    # Get model config
+    model_config = get_model_config(config.model_name)
+
+    hf_name = model_config.hf_name
     local_path = os.path.join(os.path.abspath(MODEL_DIRNAME), hf_name)
     path = local_path if os.path.exists(local_path) else hf_name
 
