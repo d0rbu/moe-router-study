@@ -9,7 +9,7 @@
 #SBATCH --mem=256G                         # Request 256GB per node
 #SBATCH --output=eval_raw_activations.%j   # Send stdout/err to "eval_raw_activations.[jobID]"
 #SBATCH --error=eval_raw_activations.%j.err # Send stderr to separate file
-#SBATCH --gres=gpu:h100:1                  # Request 1 H100 GPU per node
+#SBATCH --gres=gpu:h100:2                  # Request 2 H100 GPU per node (one to run VLLM)
 #SBATCH --partition=gpu                    # Request the GPU partition/queue
 
 ##OPTIONAL JOB SPECIFICATIONS

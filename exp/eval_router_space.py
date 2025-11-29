@@ -37,6 +37,8 @@ def eval_router_space(
     saebench_batchsize: int = 512,
     intruder_batchsize: int = 8,
     intruder_n_tokens: int = 10_000_000,
+    intruder_vllm_num_gpus: int = 1,
+    intruder_cache_device_idx: int = 1,
     dtype: str = "bf16",
     seed: int = 0,
     postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.IDENTITY,
@@ -54,6 +56,8 @@ def eval_router_space(
         saebench_batchsize: Batch size for SAEBench evaluation
         intruder_batchsize: Batch size for intruder evaluation
         intruder_n_tokens: Number of tokens for intruder evaluation
+        intruder_vllm_num_gpus: Number of GPUs for VLLM (default: 1, uses device 0)
+        intruder_cache_device_idx: Device index for caching model (default: 1, reserves 0 for VLLM)
         dtype: Data type for evaluation
         seed: Random seed
         log_level: Logging level
@@ -147,6 +151,8 @@ def eval_router_space(
         saebench_batchsize=saebench_batchsize,
         intruder_batchsize=intruder_batchsize,
         intruder_n_tokens=intruder_n_tokens,
+        intruder_vllm_num_gpus=intruder_vllm_num_gpus,
+        intruder_cache_device_idx=intruder_cache_device_idx,
         dtype=dtype,
         seed=seed,
         log_level=log_level,

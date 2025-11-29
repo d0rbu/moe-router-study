@@ -9,7 +9,7 @@
 #SBATCH --mem=256G                         # Request 256GB per node
 #SBATCH --output=eval_router_space.%j      # Send stdout/err to "eval_router_space.[jobID]"
 #SBATCH --error=eval_router_space.%j.err   # Send stderr to separate file
-#SBATCH --gres=gpu:h100:1                  # Request 1 H100 GPU per node
+#SBATCH --gres=gpu:h100:2                  # Request 2 H100 GPUs per node
 #SBATCH --partition=gpu                    # Request the GPU partition/queue
 
 ##OPTIONAL JOB SPECIFICATIONS

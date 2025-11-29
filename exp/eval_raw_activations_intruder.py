@@ -6,6 +6,7 @@ by collecting activations directly and running intruder detection on them.
 """
 
 import asyncio
+import gc
 from multiprocessing import cpu_count
 from pathlib import Path
 import sys
@@ -176,6 +177,8 @@ def eval_raw_activations(
     filter_bos: bool = False,
     pipeline_num_proc: int = cpu_count() // 2,
     num_gpus: int | None = None,
+    vllm_num_gpus: int = 1,
+    cache_device_idx: int = 1,
     verbose: bool = True,
     seed: int = 0,
     hf_token: str = "",
@@ -208,7 +211,9 @@ def eval_raw_activations(
         explainer: Type of explainer
         filter_bos: Filter BOS tokens
         pipeline_num_proc: Number of pipeline processes
-        num_gpus: Number of GPUs
+        num_gpus: Number of GPUs (deprecated, use vllm_num_gpus instead)
+        vllm_num_gpus: Number of GPUs for VLLM (default: 1, uses device 0)
+        cache_device_idx: Device index for caching model (default: 1, to reserve 0 for VLLM)
         verbose: Verbose output
         seed: Random seed
         hf_token: HuggingFace token
@@ -233,13 +238,35 @@ def eval_raw_activations(
 
     layers_sorted = sorted(layers)
 
-    # Set GPU count dynamically
-    if num_gpus is None:
-        backend = get_backend(device_type)
-        num_gpus = backend.device_count() if backend.is_available() else 0
+    # Handle GPU configuration
+    backend = get_backend(device_type)
+    total_gpus = backend.device_count() if backend.is_available() else 0
+
+    # Use num_gpus if provided (for backward compatibility), otherwise use vllm_num_gpus
+    effective_vllm_gpus = num_gpus if num_gpus is not None else vllm_num_gpus
+
+    # Validate cache_device_idx - must be available and ideally not overlapping with VLLM devices
+    if total_gpus > 0 and cache_device_idx >= total_gpus:
+        logger.warning(
+            f"cache_device_idx={cache_device_idx} is >= total GPUs ({total_gpus}), "
+            f"falling back to device {total_gpus - 1}"
+        )
+        cache_device_idx = total_gpus - 1
+
+    # Warn if only one GPU is available (caching and VLLM will share device 0)
+    if total_gpus == 1:
+        logger.warning(
+            "Only 1 GPU available. Caching model and VLLM will share device 0. "
+            "Memory will be cleared between caching and VLLM."
+        )
+        cache_device_idx = 0
 
     logger.info(
         f"Evaluating raw activations: {activation_key} from layers {layers_sorted} on {model_name}"
+    )
+    logger.info(
+        f"Device allocation: caching on {device_type}:{cache_device_idx}, "
+        f"VLLM using {effective_vllm_gpus} GPU(s) starting from device 0"
     )
     model_ckpt = model_config.get_checkpoint_strict(step=model_step_ckpt)
     model_dtype_torch = get_dtype(model_dtype)
@@ -266,11 +293,13 @@ def eval_raw_activations(
         f"Loading model from {model_config.hf_name} with revision {model_ckpt}"
     )
 
-    # Load model
+    # Load model on the cache device (not device 0 which is reserved for VLLM)
+    cache_device = f"{device_type}:{cache_device_idx}"
+    logger.debug(f"Loading caching model on {cache_device}")
     model = StandardizedTransformer(
         model_config.hf_name,
         revision=str(model_ckpt),
-        device_map={"": "cuda"},
+        device_map={"": cache_device},
         quantization_config=quantization_config,
         torch_dtype=model_dtype_torch,
         token=hf_token,
@@ -283,7 +312,7 @@ def eval_raw_activations(
 
     latent_range = th.arange(n_latents) if n_latents else None
 
-    # Setup run config
+    # Setup run config (num_gpus controls VLLM tensor parallelism)
     run_cfg = RunConfig(
         max_latents=n_latents,
         cache_cfg=CacheConfig(
@@ -315,7 +344,7 @@ def eval_raw_activations(
         load_in_8bit=load_in_8bit,
         hf_token=hf_token,
         pipeline_num_proc=pipeline_num_proc,
-        num_gpus=num_gpus,
+        num_gpus=effective_vllm_gpus,
         seed=seed,
         verbose=verbose,
     )
@@ -343,9 +372,13 @@ def eval_raw_activations(
     else:
         logger.debug("Cache already populated, skipping")
 
+    # Clean up model and free GPU memory before VLLM starts
+    logger.debug("Cleaning up caching model to free GPU memory for VLLM")
     del model
+    th.cuda.empty_cache()
+    gc.collect()
 
-    # Process cache and run intruder detection
+    # Process cache and run intruder detection (VLLM will use device 0)
     nrh = assert_type(
         non_redundant_hookpoints(hookpoints, scores_path, overwrite=False),
         list,

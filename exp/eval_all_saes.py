@@ -199,6 +199,8 @@ def run_intruder_eval(
     n_tokens: int,
     batchsize: int,
     n_latents: int,
+    vllm_num_gpus: int,
+    cache_device_idx: int,
     seed: int,
 ) -> bool:
     """Run intruder evaluation on an experiment."""
@@ -222,6 +224,10 @@ def run_intruder_eval(
         str(batchsize),
         "--n-latents",
         str(n_latents),
+        "--vllm-num-gpus",
+        str(vllm_num_gpus),
+        "--cache-device-idx",
+        str(cache_device_idx),
         "--seed",
         str(seed),
     ]
@@ -699,6 +705,8 @@ def main(
     intruder_n_tokens: int,
     intruder_batchsize: int,
     intruder_n_latents: int,
+    intruder_vllm_num_gpus: int,
+    intruder_cache_device_idx: int,
     dtype: str,
     seed: int,
     skip_evaluation: bool,
@@ -748,6 +756,8 @@ def main(
                     intruder_n_tokens,
                     intruder_batchsize,
                     intruder_n_latents,
+                    intruder_vllm_num_gpus,
+                    intruder_cache_device_idx,
                     seed,
                 )
                 if not intruder_success:
@@ -794,12 +804,31 @@ def eval_all_saes(
     intruder_n_tokens: int = 10_000_000,
     intruder_batchsize: int = 8,
     intruder_n_latents: int = 1000,
+    intruder_vllm_num_gpus: int = 1,
+    intruder_cache_device_idx: int = 1,
     dtype: str = "bf16",
     seed: int = 0,
     skip_evaluation: bool = False,
     log_level: str = "INFO",
 ) -> None:
-    """Evaluate all SAE experiments and generate rankings."""
+    """Evaluate all SAE experiments and generate rankings.
+
+    Args:
+        model_name: Model name to evaluate on
+        run_saebench: Whether to run SAEBench evaluation
+        run_intruder: Whether to run intruder evaluation
+        saebench_eval_types: List of SAEBench evaluation types to run
+        saebench_batchsize: Batch size for SAEBench evaluation
+        intruder_n_tokens: Number of tokens for intruder evaluation
+        intruder_batchsize: Batch size for intruder evaluation
+        intruder_n_latents: Number of latents for intruder evaluation
+        intruder_vllm_num_gpus: Number of GPUs for VLLM (default: 1, uses device 0)
+        intruder_cache_device_idx: Device index for caching model (default: 1, reserves 0 for VLLM)
+        dtype: Data type for evaluation
+        seed: Random seed
+        skip_evaluation: Whether to skip evaluation and only aggregate results
+        log_level: Logging level
+    """
     # Setup logging
     logger.remove()
     logger.add(sys.stderr, level=log_level)
@@ -814,6 +843,8 @@ def eval_all_saes(
         intruder_n_tokens=intruder_n_tokens,
         intruder_batchsize=intruder_batchsize,
         intruder_n_latents=intruder_n_latents,
+        intruder_vllm_num_gpus=intruder_vllm_num_gpus,
+        intruder_cache_device_idx=intruder_cache_device_idx,
         dtype=dtype,
         seed=seed,
         skip_evaluation=skip_evaluation,

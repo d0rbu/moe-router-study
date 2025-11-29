@@ -79,6 +79,8 @@ def run_intruder_eval(
     filter_bos: bool,
     pipeline_num_proc: int,
     num_gpus: int,
+    vllm_num_gpus: int,
+    cache_device_idx: int,
     verbose: bool,
     seed: int,
     hf_token: str,
@@ -112,6 +114,8 @@ def run_intruder_eval(
             filter_bos=filter_bos,
             pipeline_num_proc=pipeline_num_proc,
             num_gpus=num_gpus,
+            vllm_num_gpus=vllm_num_gpus,
+            cache_device_idx=cache_device_idx,
             verbose=verbose,
             seed=seed,
             hf_token=hf_token,
@@ -159,6 +163,8 @@ def eval_all_paths(
     intruder_filter_bos: bool = False,
     intruder_pipeline_num_proc: int = cpu_count() // 2,
     intruder_num_gpus: int | None = None,
+    intruder_vllm_num_gpus: int = 1,
+    intruder_cache_device_idx: int = 1,
     intruder_verbose: bool = True,
     intruder_hf_token: str = "",
     dtype: str = "bf16",
@@ -193,7 +199,9 @@ def eval_all_paths(
         intruder_explainer: Explainer type for intruder evaluation
         intruder_filter_bos: Whether to filter BOS tokens for intruder evaluation
         intruder_pipeline_num_proc: Number of processes for intruder evaluation pipeline
-        intruder_num_gpus: Number of GPUs for intruder evaluation
+        intruder_num_gpus: Number of GPUs for intruder evaluation (deprecated, use intruder_vllm_num_gpus)
+        intruder_vllm_num_gpus: Number of GPUs for VLLM (default: 1, uses device 0)
+        intruder_cache_device_idx: Device index for caching model (default: 1, reserves 0 for VLLM)
         intruder_verbose: Whether to use verbose output for intruder evaluation
         intruder_hf_token: HuggingFace token for intruder evaluation
         dtype: Data type for evaluation
@@ -263,6 +271,8 @@ def eval_all_paths(
             intruder_filter_bos,
             intruder_pipeline_num_proc,
             intruder_num_gpus,
+            intruder_vllm_num_gpus,
+            intruder_cache_device_idx,
             intruder_verbose,
             seed,
             intruder_hf_token,

@@ -57,6 +57,8 @@ def run_intruder_eval(
     filter_bos: bool,
     pipeline_num_proc: int,
     num_gpus: int | None,
+    vllm_num_gpus: int,
+    cache_device_idx: int,
     verbose: bool,
     seed: int,
     hf_token: str,
@@ -113,6 +115,10 @@ def run_intruder_eval(
         explainer,
         "--pipeline-num-proc",
         str(pipeline_num_proc),
+        "--vllm-num-gpus",
+        str(vllm_num_gpus),
+        "--cache-device-idx",
+        str(cache_device_idx),
         "--seed",
         str(seed),
         "--log-level",
@@ -187,6 +193,8 @@ def eval_raw_activations(
     filter_bos: bool = False,
     pipeline_num_proc: int = cpu_count() // 2,
     num_gpus: int | None = None,
+    vllm_num_gpus: int = 1,
+    cache_device_idx: int = 1,
     verbose: bool = True,
     seed: int = 0,
     hf_token: str = "",
@@ -226,7 +234,9 @@ def eval_raw_activations(
         explainer: Type of explainer
         filter_bos: Filter BOS tokens
         pipeline_num_proc: Number of pipeline processes
-        num_gpus: Number of GPUs
+        num_gpus: Number of GPUs (deprecated, use vllm_num_gpus instead)
+        vllm_num_gpus: Number of GPUs for VLLM intruder detection (default: 1, uses device 0)
+        cache_device_idx: Device index for intruder caching model (default: 1, reserves 0 for VLLM)
         verbose: Verbose output
         seed: Random seed
         hf_token: HuggingFace token
@@ -308,6 +318,8 @@ def eval_raw_activations(
             filter_bos=filter_bos,
             pipeline_num_proc=pipeline_num_proc,
             num_gpus=num_gpus,
+            vllm_num_gpus=vllm_num_gpus,
+            cache_device_idx=cache_device_idx,
             verbose=verbose,
             seed=seed,
             hf_token=hf_token,
