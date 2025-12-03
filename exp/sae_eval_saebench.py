@@ -1,4 +1,5 @@
 import os
+import sys
 
 import arguably
 from dotenv import load_dotenv
@@ -22,10 +23,15 @@ def main(
     batchsize: int = 512,
     dtype: str = "bfloat16",
     seed: int = 0,
+    log_level: str = "INFO",
 ) -> None:
     """
     Evaluate the SAEs on the given model.
     """
+    logger.remove()
+    logger.add(sys.stderr, level=log_level)
+    logger.info(f"Running with log level: {log_level}")
+
     if not eval_types:
         eval_types = [
             "absorption",
