@@ -35,7 +35,12 @@ from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from core.memory import clear_memory
 from core.model import get_model_config
-from core.moe import RouterLogitsPostprocessor, get_postprocessor
+from core.moe import (
+    CENTROID_METRICS,
+    CentroidMetric,
+    RouterLogitsPostprocessor,
+    get_postprocessor,
+)
 from core.type import assert_type
 from exp import MODEL_DIRNAME
 
@@ -98,10 +103,13 @@ def collect_path_activations(
     mask_bos_pad_eos_tokens: bool = False,
     selected_paths: list[int] | None = None,
     activation_dtype: th.dtype | None = None,
+    metric: CentroidMetric = CentroidMetric.DOT_PRODUCT,
+    metric_p: float = 2.0,
 ) -> th.Tensor:
     """Collects path activations for a given set of tokens."""
     path_acts = []
     logits_postprocessor = get_postprocessor(paths.postprocessor)
+    centroid_metric_fn = CENTROID_METRICS[metric]
 
     for batch_idx, tokens_BT in tqdm(
         enumerate(th.split(tokenized_dataset, llm_batch_size, dim=0)),
@@ -144,8 +152,8 @@ def collect_path_activations(
         # (B, T, L, E) -> (B, T, L * E)
         router_paths_BTP = router_paths.view(*tokens_BT.shape, -1)
 
-        # (B, T, L * E) @ (L * E, F) -> (B, T, F)
-        router_paths_BTF = router_paths_BTP @ paths.data.T
+        # (B, T, L * E) -> (B, T, F) using specified metric
+        router_paths_BTF = centroid_metric_fn(router_paths_BTP, paths.data, metric_p)
 
         del router_paths, router_paths_BTP
 
@@ -286,6 +294,8 @@ class PathAutoInterp(autointerp.AutoInterp):
         sparsity: th.Tensor,
         device: str,
         api_key: str,
+        metric: CentroidMetric = CentroidMetric.DOT_PRODUCT,
+        metric_p: float = 2.0,
     ):
         self.cfg = cfg
         self.model: StandardizedTransformer = model
@@ -294,6 +304,8 @@ class PathAutoInterp(autointerp.AutoInterp):
         self.tokenized_dataset = tokenized_dataset
         self.device = device
         self.api_key = api_key
+        self.metric = metric
+        self.metric_p = metric_p
         if cfg.latents is not None:
             self.latents = cfg.latents
         else:
@@ -331,6 +343,8 @@ class PathAutoInterp(autointerp.AutoInterp):
             mask_bos_pad_eos_tokens=True,
             selected_paths=self.latents,
             activation_dtype=th.bfloat16,  # reduce memory usage, we don't need full precision when sampling activations
+            metric=self.metric,
+            metric_p=self.metric_p,
         )
 
         generation_examples = {}
@@ -467,6 +481,8 @@ def run_eval_paths(
     artifacts_folder: str,
     api_key: str,
     sparsity: th.Tensor | None = None,
+    metric: CentroidMetric = CentroidMetric.DOT_PRODUCT,
+    metric_p: float = 2.0,
 ) -> dict[int, dict[str, Any]]:
     random.seed(config.random_seed)
     th.manual_seed(config.random_seed)
@@ -517,6 +533,8 @@ def run_eval_paths(
         sparsity=paths.sparsity,
         api_key=api_key,
         device=device,
+        metric=metric,
+        metric_p=metric_p,
     )
     results = asyncio.run(autointerp_runner.run())
 
@@ -533,6 +551,8 @@ def run_eval(
     save_logs_path: str | None = None,
     artifacts_path: str = "artifacts",
     log_level: str = "INFO",
+    metric: CentroidMetric = CentroidMetric.DOT_PRODUCT,
+    metric_p: float = 2.0,
 ) -> dict[str, Any]:
     eval_instance_id = get_eval_uuid()
     sae_lens_version = get_sae_lens_version()
@@ -582,7 +602,15 @@ def run_eval(
         artifacts_folder = os.path.join(artifacts_path, EVAL_TYPE_ID_AUTOINTERP)
 
         paths_eval_result = run_eval_paths(
-            config, paths_with_metadata, model, device, artifacts_folder, api_key, None
+            config,
+            paths_with_metadata,
+            model,
+            device,
+            artifacts_folder,
+            api_key,
+            None,
+            metric,
+            metric_p,
         )
 
         # Save nicely formatted logs to a text file, helpful for debugging.

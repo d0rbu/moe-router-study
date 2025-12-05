@@ -9,7 +9,110 @@ from collections.abc import Callable
 from enum import StrEnum
 
 import torch as th
+import torch.nn as nn
 import torch.nn.functional as F
+
+
+class CentroidMetric(StrEnum):
+    """Enum for different centroid/path activation metrics."""
+
+    DOT_PRODUCT = "dot_product"
+    COSINE_SIMILARITY = "cosine_similarity"
+    L1_DISTANCE = "l1_distance"
+    L2_DISTANCE = "l2_distance"
+    P_DISTANCE = "p_distance"
+
+
+def centroid_dot_product(
+    activations: th.Tensor, centroids: th.Tensor, _p: float
+) -> th.Tensor:
+    """Simple matrix multiplication: (..., D) @ (D, C) -> (..., C)"""
+    return activations @ centroids.T
+
+
+def centroid_cosine_similarity(
+    activations: th.Tensor, centroids: th.Tensor, p: float
+) -> th.Tensor:
+    """Normalize both activations and centroids, then dot product."""
+    activations_norm = F.normalize(activations, p=2, dim=-1)
+    centroids_norm = F.normalize(centroids, p=2, dim=-1)
+    return centroid_dot_product(activations_norm, centroids_norm, p)
+
+
+def centroid_p_distance(
+    activations: th.Tensor, centroids: th.Tensor, p: float
+) -> th.Tensor:
+    """General p-norm distance using cdist."""
+    original_shape = activations.shape[:-1]
+    activations_flat = activations.view(-1, activations.shape[-1])
+    distances = th.cdist(activations_flat.unsqueeze(0), centroids.unsqueeze(0), p=p)
+    return distances.squeeze(0).view(*original_shape, -1)
+
+
+def centroid_l1_distance(
+    activations: th.Tensor, centroids: th.Tensor, _p: float
+) -> th.Tensor:
+    """L1 (Manhattan) distance."""
+    return centroid_p_distance(activations, centroids, p=1.0)
+
+
+def centroid_l2_distance(
+    activations: th.Tensor, centroids: th.Tensor, _p: float
+) -> th.Tensor:
+    """L2 (Euclidean) distance."""
+    return centroid_p_distance(activations, centroids, p=2.0)
+
+
+# Mapping from enum to metric functions
+CENTROID_METRICS: dict[
+    CentroidMetric, Callable[[th.Tensor, th.Tensor, float], th.Tensor]
+] = {
+    CentroidMetric.DOT_PRODUCT: centroid_dot_product,
+    CentroidMetric.COSINE_SIMILARITY: centroid_cosine_similarity,
+    CentroidMetric.L1_DISTANCE: centroid_l1_distance,
+    CentroidMetric.L2_DISTANCE: centroid_l2_distance,
+    CentroidMetric.P_DISTANCE: centroid_p_distance,
+}
+
+
+class CentroidProjection(nn.Module):
+    """
+    A module that projects activations to centroid space using a specified metric.
+
+    This can be used as a drop-in replacement for nn.Linear when you want to
+    compute centroid activations/distances instead of a simple linear projection.
+    """
+
+    def __init__(
+        self,
+        centroids: th.Tensor,
+        metric: CentroidMetric = CentroidMetric.DOT_PRODUCT,
+        p: float = 2.0,
+    ):
+        """
+        Initialize the CentroidProjection module.
+
+        Args:
+            centroids: Tensor of shape (C, D) containing centroid vectors
+            metric: The metric to use for computing activations
+            p: The p-norm to use for P_DISTANCE metric (default: 2.0)
+        """
+        super().__init__()
+        self.register_buffer("centroids", centroids)
+        self.metric = metric
+        self.p = p
+
+    def forward(self, x: th.Tensor) -> th.Tensor:
+        """
+        Compute centroid activations for input tensor.
+
+        Args:
+            x: Input tensor of shape (..., D)
+
+        Returns:
+            Tensor of shape (..., C) containing centroid activations/distances
+        """
+        return CENTROID_METRICS[self.metric](x, self.centroids, self.p)
 
 
 def convert_router_logits_to_paths(router_logits: th.Tensor, top_k: int) -> th.Tensor:

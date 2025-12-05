@@ -14,7 +14,7 @@ import torch as th
 import yaml
 
 from core.dtype import get_dtype
-from core.moe import RouterLogitsPostprocessor
+from core.moe import CentroidMetric, RouterLogitsPostprocessor
 from exp import OUTPUT_DIR
 from exp.autointerp_saebench import Paths
 from exp.autointerp_saebench import run_eval as run_autointerp_eval
@@ -37,6 +37,8 @@ def path_eval_saebench(
     log_level: str = "INFO",
     skip_autointerp: bool = False,
     skip_sparse_probing: bool = False,
+    metric: CentroidMetric = CentroidMetric.DOT_PRODUCT,
+    metric_p: float = 2.0,
 ) -> None:
     """
     Evaluate the paths on the given model.
@@ -137,6 +139,8 @@ def path_eval_saebench(
             save_logs_path=logs_path,
             artifacts_path=os.path.join(experiment_path, "artifacts"),
             log_level=log_level,
+            metric=metric,
+            metric_p=metric_p,
         )
 
         logger.info("Autointerp evaluation complete")
@@ -159,6 +163,8 @@ def path_eval_saebench(
             save_activations=True,
             artifacts_path=os.path.join(experiment_path, "artifacts"),
             log_level=log_level,
+            metric=metric,
+            metric_p=metric_p,
         )
 
     logger.success("done :)")

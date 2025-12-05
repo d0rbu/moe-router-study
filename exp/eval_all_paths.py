@@ -14,7 +14,7 @@ import arguably
 from loguru import logger
 
 from core.device import get_backend
-from core.moe import RouterLogitsPostprocessor
+from core.moe import CentroidMetric, RouterLogitsPostprocessor
 from exp.eval_intruder import eval_intruder
 from exp.path_eval_saebench import path_eval_saebench
 
@@ -28,6 +28,8 @@ def run_path_eval_saebench(
     log_level: str = "INFO",
     skip_autointerp: bool = False,
     skip_sparse_probing: bool = False,
+    metric: CentroidMetric = CentroidMetric.DOT_PRODUCT,
+    metric_p: float = 2.0,
 ) -> bool:
     """Run SAEBench evaluation on a k-means path experiment."""
     logger.info(f"Running SAEBench evaluation on {experiment_name}")
@@ -43,6 +45,8 @@ def run_path_eval_saebench(
             log_level=log_level,
             skip_autointerp=skip_autointerp,
             skip_sparse_probing=skip_sparse_probing,
+            metric=metric,
+            metric_p=metric_p,
         )
         logger.debug(f"✅ SAEBench evaluation completed for {experiment_name}")
         return True
@@ -86,6 +90,8 @@ def run_intruder_eval(
     hf_token: str,
     log_level: str = "INFO",
     postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
+    metric: CentroidMetric = CentroidMetric.DOT_PRODUCT,
+    metric_p: float = 2.0,
 ) -> bool:
     """Run intruder evaluation on a k-means path experiment."""
     logger.info(f"Running intruder evaluation on {experiment_name}")
@@ -121,6 +127,8 @@ def run_intruder_eval(
             hf_token=hf_token,
             log_level=log_level,
             postprocessor=postprocessor,
+            metric=metric,
+            metric_p=metric_p,
         )
         logger.debug(f"✅ Intruder evaluation completed for {experiment_name}")
         return True
@@ -172,6 +180,8 @@ def eval_all_paths(
     log_level: str = "INFO",
     device_type: str = "cuda",
     postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
+    metric: CentroidMetric = CentroidMetric.DOT_PRODUCT,
+    metric_p: float = 2.0,
 ) -> None:
     """
     Evaluate a k-means path experiment using both SAEBench and intruder evaluations.
@@ -235,6 +245,8 @@ def eval_all_paths(
             log_level,
             skip_autointerp,
             skip_sparse_probing,
+            metric,
+            metric_p,
         )
         if not saebench_success:
             logger.error("SAEBench evaluation failed!")
@@ -278,6 +290,8 @@ def eval_all_paths(
             intruder_hf_token,
             log_level,
             postprocessor,
+            metric,
+            metric_p,
         )
         if not intruder_success:
             logger.error("Intruder evaluation failed!")

@@ -15,7 +15,6 @@ import numpy as np
 import orjson
 from safetensors.numpy import save_file
 import torch as th
-import torch.nn as nn
 from tqdm import tqdm
 from transformers import (
     BitsAndBytesConfig,
@@ -27,6 +26,8 @@ from core.device import get_backend
 from core.dtype import get_dtype
 from core.model import get_model_config
 from core.moe import (
+    CentroidMetric,
+    CentroidProjection,
     RouterLogitsPostprocessor,
     get_postprocessor,
 )
@@ -186,6 +187,8 @@ def load_hookpoints_and_saes(
 def load_hookpoints(
     root_dir: Path,
     dtype: th.dtype,
+    metric: CentroidMetric = CentroidMetric.DOT_PRODUCT,
+    metric_p: float = 2.0,
 ) -> tuple[dict[str, Callable[[th.Tensor], th.Tensor]], int | None]:
     """
     Loads the hookpoints from the config file.
@@ -207,14 +210,11 @@ def load_hookpoints(
 
     hookpoints_to_sparse_encode = {}
     for centroids_idx, centroids in enumerate(centroid_sets):
-        path_projection = nn.Linear(
-            centroids.shape[1],
-            centroids.shape[0],
-            bias=False,
-            device="cuda",
-            dtype=dtype,
+        path_projection = CentroidProjection(
+            centroids.to(device="cuda", dtype=dtype),
+            metric=metric,
+            p=metric_p,
         )
-        path_projection.weight.data.copy_(centroids)
         hookpoints_to_sparse_encode[f"paths_{centroids_idx}"] = path_projection
 
     return hookpoints_to_sparse_encode, top_k
@@ -547,6 +547,8 @@ def eval_intruder(
     log_level: str = "INFO",
     device_type: str = "cuda",
     postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
+    metric: CentroidMetric = CentroidMetric.DOT_PRODUCT,
+    metric_p: float = 2.0,
 ) -> None:
     logger.remove()
     logger.add(sys.stderr, level=log_level)
@@ -616,7 +618,9 @@ def eval_intruder(
 
     logger.trace("Model and tokenizer initialized")
 
-    hookpoint_to_sparse_encode, top_k = load_hookpoints(root_dir, dtype=dtype_torch)
+    hookpoint_to_sparse_encode, top_k = load_hookpoints(
+        root_dir, dtype=dtype_torch, metric=metric, metric_p=metric_p
+    )
     hookpoints = list(hookpoint_to_sparse_encode.keys())
 
     latent_range = th.arange(n_latents) if n_latents else None

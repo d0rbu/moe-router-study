@@ -45,6 +45,8 @@ from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 from core.memory import clear_memory
 from core.model import get_model_config
 from core.moe import (
+    CENTROID_METRICS,
+    CentroidMetric,
     RouterLogitsPostprocessor,
     get_postprocessor,
 )
@@ -225,11 +227,14 @@ def get_paths_meaned_activations(
     all_llm_activations_BTP: dict[str, th.Tensor],
     paths: th.Tensor,  # (F, L * E)
     batch_size: int,
+    metric: CentroidMetric = CentroidMetric.DOT_PRODUCT,
+    metric_p: float = 2.0,
 ) -> dict[str, th.Tensor]:  # (B, F)
     """Encode LLM activations with an SAE and mean across the sequence length dimension for each class while ignoring padding tokens.
     VERY IMPORTANT NOTE: We assume that the activations have been zeroed out for masked tokens."""
 
     dtype = paths.dtype
+    centroid_metric_fn = CENTROID_METRICS[metric]
 
     all_sae_activations_BF = {}
     for class_name, all_acts_BTP in all_llm_activations_BTP.items():
@@ -237,8 +242,8 @@ def get_paths_meaned_activations(
         logger.trace(f"Processing class {class_name} with shape {all_acts_BTP.shape}")
 
         for acts_BTP in th.split(all_acts_BTP, batch_size, dim=0):
-            # Compute L1 distance from each activation to each centroid
-            acts_BTF = th.cdist(acts_BTP, paths, p=1)
+            # Compute activations using the specified metric
+            acts_BTF = centroid_metric_fn(acts_BTP, paths, metric_p)
             logger.trace(
                 f"Acts BTP shape: {acts_BTP.shape}, Paths shape: {paths.shape}, Acts BTF shape: {acts_BTF.shape}"
             )
@@ -273,6 +278,8 @@ def run_eval_single_dataset(
     device: str,
     artifacts_folder: str,
     save_activations: bool,
+    metric: CentroidMetric = CentroidMetric.DOT_PRODUCT,
+    metric_p: float = 2.0,
 ) -> tuple[DatasetResults, dict[str, DatasetResults]]:
     """
     config: eval_config.EvalConfig contains all hyperparameters to reproduce the evaluation.
@@ -344,10 +351,10 @@ def run_eval_single_dataset(
         llm_results = acts["llm_results"]
 
     all_sae_train_acts_BF = get_paths_meaned_activations(
-        all_train_acts_BTP, paths.data, config.sae_batch_size
+        all_train_acts_BTP, paths.data, config.sae_batch_size, metric, metric_p
     )
     all_sae_test_acts_BF = get_paths_meaned_activations(
-        all_test_acts_BTP, paths.data, config.sae_batch_size
+        all_test_acts_BTP, paths.data, config.sae_batch_size, metric, metric_p
     )
 
     for key in list(all_train_acts_BTP.keys()):
@@ -404,6 +411,8 @@ def run_eval_paths(
     device: str,
     artifacts_folder: str,
     save_activations: bool = True,
+    metric: CentroidMetric = CentroidMetric.DOT_PRODUCT,
+    metric_p: float = 2.0,
 ) -> tuple[
     dict[str, int | float | DatasetResults], dict[str, dict[str, DatasetResults]]
 ]:
@@ -434,6 +443,8 @@ def run_eval_paths(
             device,
             artifacts_folder,
             save_activations,
+            metric,
+            metric_p,
         )
 
     averaged_results: DatasetResults = average_results_dictionaries(
@@ -461,6 +472,8 @@ def run_eval(
     save_activations: bool = True,
     artifacts_path: str = "artifacts",
     log_level: str = "INFO",
+    metric: CentroidMetric = CentroidMetric.DOT_PRODUCT,
+    metric_p: float = 2.0,
 ) -> dict[str, Any]:
     """
     If clean_up_activations is True, which means that the activations are deleted after the evaluation is done.
@@ -521,6 +534,8 @@ def run_eval(
             device,
             artifacts_folder,
             save_activations=save_activations,
+            metric=metric,
+            metric_p=metric_p,
         )
 
         eval_output = SparseProbingEvalOutput(

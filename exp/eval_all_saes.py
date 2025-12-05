@@ -28,7 +28,6 @@ from tqdm import tqdm
 from exp import OUTPUT_DIR
 from viz import FIGURE_DIR
 
-
 EVAL_TIMEOUT = 172800  # 48 hours
 
 
@@ -173,9 +172,7 @@ def run_saebench_eval(
         logger.debug(f"✅ SAEBench evaluation completed for {experiment_name}")
         return True
     except subprocess.TimeoutExpired:
-        logger.error(
-            f"❌ SAEBench evaluation timed out for {experiment_name}"
-        )
+        logger.error(f"❌ SAEBench evaluation timed out for {experiment_name}")
         return False
     except subprocess.CalledProcessError as exception:
         traceback_lines = traceback.format_tb(exception.__traceback__)
@@ -245,9 +242,7 @@ def run_intruder_eval(
         logger.debug(f"✅ Intruder evaluation completed for {experiment_name}")
         return True
     except subprocess.TimeoutExpired:
-        logger.error(
-            f"❌ Intruder evaluation timed out for {experiment_name}"
-        )
+        logger.error(f"❌ Intruder evaluation timed out for {experiment_name}")
         return False
     except subprocess.CalledProcessError as exception:
         traceback_lines = traceback.format_tb(exception.__traceback__)
@@ -809,7 +804,7 @@ def eval_all_saes(
     intruder_n_latents: int = 1000,
     intruder_vllm_num_gpus: int = 1,
     intruder_cache_device_idx: int = 1,
-    dtype: str = "bf16",
+    dtype: str = "fp32",
     seed: int = 0,
     skip_evaluation: bool = False,
     log_level: str = "INFO",
