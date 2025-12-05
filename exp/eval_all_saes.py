@@ -29,6 +29,9 @@ from exp import OUTPUT_DIR
 from viz import FIGURE_DIR
 
 
+EVAL_TIMEOUT = 172800  # 48 hours
+
+
 @dataclass
 class SAEInfo:
     """Represents a single SAE configuration."""
@@ -165,13 +168,13 @@ def run_saebench_eval(
         subprocess.run(
             cmd,
             check=True,
-            timeout=3600,  # 1 hour timeout
+            timeout=EVAL_TIMEOUT,
         )
         logger.debug(f"✅ SAEBench evaluation completed for {experiment_name}")
         return True
     except subprocess.TimeoutExpired:
         logger.error(
-            f"❌ SAEBench evaluation timed out for {experiment_name} (1 hour limit)"
+            f"❌ SAEBench evaluation timed out for {experiment_name}"
         )
         return False
     except subprocess.CalledProcessError as exception:
@@ -237,13 +240,13 @@ def run_intruder_eval(
         subprocess.run(
             cmd,
             check=True,
-            timeout=3600,  # 1 hour timeout
+            timeout=EVAL_TIMEOUT,
         )
         logger.debug(f"✅ Intruder evaluation completed for {experiment_name}")
         return True
     except subprocess.TimeoutExpired:
         logger.error(
-            f"❌ Intruder evaluation timed out for {experiment_name} (1 hour limit)"
+            f"❌ Intruder evaluation timed out for {experiment_name}"
         )
         return False
     except subprocess.CalledProcessError as exception:

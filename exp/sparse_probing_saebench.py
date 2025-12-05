@@ -237,7 +237,8 @@ def get_paths_meaned_activations(
         logger.trace(f"Processing class {class_name} with shape {all_acts_BTP.shape}")
 
         for acts_BTP in th.split(all_acts_BTP, batch_size, dim=0):
-            acts_BTF = acts_BTP @ paths.T
+            # Compute L1 distance from each activation to each centroid
+            acts_BTF = th.cdist(acts_BTP, paths, p=1)
             logger.trace(
                 f"Acts BTP shape: {acts_BTP.shape}, Paths shape: {paths.shape}, Acts BTF shape: {acts_BTF.shape}"
             )
