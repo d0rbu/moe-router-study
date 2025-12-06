@@ -17,6 +17,7 @@ from safetensors.numpy import save_file
 import torch as th
 from tqdm import tqdm
 from transformers import (
+    AutoTokenizer,
     BitsAndBytesConfig,
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
@@ -699,6 +700,12 @@ def eval_intruder(
     )
     if nrh:
         logger.info(f"Processing cache with {len(nrh)} hookpoints")
+        # Recreate tokenizer for process_cache since it was deleted earlier
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_config.hf_name,
+            revision=str(model_ckpt),
+            token=hf_token,
+        )
         asyncio.run(
             process_cache(
                 run_cfg,
