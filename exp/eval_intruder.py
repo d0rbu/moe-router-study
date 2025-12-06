@@ -688,7 +688,7 @@ def eval_intruder(
 
     # Clean up model and free GPU memory before VLLM starts
     logger.debug("Cleaning up caching model to free GPU memory for VLLM")
-    del model, hookpoint_to_sparse_encode
+    del model, tokenizer, hookpoint_to_sparse_encode
     th.cuda.empty_cache()
     gc.collect()
 
