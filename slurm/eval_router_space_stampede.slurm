@@ -1,16 +1,13 @@
 #!/bin/bash
 
 ##NECESSARY JOB SPECIFICATIONS
-#SBATCH --job-name=get_activations      # Set the job name to "get_activations"
-#SBATCH --time=6:00:00                  # Set the wall clock limit to 6 hours
-#SBATCH --ntasks=1                      # Total number of tasks (processes) across all nodes
-#SBATCH --ntasks-per-node=1             # Number of tasks per node
-#SBATCH --cpus-per-task=16              # Number of CPUs per task
-#SBATCH --mem=128G                      # Request 128GB per node
-#SBATCH --output=get_activations.%j     # Send stdout/err to "get_activations.[jobID]"
-#SBATCH --error=get_activations.%j.err  # Send stderr to separate file
-#SBATCH --gres=gpu:a100:4               # Request 4 A100 GPUs per node
-#SBATCH --partition=gpu                 # Request the GPU partition/queue
+#SBATCH -J eval_router_space         # Set the job name to "eval_router_space"
+#SBATCH -N 1                       # Number of nodes to request
+#SBATCH -n 1                       # Number of tasks (processes) to run per node
+#SBATCH -t 24:00:00                # Set the wall clock limit to 24 hours
+#SBATCH -o eval_router_space-%j      # Send stdout/err to "eval_router_space.[jobID]"
+#SBATCH -e eval_router_space-%j.err  # Send stderr to separate file
+#SBATCH -p h100                    # Request the GPU partition/queue
 
 ##OPTIONAL JOB SPECIFICATIONS
 ##SBATCH --account=123456                # Set billing account to 123456
@@ -19,6 +16,9 @@
 
 # Enable detailed logging
 set -x
+
+# Enable CUDA debugging for better error messages
+export CUDA_LAUNCH_BLOCKING=1
 
 export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
 export MASTER_PORT=$(expr 10000 + $(echo -n $SLURM_JOBID | tail -c 4))
@@ -43,5 +43,6 @@ echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 # Change to the project directory
 cd $SCRATCH/moe-router-study
 
-# Run the distributed job
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/get_activations.py --tokens-per-file 40000
+# Run the evaluation pipeline
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run python -m exp.eval_router_space eval-router-space --model-name olmoe-i --saebench-batchsize 64 --intruder-batchsize 16 --intruder-n-tokens 10000000 --postprocessor identity --intruder-explainer-model Qwen/Qwen3-32B-AWQ --log-level DEBUG
+
