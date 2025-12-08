@@ -180,7 +180,7 @@ def eval_all_paths(
     log_level: str = "INFO",
     device_type: str = "cuda",
     postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
-    metric: CentroidMetric = "dot_product",
+    metric: CentroidMetric = "dot-product",
     metric_p: float = 2.0,
 ) -> None:
     """
@@ -222,7 +222,7 @@ def eval_all_paths(
     logger.remove()
     logger.add(sys.stderr, level=log_level)
 
-    metric = CentroidMetric(metric)
+    metric = CentroidMetric(metric.replace("-", "_"))
 
     # Set GPU count dynamically based on device type
     if intruder_num_gpus is None:

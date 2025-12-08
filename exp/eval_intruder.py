@@ -187,13 +187,13 @@ def load_hookpoints_and_saes(
 def load_hookpoints(
     root_dir: Path,
     dtype: th.dtype,
-    metric: CentroidMetric = "dot_product",
+    metric: CentroidMetric = "dot-product",
     metric_p: float = 2.0,
 ) -> tuple[dict[str, Callable[[th.Tensor], th.Tensor]], int | None]:
     """
     Loads the hookpoints from the config file.
     """
-    metric = CentroidMetric(metric)
+    metric = CentroidMetric(metric.replace("-", "_"))
 
     sae_config_path = root_dir / "config.yaml"
     if sae_config_path.is_file():
@@ -549,13 +549,13 @@ def eval_intruder(
     log_level: str = "INFO",
     device_type: str = "cuda",
     postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
-    metric: CentroidMetric = "dot_product",
+    metric: CentroidMetric = "dot-product",
     metric_p: float = 2.0,
 ) -> None:
     logger.remove()
     logger.add(sys.stderr, level=log_level)
 
-    metric = CentroidMetric(metric)
+    metric = CentroidMetric(metric.replace("-", "_"))
 
     # Handle GPU configuration
     backend = get_backend(device_type)
