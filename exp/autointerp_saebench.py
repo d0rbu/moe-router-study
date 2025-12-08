@@ -153,6 +153,7 @@ def collect_path_activations(
         router_paths_BTP = router_paths.view(*tokens_BT.shape, -1)
 
         # (B, T, L * E) -> (B, T, F) using specified metric
+        paths.data = paths.data.to(device=router_paths_BTP.device)
         router_paths_BTF = centroid_metric_fn(router_paths_BTP, paths.data, metric_p)
 
         del router_paths, router_paths_BTP

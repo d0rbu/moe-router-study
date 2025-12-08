@@ -243,6 +243,7 @@ def get_paths_meaned_activations(
 
         for acts_BTP in th.split(all_acts_BTP, batch_size, dim=0):
             # Compute activations using the specified metric
+            paths = paths.to(device=acts_BTP.device)
             acts_BTF = centroid_metric_fn(acts_BTP, paths, metric_p)
             logger.trace(
                 f"Acts BTP shape: {acts_BTP.shape}, Paths shape: {paths.shape}, Acts BTF shape: {acts_BTF.shape}"
