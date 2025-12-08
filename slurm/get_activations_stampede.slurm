@@ -3,8 +3,7 @@
 ##NECESSARY JOB SPECIFICATIONS
 #SBATCH -J get_activations         # Set the job name to "get_activations"
 #SBATCH -N 1                       # Number of nodes to request
-#SBATCH -n 1                       # Total number of tasks across all nodes
-#SBATCH -tasks-per-node 1          # Tasks per node
+#SBATCH -ntasks-per-node 1         # Tasks per node
 #SBATCH -t 48:00:00                # Set the wall clock limit to 48 hours
 #SBATCH -o get_activations-%j      # Send stdout/err to "get_activations.[jobID]"
 #SBATCH -e get_activations-%j.err  # Send stderr to separate file

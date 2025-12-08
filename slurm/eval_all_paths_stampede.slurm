@@ -3,9 +3,8 @@
 ##NECESSARY JOB SPECIFICATIONS
 #SBATCH -J eval_all_paths         # Set the job name to "eval_all_paths"
 #SBATCH -N 1                       # Number of nodes to request
-#SBATCH -n 1                       # Total number of tasks across all nodes
+#SBATCH -ntasks-per-node 1         # Tasks per node
 #SBATCH -t 24:00:00                # Set the wall clock limit to 24 hours
-#SBATCH -tasks-per-node 1          # Tasks per node
 #SBATCH -o eval_all_paths-%j      # Send stdout/err to "eval_all_paths.[jobID]"
 #SBATCH -e eval_all_paths-%j.err  # Send stderr to separate file
 #SBATCH -p h100                    # Request the GPU partition/queue
