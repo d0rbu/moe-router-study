@@ -3,7 +3,7 @@
 ##NECESSARY JOB SPECIFICATIONS
 #SBATCH -J train_saes         # Set the job name to "train_saes"
 #SBATCH -N 1                       # Number of nodes to request
-#SBATCH -ntasks-per-node 1         # Tasks per node
+#SBATCH -n 1                       # Total number of tasks across all nodes
 #SBATCH -t 192:00:00                # Set the wall clock limit to 192 hours
 #SBATCH -o train_saes-%j      # Send stdout/err to "train_saes.[jobID]"
 #SBATCH -e train_saes-%j.err  # Send stderr to separate file
@@ -21,6 +21,18 @@ export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
 export MASTER_PORT=$(expr 10000 + $(echo -n $SLURM_JOBID | tail -c 4))
 export RANK=$SLURM_PROCID
 export WORLD_SIZE=$SLURM_NTASKS
+
+if [ -z "$SLURM_NTASKS_PER_NODE" ]; then
+  if [ -z "$SLURM_NNODES" ] || [ -z "$SLURM_NTASKS" ]; then
+    echo "Error: SLURM_NTASKS_PER_NODE is undefined and SLURM_NNODES/SLURM_NTASKS are not set"
+    exit 1
+  fi
+  if [ $((SLURM_NTASKS % SLURM_NNODES)) -ne 0 ]; then
+    echo "Error: SLURM_NTASKS ($SLURM_NTASKS) is not divisible by SLURM_NNODES ($SLURM_NNODES)"
+    exit 1
+  fi
+  export SLURM_NTASKS_PER_NODE=$((SLURM_NTASKS / SLURM_NNODES))
+fi
 
 # Print SLURM environment information for debugging
 echo "SLURM Job ID: $SLURM_JOB_ID"

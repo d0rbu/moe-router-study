@@ -3,7 +3,7 @@
 ##NECESSARY JOB SPECIFICATIONS
 #SBATCH -J kmeans         # Set the job name to "kmeans"
 #SBATCH -N 1                       # Number of nodes to request
-#SBATCH -ntasks-per-node 1         # Tasks per node
+#SBATCH -n 1                       # Total number of tasks across all nodes
 #SBATCH -t 24:00:00                # Set the wall clock limit to 24 hours
 #SBATCH -o kmeans-%j      # Send stdout/err to "kmeans.[jobID]"
 #SBATCH -e kmeans-%j.err  # Send stderr to separate file
@@ -24,6 +24,18 @@ export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
 export MASTER_PORT=$(expr 10000 + $(echo -n $SLURM_JOBID | tail -c 4))
 export RANK=$SLURM_PROCID
 export WORLD_SIZE=$SLURM_NTASKS
+
+if [ -z "$SLURM_NTASKS_PER_NODE" ]; then
+  if [ -z "$SLURM_NNODES" ] || [ -z "$SLURM_NTASKS" ]; then
+    echo "Error: SLURM_NTASKS_PER_NODE is undefined and SLURM_NNODES/SLURM_NTASKS are not set"
+    exit 1
+  fi
+  if [ $((SLURM_NTASKS % SLURM_NNODES)) -ne 0 ]; then
+    echo "Error: SLURM_NTASKS ($SLURM_NTASKS) is not divisible by SLURM_NNODES ($SLURM_NNODES)"
+    exit 1
+  fi
+  export SLURM_NTASKS_PER_NODE=$((SLURM_NTASKS / SLURM_NNODES))
+fi
 
 # Print SLURM environment information for debugging
 echo "SLURM Job ID: $SLURM_JOB_ID"
