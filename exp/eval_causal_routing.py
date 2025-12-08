@@ -727,7 +727,7 @@ def eval_causal_routing(
     # Intruder detection settings
     ctxlen: int = 256,
     n_tokens: int = 10_000_000,
-    batchsize: int = 8,
+    batchsize: int = 32,
     n_latents: int = 1000,
     example_ctx_len: int = 32,
     min_examples: int = 200,

@@ -800,7 +800,7 @@ def eval_all_saes(
     saebench_eval_types: list[str] | None = None,
     saebench_batchsize: int = 512,
     intruder_n_tokens: int = 10_000_000,
-    intruder_batchsize: int = 8,
+    intruder_batchsize: int = 32,
     intruder_n_latents: int = 1000,
     intruder_vllm_num_gpus: int = 1,
     intruder_cache_device_idx: int = 1,

@@ -24,6 +24,7 @@ from transformers import (
 
 from core.device import get_backend
 from core.dtype import get_dtype
+from core.intruder import DiskCache
 from core.model import get_model_config
 from core.moe import (
     CentroidMetric,
@@ -43,7 +44,6 @@ from delphi.config import (  # type: ignore
 )
 from delphi.latents import LatentDataset, LatentRecord  # type: ignore
 from delphi.latents.cache import (  # type: ignore
-    InMemoryCache,
     LatentCache,
     generate_statistics_cache,
 )
@@ -230,6 +230,8 @@ class LatentPathsCache(LatentCache):
         batch_size: int,
         log_path: Path | None = None,
         postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
+        buffer_flush_size: int = 65536,  # how many tokens before we flush to disk
+        cache_dir: Path | None = None,
     ):
         """
         Initialize the LatentCache.
@@ -240,12 +242,21 @@ class LatentPathsCache(LatentCache):
             batch_size: Size of batches for processing.
             log_path: Path to save logging output.
             postprocessor: Router logits postprocessing method to use.
+            buffer_flush_size: Number of tokens before flushing to disk.
+                Defaults to 65536.
+            cache_dir: Directory to store intermediate cache files. If None,
+                uses DiskCache.DEFAULT_CACHE_DIR.
         """
         self.model: StandardizedTransformer = model
         self.hookpoint_to_sparse_encode = hookpoint_to_sparse_encode
         self.batch_size = batch_size
         self.widths = {}
-        self.cache = InMemoryCache(filters=None, batch_size=batch_size)
+        self.cache = DiskCache(
+            filters=None,
+            batch_size=batch_size,
+            buffer_flush_size=buffer_flush_size,
+            cache_dir=cache_dir,
+        )
 
         self.log_path = log_path
         self.postprocessor_fn = get_postprocessor(postprocessor)
@@ -329,7 +340,7 @@ class LatentPathsCache(LatentCache):
         """
         width_splits: dict[str, list[tuple[th.Tensor, th.Tensor]]] = {}
 
-        for hookpoint in self.cache.latent_locations:
+        for hookpoint in self.cache.hookpoints:
             width = self.widths[hookpoint]
             boundaries = th.linspace(0, width, steps=n_splits + 1).long()
             width_splits[hookpoint] = list(
@@ -350,10 +361,12 @@ class LatentPathsCache(LatentCache):
             Defaults to True.
         """
         width_splits = self._generate_split_indices(n_splits)
-        for hookpoint in self.cache.latent_locations:
-            latent_locations = self.cache.latent_locations[hookpoint]
-            latent_activations = self.cache.latent_activations[hookpoint]
-            tokens = self.cache.tokens[hookpoint].numpy()
+        for hookpoint in self.cache.hookpoints:
+            # Load all data for this hookpoint in a single disk read
+            latent_locations, latent_activations, tokens = (
+                self.cache.get_hookpoint_data(hookpoint)
+            )
+            tokens_np = tokens.numpy()
             split_indices = width_splits[hookpoint]
 
             latent_indices = latent_locations[:, 2]
@@ -390,7 +403,7 @@ class LatentPathsCache(LatentCache):
                     "activations": masked_activations,
                 }
                 if save_tokens:
-                    split_data["tokens"] = tokens
+                    split_data["tokens"] = tokens_np
 
                 save_file(split_data, output_file)
 
@@ -403,16 +416,21 @@ class LatentPathsCache(LatentCache):
         logger.info("Feature statistics:")
 
         # Token frequency
-        for hookpoint in self.cache.latent_locations:
+        for hookpoint in self.cache.hookpoints:
             width = self.widths[hookpoint]
 
             logger.info(f"# Hookpoint: {hookpoint}")
             logger.debug(f"# Width: {width}")
 
+            # Load all data for this hookpoint in a single disk read
+            latent_locations, latent_activations, tokens = (
+                self.cache.get_hookpoint_data(hookpoint)
+            )
+
             generate_statistics_cache(
-                self.cache.tokens[hookpoint],
-                self.cache.latent_locations[hookpoint],
-                self.cache.latent_activations[hookpoint],
+                tokens,
+                latent_locations,
+                latent_activations,
                 width,
                 verbose=True,
             )
@@ -530,7 +548,7 @@ def eval_intruder(
     ctxlen: int = 256,
     load_in_8bit: bool = False,
     n_tokens: int = 10_000_000,
-    batchsize: int = 8,
+    batchsize: int = 32,
     n_latents: int = 1000,
     example_ctx_len: int = 32,
     min_examples: int = 200,

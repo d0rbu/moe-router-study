@@ -157,7 +157,7 @@ def eval_all_paths(
     intruder_ctxlen: int = 256,
     intruder_load_in_8bit: bool = False,
     intruder_n_tokens: int = 10_000_000,
-    intruder_batchsize: int = 8,
+    intruder_batchsize: int = 32,
     intruder_n_latents: int = 1000,
     intruder_example_ctx_len: int = 32,
     intruder_min_examples: int = 200,
