@@ -309,6 +309,9 @@ class LatentPathsCache(LatentCache):
 
                 self.widths[hookpoint] = sae_latents.shape[2]
 
+            gc.collect()
+            th.cuda.empty_cache()
+
         logger.info(f"Total tokens processed: {total_tokens:,}")
         self.cache.save()
 
@@ -692,7 +695,7 @@ def eval_intruder(
 
     # Clean up model and free GPU memory before VLLM starts
     logger.debug("Cleaning up caching model to free GPU memory for VLLM")
-    del model, tokenizer, hookpoint_to_sparse_encode
+    del model, hookpoint_to_sparse_encode
     th.cuda.empty_cache()
     gc.collect()
 
