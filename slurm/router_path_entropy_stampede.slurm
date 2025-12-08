@@ -4,6 +4,7 @@
 #SBATCH -J router_path_entropy         # Set the job name to "router_path_entropy"
 #SBATCH -N 1                       # Number of nodes to request
 #SBATCH -n 1                       # Total number of tasks across all nodes
+#SBATCH -tasks-per-node 1          # Tasks per node
 #SBATCH -t 06:00:00                # Set the wall clock limit to 6 hours
 #SBATCH -o router_path_entropy-%j      # Send stdout/err to "router_path_entropy.[jobID]"
 #SBATCH -e router_path_entropy-%j.err  # Send stderr to separate file

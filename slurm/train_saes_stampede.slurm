@@ -4,6 +4,7 @@
 #SBATCH -J train_saes         # Set the job name to "train_saes"
 #SBATCH -N 1                       # Number of nodes to request
 #SBATCH -n 1                       # Total number of tasks across all nodes
+#SBATCH -tasks-per-node 1          # Tasks per node
 #SBATCH -t 192:00:00                # Set the wall clock limit to 192 hours
 #SBATCH -o train_saes-%j      # Send stdout/err to "train_saes.[jobID]"
 #SBATCH -e train_saes-%j.err  # Send stderr to separate file

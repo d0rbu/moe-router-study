@@ -4,6 +4,7 @@
 #SBATCH -J eval_router_space         # Set the job name to "eval_router_space"
 #SBATCH -N 1                       # Number of nodes to request
 #SBATCH -n 1                       # Total number of tasks across all nodes
+#SBATCH -tasks-per-node 1          # Tasks per node
 #SBATCH -t 24:00:00                # Set the wall clock limit to 24 hours
 #SBATCH -o eval_router_space-%j      # Send stdout/err to "eval_router_space.[jobID]"
 #SBATCH -e eval_router_space-%j.err  # Send stderr to separate file
