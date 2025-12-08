@@ -101,6 +101,7 @@ class CentroidProjection(nn.Module):
         self.register_buffer("centroids", centroids)
         self.metric = metric
         self.p = p
+        self.metric_fn = CENTROID_METRICS[metric]
 
     def forward(self, x: th.Tensor) -> th.Tensor:
         """
@@ -112,7 +113,8 @@ class CentroidProjection(nn.Module):
         Returns:
             Tensor of shape (..., C) containing centroid activations/distances
         """
-        return CENTROID_METRICS[self.metric](x, self.centroids, self.p)
+        self.centroids = self.centroids.to(x.device)
+        return self.metric_fn(x, self.centroids, self.p)
 
 
 def convert_router_logits_to_paths(router_logits: th.Tensor, top_k: int) -> th.Tensor:
