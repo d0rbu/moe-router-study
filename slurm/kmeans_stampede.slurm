@@ -3,7 +3,7 @@
 ##NECESSARY JOB SPECIFICATIONS
 #SBATCH -J kmeans         # Set the job name to "kmeans"
 #SBATCH -N 1                       # Number of nodes to request
-#SBATCH -n 1                       # Number of tasks (processes) to run per node
+#SBATCH -n 1                       # Total number of tasks across all nodes
 #SBATCH -t 24:00:00                # Set the wall clock limit to 24 hours
 #SBATCH -o kmeans-%j      # Send stdout/err to "kmeans.[jobID]"
 #SBATCH -e kmeans-%j.err  # Send stderr to separate file

@@ -3,7 +3,7 @@
 ##NECESSARY JOB SPECIFICATIONS
 #SBATCH -J eval_all_saes         # Set the job name to "eval_all_saes"
 #SBATCH -N 1                       # Number of nodes to request
-#SBATCH -n 1                       # Number of tasks (processes) to run per node
+#SBATCH -n 1                       # Total number of tasks across all nodes
 #SBATCH -t 12:00:00                # Set the wall clock limit to 12 hours
 #SBATCH -o eval_all_saes-%j      # Send stdout/err to "eval_all_saes.[jobID]"
 #SBATCH -e eval_all_saes-%j.err  # Send stderr to separate file

@@ -3,7 +3,7 @@
 ##NECESSARY JOB SPECIFICATIONS
 #SBATCH -J router_jaccard         # Set the job name to "router_jaccard"
 #SBATCH -N 1                       # Number of nodes to request
-#SBATCH -n 1                       # Number of tasks (processes) to run per node
+#SBATCH -n 1                       # Total number of tasks across all nodes
 #SBATCH -t 06:00:00                # Set the wall clock limit to 6 hours
 #SBATCH -o router_jaccard-%j      # Send stdout/err to "router_jaccard.[jobID]"
 #SBATCH -e router_jaccard-%j.err  # Send stderr to separate file

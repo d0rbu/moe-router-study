@@ -3,7 +3,7 @@
 ##NECESSARY JOB SPECIFICATIONS
 #SBATCH -J shuffle_activations         # Set the job name to "shuffle_activations"
 #SBATCH -N 1                       # Number of nodes to request
-#SBATCH -n 1                       # Number of tasks (processes) to run per node
+#SBATCH -n 1                       # Total number of tasks across all nodes
 #SBATCH -t 12:00:00                # Set the wall clock limit to 12 hours
 #SBATCH -o shuffle_activations-%j      # Send stdout/err to "shuffle_activations.[jobID]"
 #SBATCH -e shuffle_activations-%j.err  # Send stderr to separate file
