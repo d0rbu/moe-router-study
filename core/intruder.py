@@ -6,7 +6,6 @@ larger-than-memory datasets by periodically flushing to disk using async I/O.
 """
 
 from collections import defaultdict
-from multiprocessing import synchronize
 from pathlib import Path
 import queue
 import time
@@ -18,14 +17,7 @@ import torch as th
 from torch import Tensor
 import torch.multiprocessing as mp
 
-# Note: delphi import commented out due to availability issues
-# from delphi.delphi.latents.cache import get_nonzeros_batch
-
-
-def get_nonzeros_batch(*_args, **_kwargs):
-    """Placeholder function for get_nonzeros_batch when delphi is not available."""
-    raise ImportError("delphi.delphi.latents.cache not available")
-
+from delphi.delphi.latents.cache import get_nonzeros_batch
 
 location_tensor_type = Int[Tensor, "batch_sequence 3"]
 activation_tensor_type = Float[Tensor, "batch_sequence"]
@@ -33,7 +25,7 @@ token_tensor_type = Int[Tensor, "batch sequence"]
 latent_tensor_type = Float[Tensor, "batch sequence num_latents"]
 
 
-def _disk_writer_process(write_queue: mp.Queue, done_event: synchronize.Event) -> None:
+def _disk_writer_process(write_queue: mp.Queue, done_event: mp.Event) -> None:
     """
     Background process that handles disk writes.
 
@@ -155,7 +147,7 @@ class DiskCache:
 
         # Set up async disk writer
         self._write_queue: mp.Queue = mp.Queue()
-        self._done_event: synchronize.Event = mp.Event()
+        self._done_event: mp.Event = mp.Event()
         self._writer_process: mp.Process | None = None
 
         logger.debug(
