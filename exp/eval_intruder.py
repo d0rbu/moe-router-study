@@ -598,10 +598,17 @@ class MultiGPULatentPathsCache(LatentPathsCache):
         work_queue: mp.Queue = mp.Queue()
         result_queue: mp.Queue = mp.Queue()
 
-        # Start workers
-        workers = []
-        for gpu_id in self.gpu_ids:
-            w = mp.Process(
+        # Fill work queue
+        for batch_idx, batch_tokens in enumerate(token_batches):
+            work_queue.put((batch_idx, batch_tokens))
+
+        # Add shutdown signals
+        for _ in self.gpu_ids:
+            work_queue.put(None)
+
+        # Spawn workers
+        workers = [
+            mp.spawn(
                 target=_gpu_worker,
                 args=(
                     gpu_id,
@@ -619,17 +626,11 @@ class MultiGPULatentPathsCache(LatentPathsCache):
                     self.hf_token,
                     self.quantization_config,
                 ),
+                nprocs=len(self.gpu_ids),
+                join=False,
             )
-            w.start()
-            workers.append(w)
-
-        # Submit work
-        for batch_idx, batch_tokens in enumerate(token_batches):
-            work_queue.put((batch_idx, batch_tokens))
-
-        # Send shutdown signals
-        for _ in self.gpu_ids:
-            work_queue.put(None)
+            for gpu_id in self.gpu_ids
+        ]
 
         # Collect results
         for _ in tqdm(range(total_batches), desc="Caching (multi-GPU)"):
