@@ -12,6 +12,11 @@ from collections import defaultdict
 import os
 from typing import Any, cast
 
+try:
+    from typing import assert_type  # Python 3.11+
+except ImportError:
+    from typing_extensions import assert_type
+
 import arguably
 from loguru import logger
 import matplotlib.pyplot as plt
@@ -49,7 +54,7 @@ def compute_kurtosis(x: th.Tensor, dim: int = 0) -> th.Tensor:
     z = (x - mean) / (std + 1e-8)
 
     # Compute kurtosis (excess kurtosis)
-    kurtosis = (z**4).mean(dim=dim) - 3.0
+    kurtosis = (z**4).mean(dim=dim) - 3.0  # type: ignore[misc]
 
     return kurtosis
 
@@ -105,7 +110,12 @@ def kurtosis_basis(
     )
 
     router_layers: list[int] = model.layers_with_routers
-    num_layers = len(model.layers)
+    # Get num_layers from model config or estimate from router layers
+    try:
+        num_layers = len(model.layers)  # type: ignore[arg-type]
+    except (TypeError, AttributeError):
+        # Fallback: estimate from router layers if model.layers is not sized
+        num_layers = max(router_layers) + 1 if router_layers else 0
 
     logger.info(f"Model has {num_layers} layers, {len(router_layers)} with routers")
 

@@ -186,7 +186,7 @@ def eval_all_paths(
     log_level: str = "INFO",
     device_type: str = "cuda",
     postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
-    metric: CentroidMetric = "dot-product",
+    metric: CentroidMetric = CentroidMetric.DOT_PRODUCT,
     metric_p: float = 2.0,
 ) -> None:
     """
