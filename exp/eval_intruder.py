@@ -63,6 +63,7 @@ def _gpu_worker(
     gpu_id: int,
     work_queue: mp.Queue,
     result_queue: mp.Queue,
+    log_queue: mp.Queue,
     model_name: str,
     model_revision: str,
     model_dtype: th.dtype,
@@ -77,7 +78,7 @@ def _gpu_worker(
 ):
     """Worker that processes batches on a single GPU."""
     device = f"cuda:{gpu_id}"
-    logger.info(f"Worker {gpu_id}: Loading model on {device}")
+    log_queue.put(f"Worker {gpu_id}: Loading model on {device}")
 
     # Load model
     model = StandardizedTransformer(
@@ -103,7 +104,7 @@ def _gpu_worker(
         )
 
     postprocessor_fn = get_postprocessor(postprocessor)
-    logger.info(f"Worker {gpu_id}: Ready")
+    log_queue.put(f"Worker {gpu_id}: Ready")
 
     # Process batches
     while True:
@@ -136,8 +137,20 @@ def _gpu_worker(
         result_queue.put((batch_idx, batch_tokens.cpu(), results))
         th.cuda.empty_cache()
 
-    logger.info(f"Worker {gpu_id}: Done")
+    log_queue.put(f"Worker {gpu_id}: Done")
 
+
+GPU_LOG_FILE = "gpu_log.txt"
+
+
+def _log_worker(log_queue: mp.Queue):
+    """Worker that logs messages from the log queue."""
+    with open(GPU_LOG_FILE, "w") as f:
+        while True:
+            log = log_queue.get()
+            if log is None:
+                break
+            f.write(log + "\n")
 
 def dataset_postprocess(record: LatentRecord) -> LatentRecord:
     return record
@@ -596,6 +609,7 @@ class MultiGPULatentPathsCache(LatentPathsCache):
         ctx = mp.get_context("spawn")
         work_queue: mp.Queue = ctx.Queue()
         result_queue: mp.Queue = ctx.Queue()
+        log_queue: mp.Queue = ctx.Queue()
 
         # Fill work queue
         for batch_idx, batch_tokens in enumerate(token_batches):
@@ -614,6 +628,7 @@ class MultiGPULatentPathsCache(LatentPathsCache):
                     gpu_id,
                     work_queue,
                     result_queue,
+                    log_queue,
                     self.model_name,
                     self.model_revision,
                     self.model_dtype,
@@ -626,9 +641,19 @@ class MultiGPULatentPathsCache(LatentPathsCache):
                     self.hf_token,
                     self.quantization_config,
                 ),
+                daemon=True,
             )
             for gpu_id in self.gpu_ids
         ]
+
+        # Start logging worker
+        log_worker = ctx.Process(
+            target=_log_worker,
+            name="logging_worker",
+            args=(log_queue,),
+            daemon=True,
+        )
+        log_worker.start()
 
         # Collect results
         for _ in tqdm(range(total_batches), desc="Caching (multi-GPU)"):
@@ -640,6 +665,9 @@ class MultiGPULatentPathsCache(LatentPathsCache):
         # Wait for workers
         for w in workers:
             w.join(timeout=30)
+
+        log_queue.put(None)
+        log_worker.join()
 
         logger.info(
             f"Total tokens processed: {total_batches * token_batches[0].numel():,}"
