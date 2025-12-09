@@ -220,11 +220,11 @@ def kurtosis_basis(
                 layer_acts = layer_outputs[:, layer_idx, :].cpu()
                 activations_to_process.append((layer_acts, f"layer_{layer_idx}_residual"))
 
-                # 2-3. MLP projections (skip MoE layers)
-                if layer_idx not in router_layers:
-                    # Get pre-MLP residuals: layer_output - mlp_output
-                    pre_mlp_residuals = (layer_outputs[:, layer_idx, :] - mlp_outputs[:, layer_idx, :]).cpu()
+                # Get pre-MLP residuals: layer_output - mlp_output (needed for both cases)
+                pre_mlp_residuals = (layer_outputs[:, layer_idx, :] - mlp_outputs[:, layer_idx, :]).cpu()
 
+                # 2-3. MLP projections (dense layers) vs 4. Expert routers (MoE layers)
+                if layer_idx not in router_layers:
                     # Dense MLP layer
                     up_w = cast("Tensor", model.mlps[layer_idx].up_proj.weight).detach().cpu()
                     gate_w = cast("Tensor", model.mlps[layer_idx].gate_proj.weight).detach().cpu()
@@ -234,13 +234,8 @@ def kurtosis_basis(
                     activations_to_process.append((pre_mlp_residuals @ up_w.T, f"layer_{layer_idx}_up_proj"))
                     activations_to_process.append((pre_mlp_residuals @ gate_w.T, f"layer_{layer_idx}_gate_proj"))
                     activations_to_process.append((layer_acts @ down_w, f"layer_{layer_idx}_down_proj"))
-
-                # 4. Expert routers (MoE layers only)
-                if layer_idx in router_layers:
-                    # Get pre-MLP residuals: layer_output - mlp_output
-                    pre_mlp_residuals = (layer_outputs[:, layer_idx, :] - mlp_outputs[:, layer_idx, :]).cpu()
-
-                    # Get router weights
+                else:
+                    # MoE layer - expert routers
                     router_weight = cast("Tensor", model.routers[layer_idx].weight).detach().cpu()
 
                     # Compute router logits
@@ -293,11 +288,11 @@ def kurtosis_basis(
                 layer_acts = layer_outputs[:, layer_idx, :].cpu()
                 activations_to_process.append((layer_acts, f"layer_{layer_idx}_residual"))
 
-                # 2-3. MLP projections (skip MoE layers)
-                if layer_idx not in router_layers:
-                    # Get pre-MLP residuals: layer_output - mlp_output
-                    pre_mlp_residuals = (layer_outputs[:, layer_idx, :] - mlp_outputs[:, layer_idx, :]).cpu()
+                # Get pre-MLP residuals: layer_output - mlp_output (needed for both cases)
+                pre_mlp_residuals = (layer_outputs[:, layer_idx, :] - mlp_outputs[:, layer_idx, :]).cpu()
 
+                # 2-3. MLP projections (dense layers) vs 4. Expert routers (MoE layers)
+                if layer_idx not in router_layers:
                     # Dense MLP layer
                     up_w = cast("Tensor", model.mlps[layer_idx].up_proj.weight).detach().cpu()
                     gate_w = cast("Tensor", model.mlps[layer_idx].gate_proj.weight).detach().cpu()
@@ -307,13 +302,8 @@ def kurtosis_basis(
                     activations_to_process.append((pre_mlp_residuals @ up_w.T, f"layer_{layer_idx}_up_proj"))
                     activations_to_process.append((pre_mlp_residuals @ gate_w.T, f"layer_{layer_idx}_gate_proj"))
                     activations_to_process.append((layer_acts @ down_w, f"layer_{layer_idx}_down_proj"))
-
-                # 4. Expert routers (MoE layers only)
-                if layer_idx in router_layers:
-                    # Get pre-MLP residuals: layer_output - mlp_output
-                    pre_mlp_residuals = (layer_outputs[:, layer_idx, :] - mlp_outputs[:, layer_idx, :]).cpu()
-
-                    # Get router weights
+                else:
+                    # MoE layer - expert routers
                     router_weight = cast("Tensor", model.routers[layer_idx].weight).detach().cpu()
 
                     # Compute router logits
@@ -404,13 +394,13 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
     fig, ax = plt.subplots(figsize=(12, 6))
 
     residual_stats = [
-        statistics.get(f"layer_{layer_idx}_residual")
+        statistics[f"layer_{layer_idx}_residual"]
         for layer_idx in range(num_layers)
     ]
 
-    means = [s.mean if s else 0 for s in residual_stats]
-    q25s = [s.q25 if s else 0 for s in residual_stats]
-    q75s = [s.q75 if s else 0 for s in residual_stats]
+    means = [s.mean for s in residual_stats]
+    q25s = [s.q25 for s in residual_stats]
+    q75s = [s.q75 for s in residual_stats]
 
     x = np.arange(num_layers)
     ax.bar(x, means, color="steelblue", alpha=0.7, label="Mean kurtosis")
@@ -440,13 +430,14 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
 
         for ax, proj_type in zip(axes, ["up_proj", "gate_proj", "down_proj"]):
             proj_stats = [
-                statistics.get(f"layer_{layer_idx}_{proj_type}")
+                statistics[f"layer_{layer_idx}_{proj_type}"]
                 for layer_idx in dense_layers
+                if f"layer_{layer_idx}_{proj_type}" in statistics
             ]
 
-            means = [s.mean if s else 0 for s in proj_stats]
-            q25s = [s.q25 if s else 0 for s in proj_stats]
-            q75s = [s.q75 if s else 0 for s in proj_stats]
+            means = [s.mean for s in proj_stats]
+            q25s = [s.q25 for s in proj_stats]
+            q75s = [s.q75 for s in proj_stats]
 
             x = np.arange(len(dense_layers))
             ax.bar(x, means, color="coral", alpha=0.7, label="Mean kurtosis")
@@ -479,12 +470,12 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
         fig, ax = plt.subplots(figsize=(12, 6))
 
         router_stats_per_layer = [
-            statistics.get(f"layer_{layer_idx}_router") for layer_idx in router_layers
+            statistics[f"layer_{layer_idx}_router"] for layer_idx in router_layers
         ]
 
-        means = [s.mean if s else 0 for s in router_stats_per_layer]
-        q25s = [s.q25 if s else 0 for s in router_stats_per_layer]
-        q75s = [s.q75 if s else 0 for s in router_stats_per_layer]
+        means = [s.mean for s in router_stats_per_layer]
+        q25s = [s.q25 for s in router_stats_per_layer]
+        q75s = [s.q75 for s in router_stats_per_layer]
 
         x = np.arange(len(router_layers))
         ax.bar(x, means, color="mediumseagreen", alpha=0.7, label="Per-layer mean kurtosis")
