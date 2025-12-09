@@ -2,17 +2,19 @@
 DiskCache: A memory-efficient cache that flushes to disk when buffer is full.
 
 This module provides a disk-backed cache for latent activations that can handle
-larger-than-memory datasets by periodically flushing to disk.
+larger-than-memory datasets by periodically flushing to disk using async I/O.
 """
 
 from collections import defaultdict
 from pathlib import Path
+import time
 
 from jaxtyping import Float, Int
 from loguru import logger
 from safetensors.torch import load_file, save_file
 import torch as th
 from torch import Tensor
+import torch.multiprocessing as mp
 
 from delphi.delphi.latents.cache import get_nonzeros_batch
 
@@ -22,16 +24,46 @@ token_tensor_type = Int[Tensor, "batch sequence"]
 latent_tensor_type = Float[Tensor, "batch sequence num_latents"]
 
 
+def _disk_writer_process(write_queue: mp.Queue, done_event: mp.Event):
+    """
+    Background process that handles disk writes.
+
+    Args:
+        write_queue: Queue containing (output_file, data_dict) tuples to write.
+        done_event: Event to signal when the process should stop.
+    """
+    while True:
+        try:
+            item = write_queue.get(timeout=0.1)
+        except Exception:
+            # Check if we should exit
+            if done_event.is_set() and write_queue.empty():
+                break
+            continue
+
+        if item is None:  # Poison pill
+            break
+
+        output_file, data_dict = item
+        try:
+            save_file(data_dict, output_file)
+        except Exception as e:
+            logger.error(f"Failed to write {output_file}: {e}")
+
+
 class DiskCache:
     """
     A memory-efficient cache that stores latent locations and activations,
     flushing to disk when the buffer exceeds a specified size.
 
     Unlike InMemoryCache, this class periodically writes data to disk to avoid
-    running out of memory on large datasets.
+    running out of memory on large datasets. Disk writes happen asynchronously
+    in a background process to avoid blocking the main computation.
     """
 
     DEFAULT_CACHE_DIR = Path(".intruder_cache")
+    POLL_INTERVAL_WHEN_WAITING_FOR_WRITES = 5.0
+    TIMEOUT_WHEN_WAITING_FOR_WRITES = 120.0
 
     def __init__(
         self,
@@ -104,10 +136,26 @@ class DiskCache:
         # Track whether save() has been called
         self._finalized = False
 
+        # Set up async disk writer
+        self._write_queue: mp.Queue = mp.Queue()
+        self._done_event: mp.Event = mp.Event()
+        self._writer_process: mp.Process | None = None
+
         logger.debug(
             f"DiskCache initialized with buffer_flush_size={buffer_flush_size:,}, "
             f"cache_dir={self._cache_dir}"
         )
+
+    def _ensure_writer_started(self):
+        """Start the background writer process if not already running."""
+        if self._writer_process is None or not self._writer_process.is_alive():
+            self._done_event.clear()
+            self._writer_process = mp.Process(
+                target=_disk_writer_process,
+                args=(self._write_queue, self._done_event),
+                daemon=True,
+            )
+            self._writer_process.start()
 
     def _get_hookpoint_dir(self, hookpoint: str) -> Path:
         """Get the directory for a specific hookpoint's cache files."""
@@ -116,11 +164,14 @@ class DiskCache:
         return hookpoint_dir
 
     def _flush_to_disk(self):
-        """Flush current buffer contents to disk."""
+        """Flush current buffer contents to disk asynchronously."""
         if self._current_buffer_size == 0:
             return
 
-        logger.debug(f"Flushing {self._current_buffer_size} tokens to disk")
+        logger.debug(f"Queueing {self._current_buffer_size} tokens for disk write")
+
+        # Ensure writer is running
+        self._ensure_writer_started()
 
         for hookpoint in self._hookpoints:
             if hookpoint not in self._latent_locations_buffer:
@@ -132,24 +183,23 @@ class DiskCache:
             flush_idx = self._flush_counts[hookpoint]
             self._flush_counts[hookpoint] += 1
 
+            # Concatenate and clone data to send to writer process
             concatenated_locations = th.cat(
                 self._latent_locations_buffer[hookpoint], dim=0
-            )
+            ).clone()
             concatenated_activations = th.cat(
                 self._latent_activations_buffer[hookpoint], dim=0
-            )
-            concatenated_tokens = th.cat(self._tokens_buffer[hookpoint], dim=0)
+            ).clone()
+            concatenated_tokens = th.cat(self._tokens_buffer[hookpoint], dim=0).clone()
 
-            # Save to disk
-            output_file = hookpoint_dir / f"{flush_idx}.safetensors"
-            save_file(
-                {
-                    "locations": concatenated_locations,
-                    "activations": concatenated_activations,
-                    "tokens": concatenated_tokens,
-                },
-                output_file,
-            )
+            # Queue the write
+            output_file = str(hookpoint_dir / f"{flush_idx}.safetensors")
+            data_dict = {
+                "locations": concatenated_locations,
+                "activations": concatenated_activations,
+                "tokens": concatenated_tokens,
+            }
+            self._write_queue.put((output_file, data_dict))
 
         # Clear buffers
         self._latent_locations_buffer.clear()
@@ -241,12 +291,53 @@ class DiskCache:
         Finalize the cache by flushing remaining data to disk.
 
         This method must be called before accessing data via getters.
+        Waits for all pending disk writes to complete.
         """
         # Flush any remaining buffered data
         self._flush_to_disk()
 
-        logger.debug("DiskCache finalized - data saved to disk")
+        # Wait for all writes to complete
+        if self._writer_process is not None and self._writer_process.is_alive():
+            logger.debug(f"Waiting for {self._write_queue.qsize()} writes to complete")
+            # Signal the writer to stop after processing remaining items
+            self._done_event.set()
+            # Send poison pill to ensure it exits
+            self._write_queue.put(None)
+
+            num_polls = (
+                self.TIMEOUT_WHEN_WAITING_FOR_WRITES
+                // self.POLL_INTERVAL_WHEN_WAITING_FOR_WRITES
+            )
+
+            for _ in range(num_polls):
+                current_queue_size = self._write_queue.qsize()
+                logger.debug(f"Queue size: {current_queue_size}")
+                if current_queue_size == 0:
+                    break
+
+                time.sleep(self.POLL_INTERVAL_WHEN_WAITING_FOR_WRITES)
+
+            self._writer_process.join(timeout=5)
+            if self._writer_process.is_alive():
+                logger.warning("Writer process did not terminate, forcing...")
+                self._writer_process.terminate()
+                self._writer_process.join(timeout=5)
+
+        logger.debug("DiskCache finalized - all data saved to disk")
         self._finalized = True
+
+    def __del__(self):
+        """Clean up the writer process."""
+        if (
+            hasattr(self, "_writer_process")
+            and self._writer_process is not None
+            and self._writer_process.is_alive()
+        ):
+            self._done_event.set()
+            self._write_queue.put(None)
+            self._writer_process.join(timeout=5)
+            if self._writer_process.is_alive():
+                self._writer_process.terminate()
 
     @property
     def hookpoints(self) -> list[str]:
