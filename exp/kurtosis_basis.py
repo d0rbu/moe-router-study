@@ -9,6 +9,7 @@ This experiment computes kurtosis statistics for different bases:
 
 import asyncio
 from collections import defaultdict
+from dataclasses import dataclass
 import os
 from typing import Any, cast
 
@@ -27,6 +28,44 @@ from exp.activations import load_activations_and_init_dist
 from exp.get_activations import ActivationKeys
 
 KURTOSIS_DIR = os.path.join(OUTPUT_DIR, "kurtosis_basis")
+
+
+@dataclass
+class GlobalStats:
+    """Statistics for computing kurtosis."""
+    mean: th.Tensor
+    std: th.Tensor
+
+
+@dataclass
+class Accumulator:
+    """Accumulator for computing global statistics."""
+    sum: th.Tensor | None = None
+    sum_sq: th.Tensor | None = None
+    count: int = 0
+
+
+@dataclass
+class FinalStats:
+    """Final kurtosis statistics."""
+    mean: float
+    median: float
+    std: float
+    q25: float
+    q75: float
+    min: float
+    max: float
+
+
+def update_accumulator(accumulator: Accumulator, tensor: th.Tensor, batch_size: int) -> None:
+    """Update accumulator with new batch data."""
+    if accumulator.sum is None:
+        accumulator.sum = tensor.sum(dim=0)
+        accumulator.sum_sq = (tensor ** 2).sum(dim=0)
+    else:
+        accumulator.sum += tensor.sum(dim=0)
+        accumulator.sum_sq += (tensor ** 2).sum(dim=0)
+    accumulator.count += batch_size
 
 
 def compute_kurtosis(x: th.Tensor, dim: int = 0, mean: th.Tensor | None = None, std: th.Tensor | None = None) -> th.Tensor:
@@ -128,7 +167,6 @@ def kurtosis_basis(
             reshuffled_tokens_per_file=reshuffled_tokens_per_file,
             submodule_names=[
                 ActivationKeys.LAYER_OUTPUT,
-                ActivationKeys.ATTN_OUTPUT,
                 ActivationKeys.MLP_OUTPUT,
             ],
             context_length=context_length,
@@ -153,12 +191,10 @@ def kurtosis_basis(
     logger.info(f"First pass: Computing means and standard deviations...")
 
     # Storage for means and stds for each basis type
-    global_stats: dict[str, dict[str, th.Tensor]] = {}
+    global_stats: dict[str, GlobalStats] = {}
 
     # Accumulators for computing global statistics
-    accumulators: dict[str, dict[str, th.Tensor | int]] = defaultdict(
-        lambda: {"sum": None, "sum_sq": None, "count": 0}
-    )
+    accumulators: dict[str, Accumulator] = defaultdict(Accumulator)
 
     # First pass: accumulate statistics
     activation_iterator = activations(
@@ -171,121 +207,61 @@ def kurtosis_basis(
         for batch in tqdm(activation_iterator, desc="First pass - computing statistics"):
             # Get activations
             layer_outputs = batch[ActivationKeys.LAYER_OUTPUT]  # (batch, num_layers, hidden_dim)
-            attn_outputs = batch[ActivationKeys.ATTN_OUTPUT]    # (batch, num_layers, hidden_dim) 
             mlp_outputs = batch[ActivationKeys.MLP_OUTPUT]      # (batch, num_layers, hidden_dim)
 
             batch_size_actual = layer_outputs.shape[0]
 
-            # 1. Raw residual stream activations per layer
-            for layer_idx in range(num_layers):
-                basis_key = f"layer_{layer_idx}_residual"
-                layer_acts = layer_outputs[:, layer_idx, :].cpu()  # (batch, hidden_dim)
+            # Create list of (activation_tensor, basis_key) pairs to process
+            activations_to_process = []
 
-                # Update accumulators
-                if accumulators[basis_key]["sum"] is None:
-                    accumulators[basis_key]["sum"] = layer_acts.sum(dim=0)
-                    accumulators[basis_key]["sum_sq"] = (layer_acts ** 2).sum(dim=0)
-                else:
-                    accumulators[basis_key]["sum"] += layer_acts.sum(dim=0)
-                    accumulators[basis_key]["sum_sq"] += (layer_acts ** 2).sum(dim=0)
-                accumulators[basis_key]["count"] += batch_size_actual
-
-            # 2. MLP up-projection and gate-projection neurons (skip MoE layers)
+            # Process all layers in one loop
             for layer_idx in range(num_layers):
+                # 1. Raw residual stream activations per layer
+                layer_acts = layer_outputs[:, layer_idx, :].cpu()
+                activations_to_process.append((layer_acts, f"layer_{layer_idx}_residual"))
+
+                # 2-3. MLP projections (skip MoE layers)
+                if layer_idx not in router_layers:
+                    # Get pre-MLP residuals: layer_output - mlp_output
+                    pre_mlp_residuals = (layer_outputs[:, layer_idx, :] - mlp_outputs[:, layer_idx, :]).cpu()
+
+                    # Dense MLP layer
+                    up_w = cast("Tensor", model.mlps[layer_idx].up_proj.weight).detach().cpu()
+                    gate_w = cast("Tensor", model.mlps[layer_idx].gate_proj.weight).detach().cpu()
+                    down_w = cast("Tensor", model.mlps[layer_idx].down_proj.weight).detach().cpu()
+
+                    # Add projections to processing list
+                    activations_to_process.append((pre_mlp_residuals @ up_w.T, f"layer_{layer_idx}_up_proj"))
+                    activations_to_process.append((pre_mlp_residuals @ gate_w.T, f"layer_{layer_idx}_gate_proj"))
+                    activations_to_process.append((layer_acts @ down_w, f"layer_{layer_idx}_down_proj"))
+
+                # 4. Expert routers (MoE layers only)
                 if layer_idx in router_layers:
-                    # Skip MoE layers for dense MLP analysis
-                    continue
+                    # Get pre-MLP residuals: layer_output - mlp_output
+                    pre_mlp_residuals = (layer_outputs[:, layer_idx, :] - mlp_outputs[:, layer_idx, :]).cpu()
 
-                # Get pre-MLP residuals: layer_output - mlp_output
-                pre_mlp_residuals = layer_outputs[:, layer_idx, :] - mlp_outputs[:, layer_idx, :]
-                pre_mlp_residuals = pre_mlp_residuals.cpu()
+                    # Get router weights
+                    router_weight = cast("Tensor", model.routers[layer_idx].weight).detach().cpu()
 
-                # Dense MLP layer
-                up_w = cast("Tensor", model.mlps[layer_idx].up_proj.weight).detach().cpu()
-                gate_w = cast("Tensor", model.mlps[layer_idx].gate_proj.weight).detach().cpu()
+                    # Compute router logits
+                    router_logits = pre_mlp_residuals @ router_weight.T
+                    activations_to_process.append((router_logits, f"layer_{layer_idx}_router"))
 
-                up_proj = pre_mlp_residuals @ up_w.T
-                gate_proj = pre_mlp_residuals @ gate_w.T
-
-                # Up projection
-                basis_key = f"layer_{layer_idx}_up_proj"
-                if accumulators[basis_key]["sum"] is None:
-                    accumulators[basis_key]["sum"] = up_proj.sum(dim=0)
-                    accumulators[basis_key]["sum_sq"] = (up_proj ** 2).sum(dim=0)
-                else:
-                    accumulators[basis_key]["sum"] += up_proj.sum(dim=0)
-                    accumulators[basis_key]["sum_sq"] += (up_proj ** 2).sum(dim=0)
-                accumulators[basis_key]["count"] += batch_size_actual
-
-                # Gate projection  
-                basis_key = f"layer_{layer_idx}_gate_proj"
-                if accumulators[basis_key]["sum"] is None:
-                    accumulators[basis_key]["sum"] = gate_proj.sum(dim=0)
-                    accumulators[basis_key]["sum_sq"] = (gate_proj ** 2).sum(dim=0)
-                else:
-                    accumulators[basis_key]["sum"] += gate_proj.sum(dim=0)
-                    accumulators[basis_key]["sum_sq"] += (gate_proj ** 2).sum(dim=0)
-                accumulators[basis_key]["count"] += batch_size_actual
-
-            # 3. MLP down-projection neurons (skip MoE layers)
-            for layer_idx in range(num_layers):
-                if layer_idx in router_layers:
-                    # Skip MoE layers for dense MLP analysis
-                    continue
-
-                # Use layer outputs (post-MLP residuals)
-                post_mlp_residuals = layer_outputs[:, layer_idx, :].cpu()
-
-                # Dense MLP layer
-                down_w = cast("Tensor", model.mlps[layer_idx].down_proj.weight).detach().cpu()
-
-                down_proj = post_mlp_residuals @ down_w
-
-                # Down projection
-                basis_key = f"layer_{layer_idx}_down_proj"
-                if accumulators[basis_key]["sum"] is None:
-                    accumulators[basis_key]["sum"] = down_proj.sum(dim=0)
-                    accumulators[basis_key]["sum_sq"] = (down_proj ** 2).sum(dim=0)
-                else:
-                    accumulators[basis_key]["sum"] += down_proj.sum(dim=0)
-                    accumulators[basis_key]["sum_sq"] += (down_proj ** 2).sum(dim=0)
-                accumulators[basis_key]["count"] += batch_size_actual
-
-            # 4. Expert routers (per-layer)
-            for layer_idx in router_layers:
-                # Get pre-MLP residuals: layer_output - mlp_output
-                pre_mlp_residuals = layer_outputs[:, layer_idx, :] - mlp_outputs[:, layer_idx, :]
-                pre_mlp_residuals = pre_mlp_residuals.cpu()
-
-                # Get router weights
-                router_weight = cast("Tensor", model.routers[layer_idx].weight).detach().cpu()
-
-                # Compute router logits
-                router_logits = pre_mlp_residuals @ router_weight.T
-
-                basis_key = f"layer_{layer_idx}_router"
-                if accumulators[basis_key]["sum"] is None:
-                    accumulators[basis_key]["sum"] = router_logits.sum(dim=0)
-                    accumulators[basis_key]["sum_sq"] = (router_logits ** 2).sum(dim=0)
-                else:
-                    accumulators[basis_key]["sum"] += router_logits.sum(dim=0)
-                    accumulators[basis_key]["sum_sq"] += (router_logits ** 2).sum(dim=0)
-                accumulators[basis_key]["count"] += batch_size_actual
+            # Update all accumulators
+            for tensor, basis_key in activations_to_process:
+                update_accumulator(accumulators[basis_key], tensor, batch_size_actual)
 
             num_batches_processed += 1
 
     # Compute global means and stds
     logger.info("Computing global means and standard deviations...")
     for basis_key, acc in accumulators.items():
-        count = acc["count"]
-        mean = acc["sum"] / count
-        var = (acc["sum_sq"] / count) - (mean ** 2)
+        count = acc.count
+        mean = acc.sum / count
+        var = (acc.sum_sq / count) - (mean ** 2)
         std = th.sqrt(th.clamp(var, min=1e-8))
 
-        global_stats[basis_key] = {
-            "mean": mean,
-            "std": std,
-        }
+        global_stats[basis_key] = GlobalStats(mean=mean, std=std)
 
     logger.info(f"Completed first pass with {num_batches_processed} batches")
 
@@ -306,91 +282,49 @@ def kurtosis_basis(
         for batch in tqdm(activation_iterator, desc="Second pass - computing kurtosis"):
             # Get activations
             layer_outputs = batch[ActivationKeys.LAYER_OUTPUT]
-            attn_outputs = batch[ActivationKeys.ATTN_OUTPUT]
             mlp_outputs = batch[ActivationKeys.MLP_OUTPUT]
 
-            # 1. Raw residual stream activations per layer
+            # Create list of (activation_tensor, basis_key) pairs to process (same as first pass)
+            activations_to_process = []
+
+            # Process all layers in one loop
             for layer_idx in range(num_layers):
-                basis_key = f"layer_{layer_idx}_residual"
+                # 1. Raw residual stream activations per layer
                 layer_acts = layer_outputs[:, layer_idx, :].cpu()
+                activations_to_process.append((layer_acts, f"layer_{layer_idx}_residual"))
 
-                stats = global_stats[basis_key]
-                layer_kurtosis = compute_kurtosis(
-                    layer_acts, dim=0, mean=stats["mean"], std=stats["std"]
-                )
+                # 2-3. MLP projections (skip MoE layers)
+                if layer_idx not in router_layers:
+                    # Get pre-MLP residuals: layer_output - mlp_output
+                    pre_mlp_residuals = (layer_outputs[:, layer_idx, :] - mlp_outputs[:, layer_idx, :]).cpu()
 
-                layerwise_kurtosis[basis_key].append(layer_kurtosis)
+                    # Dense MLP layer
+                    up_w = cast("Tensor", model.mlps[layer_idx].up_proj.weight).detach().cpu()
+                    gate_w = cast("Tensor", model.mlps[layer_idx].gate_proj.weight).detach().cpu()
+                    down_w = cast("Tensor", model.mlps[layer_idx].down_proj.weight).detach().cpu()
 
-            # 2. MLP up-projection and gate-projection neurons (skip MoE layers)
-            for layer_idx in range(num_layers):
+                    # Add projections to processing list
+                    activations_to_process.append((pre_mlp_residuals @ up_w.T, f"layer_{layer_idx}_up_proj"))
+                    activations_to_process.append((pre_mlp_residuals @ gate_w.T, f"layer_{layer_idx}_gate_proj"))
+                    activations_to_process.append((layer_acts @ down_w, f"layer_{layer_idx}_down_proj"))
+
+                # 4. Expert routers (MoE layers only)
                 if layer_idx in router_layers:
-                    continue
+                    # Get pre-MLP residuals: layer_output - mlp_output
+                    pre_mlp_residuals = (layer_outputs[:, layer_idx, :] - mlp_outputs[:, layer_idx, :]).cpu()
 
-                # Get pre-MLP residuals
-                pre_mlp_residuals = layer_outputs[:, layer_idx, :] - mlp_outputs[:, layer_idx, :]
-                pre_mlp_residuals = pre_mlp_residuals.cpu()
+                    # Get router weights
+                    router_weight = cast("Tensor", model.routers[layer_idx].weight).detach().cpu()
 
-                # Dense MLP layer
-                up_w = cast("Tensor", model.mlps[layer_idx].up_proj.weight).detach().cpu()
-                gate_w = cast("Tensor", model.mlps[layer_idx].gate_proj.weight).detach().cpu()
+                    # Compute router logits
+                    router_logits = pre_mlp_residuals @ router_weight.T
+                    activations_to_process.append((router_logits, f"layer_{layer_idx}_router"))
 
-                up_proj = pre_mlp_residuals @ up_w.T
-                gate_proj = pre_mlp_residuals @ gate_w.T
-
-                # Up projection
-                basis_key = f"layer_{layer_idx}_up_proj"
+            # Compute kurtosis for all activations
+            for tensor, basis_key in activations_to_process:
                 stats = global_stats[basis_key]
-                up_kurtosis = compute_kurtosis(
-                    up_proj, dim=0, mean=stats["mean"], std=stats["std"]
-                )
-                layerwise_kurtosis[basis_key].append(up_kurtosis)
-
-                # Gate projection
-                basis_key = f"layer_{layer_idx}_gate_proj"
-                stats = global_stats[basis_key]
-                gate_kurtosis = compute_kurtosis(
-                    gate_proj, dim=0, mean=stats["mean"], std=stats["std"]
-                )
-                layerwise_kurtosis[basis_key].append(gate_kurtosis)
-
-            # 3. MLP down-projection neurons (skip MoE layers)
-            for layer_idx in range(num_layers):
-                if layer_idx in router_layers:
-                    continue
-
-                # Use layer outputs
-                post_mlp_residuals = layer_outputs[:, layer_idx, :].cpu()
-
-                # Dense MLP layer
-                down_w = cast("Tensor", model.mlps[layer_idx].down_proj.weight).detach().cpu()
-
-                down_proj = post_mlp_residuals @ down_w
-
-                basis_key = f"layer_{layer_idx}_down_proj"
-                stats = global_stats[basis_key]
-                down_kurtosis = compute_kurtosis(
-                    down_proj, dim=0, mean=stats["mean"], std=stats["std"]
-                )
-                layerwise_kurtosis[basis_key].append(down_kurtosis)
-
-            # 4. Expert routers (per-layer)
-            for layer_idx in router_layers:
-                # Get pre-MLP residuals
-                pre_mlp_residuals = layer_outputs[:, layer_idx, :] - mlp_outputs[:, layer_idx, :]
-                pre_mlp_residuals = pre_mlp_residuals.cpu()
-
-                # Get router weights
-                router_weight = cast("Tensor", model.routers[layer_idx].weight).detach().cpu()
-
-                # Compute router logits
-                router_logits = pre_mlp_residuals @ router_weight.T
-
-                basis_key = f"layer_{layer_idx}_router"
-                stats = global_stats[basis_key]
-                router_kurtosis = compute_kurtosis(
-                    router_logits, dim=0, mean=stats["mean"], std=stats["std"]
-                )
-                layerwise_kurtosis[basis_key].append(router_kurtosis)
+                kurtosis = compute_kurtosis(tensor, dim=0, mean=stats.mean, std=stats.std)
+                layerwise_kurtosis[basis_key].append(kurtosis)
 
             num_batches_processed += 1
 
@@ -399,24 +333,22 @@ def kurtosis_basis(
     # Aggregate kurtosis values and compute statistics
     logger.info("Computing final statistics...")
 
-    statistics: dict[str, dict[str, float]] = {}
+    statistics: dict[str, FinalStats] = {}
 
     for basis_name, kurtosis_list in layerwise_kurtosis.items():
         # Concatenate all kurtosis values for this basis
         all_kurtosis = th.cat(kurtosis_list, dim=0)
 
         # Compute statistics
-        stats = {
-            "mean": float(all_kurtosis.mean().item()),
-            "median": float(all_kurtosis.median().item()),
-            "std": float(all_kurtosis.std().item()),
-            "q25": float(all_kurtosis.quantile(0.25).item()),
-            "q75": float(all_kurtosis.quantile(0.75).item()),
-            "min": float(all_kurtosis.min().item()),
-            "max": float(all_kurtosis.max().item()),
-        }
-
-        statistics[basis_name] = stats
+        statistics[basis_name] = FinalStats(
+            mean=float(all_kurtosis.mean().item()),
+            median=float(all_kurtosis.median().item()),
+            std=float(all_kurtosis.std().item()),
+            q25=float(all_kurtosis.quantile(0.25).item()),
+            q75=float(all_kurtosis.quantile(0.75).item()),
+            min=float(all_kurtosis.min().item()),
+            max=float(all_kurtosis.max().item()),
+        )
 
     # Also compute aggregated statistics across all router layers
     logger.info("Computing aggregated router statistics...")
@@ -428,15 +360,15 @@ def kurtosis_basis(
 
     if all_router_kurtosis:
         all_router_kurtosis_cat = th.cat(all_router_kurtosis, dim=0)
-        statistics["all_layers_router"] = {
-            "mean": float(all_router_kurtosis_cat.mean().item()),
-            "median": float(all_router_kurtosis_cat.median().item()),
-            "std": float(all_router_kurtosis_cat.std().item()),
-            "q25": float(all_router_kurtosis_cat.quantile(0.25).item()),
-            "q75": float(all_router_kurtosis_cat.quantile(0.75).item()),
-            "min": float(all_router_kurtosis_cat.min().item()),
-            "max": float(all_router_kurtosis_cat.max().item()),
-        }
+        statistics["all_layers_router"] = FinalStats(
+            mean=float(all_router_kurtosis_cat.mean().item()),
+            median=float(all_router_kurtosis_cat.median().item()),
+            std=float(all_router_kurtosis_cat.std().item()),
+            q25=float(all_router_kurtosis_cat.quantile(0.25).item()),
+            q75=float(all_router_kurtosis_cat.quantile(0.75).item()),
+            min=float(all_router_kurtosis_cat.min().item()),
+            max=float(all_router_kurtosis_cat.max().item()),
+        )
 
     results["statistics"] = statistics
 
@@ -472,13 +404,13 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
     fig, ax = plt.subplots(figsize=(12, 6))
 
     residual_stats = [
-        statistics.get(f"layer_{layer_idx}_residual", {})
+        statistics.get(f"layer_{layer_idx}_residual")
         for layer_idx in range(num_layers)
     ]
 
-    means = [s.get("mean", 0) for s in residual_stats]
-    q25s = [s.get("q25", 0) for s in residual_stats]
-    q75s = [s.get("q75", 0) for s in residual_stats]
+    means = [s.mean if s else 0 for s in residual_stats]
+    q25s = [s.q25 if s else 0 for s in residual_stats]
+    q75s = [s.q75 if s else 0 for s in residual_stats]
 
     x = np.arange(num_layers)
     ax.bar(x, means, color="steelblue", alpha=0.7, label="Mean kurtosis")
@@ -508,13 +440,13 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
 
         for ax, proj_type in zip(axes, ["up_proj", "gate_proj", "down_proj"]):
             proj_stats = [
-                statistics.get(f"layer_{layer_idx}_{proj_type}", {})
+                statistics.get(f"layer_{layer_idx}_{proj_type}")
                 for layer_idx in dense_layers
             ]
 
-            means = [s.get("mean", 0) for s in proj_stats]
-            q25s = [s.get("q25", 0) for s in proj_stats]
-            q75s = [s.get("q75", 0) for s in proj_stats]
+            means = [s.mean if s else 0 for s in proj_stats]
+            q25s = [s.q25 if s else 0 for s in proj_stats]
+            q75s = [s.q75 if s else 0 for s in proj_stats]
 
             x = np.arange(len(dense_layers))
             ax.bar(x, means, color="coral", alpha=0.7, label="Mean kurtosis")
@@ -547,12 +479,12 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
         fig, ax = plt.subplots(figsize=(12, 6))
 
         router_stats_per_layer = [
-            statistics.get(f"layer_{layer_idx}_router", {}) for layer_idx in router_layers
+            statistics.get(f"layer_{layer_idx}_router") for layer_idx in router_layers
         ]
 
-        means = [s.get("mean", 0) for s in router_stats_per_layer]
-        q25s = [s.get("q25", 0) for s in router_stats_per_layer]
-        q75s = [s.get("q75", 0) for s in router_stats_per_layer]
+        means = [s.mean if s else 0 for s in router_stats_per_layer]
+        q25s = [s.q25 if s else 0 for s in router_stats_per_layer]
+        q75s = [s.q75 if s else 0 for s in router_stats_per_layer]
 
         x = np.arange(len(router_layers))
         ax.bar(x, means, color="mediumseagreen", alpha=0.7, label="Per-layer mean kurtosis")
@@ -569,17 +501,17 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
             agg_x = len(router_layers) + 0.5
             ax.bar(
                 agg_x,
-                agg_stats["mean"],
+                agg_stats.mean,
                 color="darkgreen",
                 alpha=0.7,
                 label="All layers aggregated",
             )
             ax.errorbar(
                 agg_x,
-                agg_stats["mean"],
+                agg_stats.mean,
                 yerr=[
-                    [agg_stats["mean"] - agg_stats["q25"]],
-                    [agg_stats["q75"] - agg_stats["mean"]],
+                    [agg_stats.mean - agg_stats.q25],
+                    [agg_stats.q75 - agg_stats.mean],
                 ],
                 fmt="none",
                 ecolor="black",
@@ -613,9 +545,9 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
         if basis_name in statistics:
             basis_types.append(f"L{layer_idx}_res")
             stats = statistics[basis_name]
-            basis_means.append(stats["mean"])
-            basis_q25s.append(stats["q25"])
-            basis_q75s.append(stats["q75"])
+            basis_means.append(stats.mean)
+            basis_q25s.append(stats.q25)
+            basis_q75s.append(stats.q75)
 
     # Add MLP projections (dense layers only)
     for layer_idx in dense_layers:
@@ -625,9 +557,9 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
                 proj_abbrev = proj_type.replace("_proj", "").replace("_", "")[:2]
                 basis_types.append(f"L{layer_idx}_{proj_abbrev}")
                 stats = statistics[basis_name]
-                basis_means.append(stats["mean"])
-                basis_q25s.append(stats["q25"])
-                basis_q75s.append(stats["q75"])
+                basis_means.append(stats.mean)
+                basis_q25s.append(stats.q25)
+                basis_q75s.append(stats.q75)
 
     # Add routers
     for layer_idx in router_layers:
@@ -635,17 +567,17 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
         if basis_name in statistics:
             basis_types.append(f"L{layer_idx}_rtr")
             stats = statistics[basis_name]
-            basis_means.append(stats["mean"])
-            basis_q25s.append(stats["q25"])
-            basis_q75s.append(stats["q75"])
+            basis_means.append(stats.mean)
+            basis_q25s.append(stats.q25)
+            basis_q75s.append(stats.q75)
 
     # Add aggregated router
     if "all_layers_router" in statistics:
         basis_types.append("All_rtr")
         stats = statistics["all_layers_router"]
-        basis_means.append(stats["mean"])
-        basis_q25s.append(stats["q25"])
-        basis_q75s.append(stats["q75"])
+        basis_means.append(stats.mean)
+        basis_q25s.append(stats.q25)
+        basis_q75s.append(stats.q75)
 
     if basis_types:  # Only create plot if we have data
         x = np.arange(len(basis_types))
