@@ -59,7 +59,7 @@ def batched_cdist_argmin(
     x: th.Tensor,
     y: th.Tensor,
     p: float = 1.0,
-    batch_size: int = 1024,
+    batch_size: int = 4096,
 ) -> th.Tensor:
     """
     Compute argmin of pairwise distances between x and y in a memory-efficient way.
@@ -76,13 +76,11 @@ def batched_cdist_argmin(
     original_shape = x.shape[:-1]
     x_flat = x.view(-1, x.shape[-1])
 
-    num_chunks = x_flat.shape[0] // batch_size
-
-    chunks = th.chunk(x_flat, num_chunks)
+    batches = th.split(x_flat, batch_size, dim=0)
     results = [
-        th.cdist(chunk.float(), y.float(), p=p).argmin(dim=-1)
-        for chunk in tqdm(
-            chunks, total=num_chunks, desc="Computing argmin", leave=False
+        th.cdist(batch.float(), y.float(), p=p).argmin(dim=-1)
+        for batch in tqdm(
+            batches, total=len(batches), desc="Computing argmin", leave=False
         )
     ]
 
@@ -212,6 +210,215 @@ def collect_path_activations(
 
     all_path_acts_BTF = th.cat(path_acts, dim=0)
     return all_path_acts_BTF
+
+
+def _gpu_path_activation_worker(
+    gpu_id: int,
+    work_queue: mp.Queue,
+    result_queue: mp.Queue,
+    model_path: str,
+    model_dtype: th.dtype,
+    paths_data: th.Tensor,
+    top_k: int,
+    postprocessor: RouterLogitsPostprocessor,
+    selected_paths: list[int] | None,
+    activation_dtype: th.dtype | None,
+    metric: CentroidMetric,
+    metric_p: float,
+    mask_bos_pad_eos_tokens: bool,
+):
+    """Worker that collects path activations on a single GPU."""
+    device = f"cuda:{gpu_id}"
+
+    try:
+        # Load model on this GPU
+        model = StandardizedTransformer(
+            model_path,
+            check_attn_probs_with_trace=False,
+            check_renaming=False,
+            device_map={"": device},
+            torch_dtype=model_dtype,
+        )
+
+        # Move paths to device
+        paths = paths_data.to(device)
+
+        logits_postprocessor = get_postprocessor(postprocessor)
+        centroid_metric_fn = CENTROID_METRICS[metric]
+
+        # Process batches from queue
+        while True:
+            item = work_queue.get()
+            if item is None:  # Shutdown signal
+                break
+
+            batch_idx, tokens_BT = item
+            tokens_BT = tokens_BT.to(device)
+
+            router_logits_set = []
+
+            with model.trace(tokens_BT):
+                for layer_idx in model.layers_with_routers:
+                    router_output = model.routers_output[layer_idx]
+
+                    if isinstance(router_output, tuple):
+                        if len(router_output) == 2:
+                            router_scores, _router_indices = router_output
+                        else:
+                            raise ValueError(
+                                f"Found tuple of length {len(router_output)} for router output at layer {layer_idx}"
+                            )
+                    else:
+                        router_scores = router_output
+                    logits = router_scores.save()
+                    router_logits_set.append(logits)
+
+            router_logits = th.cat(router_logits_set, dim=-2)
+            router_paths = logits_postprocessor(router_logits, top_k)
+            router_paths_BTP = router_paths.view(*tokens_BT.shape, -1)
+
+            # Compute path activations using specified metric
+            router_paths_BTF = centroid_metric_fn(router_paths_BTP, paths, metric_p)
+
+            del router_paths, router_paths_BTP, router_logits, router_logits_set
+
+            if selected_paths is not None:
+                router_paths_BTF = router_paths_BTF[:, :, selected_paths]
+
+            if mask_bos_pad_eos_tokens:
+                attn_mask_BT = get_bos_pad_eos_mask(tokens_BT, model.tokenizer)
+            else:
+                attn_mask_BT = th.ones_like(tokens_BT, dtype=th.bool)
+
+            attn_mask_BT = attn_mask_BT.to(device=router_paths_BTF.device)
+            router_paths_BTF = router_paths_BTF * attn_mask_BT[:, :, None]
+
+            if activation_dtype is not None:
+                router_paths_BTF = router_paths_BTF.to(dtype=activation_dtype)
+
+            # Send result back to CPU
+            result_queue.put((batch_idx, router_paths_BTF.cpu()))
+
+            del tokens_BT, router_paths_BTF, attn_mask_BT
+            gc.collect()
+            th.cuda.empty_cache()
+
+    except Exception as e:
+        error_msg = f"Error in GPU {gpu_id}: {e!s}"
+        result_queue.put((None, error_msg))
+        raise
+
+
+def collect_path_activations_parallel(
+    tokenized_dataset: th.Tensor,
+    paths: Paths,
+    top_k: int,
+    llm_batch_size: int,
+    model_path: str,
+    model_dtype: th.dtype,
+    gpu_ids: list[int],
+    mask_bos_pad_eos_tokens: bool = False,
+    selected_paths: list[int] | None = None,
+    activation_dtype: th.dtype | None = None,
+    metric: CentroidMetric = CentroidMetric.DOT_PRODUCT,
+    metric_p: float = 2.0,
+) -> th.Tensor:
+    """
+    Collects path activations using multiple GPUs in parallel.
+
+    Args:
+        tokenized_dataset: Tokenized dataset tensor
+        paths: Paths object containing centroids
+        top_k: Top k paths
+        llm_batch_size: Batch size for processing
+        model_path: Path to model
+        model_dtype: Model dtype
+        gpu_ids: List of GPU IDs to use
+        mask_bos_pad_eos_tokens: Whether to mask BOS/PAD/EOS tokens
+        selected_paths: Optional list of path indices to select
+        activation_dtype: Optional dtype for activations
+        metric: Centroid distance metric
+        metric_p: P value for metric
+
+    Returns:
+        Path activations tensor of shape (dataset_size, seq_len, num_paths)
+    """
+    if len(gpu_ids) == 0:
+        raise ValueError("No GPU IDs provided")
+
+    ctx = mp.get_context("spawn")
+    work_queue: mp.Queue = ctx.Queue()
+    result_queue: mp.Queue = ctx.Queue()
+
+    # Split dataset into batches and fill work queue
+    batches = list(th.split(tokenized_dataset, llm_batch_size, dim=0))
+    total_batches = len(batches)
+
+    for batch_idx, batch in enumerate(batches):
+        work_queue.put((batch_idx, batch))
+
+    # Add shutdown signals
+    for _ in gpu_ids:
+        work_queue.put(None)
+
+    # Spawn workers
+    workers = [
+        ctx.Process(
+            target=_gpu_path_activation_worker,
+            name=f"gpu_path_activation_worker_{gpu_id}",
+            args=(
+                gpu_id,
+                work_queue,
+                result_queue,
+                model_path,
+                model_dtype,
+                paths.data,
+                top_k,
+                paths.postprocessor,
+                selected_paths,
+                activation_dtype,
+                metric,
+                metric_p,
+                mask_bos_pad_eos_tokens,
+            ),
+            daemon=True,
+        )
+        for gpu_id in gpu_ids
+    ]
+
+    for worker in workers:
+        worker.start()
+
+    # Collect results (may arrive out of order)
+    results: dict[int, th.Tensor] = {}
+
+    with tqdm(
+        total=total_batches, desc="Collecting path activations (multi-GPU)"
+    ) as pbar:
+        while len(results) < total_batches:
+            batch_idx, result = result_queue.get(timeout=600)
+
+            if batch_idx is None:
+                # Error case
+                logger.error(result)
+                continue
+
+            results[batch_idx] = result
+            pbar.update(1)
+
+    # Wait for workers to finish
+    for worker in workers:
+        worker.join(timeout=30)
+        if worker.is_alive():
+            logger.warning(
+                f"Worker {worker.name} did not terminate, forcing termination"
+            )
+            worker.terminate()
+            worker.join()
+
+    # Reassemble results in correct order
+    ordered_results = [results[i] for i in range(total_batches)]
+    return th.cat(ordered_results, dim=0)
 
 
 def get_feature_activation_sparsity(
@@ -539,6 +746,9 @@ class PathAutoInterp(autointerp.AutoInterp):
         api_key: str,
         metric: CentroidMetric = CentroidMetric.DOT_PRODUCT,
         metric_p: float = 2.0,
+        model_path: str | None = None,
+        model_dtype: th.dtype | None = None,
+        gpu_ids: list[int] | None = None,
     ):
         self.cfg = cfg
         self.model: StandardizedTransformer = model
@@ -549,6 +759,10 @@ class PathAutoInterp(autointerp.AutoInterp):
         self.api_key = api_key
         self.metric = metric
         self.metric_p = metric_p
+        self.model_path = model_path
+        self.model_dtype = model_dtype
+        self.gpu_ids = gpu_ids if gpu_ids is not None else []
+
         if cfg.latents is not None:
             self.latents = cfg.latents
         else:
@@ -576,19 +790,42 @@ class PathAutoInterp(autointerp.AutoInterp):
         """
         dataset_size, seq_len = self.tokenized_dataset.shape
 
-        # (B, L * E)
-        acts = collect_path_activations(
-            self.tokenized_dataset,
-            self.model,
-            self.paths,
-            self.top_k,
-            self.cfg.llm_batch_size,
-            mask_bos_pad_eos_tokens=True,
-            selected_paths=self.latents,
-            activation_dtype=th.bfloat16,  # reduce memory usage, we don't need full precision when sampling activations
-            metric=self.metric,
-            metric_p=self.metric_p,
-        )
+        # Use multi-GPU if configured
+        if (
+            len(self.gpu_ids) > 1
+            and self.model_path is not None
+            and self.model_dtype is not None
+        ):
+            logger.info(
+                f"Using multi-GPU path activation collection with {len(self.gpu_ids)} GPUs"
+            )
+            acts = collect_path_activations_parallel(
+                self.tokenized_dataset,
+                self.paths,
+                self.top_k,
+                self.cfg.llm_batch_size,
+                self.model_path,
+                self.model_dtype,
+                self.gpu_ids,
+                mask_bos_pad_eos_tokens=True,
+                selected_paths=self.latents,
+                activation_dtype=th.bfloat16,
+                metric=self.metric,
+                metric_p=self.metric_p,
+            )
+        else:
+            acts = collect_path_activations(
+                self.tokenized_dataset,
+                self.model,
+                self.paths,
+                self.top_k,
+                self.cfg.llm_batch_size,
+                mask_bos_pad_eos_tokens=True,
+                selected_paths=self.latents,
+                activation_dtype=th.bfloat16,  # reduce memory usage, we don't need full precision when sampling activations
+                metric=self.metric,
+                metric_p=self.metric_p,
+            )
 
         generation_examples = {}
         scoring_examples = {}
@@ -726,6 +963,9 @@ def run_eval_paths(
     sparsity: th.Tensor | None = None,
     metric: CentroidMetric = CentroidMetric.DOT_PRODUCT,
     metric_p: float = 2.0,
+    model_path: str | None = None,
+    model_dtype: th.dtype | None = None,
+    gpu_ids: list[int] | None = None,
 ) -> dict[int, dict[str, Any]]:
     random.seed(config.random_seed)
     th.manual_seed(config.random_seed)
@@ -778,6 +1018,9 @@ def run_eval_paths(
         device=device,
         metric=metric,
         metric_p=metric_p,
+        model_path=model_path,
+        model_dtype=model_dtype,
+        gpu_ids=gpu_ids,
     )
     results = asyncio.run(autointerp_runner.run())
 
@@ -920,6 +1163,9 @@ def run_eval(
             None,
             metric,
             metric_p,
+            model_path=path,
+            model_dtype=llm_dtype,
+            gpu_ids=gpu_ids,
         )
 
         # Save nicely formatted logs to a text file, helpful for debugging.
