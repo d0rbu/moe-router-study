@@ -4296,7 +4296,7 @@ wheels = [
 [[package]]
 name = "sae-bench"
 version = "0.4.2"
-source = { git = "https://github.com/d0rbu/SAEBench#6118c1707c96c53a46a3ed2f2d9753ab78539917" }
+source = { git = "https://github.com/d0rbu/SAEBench#0b78defc56160d9916169f163b371c5c7f65c1ed" }
 dependencies = [
     { name = "beartype" },
     { name = "collectibles" },
