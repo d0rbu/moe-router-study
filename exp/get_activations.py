@@ -508,6 +508,7 @@ def gpu_worker(
     model = StandardizedTransformer(
         path,
         check_attn_probs_with_trace=False,
+        check_renaming=False,
         device_map="cpu" if not gpu_available else "auto",
         torch_dtype=dtype,
     )

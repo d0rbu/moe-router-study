@@ -38,6 +38,7 @@ def router_spaces(
     model = StandardizedTransformer(
         model_config.hf_name,
         check_attn_probs_with_trace=False,
+        check_renaming=False,
         device_map=device,
         revision=revision,
     )

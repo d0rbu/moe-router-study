@@ -298,6 +298,8 @@ def eval_raw_activations(
     logger.debug(f"Loading caching model on {cache_device}")
     model = StandardizedTransformer(
         model_config.hf_name,
+        check_attn_probs_with_trace=False,
+        check_renaming=False,
         revision=str(model_ckpt),
         device_map={"": cache_device},
         quantization_config=quantization_config,

@@ -821,6 +821,7 @@ def eval_causal_routing(
     model = StandardizedTransformer(
         model_config.hf_name,
         check_attn_probs_with_trace=False,
+        check_renaming=False,
         revision=str(model_ckpt),
         device_map={"": "cuda"},
         quantization_config=quantization_config,

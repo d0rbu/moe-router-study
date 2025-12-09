@@ -83,6 +83,7 @@ def _gpu_worker(
     model = StandardizedTransformer(
         model_name,
         check_attn_probs_with_trace=False,
+        check_renaming=False,
         revision=model_revision,
         device_map={"": device},
         quantization_config=quantization_config,
@@ -984,6 +985,7 @@ def eval_intruder(
             model = StandardizedTransformer(
                 model_config.hf_name,
                 check_attn_probs_with_trace=False,
+                check_renaming=False,
                 revision=str(model_ckpt),
                 device_map={"": cache_device},
                 quantization_config=quantization_config,
