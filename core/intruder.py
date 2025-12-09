@@ -7,6 +7,7 @@ larger-than-memory datasets by periodically flushing to disk using async I/O.
 
 from collections import defaultdict
 from pathlib import Path
+import queue
 import time
 
 from jaxtyping import Float, Int
@@ -34,15 +35,22 @@ def _disk_writer_process(write_queue: mp.Queue, done_event: mp.Event):
     """
     while True:
         try:
-            item = write_queue.get(timeout=0.1)
-        except Exception:
+            item = write_queue.get(timeout=1.0)
+        except queue.Empty:
             # Check if we should exit
             if done_event.is_set() and write_queue.empty():
+                logger.debug(
+                    "Writer process received done event and queue is empty, exiting"
+                )
                 break
             continue
 
         if item is None:  # Poison pill
+            logger.debug("Writer process received poison pill, exiting")
             break
+
+        logger.debug("Writer process got item from queue")
+        logger.trace(str(item))
 
         output_file, data_dict = item
         try:
