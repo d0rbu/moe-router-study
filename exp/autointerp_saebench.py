@@ -8,7 +8,6 @@ import sys
 from typing import Any
 
 from dotenv import load_dotenv
-import torch.multiprocessing as mp
 from loguru import logger
 from nnterp import StandardizedTransformer
 from sae_bench.evals.autointerp import main as autointerp
@@ -31,8 +30,9 @@ from sae_bench.sae_bench_utils.dataset_utils import (
 )
 from tabulate import tabulate
 import torch as th
+import torch.multiprocessing as mp
 from tqdm import tqdm
-from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
+from transformers import AutoTokenizer, PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from core.memory import clear_memory
 from core.model import get_model_config
@@ -44,6 +44,36 @@ from core.moe import (
 )
 from core.type import assert_type
 from exp import MODEL_DIRNAME
+
+
+def batched_cdist_argmin(
+    x: th.Tensor,
+    y: th.Tensor,
+    p: float = 1.0,
+    n_chunks: int = 8,
+) -> th.Tensor:
+    """
+    Compute argmin of pairwise distances between x and y in a memory-efficient way.
+
+    Args:
+        x: Tensor of shape (*, D) - query points
+        y: Tensor of shape (N, D) - reference points
+        p: p-norm to use for distance computation
+        n_chunks: Number of chunks to split x into
+
+    Returns:
+        Tensor of shape (*) containing indices of closest points in y
+    """
+    original_shape = x.shape[:-1]
+    x_flat = x.view(-1, x.shape[-1])
+
+    chunks = th.chunk(x_flat, n_chunks)
+    results = [
+        th.cdist(chunk.float(), y.float(), p=p).argmin(dim=-1) for chunk in chunks
+    ]
+
+    return th.cat(results).view(original_shape)
+
 
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
@@ -232,15 +262,17 @@ def get_feature_activation_sparsity(
 
         router_paths_BTP = router_paths.view(*tokens_BT.shape, -1)
 
-        # one-hot encode the closest path to each token
-        # (B, T, L * E) . (F, L * E) -> (B, T, F)
-        distances = th.cdist(router_paths_BTP.float(), paths.float(), p=1)
-        # (B, T, F) -> (B, T, 1)
-        closest_paths = th.argmin(distances, dim=-1, keepdim=True)
-        router_paths_BTF = th.zeros_like(distances)
-        router_paths_BTF.scatter_(-1, closest_paths, 1)
+        # one-hot encode the closest path to each token using batched cdist
+        # to avoid OOM on large path sets
+        closest_paths = batched_cdist_argmin(router_paths_BTP, paths, p=1)
+        router_paths_BTF = th.zeros(
+            (*router_paths_BTP.shape[:-1], paths.shape[0]),
+            dtype=router_paths_BTP.dtype,
+            device=router_paths_BTP.device,
+        )
+        router_paths_BTF.scatter_(-1, closest_paths.unsqueeze(-1), 1)
 
-        del distances, closest_paths
+        del closest_paths
 
         if mask_bos_pad_eos_tokens:
             attn_mask_BT = get_bos_pad_eos_mask(tokens_BT, model.tokenizer)
@@ -300,7 +332,9 @@ def _gpu_sparsity_worker(
             running_sum_F = th.zeros(paths.shape[0], dtype=th.float32, device=device)
             total_tokens = 0
 
-            for _batch_idx, tokens_BT in enumerate(th.split(tokenized_dataset, batch_size, dim=0)):
+            for _batch_idx, tokens_BT in enumerate(
+                th.split(tokenized_dataset, batch_size, dim=0)
+            ):
                 router_logits_set = []
 
                 with model.trace(tokens_BT):
@@ -324,13 +358,17 @@ def _gpu_sparsity_worker(
                 router_paths = logits_postprocessor(router_logits, top_k)
                 router_paths_BTP = router_paths.view(*tokens_BT.shape, -1)
 
-                # one-hot encode the closest path to each token
-                distances = th.cdist(router_paths_BTP.float(), paths.float(), p=1)
-                closest_paths = th.argmin(distances, dim=-1, keepdim=True)
-                router_paths_BTF = th.zeros_like(distances)
-                router_paths_BTF.scatter_(-1, closest_paths, 1)
+                # one-hot encode the closest path to each token using batched cdist
+                # to avoid OOM on large path sets
+                closest_paths = batched_cdist_argmin(router_paths_BTP, paths, p=1)
+                router_paths_BTF = th.zeros(
+                    (*router_paths_BTP.shape[:-1], paths.shape[0]),
+                    dtype=router_paths_BTP.dtype,
+                    device=router_paths_BTP.device,
+                )
+                router_paths_BTF.scatter_(-1, closest_paths.unsqueeze(-1), 1)
 
-                del distances, closest_paths
+                del closest_paths, router_paths, router_logits, router_logits_set
 
                 if mask_bos_pad_eos_tokens:
                     attn_mask_BT = get_bos_pad_eos_mask(tokens_BT, model.tokenizer)
@@ -447,7 +485,9 @@ def get_feature_activation_sparsity_parallel(
     for worker in workers:
         worker.join(timeout=30)
         if worker.is_alive():
-            logger.warning(f"Worker {worker.name} did not terminate, forcing termination")
+            logger.warning(
+                f"Worker {worker.name} did not terminate, forcing termination"
+            )
             worker.terminate()
             worker.join()
 
@@ -810,11 +850,15 @@ def run_eval(
         # Collect paths that need sparsity computation
         paths_needing_sparsity = []
         for idx, paths_obj in enumerate(selected_paths_set):
-            if isinstance(paths_obj, Paths) and not isinstance(paths_obj, PathsWithSparsity):
+            if isinstance(paths_obj, Paths) and not isinstance(
+                paths_obj, PathsWithSparsity
+            ):
                 paths_needing_sparsity.append((idx, paths_obj))
 
         if paths_needing_sparsity:
-            logger.info(f"Computing sparsity for {len(paths_needing_sparsity)} paths using {len(gpu_ids)} GPUs")
+            logger.info(
+                f"Computing sparsity for {len(paths_needing_sparsity)} paths using {len(gpu_ids)} GPUs"
+            )
             # Get postprocessor from first path that needs sparsity
             postprocessor = paths_needing_sparsity[0][1].postprocessor
             sparsity_results = get_feature_activation_sparsity_parallel(
@@ -916,13 +960,13 @@ def run_eval(
                     autointerp_score=score, autointerp_std_dev=std_dev
                 )
             ),
-            eval_result_details=[], # type: ignore
-            eval_result_unstructured=paths_eval_result, # type: ignore
-            sae_bench_commit_hash=sae_bench_commit_hash, # type: ignore
-            sae_lens_id="paths", # type: ignore
-            sae_lens_release_id=paths_with_metadata.name, # type: ignore
-            sae_lens_version=sae_lens_version, # type: ignore
-            sae_cfg_dict=paths_with_metadata.metadata, # type: ignore
+            eval_result_details=[],  # type: ignore
+            eval_result_unstructured=paths_eval_result,  # type: ignore
+            sae_bench_commit_hash=sae_bench_commit_hash,  # type: ignore
+            sae_lens_id="paths",  # type: ignore
+            sae_lens_release_id=paths_with_metadata.name,  # type: ignore
+            sae_lens_version=sae_lens_version,  # type: ignore
+            sae_cfg_dict=paths_with_metadata.metadata,  # type: ignore
         )
 
         results_dict[f"{paths_with_metadata.name}"] = asdict(eval_output)
