@@ -45,12 +45,21 @@ from core.moe import (
 from core.type import assert_type
 from exp import MODEL_DIRNAME
 
+load_dotenv()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+
+
+if not OPENAI_API_KEY:
+    logger.error(
+        "OPENAI_API_KEY is not set, please set it as an environment variable or in a .env file if using autointerp"
+    )
+
 
 def batched_cdist_argmin(
     x: th.Tensor,
     y: th.Tensor,
     p: float = 1.0,
-    n_chunks: int = 8,
+    batch_size: int = 1024,
 ) -> th.Tensor:
     """
     Compute argmin of pairwise distances between x and y in a memory-efficient way.
@@ -67,22 +76,14 @@ def batched_cdist_argmin(
     original_shape = x.shape[:-1]
     x_flat = x.view(-1, x.shape[-1])
 
-    chunks = th.chunk(x_flat, n_chunks)
+    num_chunks = x_flat.shape[0] // batch_size
+
+    chunks = th.chunk(x_flat, num_chunks)
     results = [
         th.cdist(chunk.float(), y.float(), p=p).argmin(dim=-1) for chunk in chunks
     ]
 
     return th.cat(results).view(original_shape)
-
-
-load_dotenv()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-
-
-if not OPENAI_API_KEY:
-    logger.error(
-        "OPENAI_API_KEY is not set, please set it as an environment variable or in a .env file if using autointerp"
-    )
 
 
 @dataclass
