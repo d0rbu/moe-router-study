@@ -30,6 +30,7 @@ def run_path_eval_saebench(
     skip_sparse_probing: bool = False,
     metric: CentroidMetric = CentroidMetric.DOT_PRODUCT,
     metric_p: float = 2.0,
+    num_autointerp_latents: int = 1000,
 ) -> bool:
     """Run SAEBench evaluation on a k-means path experiment."""
     logger.info(f"Running SAEBench evaluation on {experiment_name}")
@@ -47,6 +48,7 @@ def run_path_eval_saebench(
             skip_sparse_probing=skip_sparse_probing,
             metric=metric,
             metric_p=metric_p,
+            num_autointerp_latents=num_autointerp_latents,
         )
         logger.debug(f"✅ SAEBench evaluation completed for {experiment_name}")
         return True
@@ -154,6 +156,7 @@ def eval_all_paths(
     skip_sparse_probing: bool = False,
     run_intruder: bool = True,
     saebench_batchsize: int = 512,
+    num_autointerp_latents: int = 1000,
     intruder_model_step_ckpt: int | None = None,
     intruder_model_dtype: str = "bf16",
     intruder_ctxlen: int = 256,
@@ -253,6 +256,7 @@ def eval_all_paths(
             skip_sparse_probing,
             metric,
             metric_p,
+            num_autointerp_latents,
         )
         if not saebench_success:
             logger.error("SAEBench evaluation failed!")

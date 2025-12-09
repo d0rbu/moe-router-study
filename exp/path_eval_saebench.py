@@ -39,6 +39,7 @@ def path_eval_saebench(
     skip_sparse_probing: bool = False,
     metric: CentroidMetric = "dot-product",
     metric_p: float = 2.0,
+    num_autointerp_latents: int = 1000,
 ) -> None:
     """
     Evaluate the paths on the given model.
@@ -132,6 +133,7 @@ def path_eval_saebench(
                 random_seed=seed,
                 llm_batch_size=batchsize,
                 llm_dtype=str_dtype,
+                n_latents=num_autointerp_latents,
             ),
             selected_paths_set=paths_set,
             device=device,
