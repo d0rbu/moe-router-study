@@ -29,7 +29,7 @@ from exp.get_activations import ActivationKeys
 KURTOSIS_DIR = os.path.join(OUTPUT_DIR, "kurtosis_basis")
 
 
-def compute_kurtosis(x: th.Tensor, dim: int = 0) -> th.Tensor:
+def compute_kurtosis(x: th.Tensor, dim: int = 0, mean: th.Tensor | None = None, std: th.Tensor | None = None) -> th.Tensor:
     """Compute kurtosis (Fisher's definition) along a dimension.
 
     Kurtosis = E[(X - μ)^4] / sigma^4 - 3
@@ -37,13 +37,22 @@ def compute_kurtosis(x: th.Tensor, dim: int = 0) -> th.Tensor:
     Args:
         x: Input tensor
         dim: Dimension along which to compute kurtosis
+        mean: Pre-computed mean (optional)
+        std: Pre-computed std (optional)
 
     Returns:
         Kurtosis values
     """
-    # Compute mean and std
-    mean = x.mean(dim=dim, keepdim=True)
-    std = x.std(dim=dim, keepdim=True, unbiased=False)
+    # Compute or use provided mean and std
+    if mean is None:
+        mean = x.mean(dim=dim, keepdim=True)
+    else:
+        mean = mean.unsqueeze(dim) if mean.dim() == x.dim() - 1 else mean
+
+    if std is None:
+        std = x.std(dim=dim, keepdim=True, unbiased=False)
+    else:
+        std = std.unsqueeze(dim) if std.dim() == x.dim() - 1 else std
 
     # Compute normalized deviations
     z = (x - mean) / (std + 1e-8)
@@ -58,12 +67,12 @@ def compute_kurtosis(x: th.Tensor, dim: int = 0) -> th.Tensor:
 def kurtosis_basis(
     model_name: str = "olmoe",
     dataset_name: str = "lmsys",
-    tokens_per_file: int = 5_000,
-    reshuffled_tokens_per_file: int = 10_000,
+    tokens_per_file: int = 100_000,
+    reshuffled_tokens_per_file: int = 100_000,
     context_length: int = 2048,
     checkpoint_idx: int | None = None,
     device: str = "cpu",
-    max_samples: int = 100_000,
+    max_samples: int = 10_000_000,
     batch_size: int = 4096,
     seed: int = 0,
     debug: bool = False,
@@ -105,12 +114,7 @@ def kurtosis_basis(
     )
 
     router_layers: list[int] = model.layers_with_routers
-    # Get num_layers from model config or estimate from router layers
-    try:
-        num_layers = len(model.layers)  # type: ignore[arg-type]
-    except (TypeError, AttributeError):
-        # Fallback: estimate from router layers if model.layers is not sized
-        num_layers = max(router_layers) + 1 if router_layers else 0
+    num_layers = len(model.layers)
 
     logger.info(f"Model has {num_layers} layers, {len(router_layers)} with routers")
 
@@ -145,14 +149,18 @@ def kurtosis_basis(
         "max_samples": max_samples,
     }
 
-    # Track statistics by layer for some bases
-    layerwise_kurtosis: dict[str, dict[int, list[th.Tensor]]] = defaultdict(
-        lambda: defaultdict(list)
+    # Two-pass approach: First pass to compute means and stds, second pass to compute kurtosis
+    logger.info(f"First pass: Computing means and standard deviations...")
+
+    # Storage for means and stds for each basis type
+    global_stats: dict[str, dict[str, th.Tensor]] = {}
+
+    # Accumulators for computing global statistics
+    accumulators: dict[str, dict[str, th.Tensor | int]] = defaultdict(
+        lambda: {"sum": None, "sum_sq": None, "count": 0}
     )
 
-    # Process activations in batches
-    logger.info(f"Processing activations (max_samples={max_samples})...")
-
+    # First pass: accumulate statistics
     activation_iterator = activations(
         batch_size=batch_size, start_idx=0, max_samples=max_samples
     )
@@ -160,258 +168,255 @@ def kurtosis_basis(
     num_batches_processed = 0
 
     with th.no_grad():
-        for batch in tqdm(activation_iterator, desc="Processing batches"):
-            # Get layer outputs (post-layer-norm residual stream at each layer)
-            # Shape: (batch, num_layers, hidden_dim)
+        for batch in tqdm(activation_iterator, desc="First pass - computing statistics"):
+            # Get activations
+            layer_outputs = batch[ActivationKeys.LAYER_OUTPUT]  # (batch, num_layers, hidden_dim)
+            attn_outputs = batch[ActivationKeys.ATTN_OUTPUT]    # (batch, num_layers, hidden_dim) 
+            mlp_outputs = batch[ActivationKeys.MLP_OUTPUT]      # (batch, num_layers, hidden_dim)
+
+            batch_size_actual = layer_outputs.shape[0]
+
+            # 1. Raw residual stream activations per layer
+            for layer_idx in range(num_layers):
+                basis_key = f"layer_{layer_idx}_residual"
+                layer_acts = layer_outputs[:, layer_idx, :].cpu()  # (batch, hidden_dim)
+
+                # Update accumulators
+                if accumulators[basis_key]["sum"] is None:
+                    accumulators[basis_key]["sum"] = layer_acts.sum(dim=0)
+                    accumulators[basis_key]["sum_sq"] = (layer_acts ** 2).sum(dim=0)
+                else:
+                    accumulators[basis_key]["sum"] += layer_acts.sum(dim=0)
+                    accumulators[basis_key]["sum_sq"] += (layer_acts ** 2).sum(dim=0)
+                accumulators[basis_key]["count"] += batch_size_actual
+
+            # 2. MLP up-projection and gate-projection neurons (skip MoE layers)
+            for layer_idx in range(num_layers):
+                if layer_idx in router_layers:
+                    # Skip MoE layers for dense MLP analysis
+                    continue
+
+                # Get pre-MLP residuals: layer_output - mlp_output
+                pre_mlp_residuals = layer_outputs[:, layer_idx, :] - mlp_outputs[:, layer_idx, :]
+                pre_mlp_residuals = pre_mlp_residuals.cpu()
+
+                # Dense MLP layer
+                up_w = cast("Tensor", model.mlps[layer_idx].up_proj.weight).detach().cpu()
+                gate_w = cast("Tensor", model.mlps[layer_idx].gate_proj.weight).detach().cpu()
+
+                up_proj = pre_mlp_residuals @ up_w.T
+                gate_proj = pre_mlp_residuals @ gate_w.T
+
+                # Up projection
+                basis_key = f"layer_{layer_idx}_up_proj"
+                if accumulators[basis_key]["sum"] is None:
+                    accumulators[basis_key]["sum"] = up_proj.sum(dim=0)
+                    accumulators[basis_key]["sum_sq"] = (up_proj ** 2).sum(dim=0)
+                else:
+                    accumulators[basis_key]["sum"] += up_proj.sum(dim=0)
+                    accumulators[basis_key]["sum_sq"] += (up_proj ** 2).sum(dim=0)
+                accumulators[basis_key]["count"] += batch_size_actual
+
+                # Gate projection  
+                basis_key = f"layer_{layer_idx}_gate_proj"
+                if accumulators[basis_key]["sum"] is None:
+                    accumulators[basis_key]["sum"] = gate_proj.sum(dim=0)
+                    accumulators[basis_key]["sum_sq"] = (gate_proj ** 2).sum(dim=0)
+                else:
+                    accumulators[basis_key]["sum"] += gate_proj.sum(dim=0)
+                    accumulators[basis_key]["sum_sq"] += (gate_proj ** 2).sum(dim=0)
+                accumulators[basis_key]["count"] += batch_size_actual
+
+            # 3. MLP down-projection neurons (skip MoE layers)
+            for layer_idx in range(num_layers):
+                if layer_idx in router_layers:
+                    # Skip MoE layers for dense MLP analysis
+                    continue
+
+                # Use layer outputs (post-MLP residuals)
+                post_mlp_residuals = layer_outputs[:, layer_idx, :].cpu()
+
+                # Dense MLP layer
+                down_w = cast("Tensor", model.mlps[layer_idx].down_proj.weight).detach().cpu()
+
+                down_proj = post_mlp_residuals @ down_w
+
+                # Down projection
+                basis_key = f"layer_{layer_idx}_down_proj"
+                if accumulators[basis_key]["sum"] is None:
+                    accumulators[basis_key]["sum"] = down_proj.sum(dim=0)
+                    accumulators[basis_key]["sum_sq"] = (down_proj ** 2).sum(dim=0)
+                else:
+                    accumulators[basis_key]["sum"] += down_proj.sum(dim=0)
+                    accumulators[basis_key]["sum_sq"] += (down_proj ** 2).sum(dim=0)
+                accumulators[basis_key]["count"] += batch_size_actual
+
+            # 4. Expert routers (per-layer)
+            for layer_idx in router_layers:
+                # Get pre-MLP residuals: layer_output - mlp_output
+                pre_mlp_residuals = layer_outputs[:, layer_idx, :] - mlp_outputs[:, layer_idx, :]
+                pre_mlp_residuals = pre_mlp_residuals.cpu()
+
+                # Get router weights
+                router_weight = cast("Tensor", model.routers[layer_idx].weight).detach().cpu()
+
+                # Compute router logits
+                router_logits = pre_mlp_residuals @ router_weight.T
+
+                basis_key = f"layer_{layer_idx}_router"
+                if accumulators[basis_key]["sum"] is None:
+                    accumulators[basis_key]["sum"] = router_logits.sum(dim=0)
+                    accumulators[basis_key]["sum_sq"] = (router_logits ** 2).sum(dim=0)
+                else:
+                    accumulators[basis_key]["sum"] += router_logits.sum(dim=0)
+                    accumulators[basis_key]["sum_sq"] += (router_logits ** 2).sum(dim=0)
+                accumulators[basis_key]["count"] += batch_size_actual
+
+            num_batches_processed += 1
+
+    # Compute global means and stds
+    logger.info("Computing global means and standard deviations...")
+    for basis_key, acc in accumulators.items():
+        count = acc["count"]
+        mean = acc["sum"] / count
+        var = (acc["sum_sq"] / count) - (mean ** 2)
+        std = th.sqrt(th.clamp(var, min=1e-8))
+
+        global_stats[basis_key] = {
+            "mean": mean,
+            "std": std,
+        }
+
+    logger.info(f"Completed first pass with {num_batches_processed} batches")
+
+    # Second pass: compute kurtosis using global statistics
+    logger.info("Second pass: Computing kurtosis...")
+
+    # Track kurtosis values by basis
+    layerwise_kurtosis: dict[str, list[th.Tensor]] = defaultdict(list)
+
+    # Second pass
+    activation_iterator = activations(
+        batch_size=batch_size, start_idx=0, max_samples=max_samples
+    )
+
+    num_batches_processed = 0
+
+    with th.no_grad():
+        for batch in tqdm(activation_iterator, desc="Second pass - computing kurtosis"):
+            # Get activations
             layer_outputs = batch[ActivationKeys.LAYER_OUTPUT]
-
-            # Get attention outputs (post-attention residual stream)
-            # Shape: (batch, num_layers, hidden_dim)
             attn_outputs = batch[ActivationKeys.ATTN_OUTPUT]
-
-            # Get MLP outputs (post-MLP residual stream)
-            # Shape: (batch, num_layers, hidden_dim)
             mlp_outputs = batch[ActivationKeys.MLP_OUTPUT]
 
             # 1. Raw residual stream activations per layer
             for layer_idx in range(num_layers):
-                # Compute kurtosis for each element in the residual stream
-                layer_acts = layer_outputs[:, layer_idx, :]  # (batch, hidden_dim)
-                layer_kurtosis = compute_kurtosis(layer_acts, dim=0)  # (hidden_dim,)
+                basis_key = f"layer_{layer_idx}_residual"
+                layer_acts = layer_outputs[:, layer_idx, :].cpu()
 
-                layerwise_kurtosis[f"layer_{layer_idx}_residual"][layer_idx].append(
-                    layer_kurtosis.cpu()
+                stats = global_stats[basis_key]
+                layer_kurtosis = compute_kurtosis(
+                    layer_acts, dim=0, mean=stats["mean"], std=stats["std"]
                 )
 
-            # 2. MLP up-projection and gate-projection neurons
-            for layer_idx in tqdm(
-                range(num_layers), desc="MLP projections", leave=False
-            ):
-                # Get post-attention, pre-MLP residuals
-                pre_mlp_residuals = attn_outputs[:, layer_idx, :]  # (batch, hidden_dim)
+                layerwise_kurtosis[basis_key].append(layer_kurtosis)
 
-                # Check if this layer has MLP experts (MoE layer)
+            # 2. MLP up-projection and gate-projection neurons (skip MoE layers)
+            for layer_idx in range(num_layers):
                 if layer_idx in router_layers:
-                    # MoE layer - get weights from experts
-                    experts = model.mlps[layer_idx].experts
+                    continue
 
-                    # Get number of experts
-                    if isinstance(experts, list):
-                        num_experts = len(experts)
-                    else:
-                        # Try to count experts
-                        num_experts = 0
-                        while True:
-                            try:
-                                if isinstance(experts, list):
-                                    _ = experts[num_experts]
-                                else:
-                                    try:
-                                        _ = getattr(experts, str(num_experts))
-                                    except AttributeError:
-                                        _ = experts[str(num_experts)]
-                                num_experts += 1
-                            except (IndexError, KeyError):
-                                break
+                # Get pre-MLP residuals
+                pre_mlp_residuals = layer_outputs[:, layer_idx, :] - mlp_outputs[:, layer_idx, :]
+                pre_mlp_residuals = pre_mlp_residuals.cpu()
 
-                    # Accumulate projections across all experts
-                    all_up_projs = []
-                    all_gate_projs = []
+                # Dense MLP layer
+                up_w = cast("Tensor", model.mlps[layer_idx].up_proj.weight).detach().cpu()
+                gate_w = cast("Tensor", model.mlps[layer_idx].gate_proj.weight).detach().cpu()
 
-                    for expert_idx in range(num_experts):
-                        # Get expert
-                        if isinstance(experts, list):
-                            expert = experts[expert_idx]
-                        else:
-                            try:
-                                expert = getattr(experts, str(expert_idx))
-                            except AttributeError:
-                                expert = experts[str(expert_idx)]
+                up_proj = pre_mlp_residuals @ up_w.T
+                gate_proj = pre_mlp_residuals @ gate_w.T
 
-                        # Get weights
-                        up_w = cast(
-                            "Tensor", expert.up_proj.weight
-                        ).detach()  # (mlp_dim, hidden_dim)
-                        gate_w = cast(
-                            "Tensor", expert.gate_proj.weight
-                        ).detach()  # (mlp_dim, hidden_dim)
+                # Up projection
+                basis_key = f"layer_{layer_idx}_up_proj"
+                stats = global_stats[basis_key]
+                up_kurtosis = compute_kurtosis(
+                    up_proj, dim=0, mean=stats["mean"], std=stats["std"]
+                )
+                layerwise_kurtosis[basis_key].append(up_kurtosis)
 
-                        # Project: (batch, mlp_dim) = (batch, hidden_dim) @ (hidden_dim, mlp_dim)
-                        up_proj = pre_mlp_residuals @ up_w.T.to(
-                            pre_mlp_residuals.device
-                        )
-                        gate_proj = pre_mlp_residuals @ gate_w.T.to(
-                            pre_mlp_residuals.device
-                        )
+                # Gate projection
+                basis_key = f"layer_{layer_idx}_gate_proj"
+                stats = global_stats[basis_key]
+                gate_kurtosis = compute_kurtosis(
+                    gate_proj, dim=0, mean=stats["mean"], std=stats["std"]
+                )
+                layerwise_kurtosis[basis_key].append(gate_kurtosis)
 
-                        all_up_projs.append(up_proj)
-                        all_gate_projs.append(gate_proj)
-
-                    # Concatenate all expert projections
-                    # Shape: (batch, num_experts * mlp_dim)
-                    all_up_projs_cat = th.cat(all_up_projs, dim=1)
-                    all_gate_projs_cat = th.cat(all_gate_projs, dim=1)
-
-                    # Compute kurtosis
-                    up_kurtosis = compute_kurtosis(all_up_projs_cat, dim=0)
-                    gate_kurtosis = compute_kurtosis(all_gate_projs_cat, dim=0)
-
-                    layerwise_kurtosis[f"layer_{layer_idx}_up_proj"][layer_idx].append(
-                        up_kurtosis.cpu()
-                    )
-                    layerwise_kurtosis[f"layer_{layer_idx}_gate_proj"][
-                        layer_idx
-                    ].append(gate_kurtosis.cpu())
-                else:
-                    # Dense MLP layer
-                    up_w = cast("Tensor", model.mlps[layer_idx].up_proj.weight).detach()
-                    gate_w = cast(
-                        "Tensor", model.mlps[layer_idx].gate_proj.weight
-                    ).detach()
-
-                    up_proj = pre_mlp_residuals @ up_w.T.to(pre_mlp_residuals.device)
-                    gate_proj = pre_mlp_residuals @ gate_w.T.to(
-                        pre_mlp_residuals.device
-                    )
-
-                    up_kurtosis = compute_kurtosis(up_proj, dim=0)
-                    gate_kurtosis = compute_kurtosis(gate_proj, dim=0)
-
-                    layerwise_kurtosis[f"layer_{layer_idx}_up_proj"][layer_idx].append(
-                        up_kurtosis.cpu()
-                    )
-                    layerwise_kurtosis[f"layer_{layer_idx}_gate_proj"][
-                        layer_idx
-                    ].append(gate_kurtosis.cpu())
-
-            # 3. MLP down-projection neurons
-            for layer_idx in tqdm(range(num_layers), desc="MLP down-proj", leave=False):
-                # Get post-MLP residuals
-                post_mlp_residuals = mlp_outputs[:, layer_idx, :]  # (batch, hidden_dim)
-
-                # Check if this layer has MLP experts (MoE layer)
+            # 3. MLP down-projection neurons (skip MoE layers)
+            for layer_idx in range(num_layers):
                 if layer_idx in router_layers:
-                    # MoE layer
-                    experts = model.mlps[layer_idx].experts
+                    continue
 
-                    # Get number of experts
-                    if isinstance(experts, list):
-                        num_experts = len(experts)
-                    else:
-                        num_experts = 0
-                        while True:
-                            try:
-                                if isinstance(experts, list):
-                                    _ = experts[num_experts]
-                                else:
-                                    try:
-                                        _ = getattr(experts, str(num_experts))
-                                    except AttributeError:
-                                        _ = experts[str(num_experts)]
-                                num_experts += 1
-                            except (IndexError, KeyError):
-                                break
+                # Use layer outputs
+                post_mlp_residuals = layer_outputs[:, layer_idx, :].cpu()
 
-                    # Accumulate projections across all experts
-                    all_down_projs = []
+                # Dense MLP layer
+                down_w = cast("Tensor", model.mlps[layer_idx].down_proj.weight).detach().cpu()
 
-                    for expert_idx in range(num_experts):
-                        # Get expert
-                        if isinstance(experts, list):
-                            expert = experts[expert_idx]
-                        else:
-                            try:
-                                expert = getattr(experts, str(expert_idx))
-                            except AttributeError:
-                                expert = experts[str(expert_idx)]
+                down_proj = post_mlp_residuals @ down_w
 
-                        # Get weights (transpose for "reading" from down_proj)
-                        down_w = cast(
-                            "Tensor", expert.down_proj.weight
-                        ).detach()  # (hidden_dim, mlp_dim)
-
-                        # Project: (batch, mlp_dim) = (batch, hidden_dim) @ (hidden_dim, mlp_dim)
-                        # We want to see what neurons the residual reads FROM
-                        down_proj = post_mlp_residuals @ down_w.to(
-                            post_mlp_residuals.device
-                        )
-
-                        all_down_projs.append(down_proj)
-
-                    # Concatenate all expert projections
-                    all_down_projs_cat = th.cat(all_down_projs, dim=1)
-
-                    # Compute kurtosis
-                    down_kurtosis = compute_kurtosis(all_down_projs_cat, dim=0)
-
-                    layerwise_kurtosis[f"layer_{layer_idx}_down_proj"][
-                        layer_idx
-                    ].append(down_kurtosis.cpu())
-                else:
-                    # Dense MLP layer
-                    down_w = cast(
-                        "Tensor", model.mlps[layer_idx].down_proj.weight
-                    ).detach()
-
-                    down_proj = post_mlp_residuals @ down_w.to(
-                        post_mlp_residuals.device
-                    )
-
-                    down_kurtosis = compute_kurtosis(down_proj, dim=0)
-
-                    layerwise_kurtosis[f"layer_{layer_idx}_down_proj"][
-                        layer_idx
-                    ].append(down_kurtosis.cpu())
+                basis_key = f"layer_{layer_idx}_down_proj"
+                stats = global_stats[basis_key]
+                down_kurtosis = compute_kurtosis(
+                    down_proj, dim=0, mean=stats["mean"], std=stats["std"]
+                )
+                layerwise_kurtosis[basis_key].append(down_kurtosis)
 
             # 4. Expert routers (per-layer)
-            for layer_idx in tqdm(router_layers, desc="Expert routers", leave=False):
-                # Get post-attention residuals for routing
-                pre_mlp_residuals = attn_outputs[:, layer_idx, :]  # (batch, hidden_dim)
+            for layer_idx in router_layers:
+                # Get pre-MLP residuals
+                pre_mlp_residuals = layer_outputs[:, layer_idx, :] - mlp_outputs[:, layer_idx, :]
+                pre_mlp_residuals = pre_mlp_residuals.cpu()
 
                 # Get router weights
-                router_weight = cast(
-                    "Tensor", model.routers[layer_idx].weight
-                ).detach()  # (num_experts, hidden_dim)
+                router_weight = cast("Tensor", model.routers[layer_idx].weight).detach().cpu()
 
-                # Compute router logits: (batch, num_experts) = (batch, hidden_dim) @ (hidden_dim, num_experts)
-                router_logits = pre_mlp_residuals @ router_weight.T.to(
-                    pre_mlp_residuals.device
+                # Compute router logits
+                router_logits = pre_mlp_residuals @ router_weight.T
+
+                basis_key = f"layer_{layer_idx}_router"
+                stats = global_stats[basis_key]
+                router_kurtosis = compute_kurtosis(
+                    router_logits, dim=0, mean=stats["mean"], std=stats["std"]
                 )
-
-                # Compute kurtosis
-                router_kurtosis = compute_kurtosis(router_logits, dim=0)
-
-                layerwise_kurtosis[f"layer_{layer_idx}_router"][layer_idx].append(
-                    router_kurtosis.cpu()
-                )
+                layerwise_kurtosis[basis_key].append(router_kurtosis)
 
             num_batches_processed += 1
 
-    logger.info(f"Processed {num_batches_processed} batches")
+    logger.info(f"Completed second pass with {num_batches_processed} batches")
 
     # Aggregate kurtosis values and compute statistics
-    logger.info("Computing statistics...")
+    logger.info("Computing final statistics...")
 
-    # For each basis type, concatenate all kurtosis values and compute stats
     statistics: dict[str, dict[str, float]] = {}
 
-    for basis_name, layer_dict in layerwise_kurtosis.items():
-        for kurtosis_list in layer_dict.values():
-            # Concatenate all kurtosis values for this basis
-            all_kurtosis = th.cat(kurtosis_list, dim=0)
+    for basis_name, kurtosis_list in layerwise_kurtosis.items():
+        # Concatenate all kurtosis values for this basis
+        all_kurtosis = th.cat(kurtosis_list, dim=0)
 
-            # Compute statistics
-            stats = {
-                "mean": float(all_kurtosis.mean().item()),
-                "median": float(all_kurtosis.median().item()),
-                "std": float(all_kurtosis.std().item()),
-                "q25": float(all_kurtosis.quantile(0.25).item()),
-                "q75": float(all_kurtosis.quantile(0.75).item()),
-                "min": float(all_kurtosis.min().item()),
-                "max": float(all_kurtosis.max().item()),
-            }
+        # Compute statistics
+        stats = {
+            "mean": float(all_kurtosis.mean().item()),
+            "median": float(all_kurtosis.median().item()),
+            "std": float(all_kurtosis.std().item()),
+            "q25": float(all_kurtosis.quantile(0.25).item()),
+            "q75": float(all_kurtosis.quantile(0.75).item()),
+            "min": float(all_kurtosis.min().item()),
+            "max": float(all_kurtosis.max().item()),
+        }
 
-            statistics[basis_name] = stats
+        statistics[basis_name] = stats
 
     # Also compute aggregated statistics across all router layers
     logger.info("Computing aggregated router statistics...")
@@ -419,8 +424,7 @@ def kurtosis_basis(
     for layer_idx in router_layers:
         basis_name = f"layer_{layer_idx}_router"
         if basis_name in layerwise_kurtosis:
-            kurtosis_list = layerwise_kurtosis[basis_name][layer_idx]
-            all_router_kurtosis.extend(kurtosis_list)
+            all_router_kurtosis.extend(layerwise_kurtosis[basis_name])
 
     if all_router_kurtosis:
         all_router_kurtosis_cat = th.cat(all_router_kurtosis, dim=0)
@@ -496,97 +500,103 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
     plt.savefig(os.path.join(KURTOSIS_DIR, f"{output_prefix}_residual.png"), dpi=150)
     plt.close()
 
-    # 2. Plot: MLP projections kurtosis by layer
-    fig, axes = plt.subplots(3, 1, figsize=(12, 15))
+    # 2. Plot: MLP projections kurtosis by layer (only dense layers)
+    dense_layers = [i for i in range(num_layers) if i not in router_layers]
+    
+    if dense_layers:
+        fig, axes = plt.subplots(3, 1, figsize=(12, 15))
 
-    for ax, proj_type in zip(axes, ["up_proj", "gate_proj", "down_proj"], strict=False):
-        proj_stats = [
-            statistics.get(f"layer_{layer_idx}_{proj_type}", {})
-            for layer_idx in range(num_layers)
+        for ax, proj_type in zip(axes, ["up_proj", "gate_proj", "down_proj"]):
+            proj_stats = [
+                statistics.get(f"layer_{layer_idx}_{proj_type}", {})
+                for layer_idx in dense_layers
+            ]
+
+            means = [s.get("mean", 0) for s in proj_stats]
+            q25s = [s.get("q25", 0) for s in proj_stats]
+            q75s = [s.get("q75", 0) for s in proj_stats]
+
+            x = np.arange(len(dense_layers))
+            ax.bar(x, means, color="coral", alpha=0.7, label="Mean kurtosis")
+
+            yerr_lower = np.array(means) - np.array(q25s)
+            yerr_upper = np.array(q75s) - np.array(means)
+            ax.errorbar(
+                x,
+                means,
+                yerr=[yerr_lower, yerr_upper],
+                fmt="none",
+                ecolor="black",
+                capsize=3,
+            )
+
+            ax.set_xlabel("Dense Layer Index")
+            ax.set_ylabel("Kurtosis")
+            ax.set_title(f"MLP {proj_type.replace('_', ' ').title()} Kurtosis by Dense Layer")
+            ax.set_xticks(x)
+            ax.set_xticklabels([str(l) for l in dense_layers])
+            ax.legend()
+            ax.grid(axis="y", alpha=0.3)
+
+        plt.tight_layout()
+        plt.savefig(os.path.join(KURTOSIS_DIR, f"{output_prefix}_mlp_projs.png"), dpi=150)
+        plt.close()
+
+    # 3. Plot: Router kurtosis (per-layer and aggregated)
+    if router_layers:
+        fig, ax = plt.subplots(figsize=(12, 6))
+
+        router_stats_per_layer = [
+            statistics.get(f"layer_{layer_idx}_router", {}) for layer_idx in router_layers
         ]
 
-        means = [s.get("mean", 0) for s in proj_stats]
-        q25s = [s.get("q25", 0) for s in proj_stats]
-        q75s = [s.get("q75", 0) for s in proj_stats]
+        means = [s.get("mean", 0) for s in router_stats_per_layer]
+        q25s = [s.get("q25", 0) for s in router_stats_per_layer]
+        q75s = [s.get("q75", 0) for s in router_stats_per_layer]
 
-        x = np.arange(num_layers)
-        ax.bar(x, means, color="coral", alpha=0.7, label="Mean kurtosis")
+        x = np.arange(len(router_layers))
+        ax.bar(x, means, color="mediumseagreen", alpha=0.7, label="Per-layer mean kurtosis")
 
         yerr_lower = np.array(means) - np.array(q25s)
         yerr_upper = np.array(q75s) - np.array(means)
         ax.errorbar(
-            x,
-            means,
-            yerr=[yerr_lower, yerr_upper],
-            fmt="none",
-            ecolor="black",
-            capsize=3,
+            x, means, yerr=[yerr_lower, yerr_upper], fmt="none", ecolor="black", capsize=3
         )
 
-        ax.set_xlabel("Layer")
+        # Add aggregated router statistics
+        if "all_layers_router" in statistics:
+            agg_stats = statistics["all_layers_router"]
+            agg_x = len(router_layers) + 0.5
+            ax.bar(
+                agg_x,
+                agg_stats["mean"],
+                color="darkgreen",
+                alpha=0.7,
+                label="All layers aggregated",
+            )
+            ax.errorbar(
+                agg_x,
+                agg_stats["mean"],
+                yerr=[
+                    [agg_stats["mean"] - agg_stats["q25"]],
+                    [agg_stats["q75"] - agg_stats["mean"]],
+                ],
+                fmt="none",
+                ecolor="black",
+                capsize=3,
+            )
+
+        ax.set_xlabel("Router Layer")
         ax.set_ylabel("Kurtosis")
-        ax.set_title(f"MLP {proj_type.replace('_', ' ').title()} Kurtosis by Layer")
+        ax.set_title("Expert Router Kurtosis by Layer")
+        ax.set_xticks(list(x) + [len(router_layers) + 0.5])
+        ax.set_xticklabels([str(l) for l in router_layers] + ["All"])
         ax.legend()
         ax.grid(axis="y", alpha=0.3)
 
-    plt.tight_layout()
-    plt.savefig(os.path.join(KURTOSIS_DIR, f"{output_prefix}_mlp_projs.png"), dpi=150)
-    plt.close()
-
-    # 3. Plot: Router kurtosis (per-layer and aggregated)
-    fig, ax = plt.subplots(figsize=(12, 6))
-
-    router_stats_per_layer = [
-        statistics.get(f"layer_{layer_idx}_router", {}) for layer_idx in router_layers
-    ]
-
-    means = [s.get("mean", 0) for s in router_stats_per_layer]
-    q25s = [s.get("q25", 0) for s in router_stats_per_layer]
-    q75s = [s.get("q75", 0) for s in router_stats_per_layer]
-
-    x = np.arange(len(router_layers))
-    ax.bar(x, means, color="mediumseagreen", alpha=0.7, label="Per-layer mean kurtosis")
-
-    yerr_lower = np.array(means) - np.array(q25s)
-    yerr_upper = np.array(q75s) - np.array(means)
-    ax.errorbar(
-        x, means, yerr=[yerr_lower, yerr_upper], fmt="none", ecolor="black", capsize=3
-    )
-
-    # Add aggregated router statistics
-    if "all_layers_router" in statistics:
-        agg_stats = statistics["all_layers_router"]
-        agg_x = len(router_layers) + 0.5
-        ax.bar(
-            agg_x,
-            agg_stats["mean"],
-            color="darkgreen",
-            alpha=0.7,
-            label="All layers aggregated",
-        )
-        ax.errorbar(
-            agg_x,
-            agg_stats["mean"],
-            yerr=[
-                [agg_stats["mean"] - agg_stats["q25"]],
-                [agg_stats["q75"] - agg_stats["mean"]],
-            ],
-            fmt="none",
-            ecolor="black",
-            capsize=3,
-        )
-
-    ax.set_xlabel("Router Layer")
-    ax.set_ylabel("Kurtosis")
-    ax.set_title("Expert Router Kurtosis by Layer")
-    ax.set_xticks([*list(x), len(router_layers) + 0.5])
-    ax.set_xticklabels([str(layer) for layer in router_layers] + ["All"])
-    ax.legend()
-    ax.grid(axis="y", alpha=0.3)
-
-    plt.tight_layout()
-    plt.savefig(os.path.join(KURTOSIS_DIR, f"{output_prefix}_router.png"), dpi=150)
-    plt.close()
+        plt.tight_layout()
+        plt.savefig(os.path.join(KURTOSIS_DIR, f"{output_prefix}_router.png"), dpi=150)
+        plt.close()
 
     # 4. Plot: Comparison across all basis types
     fig, ax = plt.subplots(figsize=(16, 8))
@@ -607,8 +617,8 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
             basis_q25s.append(stats["q25"])
             basis_q75s.append(stats["q75"])
 
-    # Add MLP projections
-    for layer_idx in range(num_layers):
+    # Add MLP projections (dense layers only)
+    for layer_idx in dense_layers:
         for proj_type in ["up_proj", "gate_proj", "down_proj"]:
             basis_name = f"layer_{layer_idx}_{proj_type}"
             if basis_name in statistics:
@@ -637,30 +647,26 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
         basis_q25s.append(stats["q25"])
         basis_q75s.append(stats["q75"])
 
-    x = np.arange(len(basis_types))
-    ax.bar(x, basis_means, color="slateblue", alpha=0.7)
+    if basis_types:  # Only create plot if we have data
+        x = np.arange(len(basis_types))
+        ax.bar(x, basis_means, color="slateblue", alpha=0.7)
 
-    yerr_lower = np.array(basis_means) - np.array(basis_q25s)
-    yerr_upper = np.array(basis_q75s) - np.array(basis_means)
-    ax.errorbar(
-        x,
-        basis_means,
-        yerr=[yerr_lower, yerr_upper],
-        fmt="none",
-        ecolor="black",
-        capsize=2,
-    )
+        yerr_lower = np.array(basis_means) - np.array(basis_q25s)
+        yerr_upper = np.array(basis_q75s) - np.array(basis_means)
+        ax.errorbar(
+            x, basis_means, yerr=[yerr_lower, yerr_upper], fmt="none", ecolor="black", capsize=2
+        )
 
-    ax.set_xlabel("Basis Type")
-    ax.set_ylabel("Kurtosis")
-    ax.set_title("Kurtosis Comparison Across All Basis Types")
-    ax.set_xticks(x)
-    ax.set_xticklabels(basis_types, rotation=90, fontsize=6)
-    ax.grid(axis="y", alpha=0.3)
+        ax.set_xlabel("Basis Type")
+        ax.set_ylabel("Kurtosis")
+        ax.set_title("Kurtosis Comparison Across All Basis Types")
+        ax.set_xticks(x)
+        ax.set_xticklabels(basis_types, rotation=90, fontsize=6)
+        ax.grid(axis="y", alpha=0.3)
 
-    plt.tight_layout()
-    plt.savefig(os.path.join(KURTOSIS_DIR, f"{output_prefix}_comparison.png"), dpi=150)
-    plt.close()
+        plt.tight_layout()
+        plt.savefig(os.path.join(KURTOSIS_DIR, f"{output_prefix}_comparison.png"), dpi=150)
+        plt.close()
 
     logger.info(f"Saved visualizations to {KURTOSIS_DIR}")
 
