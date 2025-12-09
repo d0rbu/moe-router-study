@@ -78,7 +78,7 @@ class DiskCache:
         self,
         filters: dict[str, Tensor] | None = None,
         batch_size: int = 64,
-        buffer_flush_size: int = 131072,  # how many tokens before we flush to disk
+        buffer_flush_size: int = 65536,  # how many tokens before we flush to disk
         cache_dir: Path | None = None,
     ):
         """
