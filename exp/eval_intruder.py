@@ -671,6 +671,10 @@ class MultiGPULatentPathsCache(LatentPathsCache):
             for gpu_id in self.gpu_ids
         ]
 
+        for worker in workers:
+            logger.info(f"Starting worker {worker.name}")
+            worker.start()
+
         # Start logging worker
         log_worker = ctx.Process(
             target=_log_worker,
