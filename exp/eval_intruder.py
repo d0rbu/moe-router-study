@@ -15,8 +15,10 @@ import numpy as np
 import orjson
 from safetensors.numpy import save_file
 import torch as th
+import torch.multiprocessing as mp
 from tqdm import tqdm
 from transformers import (
+    AutoTokenizer,
     BitsAndBytesConfig,
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
@@ -55,6 +57,85 @@ from delphi.utils import load_tokenized_data  # type: ignore
 from exp import OUTPUT_DIR
 from exp.get_activations import ActivationKeys
 from exp.kmeans import KMEANS_FILENAME
+
+
+def _gpu_worker(
+    gpu_id: int,
+    work_queue: mp.Queue,
+    result_queue: mp.Queue,
+    model_name: str,
+    model_revision: str,
+    model_dtype: th.dtype,
+    kmeans_path: Path,
+    centroid_dtype: th.dtype,
+    metric: CentroidMetric,
+    metric_p: float,
+    postprocessor: RouterLogitsPostprocessor,
+    top_k: int,
+    hf_token: str,
+    quantization_config: BitsAndBytesConfig | None,
+):
+    """Worker that processes batches on a single GPU."""
+    device = f"cuda:{gpu_id}"
+    logger.info(f"Worker {gpu_id}: Loading model on {device}")
+
+    # Load model
+    model = StandardizedTransformer(
+        model_name,
+        check_attn_probs_with_trace=False,
+        revision=model_revision,
+        device_map={"": device},
+        quantization_config=quantization_config,
+        torch_dtype=model_dtype,
+        token=hf_token,
+    )
+
+    # Load centroids
+    with open(kmeans_path, "rb") as f:
+        data = th.load(f, map_location=device, weights_only=False)
+    centroid_sets: list[th.Tensor] = data["centroids"]
+
+    hookpoint_to_sparse_encode = {}
+    for i, centroids in enumerate(centroid_sets):
+        hookpoint_to_sparse_encode[f"paths_{i}"] = CentroidProjection(
+            centroids.to(device=device, dtype=centroid_dtype), metric=metric, p=metric_p
+        )
+
+    postprocessor_fn = get_postprocessor(postprocessor)
+    logger.info(f"Worker {gpu_id}: Ready")
+
+    # Process batches
+    while True:
+        item = work_queue.get()
+        if item is None:  # Shutdown signal
+            break
+
+        batch_idx, batch_tokens = item
+        batch_tokens = batch_tokens.to(device)
+
+        # Forward pass
+        router_paths = []
+        with model.trace(batch_tokens):
+            for layer_idx in model.layers_with_routers:
+                out = model.routers_output[layer_idx]
+                router_paths.append(
+                    out[0].save() if isinstance(out, tuple) else out.save()
+                )
+
+        router_paths = th.stack(router_paths, dim=-2)
+        sparse_paths = postprocessor_fn(router_paths, top_k).to(dtype=centroid_dtype)
+        router_paths_flat = sparse_paths.view(*batch_tokens.shape, -1)
+
+        # Encode
+        results = {}
+        for hookpoint, encoder in hookpoint_to_sparse_encode.items():
+            latents = encoder(router_paths_flat)
+            results[hookpoint] = (latents.cpu(), latents.shape[2])
+
+        result_queue.put((batch_idx, batch_tokens.cpu(), results))
+        th.cuda.empty_cache()
+
+    logger.info(f"Worker {gpu_id}: Done")
 
 
 def dataset_postprocess(record: LatentRecord) -> LatentRecord:
@@ -230,7 +311,7 @@ class LatentPathsCache(LatentCache):
         batch_size: int,
         log_path: Path | None = None,
         postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
-        buffer_flush_size: int = 100000,  # how many tokens before we flush to disk
+        buffer_flush_size: int = 131072,  # how many tokens before we flush to disk
         cache_dir: Path | None = None,
     ):
         """
@@ -243,12 +324,23 @@ class LatentPathsCache(LatentCache):
             log_path: Path to save logging output.
             postprocessor: Router logits postprocessing method to use.
             buffer_flush_size: Number of tokens before flushing to disk.
-                Defaults to 100000.
+                Defaults to 131072.
             cache_dir: Directory to store intermediate cache files. If None,
                 uses DiskCache.DEFAULT_CACHE_DIR.
         """
+        self._init_cache(batch_size, buffer_flush_size, cache_dir, log_path)
         self.model: StandardizedTransformer = model
         self.hookpoint_to_sparse_encode = hookpoint_to_sparse_encode
+        self.postprocessor_fn = get_postprocessor(postprocessor)
+
+    def _init_cache(
+        self,
+        batch_size: int,
+        buffer_flush_size: int,
+        cache_dir: Path | None,
+        log_path: Path | None,
+    ):
+        """Initialize cache-related attributes (shared by subclasses)."""
         self.batch_size = batch_size
         self.widths = {}
         self.cache = DiskCache(
@@ -257,9 +349,7 @@ class LatentPathsCache(LatentCache):
             buffer_flush_size=buffer_flush_size,
             cache_dir=cache_dir,
         )
-
         self.log_path = log_path
-        self.postprocessor_fn = get_postprocessor(postprocessor)
 
     def run(self, n_tokens: int, tokens: th.Tensor, top_k: int, dtype: th.dtype):
         """
@@ -436,6 +526,127 @@ class LatentPathsCache(LatentCache):
             )
 
 
+class MultiGPULatentPathsCache(LatentPathsCache):
+    """Subclass of LatentPathsCache that processes batches across multiple GPUs."""
+
+    def __init__(
+        self,
+        batch_size: int,
+        gpu_ids: list[int],
+        model_name: str,
+        model_revision: str,
+        model_dtype: th.dtype,
+        kmeans_path: Path,
+        dtype: th.dtype,
+        metric: CentroidMetric,
+        metric_p: float,
+        postprocessor: RouterLogitsPostprocessor,
+        top_k: int,
+        hf_token: str,
+        quantization_config: BitsAndBytesConfig | None,
+        log_path: Path | None = None,
+        buffer_flush_size: int = 131072,
+        cache_dir: Path | None = None,
+    ):
+        """
+        Initialize the multi-GPU cache.
+
+        Args:
+            batch_size: Size of batches for processing.
+            gpu_ids: List of GPU IDs to use for parallel processing.
+            model_name: Name of the model to load.
+            model_revision: Model revision/checkpoint.
+            model_dtype: Data type for model weights.
+            kmeans_path: Path to the kmeans centroids file.
+            dtype: Data type for sparse encoding output.
+            metric: Centroid distance metric.
+            metric_p: P value for distance metric.
+            postprocessor: Router logits postprocessing method.
+            top_k: Top k paths to cache.
+            hf_token: HuggingFace token for model access.
+            quantization_config: Optional quantization config.
+            log_path: Path to save logging output.
+            buffer_flush_size: Number of tokens before flushing to disk.
+            cache_dir: Directory to store intermediate cache files.
+        """
+        self._init_cache(batch_size, buffer_flush_size, cache_dir, log_path)
+
+        # Store config for workers (they load their own models)
+        self.gpu_ids = gpu_ids
+        self.model_name = model_name
+        self.model_revision = model_revision
+        self.model_dtype = model_dtype
+        self.kmeans_path = kmeans_path
+        self.dtype = dtype
+        self.metric = metric
+        self.metric_p = metric_p
+        self.postprocessor = postprocessor
+        self.top_k = top_k
+        self.hf_token = hf_token
+        self.quantization_config = quantization_config
+
+    def run(self, n_tokens: int, tokens: th.Tensor):
+        """Run caching using multiple GPUs in parallel."""
+        token_batches = self.load_token_batches(n_tokens, tokens)
+        total_batches = len(token_batches)
+
+        logger.info(
+            f"Multi-GPU caching: {len(self.gpu_ids)} GPUs, {total_batches} batches"
+        )
+
+        work_queue: mp.Queue = mp.Queue()
+        result_queue: mp.Queue = mp.Queue()
+
+        # Start workers
+        workers = []
+        for gpu_id in self.gpu_ids:
+            w = mp.Process(
+                target=_gpu_worker,
+                args=(
+                    gpu_id,
+                    work_queue,
+                    result_queue,
+                    self.model_name,
+                    self.model_revision,
+                    self.model_dtype,
+                    self.kmeans_path,
+                    self.dtype,
+                    self.metric,
+                    self.metric_p,
+                    self.postprocessor,
+                    self.top_k,
+                    self.hf_token,
+                    self.quantization_config,
+                ),
+            )
+            w.start()
+            workers.append(w)
+
+        # Submit work
+        for batch_idx, batch_tokens in enumerate(token_batches):
+            work_queue.put((batch_idx, batch_tokens))
+
+        # Send shutdown signals
+        for _ in self.gpu_ids:
+            work_queue.put(None)
+
+        # Collect results
+        for _ in tqdm(range(total_batches), desc="Caching (multi-GPU)"):
+            batch_idx, batch_tokens, results = result_queue.get(timeout=600)
+            for hookpoint, (latents, width) in results.items():
+                self.cache.add(latents, batch_tokens, batch_idx, hookpoint)
+                self.widths[hookpoint] = width
+
+        # Wait for workers
+        for w in workers:
+            w.join(timeout=30)
+
+        logger.info(
+            f"Total tokens processed: {total_batches * token_batches[0].numel():,}"
+        )
+        self.cache.save()
+
+
 def load_and_filter_tokens(
     tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast,
     cache_cfg: CacheConfig,
@@ -537,6 +748,61 @@ def populate_cache(
     cache.save_config(save_dir=latents_path, cfg=cache_cfg, model_name=run_cfg.model)
 
 
+def populate_cache_multiprocess(
+    run_cfg: RunConfig,
+    root_dir: Path,
+    latents_path: Path,
+    tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast,
+    top_k: int,
+    dtype: th.dtype,
+    gpu_ids: list[int],
+    model_name: str,
+    model_revision: str,
+    model_dtype: th.dtype,
+    metric: CentroidMetric,
+    metric_p: float,
+    hf_token: str,
+    quantization_config: BitsAndBytesConfig | None,
+    postprocessor: RouterLogitsPostprocessor,
+) -> None:
+    """Populate cache using multiple GPUs."""
+    kmeans_path = root_dir / KMEANS_FILENAME
+    if not kmeans_path.is_file():
+        raise ValueError(f"Kmeans file not found: {kmeans_path}")
+
+    latents_path.mkdir(parents=True, exist_ok=True)
+    log_path = latents_path.parent / "log"
+    log_path.mkdir(parents=True, exist_ok=True)
+
+    cache_cfg = run_cfg.cache_cfg
+    tokens = load_and_filter_tokens(tokenizer, cache_cfg, run_cfg)
+
+    cache = MultiGPULatentPathsCache(
+        batch_size=cache_cfg.batch_size,
+        gpu_ids=gpu_ids,
+        model_name=model_name,
+        model_revision=model_revision,
+        model_dtype=model_dtype,
+        kmeans_path=kmeans_path,
+        dtype=dtype,
+        metric=metric,
+        metric_p=metric_p,
+        postprocessor=postprocessor,
+        top_k=top_k,
+        hf_token=hf_token,
+        quantization_config=quantization_config,
+        log_path=log_path,
+    )
+
+    cache.run(n_tokens=cache_cfg.n_tokens, tokens=tokens)
+
+    if run_cfg.verbose:
+        cache.generate_statistics_cache()
+
+    cache.save_splits(n_splits=cache_cfg.n_splits, save_dir=latents_path)
+    cache.save_config(save_dir=latents_path, cfg=cache_cfg, model_name=run_cfg.model)
+
+
 @arguably.command()
 def eval_intruder(
     *,
@@ -563,7 +829,8 @@ def eval_intruder(
     pipeline_num_proc: int = cpu_count() // 2,
     num_gpus: int | None = None,
     vllm_num_gpus: int = 1,
-    cache_device_idx: int = 1,
+    cache_num_gpus: int = 0,
+    cache_start_gpu: int = 0,
     verbose: bool = True,
     seed: int = 0,
     hf_token: str = "",
@@ -585,25 +852,22 @@ def eval_intruder(
     # Use num_gpus if provided (for backward compatibility), otherwise use vllm_num_gpus
     effective_vllm_gpus = num_gpus if num_gpus is not None else vllm_num_gpus
 
-    # Validate cache_device_idx - must be available and ideally not overlapping with VLLM devices
-    if total_gpus > 0 and cache_device_idx >= total_gpus:
-        logger.warning(
-            f"cache_device_idx={cache_device_idx} is >= total GPUs ({total_gpus}), "
-            f"falling back to device {total_gpus - 1}"
-        )
-        cache_device_idx = total_gpus - 1
+    # Calculate cache GPU IDs
+    if cache_num_gpus <= 0:
+        cache_num_gpus = total_gpus
 
-    # Warn if only one GPU is available (caching and VLLM will share device 0)
+    cache_gpu_ids = list(range(cache_start_gpu, cache_start_gpu + cache_num_gpus))
+    cache_gpu_ids = [g for g in cache_gpu_ids if g < total_gpus]
+
+    assert cache_gpu_ids, "No cache GPUs available"
+
     if total_gpus == 1:
-        logger.warning(
-            "Only 1 GPU available. Caching model and VLLM will share device 0. "
-            "Memory will be cleared between caching and VLLM."
-        )
-        cache_device_idx = 0
+        logger.warning("Only 1 GPU available. Caching and VLLM will share GPU 0.")
+        cache_gpu_ids = [0]
 
     logger.info(f"Running with log level: {log_level}")
     logger.info(
-        f"Device allocation: caching on {device_type}:{cache_device_idx}, "
+        f"Device allocation: caching on GPUs {cache_gpu_ids}, "
         f"VLLM using {effective_vllm_gpus} GPU(s) starting from device 0"
     )
 
@@ -624,33 +888,25 @@ def eval_intruder(
 
     th.manual_seed(seed)
 
-    # Load model on the cache device (not device 0 which is reserved for VLLM)
-    cache_device = f"{device_type}:{cache_device_idx}"
-    logger.debug(
-        f"Loading model from {model_config.hf_name} with revision {model_ckpt} on {cache_device}"
-    )
+    use_multiprocess = len(cache_gpu_ids) > 1
 
-    model = StandardizedTransformer(
-        model_config.hf_name,
-        check_attn_probs_with_trace=False,
-        revision=str(model_ckpt),
-        device_map={"": cache_device},
-        quantization_config=quantization_config,
-        torch_dtype=model_dtype_torch,
-        token=hf_token,
+    # Load tokenizer (always needed)
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_config.hf_name, revision=str(model_ckpt), token=hf_token
     )
-    tokenizer = model.tokenizer
-
-    logger.trace("Model and tokenizer initialized")
 
     hookpoint_to_sparse_encode, top_k = load_hookpoints(
         root_dir, dtype=dtype_torch, metric=metric, metric_p=metric_p
     )
     hookpoints = list(hookpoint_to_sparse_encode.keys())
 
+    # Only load hookpoints if single-GPU mode
+    if use_multiprocess:
+        assert top_k is not None, "Multi-GPU not supported for SAE experiments"
+
     latent_range = th.arange(n_latents) if n_latents else None
 
-    # Setup run config (num_gpus controls VLLM tensor parallelism)
+    # Setup run config
     run_cfg = RunConfig(
         max_latents=n_latents,
         cache_cfg=CacheConfig(
@@ -693,27 +949,63 @@ def eval_intruder(
         ),
         dict,
     )
+
     if nrh:
-        logger.info(f"Populating cache with {len(nrh)} hookpoints")
         if top_k is None:
             raise ValueError("top_k cannot be None when populating cache")
-        populate_cache(
-            run_cfg,
-            model,
-            nrh,
-            root_dir,
-            latents_path,
-            tokenizer,
-            top_k=top_k,
-            dtype=dtype_torch,
-            postprocessor=postprocessor,
-        )
+
+        if use_multiprocess:
+            logger.info(
+                f"Populating cache with {len(hookpoints)} hookpoints using {len(cache_gpu_ids)} GPUs"
+            )
+            populate_cache_multiprocess(
+                run_cfg=run_cfg,
+                root_dir=root_dir,
+                latents_path=latents_path,
+                tokenizer=tokenizer,
+                top_k=top_k,
+                dtype=dtype_torch,
+                gpu_ids=cache_gpu_ids,
+                model_name=model_config.hf_name,
+                model_revision=str(model_ckpt),
+                model_dtype=model_dtype_torch,
+                metric=metric,
+                metric_p=metric_p,
+                hf_token=hf_token,
+                quantization_config=quantization_config,
+                postprocessor=postprocessor,
+            )
+        else:
+            # Single GPU: load model and use original populate_cache
+            cache_device = f"{device_type}:{cache_gpu_ids[0]}"
+            logger.info(
+                f"Populating cache with {len(nrh)} hookpoints on {cache_device}"
+            )
+            model = StandardizedTransformer(
+                model_config.hf_name,
+                check_attn_probs_with_trace=False,
+                revision=str(model_ckpt),
+                device_map={"": cache_device},
+                quantization_config=quantization_config,
+                torch_dtype=model_dtype_torch,
+                token=hf_token,
+            )
+            populate_cache(
+                run_cfg,
+                model,
+                nrh,
+                root_dir,
+                latents_path,
+                tokenizer,
+                top_k=top_k,
+                dtype=dtype_torch,
+                postprocessor=postprocessor,
+            )
+            del model
     else:
         logger.debug("No non-redundant hookpoints found, skipping cache population")
 
-    # Clean up model and free GPU memory before VLLM starts
-    logger.debug("Cleaning up caching model to free GPU memory for VLLM")
-    del model, hookpoint_to_sparse_encode
+    # Clean up
     th.cuda.empty_cache()
     gc.collect()
 
