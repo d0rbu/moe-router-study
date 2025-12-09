@@ -269,14 +269,12 @@ def load_hookpoints_and_saes(
 def load_hookpoints(
     root_dir: Path,
     dtype: th.dtype,
-    metric: CentroidMetric = "dot-product",
+    metric: CentroidMetric = CentroidMetric.DOT_PRODUCT,
     metric_p: float = 2.0,
 ) -> tuple[dict[str, Callable[[th.Tensor], th.Tensor]], int | None]:
     """
     Loads the hookpoints from the config file.
     """
-    metric = CentroidMetric(metric.replace("-", "_"))
-
     sae_config_path = root_dir / "config.yaml"
     if sae_config_path.is_file():
         # this is a sae experiment, not paths
@@ -609,7 +607,7 @@ class MultiGPULatentPathsCache(LatentPathsCache):
         # Spawn workers
         workers = [
             mp.spawn(
-                target=_gpu_worker,
+                _gpu_worker,
                 args=(
                     gpu_id,
                     work_queue,
