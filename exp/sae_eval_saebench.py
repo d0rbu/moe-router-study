@@ -24,6 +24,7 @@ def main(
     dtype: str = "bfloat16",
     seed: int = 0,
     log_level: str = "INFO",
+    num_autointerp_latents: int = 1000,
 ) -> None:
     """
     Evaluate the SAEs on the given model.
@@ -67,6 +68,7 @@ def main(
         random_seed=seed,
         download_location=OUTPUT_DIR,
         api_key=OPENAI_API_KEY,
+        num_autointerp_latents=num_autointerp_latents,
     )
 
 
