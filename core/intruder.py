@@ -55,6 +55,7 @@ def _disk_writer_process(write_queue: mp.Queue, done_event: mp.Event):
         output_file, data_dict = item
         try:
             save_file(data_dict, output_file)
+            logger.debug(f"Writer process wrote {output_file}")
         except Exception as e:
             logger.error(f"Failed to write {output_file}: {e}")
 
