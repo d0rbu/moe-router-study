@@ -5,6 +5,7 @@ import gc
 import json
 from multiprocessing import cpu_count
 from pathlib import Path
+import queue
 import sys
 
 import arguably
@@ -143,6 +144,8 @@ def _gpu_worker(
 
         del router_paths_flat
 
+        log_queue.put(f"Worker {gpu_id}: submitting results for batch {batch_idx}")
+
         result_queue.put((batch_idx, batch_tokens.cpu(), results))
         del batch_tokens, results
 
@@ -158,11 +161,20 @@ GPU_LOG_FILE = "gpu_log.txt"
 def _log_worker(log_queue: mp.Queue):
     """Worker that logs messages from the log queue."""
     with open(GPU_LOG_FILE, "w") as f:
+        f.write("Logging started\n")
         while True:
-            log = log_queue.get()
+            try:
+                log = log_queue.get(timeout=60)
+            except queue.Empty:
+                f.write("No logs after 1 minute\n")
+                continue
+
             if log is None:
+                f.write("Received stop signal\n")
                 break
-            f.write(log + "\n")
+            f.write(f"{log}\n")
+
+        f.write("Logging finished\n")
 
 
 def dataset_postprocess(record: LatentRecord) -> LatentRecord:
@@ -670,7 +682,13 @@ class MultiGPULatentPathsCache(LatentPathsCache):
 
         # Collect results
         for _ in tqdm(range(total_batches), desc="Caching (multi-GPU)"):
-            batch_idx, batch_tokens, results = result_queue.get(timeout=600)
+            for retry_idx in range(100):
+                try:
+                    batch_idx, batch_tokens, results = result_queue.get(timeout=6)
+                    break
+                except queue.Empty:
+                    logger.info(f"No results after {retry_idx} retries")
+
             for hookpoint, (latents, width) in results.items():
                 self.cache.add(latents, batch_tokens, batch_idx, hookpoint)
                 self.widths[hookpoint] = width
