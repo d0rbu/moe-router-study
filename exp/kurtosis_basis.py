@@ -12,11 +12,6 @@ from collections import defaultdict
 import os
 from typing import Any, cast
 
-try:
-    from typing import assert_type  # Python 3.11+
-except ImportError:
-    from typing_extensions import assert_type
-
 import arguably
 from loguru import logger
 import matplotlib.pyplot as plt
