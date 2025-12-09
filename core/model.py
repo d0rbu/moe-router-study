@@ -131,7 +131,15 @@ class ModelConfig:
             logger.warning(
                 "No step or num_tokens provided, returning latest checkpoint"
             )
-            return self.latest_checkpoint
+            # if we haven't fetched the checkpoints, do so now
+            if not self.checkpoints and not self.eager_fetch:
+                self.checkpoints = self.fetch_checkpoints()
+
+            # Return the last checkpoint from the list if available
+            if self.checkpoints:
+                return self.checkpoints[-1]
+            else:
+                return self.latest_checkpoint
 
         # if we haven't fetched the checkpoints, do so now
         if not self.checkpoints and not self.eager_fetch:
