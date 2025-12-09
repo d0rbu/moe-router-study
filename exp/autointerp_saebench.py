@@ -8,6 +8,7 @@ import sys
 from typing import Any
 
 from dotenv import load_dotenv
+import torch.multiprocessing as mp
 from loguru import logger
 from nnterp import StandardizedTransformer
 from sae_bench.evals.autointerp import main as autointerp
@@ -254,6 +255,203 @@ def get_feature_activation_sparsity(
         running_sum_F += th.sum(router_paths_BTF, dim=(0, 1))
 
     return running_sum_F / total_tokens
+
+
+def _gpu_sparsity_worker(
+    gpu_id: int,
+    work_queue: mp.Queue,
+    result_queue: mp.Queue,
+    model_path: str,
+    model_dtype: th.dtype,
+    tokens_path: str,
+    batch_size: int,
+    mask_bos_pad_eos_tokens: bool,
+    postprocessor: RouterLogitsPostprocessor,
+):
+    """Worker that processes path sparsity computation on a single GPU."""
+    device = f"cuda:{gpu_id}"
+
+    try:
+        # Load model on this GPU
+        model = StandardizedTransformer(
+            model_path,
+            check_attn_probs_with_trace=False,
+            check_renaming=False,
+            device_map={"": device},
+            torch_dtype=model_dtype,
+        )
+
+        # Load tokenized dataset
+        tokenized_dataset = th.load(tokens_path).to(device)
+
+        logits_postprocessor = get_postprocessor(postprocessor)
+
+        # Process paths from queue
+        while True:
+            item = work_queue.get()
+            if item is None:  # Shutdown signal
+                break
+
+            path_idx, paths_data, top_k = item
+
+            # Move paths to device
+            paths = paths_data.to(device)
+
+            running_sum_F = th.zeros(paths.shape[0], dtype=th.float32, device=device)
+            total_tokens = 0
+
+            for _batch_idx, tokens_BT in enumerate(th.split(tokenized_dataset, batch_size, dim=0)):
+                router_logits_set = []
+
+                with model.trace(tokens_BT):
+                    for layer_idx in model.layers_with_routers:
+                        router_output = model.routers_output[layer_idx]
+
+                        # Handle different router output formats
+                        if isinstance(router_output, tuple):
+                            if len(router_output) == 2:
+                                router_scores, _router_indices = router_output
+                            else:
+                                raise ValueError(
+                                    f"Found tuple of length {len(router_output)} for router output at layer {layer_idx}"
+                                )
+                        else:
+                            router_scores = router_output
+                        logits = router_scores.save()
+                        router_logits_set.append(logits)
+
+                router_logits = th.cat(router_logits_set, dim=-2)
+                router_paths = logits_postprocessor(router_logits, top_k)
+                router_paths_BTP = router_paths.view(*tokens_BT.shape, -1)
+
+                # one-hot encode the closest path to each token
+                distances = th.cdist(router_paths_BTP.float(), paths.float(), p=1)
+                closest_paths = th.argmin(distances, dim=-1, keepdim=True)
+                router_paths_BTF = th.zeros_like(distances)
+                router_paths_BTF.scatter_(-1, closest_paths, 1)
+
+                del distances, closest_paths
+
+                if mask_bos_pad_eos_tokens:
+                    attn_mask_BT = get_bos_pad_eos_mask(tokens_BT, model.tokenizer)
+                else:
+                    attn_mask_BT = th.ones_like(tokens_BT, dtype=th.bool)
+
+                attn_mask_BT = attn_mask_BT.to(device=router_paths_BTF.device)
+                router_paths_BTF = router_paths_BTF * attn_mask_BT[:, :, None]
+                total_tokens += attn_mask_BT.sum().item()
+
+                running_sum_F += th.sum(router_paths_BTF, dim=(0, 1))
+
+            sparsity = running_sum_F / total_tokens
+            # Move result back to CPU for queue transfer
+            result_queue.put((path_idx, sparsity.cpu()))
+
+            # Clean up GPU memory
+            del paths, running_sum_F, sparsity
+            gc.collect()
+            th.cuda.empty_cache()
+
+    except Exception as e:
+        error_msg = f"Error in GPU {gpu_id}: {e!s}"
+        result_queue.put((None, error_msg))
+        raise
+
+
+def get_feature_activation_sparsity_parallel(
+    tokens_path: str,
+    paths_list: list[tuple[int, Paths]],
+    model_path: str,
+    model_dtype: th.dtype,
+    gpu_ids: list[int],
+    batch_size: int,
+    mask_bos_pad_eos_tokens: bool = False,
+    postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
+) -> dict[int, th.Tensor]:
+    """
+    Get activation sparsity for multiple paths in parallel across multiple GPUs.
+
+    Args:
+        tokens_path: Path to saved tokenized dataset
+        paths_list: List of (index, Paths) tuples to process
+        model_path: Path to model
+        model_dtype: Model dtype
+        gpu_ids: List of GPU IDs to use
+        batch_size: Batch size for processing
+        mask_bos_pad_eos_tokens: Whether to mask BOS/PAD/EOS tokens
+        postprocessor: Postprocessor to use
+
+    Returns:
+        Dictionary mapping path index to sparsity tensor
+    """
+    if len(paths_list) == 0:
+        return {}
+
+    # Set multiprocessing start method to spawn (required for CUDA)
+    mp.set_start_method("spawn", force=True)
+
+    ctx = mp.get_context("spawn")
+    work_queue: mp.Queue = ctx.Queue()
+    result_queue: mp.Queue = ctx.Queue()
+
+    # Fill work queue with paths
+    for path_idx, paths_obj in paths_list:
+        work_queue.put((path_idx, paths_obj.data, paths_obj.top_k))
+
+    # Add shutdown signals
+    for _ in gpu_ids:
+        work_queue.put(None)
+
+    # Spawn workers
+    workers = [
+        ctx.Process(
+            target=_gpu_sparsity_worker,
+            name=f"gpu_sparsity_worker_{gpu_id}",
+            args=(
+                gpu_id,
+                work_queue,
+                result_queue,
+                model_path,
+                model_dtype,
+                tokens_path,
+                batch_size,
+                mask_bos_pad_eos_tokens,
+                postprocessor,
+            ),
+            daemon=True,
+        )
+        for gpu_id in gpu_ids
+    ]
+
+    # Start all workers
+    for worker in workers:
+        worker.start()
+
+    # Collect results
+    results = {}
+    expected_results = len(paths_list)
+
+    with tqdm(total=expected_results, desc="Computing sparsity (multi-GPU)") as pbar:
+        while len(results) < expected_results:
+            path_idx, result = result_queue.get(timeout=600)
+
+            if path_idx is None:
+                # Error case
+                logger.error(result)
+                continue
+
+            results[path_idx] = result
+            pbar.update(1)
+
+    # Wait for workers to finish
+    for worker in workers:
+        worker.join(timeout=30)
+        if worker.is_alive():
+            logger.warning(f"Worker {worker.name} did not terminate, forcing termination")
+            worker.terminate()
+            worker.join()
+
+    return results
 
 
 class Example(autointerp.Example):
@@ -507,7 +705,7 @@ def run_eval_paths(
 
     print(f"Loaded tokenized dataset of shape {tokenized_dataset.shape}")
 
-    if isinstance(paths, Paths):
+    if isinstance(paths, Paths) and not isinstance(paths, PathsWithSparsity):
         sparsity = get_feature_activation_sparsity(
             tokenized_dataset,
             model,
@@ -554,6 +752,7 @@ def run_eval(
     log_level: str = "INFO",
     metric: CentroidMetric = CentroidMetric.DOT_PRODUCT,
     metric_p: float = 2.0,
+    num_gpus: int | None = None,
 ) -> dict[str, Any]:
     eval_instance_id = get_eval_uuid()
     sae_lens_version = get_sae_lens_version()
@@ -578,7 +777,68 @@ def run_eval(
     path = local_path if os.path.exists(local_path) else hf_name
 
     logger.info(f"Using model from {path}")
-    # Initialize model
+
+    # Determine available GPUs
+    if num_gpus is None:
+        num_gpus = th.cuda.device_count() if th.cuda.is_available() else 0
+
+    gpu_ids = list(range(num_gpus)) if num_gpus > 0 else []
+    use_parallel_sparsity = len(gpu_ids) > 1
+
+    # Pre-compute sparsity in parallel for paths that need it
+    if use_parallel_sparsity:
+        artifacts_folder = os.path.join(artifacts_path, EVAL_TYPE_ID_AUTOINTERP)
+        os.makedirs(artifacts_folder, exist_ok=True)
+
+        tokens_filename = f"{autointerp.escape_slash(config.model_name)}_{config.total_tokens}_tokens_{config.llm_context_size}_ctx.pt"
+        tokens_path = os.path.join(artifacts_folder, tokens_filename)
+
+        # Load or create tokenized dataset for sparsity computation
+        if not os.path.exists(tokens_path):
+            tokenizer = AutoTokenizer.from_pretrained(path)
+            tokenized_dataset = load_and_tokenize_dataset(
+                config.dataset_name,
+                config.llm_context_size,
+                config.total_tokens,
+                assert_type(tokenizer, PreTrainedTokenizer | PreTrainedTokenizerFast),
+            )
+            th.save(tokenized_dataset, tokens_path)
+            del tokenizer
+            gc.collect()
+            clear_memory()
+
+        # Collect paths that need sparsity computation
+        paths_needing_sparsity = []
+        for idx, paths_obj in enumerate(selected_paths_set):
+            if isinstance(paths_obj, Paths) and not isinstance(paths_obj, PathsWithSparsity):
+                paths_needing_sparsity.append((idx, paths_obj))
+
+        if paths_needing_sparsity:
+            logger.info(f"Computing sparsity for {len(paths_needing_sparsity)} paths using {len(gpu_ids)} GPUs")
+            # Get postprocessor from first path that needs sparsity
+            postprocessor = paths_needing_sparsity[0][1].postprocessor
+            sparsity_results = get_feature_activation_sparsity_parallel(
+                tokens_path=tokens_path,
+                paths_list=paths_needing_sparsity,
+                model_path=path,
+                model_dtype=llm_dtype,
+                gpu_ids=gpu_ids,
+                batch_size=config.llm_batch_size,
+                mask_bos_pad_eos_tokens=True,
+                postprocessor=postprocessor,
+            )
+
+            for idx, sparsity in sparsity_results.items():
+                selected_paths_set[idx] = PathsWithSparsity(
+                    data=selected_paths_set[idx].data,
+                    top_k=selected_paths_set[idx].top_k,
+                    name=selected_paths_set[idx].name,
+                    metadata=selected_paths_set[idx].metadata,
+                    postprocessor=selected_paths_set[idx].postprocessor,
+                    sparsity=sparsity,
+                )
+
+    # Initialize model for main processing
     model: StandardizedTransformer = StandardizedTransformer(
         path,
         check_attn_probs_with_trace=False,
