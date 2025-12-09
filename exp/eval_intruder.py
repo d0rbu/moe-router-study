@@ -593,8 +593,9 @@ class MultiGPULatentPathsCache(LatentPathsCache):
             f"Multi-GPU caching: {len(self.gpu_ids)} GPUs, {total_batches} batches"
         )
 
-        work_queue: mp.Queue = mp.Queue()
-        result_queue: mp.Queue = mp.Queue()
+        ctx = mp.get_context("spawn")
+        work_queue: mp.Queue = ctx.Queue()
+        result_queue: mp.Queue = ctx.Queue()
 
         # Fill work queue
         for batch_idx, batch_tokens in enumerate(token_batches):
@@ -606,8 +607,9 @@ class MultiGPULatentPathsCache(LatentPathsCache):
 
         # Spawn workers
         workers = [
-            mp.spawn(
-                _gpu_worker,
+            ctx.Process(
+                target=_gpu_worker,
+                name=f"gpu_worker_{gpu_id}",
                 args=(
                     gpu_id,
                     work_queue,
@@ -624,8 +626,6 @@ class MultiGPULatentPathsCache(LatentPathsCache):
                     self.hf_token,
                     self.quantization_config,
                 ),
-                nprocs=len(self.gpu_ids),
-                join=False,
             )
             for gpu_id in self.gpu_ids
         ]
@@ -837,7 +837,7 @@ def eval_intruder(
     log_level: str = "INFO",
     device_type: str = "cuda",
     postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
-    metric: CentroidMetric = "dot-product",
+    metric: CentroidMetric = CentroidMetric.DOT_PRODUCT,
     metric_p: float = 2.0,
 ) -> None:
     logger.remove()
