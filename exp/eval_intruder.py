@@ -59,6 +59,7 @@ from exp.get_activations import ActivationKeys
 from exp.kmeans import KMEANS_FILENAME
 
 
+@th.inference_mode()
 def _gpu_worker(
     gpu_id: int,
     work_queue: mp.Queue,
@@ -96,12 +97,14 @@ def _gpu_worker(
     with open(kmeans_path, "rb") as f:
         data = th.load(f, map_location=device, weights_only=False)
     centroid_sets: list[th.Tensor] = data["centroids"]
+    del data
 
     hookpoint_to_sparse_encode = {}
     for i, centroids in enumerate(centroid_sets):
         hookpoint_to_sparse_encode[f"paths_{i}"] = CentroidProjection(
             centroids.to(device=device, dtype=centroid_dtype), metric=metric, p=metric_p
         )
+    del centroid_sets
 
     postprocessor_fn = get_postprocessor(postprocessor)
     log_queue.put(f"Worker {gpu_id}: Ready")
@@ -126,15 +129,24 @@ def _gpu_worker(
 
         router_paths = th.stack(router_paths, dim=-2)
         sparse_paths = postprocessor_fn(router_paths, top_k).to(dtype=centroid_dtype)
+        del router_paths
+
         router_paths_flat = sparse_paths.view(*batch_tokens.shape, -1)
+        del sparse_paths
 
         # Encode
         results = {}
         for hookpoint, encoder in hookpoint_to_sparse_encode.items():
             latents = encoder(router_paths_flat)
             results[hookpoint] = (latents.cpu(), latents.shape[2])
+            del latents
+
+        del router_paths_flat
 
         result_queue.put((batch_idx, batch_tokens.cpu(), results))
+        del batch_tokens, results
+
+        gc.collect()
         th.cuda.empty_cache()
 
     log_queue.put(f"Worker {gpu_id}: Done")
@@ -151,6 +163,7 @@ def _log_worker(log_queue: mp.Queue):
             if log is None:
                 break
             f.write(log + "\n")
+
 
 def dataset_postprocess(record: LatentRecord) -> LatentRecord:
     return record
