@@ -80,7 +80,10 @@ def batched_cdist_argmin(
 
     chunks = th.chunk(x_flat, num_chunks)
     results = [
-        th.cdist(chunk.float(), y.float(), p=p).argmin(dim=-1) for chunk in chunks
+        th.cdist(chunk.float(), y.float(), p=p).argmin(dim=-1)
+        for chunk in tqdm(
+            chunks, total=num_chunks, desc="Computing argmin", leave=False
+        )
     ]
 
     return th.cat(results).view(original_shape)
