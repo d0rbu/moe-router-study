@@ -635,7 +635,7 @@ class MultiGPULatentPathsCache(LatentPathsCache):
 
         ctx = mp.get_context("spawn")
         work_queue: mp.Queue = ctx.Queue()
-        result_queue: mp.Queue = ctx.Queue()
+        result_queue: mp.Queue = ctx.Queue(maxsize=self.RESULT_QUEUE_MAX_SIZE)
         log_queue: mp.Queue = ctx.Queue()
 
         # Fill work queue
