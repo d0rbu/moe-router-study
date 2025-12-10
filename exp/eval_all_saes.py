@@ -803,7 +803,7 @@ def eval_all_saes(
     run_saebench: bool = True,
     run_intruder: bool = True,
     saebench_eval_types: list[str] | None = None,
-    saebench_batchsize: int = 100,
+    saebench_batchsize: int = 64,
     num_autointerp_latents: int = 1000,
     intruder_n_tokens: int = 10_000_000,
     intruder_batchsize: int = 32,
