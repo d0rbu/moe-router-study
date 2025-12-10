@@ -114,6 +114,7 @@ def compute_kurtosis(
 
 @arguably.command()
 def kurtosis_basis(
+    *,
     model_name: str = "olmoe",
     dataset_name: str = "lmsys",
     tokens_per_file: int = 100_000,
