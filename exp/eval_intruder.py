@@ -348,7 +348,7 @@ class LatentPathsCache(LatentCache):
         batch_size: int,
         log_path: Path | None = None,
         postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
-        buffer_flush_size: int = 65536,  # how many tokens before we flush to disk
+        buffer_flush_size: int = 32_768,  # how many tokens before we flush to disk
         cache_dir: Path | None = None,
     ):
         """
@@ -361,7 +361,7 @@ class LatentPathsCache(LatentCache):
             log_path: Path to save logging output.
             postprocessor: Router logits postprocessing method to use.
             buffer_flush_size: Number of tokens before flushing to disk.
-                Defaults to 65536.
+                Defaults to 32_768.
             cache_dir: Directory to store intermediate cache files. If None,
                 uses DiskCache.DEFAULT_CACHE_DIR.
         """
@@ -582,7 +582,7 @@ class MultiGPULatentPathsCache(LatentPathsCache):
         hf_token: str,
         quantization_config: BitsAndBytesConfig | None,
         log_path: Path | None = None,
-        buffer_flush_size: int = 65536,
+        buffer_flush_size: int = 32_768,
         cache_dir: Path | None = None,
     ):
         """

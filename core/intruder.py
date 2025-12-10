@@ -6,6 +6,7 @@ larger-than-memory datasets by periodically flushing to disk using async I/O.
 """
 
 from collections import defaultdict
+import gc
 from pathlib import Path
 import queue
 import time
@@ -59,6 +60,10 @@ def _disk_writer_process(write_queue: mp.Queue, done_event: mp.Event) -> None:
         except Exception as e:
             logger.error(f"Failed to write {output_file}: {e}")
 
+        del data_dict
+        gc.collect()
+        th.cuda.empty_cache()
+
 
 class DiskCache:
     """
@@ -78,7 +83,7 @@ class DiskCache:
         self,
         filters: dict[str, Tensor] | None = None,
         batch_size: int = 64,
-        buffer_flush_size: int = 65536,  # how many tokens before we flush to disk
+        buffer_flush_size: int = 32_768,  # how many tokens before we flush to disk
         cache_dir: Path | None = None,
     ):
         """
@@ -210,6 +215,13 @@ class DiskCache:
             }
             self._write_queue.put((output_file, data_dict))
 
+        del (
+            concatenated_locations,
+            concatenated_activations,
+            concatenated_tokens,
+            data_dict,
+        )
+
         # Clear buffers
         self._latent_locations_buffer.clear()
         self._latent_activations_buffer.clear()
@@ -220,6 +232,9 @@ class DiskCache:
         self._latent_locations_buffer = defaultdict(list)
         self._latent_activations_buffer = defaultdict(list)
         self._tokens_buffer = defaultdict(list)
+
+        gc.collect()
+        th.cuda.empty_cache()
 
     def _get_nonzeros(
         self, latents: latent_tensor_type, module_path: str
