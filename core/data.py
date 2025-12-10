@@ -106,9 +106,11 @@ def lmsys_chat_1m_text(
 
     def _iter():
         if streaming:
-            # Handle objects that support subscripting (dict, mocks, etc.)
-            if hasattr(ds, "__getitem__"):
-                conversations = ds["conversation"]  # type: ignore[index]
+            # IterableDataset doesn't support column access (ds["column"]),
+            # must iterate through samples instead. Only dicts (e.g., test mocks)
+            # support direct column access.
+            if isinstance(ds, dict):
+                conversations = ds["conversation"]
             else:
                 conversations = (sample["conversation"] for sample in ds)
             iterator = tqdm(conversations, desc="Formatting conversations")
