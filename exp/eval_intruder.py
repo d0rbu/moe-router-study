@@ -3,7 +3,6 @@ from collections.abc import Callable
 from functools import partial
 import gc
 import json
-from multiprocessing import cpu_count
 from pathlib import Path
 import queue
 import sys
@@ -17,6 +16,7 @@ import orjson
 from safetensors.numpy import save_file
 import torch as th
 import torch.multiprocessing as mp
+from torch.multiprocessing import cpu_count
 from tqdm import tqdm
 from transformers import (
     AutoTokenizer,
@@ -330,7 +330,6 @@ def load_hookpoints(
 
     hookpoints_to_sparse_encode = {}
     for centroids_idx, centroids in enumerate(centroid_sets):
-        import pdb; pdb.set_trace()
         path_projection = CentroidProjection(
             centroids.to(device="cuda", dtype=dtype),
             metric=metric,
@@ -904,6 +903,7 @@ def eval_intruder(
     metric: CentroidMetric = "dot-product",
     metric_p: float = 2.0,
 ) -> None:
+    import pdb; pdb.set_trace()
     logger.remove()
     logger.add(sys.stderr, level=log_level)
 
