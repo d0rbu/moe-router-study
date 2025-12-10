@@ -686,12 +686,9 @@ class MultiGPULatentPathsCache(LatentPathsCache):
 
         # Collect results
         for _ in tqdm(range(total_batches), desc="Caching (multi-GPU)"):
-            for retry_idx in range(100):
-                try:
-                    batch_idx, batch_tokens, results = result_queue.get(timeout=6)
-                    break
-                except queue.Empty:
-                    logger.info(f"No results after {retry_idx} retries")
+            batch_idx, batch_tokens, results = result_queue.get(timeout=300)
+
+            logger.debug(f"Received results for batch {batch_idx}")
 
             for hookpoint, (latents, width) in results.items():
                 self.cache.add(latents, batch_tokens, batch_idx, hookpoint)
