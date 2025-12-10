@@ -11,6 +11,7 @@ import asyncio
 from collections import defaultdict
 from dataclasses import dataclass
 import os
+import sys
 from typing import Any, cast
 
 import arguably
@@ -126,6 +127,7 @@ def kurtosis_basis(
     batch_size: int = 4096,
     seed: int = 0,
     debug: bool = False,
+    log_level: str = "INFO",
 ) -> None:
     """Compute kurtosis statistics for various transformer bases.
 
@@ -141,7 +143,13 @@ def kurtosis_basis(
         batch_size: Batch size for loading activations
         seed: Random seed for reshuffling
         debug: Debug mode (uses fewer files)
+        log_level: Log level
     """
+    logger.remove()
+    logger.add(sys.stderr, level=log_level)
+
+    logger.info(f"Running with log level: {log_level}")
+
     os.makedirs(KURTOSIS_DIR, exist_ok=True)
 
     # Get model config
