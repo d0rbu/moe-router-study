@@ -154,8 +154,7 @@ def process_batch(
         minibatch_start = minibatch_idx * minibatch_size
         minibatch_end = min(minibatch_start + minibatch_size, batch_size)
         encoded_minibatch = {
-            k: v[minibatch_start:minibatch_end].to(model.device)
-            for k, v in encoded_batch.items()
+            k: v[minibatch_start:minibatch_end] for k, v in encoded_batch.items()
         }
 
         minibatch_token_count = encoded_minibatch["attention_mask"].sum().item()
