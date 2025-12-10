@@ -155,7 +155,7 @@ def eval_all_paths(
     skip_autointerp: bool = False,
     skip_sparse_probing: bool = False,
     run_intruder: bool = True,
-    saebench_batchsize: int = 512,
+    saebench_batchsize: int = 100,
     num_autointerp_latents: int = 1000,
     intruder_model_step_ckpt: int | None = None,
     intruder_model_dtype: str = "bf16",

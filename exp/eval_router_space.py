@@ -34,7 +34,7 @@ def eval_router_space(
     skip_autointerp: bool = False,
     skip_sparse_probing: bool = False,
     run_intruder: bool = True,
-    saebench_batchsize: int = 512,
+    saebench_batchsize: int = 100,
     intruder_batchsize: int = 32,
     intruder_explainer_model: str = "ibnzterrell/Meta-Llama-3.3-70B-Instruct-AWQ-INT4",
     intruder_n_tokens: int = 10_000_000,

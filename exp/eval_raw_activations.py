@@ -176,7 +176,7 @@ def eval_raw_activations(
     dtype: str = "bf16",
     ctxlen: int = 256,
     load_in_8bit: bool = False,
-    saebench_batchsize: int = 16,
+    saebench_batchsize: int = 8,
     lower_sparse_probing_vram_usage: bool = False,
     n_tokens: int = 10_000_000,
     batchsize: int = 512,
