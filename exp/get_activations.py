@@ -773,7 +773,7 @@ def get_router_activations(
     minibatch_size: int = 2,
     gpus_per_worker: int = 2,
     cuda_devices: str = "",
-    tokens_per_file: int = 5_000,
+    tokens_per_file: int = 100_000,
     num_tokens: int = 1_000_000_000,  # 1B tokens
     resume: bool = True,
     name: str | None = None,
