@@ -903,7 +903,6 @@ def eval_intruder(
     metric: CentroidMetric = "dot-product",
     metric_p: float = 2.0,
 ) -> None:
-    import pdb; pdb.set_trace()
     logger.remove()
     logger.add(sys.stderr, level=log_level)
 
