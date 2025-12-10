@@ -476,6 +476,19 @@ def gpu_worker(
     device_type: DeviceType = "cuda",
 ) -> None:
     """Worker process for processing batches on a specific device."""
+
+    # Set CUDA_VISIBLE_DEVICES FIRST, before any CUDA operations
+    # This must happen before model loading to take effect
+    if gpu_available:
+        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(
+            str(device_id) for device_id in device_ids
+        )
+        # After setting CUDA_VISIBLE_DEVICES, device indices are remapped to 0, 1, ...
+        # So we use local indices instead of the original device_ids
+        local_device_ids = list(range(len(device_ids)))
+    else:
+        local_device_ids = [0]
+
     logger.debug(
         f"Processing batch with activations to store: {activations_to_store} layers to store: {layers_to_store}"
     )
@@ -544,10 +557,7 @@ def gpu_worker(
 
     if gpu_available:
         logger.info(
-            f"Starting GPU worker {rank} on {', '.join(f'cuda:{device_id}' for device_id in device_ids)}"
-        )
-        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(
-            str(device_id) for device_id in device_ids
+            f"Starting GPU worker {rank} on {', '.join(f'cuda:{device_id}' for device_id in device_ids)} (local devices: {local_device_ids})"
         )
     else:
         logger.info(f"Starting CPU worker {rank}")
@@ -572,9 +582,11 @@ def gpu_worker(
         # Process batch
         batch_idx, encoded_batch, batch_tokens, tokens_count = item
 
-        # Move tensors to device
+        # Move tensors to device (use local_device_ids since CUDA_VISIBLE_DEVICES remaps indices)
         if gpu_available:
-            encoded_batch = {k: v.to(device_ids[0]) for k, v in encoded_batch.items()}
+            encoded_batch = {
+                k: v.to(local_device_ids[0]) for k, v in encoded_batch.items()
+            }
 
         # Process batch and get router logits
         logger.debug(f"Rank {rank} processing batch {batch_idx}")
