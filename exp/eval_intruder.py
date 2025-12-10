@@ -566,6 +566,8 @@ class LatentPathsCache(LatentCache):
 class MultiGPULatentPathsCache(LatentPathsCache):
     """Subclass of LatentPathsCache that processes batches across multiple GPUs."""
 
+    RESULT_QUEUE_MAX_SIZE = 6
+
     def __init__(
         self,
         batch_size: int,
