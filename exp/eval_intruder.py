@@ -900,7 +900,7 @@ def eval_intruder(
     log_level: str = "INFO",
     device_type: str = "cuda",
     postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
-    metric: CentroidMetric = CentroidMetric.DOT_PRODUCT,
+    metric: CentroidMetric = "dot-product",
     metric_p: float = 2.0,
 ) -> None:
     logger.remove()
