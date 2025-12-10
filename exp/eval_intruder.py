@@ -330,6 +330,7 @@ def load_hookpoints(
 
     hookpoints_to_sparse_encode = {}
     for centroids_idx, centroids in enumerate(centroid_sets):
+        import pdb; pdb.set_trace()
         path_projection = CentroidProjection(
             centroids.to(device="cuda", dtype=dtype),
             metric=metric,
