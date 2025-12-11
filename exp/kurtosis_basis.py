@@ -21,6 +21,7 @@ from nnterp import StandardizedTransformer
 import numpy as np
 import torch as th
 from torch import Tensor
+import torch.nn as nn
 from tqdm import tqdm
 
 from core.model import get_model_config
@@ -67,10 +68,10 @@ def update_accumulator(
     """Update accumulator with new batch data."""
     if accumulator.sum is None:
         accumulator.sum = tensor.sum(dim=0)
-        accumulator.sum_sq = (tensor**2).sum(dim=0)
+        accumulator.sum_sq = (tensor * tensor).sum(dim=0)
     else:
         accumulator.sum += tensor.sum(dim=0)
-        accumulator.sum_sq += (tensor**2).sum(dim=0)
+        accumulator.sum_sq += (tensor * tensor).sum(dim=0)
     accumulator.count += batch_size
 
 
@@ -173,7 +174,7 @@ def kurtosis_basis(
     )
 
     router_layers: list[int] = model.layers_with_routers
-    num_layers = len(model.layers)
+    num_layers = len(cast("nn.ModuleList", model.layers))
 
     logger.info(f"Model has {num_layers} layers, {len(router_layers)} with routers")
 
@@ -225,7 +226,7 @@ def kurtosis_basis(
 
     with th.no_grad():
         for batch in tqdm(
-            activation_iterator, desc="First pass - computing statistics"
+            activation_iterator, desc="First pass - computing statistics",
         ):
             # Get activations
             # layer_outputs: (batch, num_layers, hidden_dim)
@@ -331,10 +332,10 @@ def kurtosis_basis(
         batch_size=batch_size, start_idx=0, max_samples=max_samples
     )
 
-    num_batches_processed = 0
+    second_pass_num_batches_processed = 0
 
     with th.no_grad():
-        for batch in tqdm(activation_iterator, desc="Second pass - computing kurtosis"):
+        for batch in tqdm(activation_iterator, desc="Second pass - computing kurtosis", total=num_batches_processed):
             # Get activations
             layer_outputs = batch[ActivationKeys.LAYER_OUTPUT].to(device=device)
             mlp_outputs = batch[ActivationKeys.MLP_OUTPUT].to(device=device)
@@ -407,9 +408,9 @@ def kurtosis_basis(
                 )
                 layerwise_kurtosis[basis_key].append(kurtosis)
 
-            num_batches_processed += 1
+            second_pass_num_batches_processed += 1
 
-    logger.info(f"Completed second pass with {num_batches_processed} batches")
+    logger.info(f"Completed second pass with {second_pass_num_batches_processed} batches")
 
     # Aggregate kurtosis values and compute statistics
     logger.info("Computing final statistics...")
