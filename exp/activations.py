@@ -431,14 +431,20 @@ class Activations:
             """Load a file with retries in case of transient corruption."""
             for attempt in range(max_retries):
                 try:
-                    return await asyncio.to_thread(th.load, filepath, weights_only=False)
+                    return await asyncio.to_thread(
+                        th.load, filepath, weights_only=False
+                    )
                 except RuntimeError as e:
                     if "PytorchStreamReader" in str(e) and attempt < max_retries - 1:
-                        logger.warning(f"Attempt {attempt + 1} failed loading {filepath}: {e}. Retrying...")
+                        logger.warning(
+                            f"Attempt {attempt + 1} failed loading {filepath}: {e}. Retrying..."
+                        )
                         await asyncio.sleep(0.1 * (attempt + 1))  # Exponential backoff
                         continue
                     raise
-            raise RuntimeError(f"Failed to load {filepath} after {max_retries} attempts")
+            raise RuntimeError(
+                f"Failed to load {filepath} after {max_retries} attempts"
+            )
 
         results = await asyncio.gather(
             *[load_with_retry(filepath) for filepath in filepaths]
@@ -721,7 +727,9 @@ class Activations:
                             logger.error(f"File {filepath} is empty, skipping rename")
                             continue
                     except OSError as e:
-                        logger.error(f"Error checking file {filepath}: {e}, skipping rename")
+                        logger.error(
+                            f"Error checking file {filepath}: {e}, skipping rename"
+                        )
                         continue
                     os.rename(filepath, final_path)
                 else:
@@ -738,7 +746,9 @@ class Activations:
             # Verify all files exist and are readable
             for filepath in renamed_activation_filepaths:
                 if not os.path.exists(filepath):
-                    logger.error(f"Expected file {filepath} does not exist after rename")
+                    logger.error(
+                        f"Expected file {filepath} does not exist after rename"
+                    )
                 else:
                     # Verify file is readable and not corrupted
                     try:

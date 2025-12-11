@@ -310,11 +310,7 @@ class TestLmsysChatText:
         mock_tokenizer.apply_chat_template.return_value = 123  # Not a string
 
         with patch("core.data.load_dataset") as mock_load_dataset:
-            mock_dataset = {
-                "conversation": [
-                    [{"role": "user", "content": "Hello"}]
-                ]
-            }
+            mock_dataset = {"conversation": [[{"role": "user", "content": "Hello"}]]}
             mock_load_dataset.return_value = mock_dataset
 
             result_iter = lmsys_chat_1m_text(mock_tokenizer)
@@ -335,9 +331,7 @@ class TestLmsysChatText:
         ]
 
         with patch("core.data.load_dataset") as mock_load_dataset:
-            mock_dataset = {
-                "conversation": [test_conversation]
-            }
+            mock_dataset = {"conversation": [test_conversation]}
             mock_load_dataset.return_value = mock_dataset
 
             result_iter = lmsys_chat_1m_text(mock_tokenizer)
