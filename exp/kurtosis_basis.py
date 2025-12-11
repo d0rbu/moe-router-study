@@ -169,6 +169,7 @@ def kurtosis_basis(
         check_renaming=False,
         device_map={"": device},
         revision=revision,
+        dispatch=True,
     )
 
     router_layers: list[int] = model.layers_with_routers
