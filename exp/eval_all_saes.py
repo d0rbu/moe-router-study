@@ -215,6 +215,7 @@ def run_intruder_eval(
         "python",
         "-m",
         "exp.eval_intruder",
+        "eval-intruder",
         "--experiment-dir",
         experiment_name,
         "--model-name",
