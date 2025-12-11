@@ -200,6 +200,24 @@ def compute_kurtosis_statistics(
         "max_samples": max_samples,
     }
 
+    # Get hidden dimension for random projections
+    hidden_dim = activation_dims[ActivationKeys.LAYER_OUTPUT][-1]
+
+    # Generate random projection matrices (same for all layers)
+    # 1. Random orthonormal matrix (QR decomposition of random matrix)
+    random_normal = th.randn(hidden_dim, hidden_dim, device=device, dtype=th.float32)
+    q_orthonormal, _ = th.linalg.qr(random_normal)
+    random_orthonormal_matrix = q_orthonormal.T  # Transpose for right multiplication
+
+    # 2. Random orthogonal matrix (properly normalized rows)
+    random_orthogonal_matrix = th.randn(hidden_dim, hidden_dim, device=device, dtype=th.float32)
+    random_orthogonal_matrix = random_orthogonal_matrix / th.norm(random_orthogonal_matrix, dim=1, keepdim=True)
+    random_orthogonal_matrix = random_orthogonal_matrix.T  # Transpose for right multiplication
+
+    # 3. Completely random matrix from normal distribution
+    random_normal_matrix = th.randn(hidden_dim, hidden_dim, device=device, dtype=th.float32)
+    random_normal_matrix = random_normal_matrix.T  # Transpose for right multiplication
+
     # Two-pass approach: First pass to compute means and stds, second pass to compute kurtosis
     logger.info("First pass: Computing means and standard deviations...")
 
@@ -245,6 +263,18 @@ def compute_kurtosis_statistics(
                 layer_acts = layer_outputs[:, layer_idx, :]
                 activations_to_process.append(
                     (layer_acts, f"layer_{layer_idx}_residual")
+                )
+
+                # Add random projections for this layer
+                layer_acts_dtype = layer_acts.to(dtype=random_orthonormal_matrix.dtype)
+                activations_to_process.append(
+                    (layer_acts_dtype @ random_orthonormal_matrix, f"layer_{layer_idx}_random_orthonormal")
+                )
+                activations_to_process.append(
+                    (layer_acts_dtype @ random_orthogonal_matrix, f"layer_{layer_idx}_random_orthogonal")
+                )
+                activations_to_process.append(
+                    (layer_acts_dtype @ random_normal_matrix, f"layer_{layer_idx}_random_normal")
                 )
 
                 # Get pre-MLP residuals: layer_output - mlp_output (needed for both cases)
@@ -342,6 +372,18 @@ def compute_kurtosis_statistics(
                 layer_acts = layer_outputs[:, layer_idx, :]
                 activations_to_process.append(
                     (layer_acts, f"layer_{layer_idx}_residual")
+                )
+
+                # Add random projections for this layer
+                layer_acts_dtype = layer_acts.to(dtype=random_orthonormal_matrix.dtype)
+                activations_to_process.append(
+                    (layer_acts_dtype @ random_orthonormal_matrix, f"layer_{layer_idx}_random_orthonormal")
+                )
+                activations_to_process.append(
+                    (layer_acts_dtype @ random_orthogonal_matrix, f"layer_{layer_idx}_random_orthogonal")
+                )
+                activations_to_process.append(
+                    (layer_acts_dtype @ random_normal_matrix, f"layer_{layer_idx}_random_normal")
                 )
 
                 # Get pre-MLP residuals: layer_output - mlp_output (needed for both cases)
@@ -593,6 +635,66 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
 
     plt.tight_layout()
     plt.savefig(os.path.join(KURTOSIS_DIR, f"{output_prefix}_residual_mean_std.png"), dpi=150)
+    plt.close()
+
+    # 1.75. Plot: Random projection kurtosis comparison (orthonormal, orthogonal, normal)
+    fig, axes = plt.subplots(2, 1, figsize=(12, 10))
+
+    # Get stats for each random projection type
+    projection_types = [
+        ("random_orthonormal", "Random Orthonormal (QR)", "purple"),
+        ("random_orthogonal", "Random Orthogonal (Normalized)", "magenta"),
+        ("random_normal", "Random Normal", "pink")
+    ]
+
+    # First subplot: Medians with Q25/Q75
+    ax = axes[0]
+    for proj_type, label, color in projection_types:
+        proj_stats = [
+            statistics[f"layer_{layer_idx}_{proj_type}"]
+            for layer_idx in range(num_layers)
+            if f"layer_{layer_idx}_{proj_type}" in statistics
+        ]
+        if proj_stats:
+            medians = [s.median for s in proj_stats]
+            q25s = [s.q25 for s in proj_stats]
+            q75s = [s.q75 for s in proj_stats]
+            x = np.arange(len(proj_stats))
+            ax.plot(x, medians, marker='o', label=label, color=color, alpha=0.7, linewidth=2)
+            ax.fill_between(x, q25s, q75s, alpha=0.2, color=color)
+
+    ax.set_xlabel("Layer")
+    ax.set_ylabel("Kurtosis")
+    ax.set_title("Random Projection Kurtosis Comparison - Median with Q25/Q75")
+    ax.legend()
+    ax.grid(axis="y", alpha=0.3)
+
+    # Second subplot: Means with std
+    ax = axes[1]
+    for proj_type, label, color in projection_types:
+        proj_stats = [
+            statistics[f"layer_{layer_idx}_{proj_type}"]
+            for layer_idx in range(num_layers)
+            if f"layer_{layer_idx}_{proj_type}" in statistics
+        ]
+        if proj_stats:
+            means = [s.mean for s in proj_stats]
+            stds = [s.std for s in proj_stats]
+            x = np.arange(len(proj_stats))
+            ax.plot(x, means, marker='o', label=label, color=color, alpha=0.7, linewidth=2)
+            ax.fill_between(x, 
+                          np.array(means) - np.array(stds), 
+                          np.array(means) + np.array(stds), 
+                          alpha=0.2, color=color)
+
+    ax.set_xlabel("Layer")
+    ax.set_ylabel("Kurtosis")
+    ax.set_title("Random Projection Kurtosis Comparison - Mean with Std")
+    ax.legend()
+    ax.grid(axis="y", alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(KURTOSIS_DIR, f"{output_prefix}_random_projections.png"), dpi=150)
     plt.close()
 
     # 2. Plot: MLP projections kurtosis by layer (only dense layers), box-and-whisker style and means + std
