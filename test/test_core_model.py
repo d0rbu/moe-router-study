@@ -310,7 +310,7 @@ class TestModelConfig:
 
     def test_get_checkpoint_no_params(self):
         """Test get_checkpoint with no parameters."""
-        config = ModelConfig(hf_name="test/model", eager_fetch=False)
+        config = ModelConfig(hf_name="test/model", total_steps=2000, total_tokens=10000, eager_fetch=False)
         config.checkpoints = [
             Checkpoint(1000, 5000, config),
             Checkpoint(2000, 10000, config),
@@ -319,7 +319,7 @@ class TestModelConfig:
         with patch("core.model.logger") as mock_logger:
             result = config.get_checkpoint()
 
-            # Should return last checkpoint and log warning
+            # Should return latest checkpoint and log warning
             assert result.step == 2000
             mock_logger.warning.assert_called_once()
 

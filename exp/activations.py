@@ -723,7 +723,6 @@ class Activations:
                     except OSError as e:
                         logger.error(f"Error checking file {filepath}: {e}, skipping rename")
                         continue
-                    
                     os.rename(filepath, final_path)
                 else:
                     logger.warning(f"File {filepath} does not exist, skipping rename")
@@ -806,11 +805,9 @@ class Activations:
         # Note: output_filepath may end with .pt-temp, so we add .writing suffix
         temp_filepath = output_filepath + ".writing"
         th.save(collated_batch, temp_filepath)
-        
         # Ensure data is flushed to disk before renaming
-        with open(temp_filepath, 'rb') as f:
+        with open(temp_filepath, "rb") as f:
             os.fsync(f.fileno())
-        
         os.rename(temp_filepath, output_filepath)
 
         return output_filepath
