@@ -400,13 +400,30 @@ class LatentPathsCache(LatentCache):
         """
         token_batches = self.load_token_batches(n_tokens, tokens)
 
+        # Check if we can resume from existing cache
+        max_batch_idx = self.cache.get_max_batch_index()
+        start_batch_idx = 0
+        if max_batch_idx is not None:
+            start_batch_idx = max_batch_idx + 1
+            if start_batch_idx < len(token_batches):
+                logger.info(
+                    f"Resuming from batch {start_batch_idx} (batches 0-{max_batch_idx} already processed)"
+                )
+            else:
+                logger.info(
+                    f"All batches already processed (0-{max_batch_idx}), nothing to do"
+                )
+                self.cache.save()
+                return
+
         total_tokens = 0
         total_batches = len(token_batches)
         tokens_per_batch = token_batches[0].numel()
         for batch_idx, batch in tqdm(
-            enumerate(token_batches),
+            enumerate(token_batches[start_batch_idx:], start=start_batch_idx),
             total=total_batches,
             desc="Caching latents",
+            initial=start_batch_idx,
         ):
             total_tokens += tokens_per_batch
             router_paths = []
@@ -629,8 +646,25 @@ class MultiGPULatentPathsCache(LatentPathsCache):
         token_batches = self.load_token_batches(n_tokens, tokens)
         total_batches = len(token_batches)
 
+        # Check if we can resume from existing cache
+        max_batch_idx = self.cache.get_max_batch_index()
+        start_batch_idx = 0
+        if max_batch_idx is not None:
+            start_batch_idx = max_batch_idx + 1
+            if start_batch_idx < len(token_batches):
+                logger.info(
+                    f"Resuming from batch {start_batch_idx} (batches 0-{max_batch_idx} already processed)"
+                )
+            else:
+                logger.info(
+                    f"All batches already processed (0-{max_batch_idx}), nothing to do"
+                )
+                self.cache.save()
+                return
+
+        batches_to_process = total_batches - start_batch_idx
         logger.info(
-            f"Multi-GPU caching: {len(self.gpu_ids)} GPUs, {total_batches} batches"
+            f"Multi-GPU caching: {len(self.gpu_ids)} GPUs, {batches_to_process} batches to process (starting from batch {start_batch_idx})"
         )
 
         ctx = mp.get_context("spawn")
@@ -638,8 +672,8 @@ class MultiGPULatentPathsCache(LatentPathsCache):
         result_queue: mp.Queue = ctx.Queue(maxsize=self.RESULT_QUEUE_MAX_SIZE)
         log_queue: mp.Queue = ctx.Queue()
 
-        # Fill work queue
-        for batch_idx, batch_tokens in enumerate(token_batches):
+        # Fill work queue (skip already-processed batches)
+        for batch_idx, batch_tokens in enumerate(token_batches[start_batch_idx:], start=start_batch_idx):
             work_queue.put((batch_idx, batch_tokens))
 
         # Add shutdown signals
@@ -687,7 +721,7 @@ class MultiGPULatentPathsCache(LatentPathsCache):
         log_worker.start()
 
         # Collect results
-        for _ in tqdm(range(total_batches), desc="Caching (multi-GPU)"):
+        for _ in tqdm(range(batches_to_process), total=total_batches, desc="Caching (multi-GPU)", initial=start_batch_idx):
             batch_idx, batch_tokens, results = result_queue.get(timeout=300)
 
             logger.debug(f"Received results for batch {batch_idx}")
@@ -706,6 +740,7 @@ class MultiGPULatentPathsCache(LatentPathsCache):
         logger.info(
             f"Total tokens processed: {total_batches * token_batches[0].numel():,}"
         )
+        logger.info(f"Tokens processed in this run: {batches_to_process * token_batches[0].numel():,}")
         self.cache.save()
 
 
@@ -899,13 +934,13 @@ def eval_intruder(
     log_level: str = "INFO",
     device_type: str = "cuda",
     postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
-    metric: CentroidMetric = "dot-product",
+    metric: str = "dot_product",
     metric_p: float = 2.0,
 ) -> None:
     logger.remove()
     logger.add(sys.stderr, level=log_level)
 
-    metric = CentroidMetric(metric.replace("-", "_"))
+    metric = CentroidMetric(metric)
 
     # Handle GPU configuration
     backend = get_backend(device_type)

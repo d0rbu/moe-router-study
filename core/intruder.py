@@ -368,6 +368,57 @@ class DiskCache:
         """Return list of all hookpoints in the cache."""
         return list(self._hookpoints)
 
+    def get_max_batch_index(self) -> int | None:
+        """
+        Get the maximum batch index that has been processed across all hookpoints.
+
+        This is useful for resuming cache population from where it left off.
+        The batch index in locations is stored as `batch_number * batch_size + offset`,
+        where offset is 0 to batch_size-1. So we divide by batch_size to get the batch number.
+
+        Returns:
+            Maximum batch index (0-indexed) that has been processed, or None if
+            no cache data exists yet.
+        """
+        if not self._hookpoints:
+            return None
+
+        max_batch_idx = -1
+        has_data = False
+
+        for hookpoint in self._hookpoints:
+            hookpoint_dir = self._get_hookpoint_dir(hookpoint)
+            batch_files = sorted(
+                hookpoint_dir.glob("*.safetensors"),
+                key=lambda p: int(p.stem),
+            )
+
+            if not batch_files:
+                continue
+
+            has_data = True
+            # Check all files to find the maximum batch index
+            for batch_file in batch_files:
+                try:
+                    data = load_file(batch_file)
+                    locations = data["locations"]
+                    if locations.shape[0] > 0:
+                        # Batch index is stored in locations[:, 0]
+                        # It's stored as batch_number * batch_size + offset (0 to batch_size-1)
+                        # So dividing by batch_size gives us the batch_number
+                        max_stored_idx = locations[:, 0].max().item()
+                        max_batch_in_file = max_stored_idx // self.batch_size
+                        max_batch_idx = max(max_batch_idx, max_batch_in_file)
+                except Exception as e:
+                    logger.exception(f"Failed to read {batch_file} for batch index check: {e}")
+                    raise e
+
+        if not has_data:
+            return None
+
+        # Return the maximum batch index (0-indexed)
+        return max_batch_idx if max_batch_idx >= 0 else None
+
     def get_hookpoint_data(
         self, hookpoint: str
     ) -> tuple[location_tensor_type, activation_tensor_type, token_tensor_type]:
