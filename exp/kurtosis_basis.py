@@ -114,22 +114,19 @@ def compute_kurtosis(
     return kurtosis
 
 
-@arguably.command()
-def kurtosis_basis(
-    *,
-    model_name: str = "olmoe-i",
-    dataset_name: str = "lmsys",
-    tokens_per_file: int = 100_000,
-    reshuffled_tokens_per_file: int = 100_000,
-    context_length: int = 2048,
-    checkpoint_idx: int | None = None,
-    device: str = "cpu",
-    max_samples: int = 10_000_000,
-    batch_size: int = 10_000,
-    seed: int = 0,
-    debug: bool = False,
-    log_level: str = "INFO",
-) -> None:
+def compute_kurtosis_statistics(
+    model_name: str,
+    dataset_name: str,
+    tokens_per_file: int,
+    reshuffled_tokens_per_file: int,
+    context_length: int,
+    checkpoint_idx: int | None,
+    device: str,
+    max_samples: int,
+    batch_size: int,
+    seed: int,
+    debug: bool,
+) -> dict[str, Any]:
     """Compute kurtosis statistics for various transformer bases.
 
     Args:
@@ -144,15 +141,10 @@ def kurtosis_basis(
         batch_size: Batch size for loading activations
         seed: Random seed for reshuffling
         debug: Debug mode (uses fewer files)
-        log_level: Log level
+
+    Returns:
+        Dictionary containing computed kurtosis statistics
     """
-    logger.remove()
-    logger.add(sys.stderr, level=log_level)
-
-    logger.info(f"Running with log level: {log_level}")
-
-    os.makedirs(KURTOSIS_DIR, exist_ok=True)
-
     # Get model config
     model_config = get_model_config(model_name)
 
@@ -456,15 +448,79 @@ def kurtosis_basis(
 
     results["statistics"] = statistics
 
-    # Save results
+    return results
+
+
+@arguably.command()
+def kurtosis_basis(
+    *,
+    model_name: str = "olmoe-i",
+    dataset_name: str = "lmsys",
+    tokens_per_file: int = 100_000,
+    reshuffled_tokens_per_file: int = 100_000,
+    context_length: int = 2048,
+    checkpoint_idx: int | None = None,
+    device: str = "cpu",
+    max_samples: int = 10_000_000,
+    batch_size: int = 10_000,
+    seed: int = 0,
+    debug: bool = False,
+    log_level: str = "INFO",
+) -> None:
+    """Compute kurtosis statistics for various transformer bases.
+
+    Args:
+        model_name: Name of the model to analyze
+        dataset_name: Name of the dataset used for activations
+        tokens_per_file: Tokens per file in original activations
+        reshuffled_tokens_per_file: Tokens per file in reshuffled activations
+        context_length: Context length for activations
+        checkpoint_idx: Model checkpoint index (None for latest)
+        device: Device to load model on
+        max_samples: Maximum number of activation samples to use
+        batch_size: Batch size for loading activations
+        seed: Random seed for reshuffling
+        debug: Debug mode (uses fewer files)
+        log_level: Log level
+    """
+    logger.remove()
+    logger.add(sys.stderr, level=log_level)
+
+    logger.info(f"Running with log level: {log_level}")
+
+    os.makedirs(KURTOSIS_DIR, exist_ok=True)
+
+    # Determine output filename
     output_filename = f"kurtosis_{model_name}"
     if checkpoint_idx is not None:
         output_filename += f"_checkpoint{checkpoint_idx}"
     output_filename += ".pt"
 
     output_path = os.path.join(KURTOSIS_DIR, output_filename)
-    th.save(results, output_path)
-    logger.info(f"Saved results to {output_path}")
+
+    # Check if cached results exist
+    if os.path.exists(output_path):
+        logger.info(f"Loading cached results from {output_path}")
+        results = th.load(output_path)
+    else:
+        logger.info("No cached results found. Computing kurtosis statistics...")
+        results = compute_kurtosis_statistics(
+            model_name=model_name,
+            dataset_name=dataset_name,
+            tokens_per_file=tokens_per_file,
+            reshuffled_tokens_per_file=reshuffled_tokens_per_file,
+            context_length=context_length,
+            checkpoint_idx=checkpoint_idx,
+            device=device,
+            max_samples=max_samples,
+            batch_size=batch_size,
+            seed=seed,
+            debug=debug,
+        )
+
+        # Save results
+        th.save(results, output_path)
+        logger.info(f"Saved results to {output_path}")
 
     # Create visualizations
     logger.info("Creating visualizations...")
@@ -578,7 +634,7 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
                 f"MLP {proj_type.replace('_', ' ').title()} Kurtosis by Dense Layer"
             )
             ax.set_xticks(x)
-            ax.set_xticklabels([str(l) for l in dense_layers])
+            ax.set_xticklabels([str(layer_idx) for layer_idx in dense_layers])
             ax.legend()
             ax.grid(axis="y", alpha=0.3)
 
@@ -642,8 +698,8 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
         ax.set_xlabel("Router Layer")
         ax.set_ylabel("Kurtosis")
         ax.set_title("Expert Router Kurtosis by Layer")
-        ax.set_xticks(list(x) + [len(router_layers) + 0.5])
-        ax.set_xticklabels([str(l) for l in router_layers] + ["All"])
+        ax.set_xticks([*list(x), len(router_layers) + 0.5])
+        ax.set_xticklabels([str(layer_idx) for layer_idx in router_layers] + ["All"])
         ax.legend()
         ax.grid(axis="y", alpha=0.3)
 
