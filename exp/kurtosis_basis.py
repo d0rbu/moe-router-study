@@ -233,6 +233,13 @@ def kurtosis_basis(
             # mlp_outputs: (batch, num_layers, hidden_dim)
             mlp_outputs = batch[ActivationKeys.MLP_OUTPUT].to(device=device)
 
+            assert layer_outputs.shape[1] == mlp_outputs.shape[1] == num_layers, (
+                "Number of layers mismatch: "
+                f"Layer outputs shape: {layer_outputs.shape}, MLP outputs shape: {mlp_outputs.shape}, "
+                f"Number of layers: {num_layers}, "
+                f"Router layers: {router_layers}"
+            )
+
             batch_size_actual = layer_outputs.shape[0]
 
             # Create list of (activation_tensor, basis_key) pairs to process
