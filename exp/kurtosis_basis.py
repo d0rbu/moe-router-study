@@ -228,12 +228,10 @@ def kurtosis_basis(
             activation_iterator, desc="First pass - computing statistics"
         ):
             # Get activations
-            layer_outputs = batch[
-                ActivationKeys.LAYER_OUTPUT
-            ]  # (batch, num_layers, hidden_dim)
-            mlp_outputs = batch[
-                ActivationKeys.MLP_OUTPUT
-            ]  # (batch, num_layers, hidden_dim)
+            # layer_outputs: (batch, num_layers, hidden_dim)
+            layer_outputs = batch[ActivationKeys.LAYER_OUTPUT].to(device=device)
+            # mlp_outputs: (batch, num_layers, hidden_dim)
+            mlp_outputs = batch[ActivationKeys.MLP_OUTPUT].to(device=device)
 
             batch_size_actual = layer_outputs.shape[0]
 
@@ -243,7 +241,8 @@ def kurtosis_basis(
             # Process all layers in one loop
             for layer_idx in range(num_layers):
                 # 1. Raw residual stream activations per layer
-                layer_acts = layer_outputs[:, layer_idx, :].cpu()
+                # layer_acts: (batch, hidden_dim)
+                layer_acts = layer_outputs[:, layer_idx, :]
                 activations_to_process.append(
                     (layer_acts, f"layer_{layer_idx}_residual")
                 )
@@ -251,7 +250,7 @@ def kurtosis_basis(
                 # Get pre-MLP residuals: layer_output - mlp_output (needed for both cases)
                 pre_mlp_residuals = (
                     layer_outputs[:, layer_idx, :] - mlp_outputs[:, layer_idx, :]
-                ).cpu()
+                )
 
                 # 2-3. MLP projections (dense layers) vs 4. Expert routers (MoE layers)
                 if layer_idx not in router_layers:
@@ -259,17 +258,17 @@ def kurtosis_basis(
                     up_w = (
                         cast("Tensor", model.mlps[layer_idx].up_proj.weight)
                         .detach()
-                        .cpu()
+                        .to(dtype=pre_mlp_residuals.dtype)
                     )
                     gate_w = (
                         cast("Tensor", model.mlps[layer_idx].gate_proj.weight)
                         .detach()
-                        .cpu()
+                        .to(dtype=pre_mlp_residuals.dtype)
                     )
                     down_w = (
                         cast("Tensor", model.mlps[layer_idx].down_proj.weight)
                         .detach()
-                        .cpu()
+                        .to(dtype=pre_mlp_residuals.dtype)
                     )
 
                     # Add projections to processing list
@@ -285,7 +284,9 @@ def kurtosis_basis(
                 else:
                     # MoE layer - expert routers
                     router_weight = (
-                        cast("Tensor", model.routers[layer_idx].weight).detach().cpu()
+                        cast("Tensor", model.routers[layer_idx].weight)
+                        .detach()
+                        .to(dtype=pre_mlp_residuals.dtype)
                     )
 
                     # Compute router logits
@@ -328,8 +329,8 @@ def kurtosis_basis(
     with th.no_grad():
         for batch in tqdm(activation_iterator, desc="Second pass - computing kurtosis"):
             # Get activations
-            layer_outputs = batch[ActivationKeys.LAYER_OUTPUT]
-            mlp_outputs = batch[ActivationKeys.MLP_OUTPUT]
+            layer_outputs = batch[ActivationKeys.LAYER_OUTPUT].to(device=device)
+            mlp_outputs = batch[ActivationKeys.MLP_OUTPUT].to(device=device)
 
             # Create list of (activation_tensor, basis_key) pairs to process (same as first pass)
             activations_to_process = []
@@ -337,7 +338,8 @@ def kurtosis_basis(
             # Process all layers in one loop
             for layer_idx in range(num_layers):
                 # 1. Raw residual stream activations per layer
-                layer_acts = layer_outputs[:, layer_idx, :].cpu()
+                # layer_acts: (batch, hidden_dim)
+                layer_acts = layer_outputs[:, layer_idx, :]
                 activations_to_process.append(
                     (layer_acts, f"layer_{layer_idx}_residual")
                 )
@@ -345,7 +347,7 @@ def kurtosis_basis(
                 # Get pre-MLP residuals: layer_output - mlp_output (needed for both cases)
                 pre_mlp_residuals = (
                     layer_outputs[:, layer_idx, :] - mlp_outputs[:, layer_idx, :]
-                ).cpu()
+                )
 
                 # 2-3. MLP projections (dense layers) vs 4. Expert routers (MoE layers)
                 if layer_idx not in router_layers:
@@ -353,17 +355,17 @@ def kurtosis_basis(
                     up_w = (
                         cast("Tensor", model.mlps[layer_idx].up_proj.weight)
                         .detach()
-                        .cpu()
+                        .to(dtype=pre_mlp_residuals.dtype)
                     )
                     gate_w = (
                         cast("Tensor", model.mlps[layer_idx].gate_proj.weight)
                         .detach()
-                        .cpu()
+                        .to(dtype=pre_mlp_residuals.dtype)
                     )
                     down_w = (
                         cast("Tensor", model.mlps[layer_idx].down_proj.weight)
                         .detach()
-                        .cpu()
+                        .to(dtype=pre_mlp_residuals.dtype)
                     )
 
                     # Add projections to processing list
@@ -379,7 +381,9 @@ def kurtosis_basis(
                 else:
                     # MoE layer - expert routers
                     router_weight = (
-                        cast("Tensor", model.routers[layer_idx].weight).detach().cpu()
+                        cast("Tensor", model.routers[layer_idx].weight)
+                        .detach()
+                        .to(dtype=pre_mlp_residuals.dtype)
                     )
 
                     # Compute router logits
