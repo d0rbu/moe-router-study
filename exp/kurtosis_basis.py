@@ -750,80 +750,254 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
         plt.savefig(os.path.join(KURTOSIS_DIR, f"{output_prefix}_router_mean_std.png"), dpi=150)
         plt.close()
 
-    # 4. Plot: Comparison across all basis types
-    fig, ax = plt.subplots(figsize=(16, 8))
+    # 4. Plot: Comparison across all basis types (grouped bar chart)
+    # Version 1: Q25, median, Q75 (box-and-whisker style)
+    # Version 2: Mean with std error bars
 
-    # Collect all basis types with their statistics
-    basis_types = []
-    basis_means = []
-    basis_q25s = []
-    basis_q75s = []
+    # Define bar categories
+    bar_categories = ["Residual", "Up", "Gate", "Down", "Router"]
+    num_categories = len(bar_categories)
+    bar_width = 0.15
 
-    # Add residual streams
+    # Colors for each category (distinct colors for Up, Gate, Down)
+    colors = {
+        "Residual": "steelblue",
+        "Up": "coral",
+        "Gate": "orange",
+        "Down": "tomato",
+        "Router": "mediumseagreen",
+    }
+
+    # Collect data organized by layer groups
+    # Each group stores both median/q25/q75 and mean/std
+    layer_groups = []
+    group_labels = []
+
+    # Process each layer
+    for layer_idx in range(num_layers):
+        group_data_median = {}
+        group_data_mean = {}
+        group_errors_q25_q75 = {}
+        group_errors_std = {}
+
+        # Residual stream (always present)
+        basis_name = f"layer_{layer_idx}_residual"
+        if basis_name in statistics:
+            stats = statistics[basis_name]
+            group_data_median["Residual"] = stats.median
+            group_data_mean["Residual"] = stats.mean
+            group_errors_q25_q75["Residual"] = (stats.median - stats.q25, stats.q75 - stats.median)
+            group_errors_std["Residual"] = stats.std
+
+        # MLP projections (only for dense layers)
+        if layer_idx in dense_layers:
+            for proj_type in ["up_proj", "gate_proj", "down_proj"]:
+                basis_name = f"layer_{layer_idx}_{proj_type}"
+                if basis_name in statistics:
+                    stats = statistics[basis_name]
+                    category = proj_type.replace("_proj", "").title()
+                    group_data_median[category] = stats.median
+                    group_data_mean[category] = stats.mean
+                    group_errors_q25_q75[category] = (stats.median - stats.q25, stats.q75 - stats.median)
+                    group_errors_std[category] = stats.std
+
+        # Router (only for router layers)
+        if layer_idx in router_layers:
+            basis_name = f"layer_{layer_idx}_router"
+            if basis_name in statistics:
+                stats = statistics[basis_name]
+                group_data_median["Router"] = stats.median
+                group_data_mean["Router"] = stats.mean
+                group_errors_q25_q75["Router"] = (stats.median - stats.q25, stats.q75 - stats.median)
+                group_errors_std["Router"] = stats.std
+
+        if group_data_median:  # Only add if we have data for this layer
+            layer_groups.append({
+                "median": group_data_median,
+                "mean": group_data_mean,
+                "q25_q75": group_errors_q25_q75,
+                "std": group_errors_std,
+            })
+            group_labels.append(f"L{layer_idx}")
+
+    # Add aggregated group (if available)
+    aggregated_data_median = {}
+    aggregated_data_mean = {}
+    aggregated_errors_q25_q75 = {}
+    aggregated_errors_std = {}
+    has_aggregated = False
+
+    # Aggregate residual streams across all layers
+    residual_medians = []
+    residual_means = []
+    residual_q25s = []
+    residual_q75s = []
+    residual_stds = []
     for layer_idx in range(num_layers):
         basis_name = f"layer_{layer_idx}_residual"
         if basis_name in statistics:
-            basis_types.append(f"L{layer_idx}_res")
             stats = statistics[basis_name]
-            basis_means.append(stats.mean)
-            basis_q25s.append(stats.q25)
-            basis_q75s.append(stats.q75)
+            residual_medians.append(stats.median)
+            residual_means.append(stats.mean)
+            residual_q25s.append(stats.q25)
+            residual_q75s.append(stats.q75)
+            residual_stds.append(stats.std)
+    if residual_medians:
+        aggregated_data_median["Residual"] = np.mean(residual_medians)
+        aggregated_data_mean["Residual"] = np.mean(residual_means)
+        # Use mean of error ranges
+        mean_err_lower = np.mean([m - q25 for m, q25 in zip(residual_medians, residual_q25s, strict=False)])
+        mean_err_upper = np.mean([q75 - m for m, q75 in zip(residual_medians, residual_q75s, strict=False)])
+        aggregated_errors_q25_q75["Residual"] = (mean_err_lower, mean_err_upper)
+        aggregated_errors_std["Residual"] = np.mean(residual_stds)
+        has_aggregated = True
 
-    # Add MLP projections (dense layers only)
-    for layer_idx in dense_layers:
-        for proj_type in ["up_proj", "gate_proj", "down_proj"]:
+    # Aggregate MLP projections across all dense layers
+    for proj_type in ["up_proj", "gate_proj", "down_proj"]:
+        proj_medians = []
+        proj_means = []
+        proj_q25s = []
+        proj_q75s = []
+        proj_stds = []
+        for layer_idx in dense_layers:
             basis_name = f"layer_{layer_idx}_{proj_type}"
             if basis_name in statistics:
-                proj_abbrev = proj_type.replace("_proj", "").replace("_", "")[:2]
-                basis_types.append(f"L{layer_idx}_{proj_abbrev}")
                 stats = statistics[basis_name]
-                basis_means.append(stats.mean)
-                basis_q25s.append(stats.q25)
-                basis_q75s.append(stats.q75)
+                proj_medians.append(stats.median)
+                proj_means.append(stats.mean)
+                proj_q25s.append(stats.q25)
+                proj_q75s.append(stats.q75)
+                proj_stds.append(stats.std)
+        if proj_medians:
+            category = proj_type.replace("_proj", "").title()
+            aggregated_data_median[category] = np.mean(proj_medians)
+            aggregated_data_mean[category] = np.mean(proj_means)
+            mean_err_lower = np.mean([m - q25 for m, q25 in zip(proj_medians, proj_q25s, strict=False)])
+            mean_err_upper = np.mean([q75 - m for m, q75 in zip(proj_medians, proj_q75s, strict=False)])
+            aggregated_errors_q25_q75[category] = (mean_err_lower, mean_err_upper)
+            aggregated_errors_std[category] = np.mean(proj_stds)
+            has_aggregated = True
 
-    # Add routers
-    for layer_idx in router_layers:
-        basis_name = f"layer_{layer_idx}_router"
-        if basis_name in statistics:
-            basis_types.append(f"L{layer_idx}_rtr")
-            stats = statistics[basis_name]
-            basis_means.append(stats.mean)
-            basis_q25s.append(stats.q25)
-            basis_q75s.append(stats.q75)
-
-    # Add aggregated router
+    # Aggregate routers
     if "all_layers_router" in statistics:
-        basis_types.append("All_rtr")
         stats = statistics["all_layers_router"]
-        basis_means.append(stats.mean)
-        basis_q25s.append(stats.q25)
-        basis_q75s.append(stats.q75)
+        aggregated_data_median["Router"] = stats.median
+        aggregated_data_mean["Router"] = stats.mean
+        aggregated_errors_q25_q75["Router"] = (stats.median - stats.q25, stats.q75 - stats.median)
+        aggregated_errors_std["Router"] = stats.std
+        has_aggregated = True
 
-    if basis_types:  # Only create plot if we have data
-        x = np.arange(len(basis_types))
-        ax.bar(x, basis_means, color="slateblue", alpha=0.7)
+    if has_aggregated:
+        layer_groups.append({
+            "median": aggregated_data_median,
+            "mean": aggregated_data_mean,
+            "q25_q75": aggregated_errors_q25_q75,
+            "std": aggregated_errors_std,
+        })
+        group_labels.append("All")
 
-        yerr_lower = np.array(basis_means) - np.array(basis_q25s)
-        yerr_upper = np.array(basis_q75s) - np.array(basis_means)
-        ax.errorbar(
-            x,
-            basis_means,
-            yerr=[yerr_lower, yerr_upper],
-            fmt="none",
-            ecolor="black",
-            capsize=2,
-        )
+    if layer_groups:  # Only create plot if we have data
+        num_groups = len(layer_groups)
+        x_base = np.arange(num_groups)
 
-        ax.set_xlabel("Basis Type")
+        # Version 1: Q25, median, Q75 (box-and-whisker style)
+        fig, ax = plt.subplots(figsize=(20, 8))
+
+        # Plot bars for each category
+        for cat_idx, category in enumerate(bar_categories):
+            values = []
+            errors_lower = []
+            errors_upper = []
+            x_positions = []
+
+            for group_idx, group in enumerate(layer_groups):
+                if category in group["median"]:
+                    values.append(group["median"][category])
+                    err_lower, err_upper = group["q25_q75"].get(category, (0, 0))
+                    errors_lower.append(err_lower)
+                    errors_upper.append(err_upper)
+                    x_positions.append(group_idx)
+
+            if values:  # Only plot if we have values for this category
+                x_pos = x_base[x_positions] + (cat_idx - num_categories / 2 + 0.5) * bar_width
+                ax.bar(
+                    x_pos,
+                    values,
+                    bar_width,
+                    label=category,
+                    color=colors[category],
+                    alpha=0.7,
+                )
+                # Add error bars
+                ax.errorbar(
+                    x_pos,
+                    values,
+                    yerr=[errors_lower, errors_upper],
+                    fmt="none",
+                    ecolor="black",
+                    capsize=2,
+                )
+
+        ax.set_xlabel("Layer Group")
         ax.set_ylabel("Kurtosis")
-        ax.set_title("Kurtosis Comparison Across All Basis Types")
-        ax.set_xticks(x)
-        ax.set_xticklabels(basis_types, rotation=90, fontsize=6)
+        ax.set_title("Kurtosis Comparison Across All Basis Types (Grouped by Layer) - Median with Q25/Q75")
+        ax.set_xticks(x_base)
+        ax.set_xticklabels(group_labels)
+        ax.legend(title="Basis Type", loc="upper left")
         ax.grid(axis="y", alpha=0.3)
 
         plt.tight_layout()
         plt.savefig(
             os.path.join(KURTOSIS_DIR, f"{output_prefix}_comparison.png"), dpi=150
+        )
+        plt.close()
+
+        # Version 2: Mean with std error bars
+        fig, ax = plt.subplots(figsize=(20, 8))
+
+        # Plot bars for each category
+        for cat_idx, category in enumerate(bar_categories):
+            values = []
+            errors_std = []
+            x_positions = []
+
+            for group_idx, group in enumerate(layer_groups):
+                if category in group["mean"]:
+                    values.append(group["mean"][category])
+                    errors_std.append(group["std"].get(category, 0))
+                    x_positions.append(group_idx)
+
+            if values:  # Only plot if we have values for this category
+                x_pos = x_base[x_positions] + (cat_idx - num_categories / 2 + 0.5) * bar_width
+                ax.bar(
+                    x_pos,
+                    values,
+                    bar_width,
+                    label=category,
+                    color=colors[category],
+                    alpha=0.7,
+                )
+                # Add error bars
+                ax.errorbar(
+                    x_pos,
+                    values,
+                    yerr=errors_std,
+                    fmt="none",
+                    ecolor="black",
+                    capsize=2,
+                )
+
+        ax.set_xlabel("Layer Group")
+        ax.set_ylabel("Kurtosis")
+        ax.set_title("Kurtosis Comparison Across All Basis Types (Grouped by Layer) - Mean with Std")
+        ax.set_xticks(x_base)
+        ax.set_xticklabels(group_labels)
+        ax.legend(title="Basis Type", loc="upper left")
+        ax.grid(axis="y", alpha=0.3)
+
+        plt.tight_layout()
+        plt.savefig(
+            os.path.join(KURTOSIS_DIR, f"{output_prefix}_comparison_mean_std.png"), dpi=150
         )
         plt.close()
 
