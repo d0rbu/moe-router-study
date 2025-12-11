@@ -501,7 +501,7 @@ def kurtosis_basis(
     # Check if cached results exist
     if os.path.exists(output_path):
         logger.info(f"Loading cached results from {output_path}")
-        results = th.load(output_path)
+        results = th.load(output_path, weights_only=False)
     else:
         logger.info("No cached results found. Computing kurtosis statistics...")
         results = compute_kurtosis_statistics(
