@@ -67,10 +67,10 @@ def update_accumulator(
     """Update accumulator with new batch data."""
     if accumulator.sum is None:
         accumulator.sum = tensor.sum(dim=0)
-        accumulator.sum_sq = (tensor**2).sum(dim=0)
+        accumulator.sum_sq = th.pow(tensor, 2).sum(dim=0)
     else:
         accumulator.sum += tensor.sum(dim=0)
-        accumulator.sum_sq += (tensor**2).sum(dim=0)
+        accumulator.sum_sq += th.pow(tensor, 2).sum(dim=0)
     accumulator.count += batch_size
 
 
@@ -173,7 +173,7 @@ def kurtosis_basis(
     )
 
     router_layers: list[int] = model.layers_with_routers
-    num_layers = len(model.layers)
+    num_layers = len(model.layers)  # type: ignore
 
     logger.info(f"Model has {num_layers} layers, {len(router_layers)} with routers")
 
@@ -551,7 +551,7 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
                 f"MLP {proj_type.replace('_', ' ').title()} Kurtosis by Dense Layer"
             )
             ax.set_xticks(x)
-            ax.set_xticklabels([str(l) for l in dense_layers])
+            ax.set_xticklabels([str(layer) for layer in dense_layers])
             ax.legend()
             ax.grid(axis="y", alpha=0.3)
 
@@ -615,8 +615,8 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
         ax.set_xlabel("Router Layer")
         ax.set_ylabel("Kurtosis")
         ax.set_title("Expert Router Kurtosis by Layer")
-        ax.set_xticks(list(x) + [len(router_layers) + 0.5])
-        ax.set_xticklabels([str(l) for l in router_layers] + ["All"])
+        ax.set_xticks([*list(x), len(router_layers) + 0.5])
+        ax.set_xticklabels([str(layer) for layer in router_layers] + ["All"])
         ax.legend()
         ax.grid(axis="y", alpha=0.3)
 

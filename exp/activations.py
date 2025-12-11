@@ -427,11 +427,27 @@ class Activations:
 
     @staticmethod
     async def load_files_async(filepaths: list[str]) -> list[dict]:
+        async def load_with_retry(filepath: str, max_retries: int = 3) -> dict:
+            """Load a file with retries in case of transient corruption."""
+            for attempt in range(max_retries):
+                try:
+                    return await asyncio.to_thread(
+                        th.load, filepath, weights_only=False
+                    )
+                except RuntimeError as e:
+                    if "PytorchStreamReader" in str(e) and attempt < max_retries - 1:
+                        logger.warning(
+                            f"Attempt {attempt + 1} failed loading {filepath}: {e}. Retrying..."
+                        )
+                        await asyncio.sleep(0.1 * (attempt + 1))  # Exponential backoff
+                        continue
+                    raise
+            raise RuntimeError(
+                f"Failed to load {filepath} after {max_retries} attempts"
+            )
+
         results = await asyncio.gather(
-            *[
-                asyncio.to_thread(th.load, filepath, weights_only=False)
-                for filepath in filepaths
-            ]
+            *[load_with_retry(filepath) for filepath in filepaths]
         )
         return list(results)
 
@@ -701,7 +717,23 @@ class Activations:
                 leave=False,
                 total=len(new_activation_filepaths),
             ):
-                os.rename(filepath, os.path.join(output_dir, f"{new_idx}.pt"))
+                final_path = os.path.join(output_dir, f"{new_idx}.pt")
+                # Ensure file is fully written before renaming
+                if os.path.exists(filepath):
+                    # Verify file is complete before renaming
+                    try:
+                        file_size = os.path.getsize(filepath)
+                        if file_size == 0:
+                            logger.error(f"File {filepath} is empty, skipping rename")
+                            continue
+                    except OSError as e:
+                        logger.error(
+                            f"Error checking file {filepath}: {e}, skipping rename"
+                        )
+                        continue
+                    os.rename(filepath, final_path)
+                else:
+                    logger.warning(f"File {filepath} does not exist, skipping rename")
 
             reshuffled_activation_filenames = [
                 f"{i}.pt" for i in range(len(new_activation_filepaths))
@@ -710,6 +742,20 @@ class Activations:
                 os.path.join(output_dir, filename)
                 for filename in reshuffled_activation_filenames
             ]
+
+            # Verify all files exist and are readable
+            for filepath in renamed_activation_filepaths:
+                if not os.path.exists(filepath):
+                    logger.error(
+                        f"Expected file {filepath} does not exist after rename"
+                    )
+                else:
+                    # Verify file is readable and not corrupted
+                    try:
+                        th.load(filepath, weights_only=False)
+                        logger.trace(f"Verified file {filepath} is readable")
+                    except Exception as e:
+                        logger.error(f"File {filepath} exists but is corrupted: {e}")
         else:
             renamed_activation_filepaths = []
 
@@ -750,18 +796,29 @@ class Activations:
 
     @staticmethod
     def _collate_and_save_batch(batch: dict, output_filepath: str) -> str:
+        # Create a new dictionary instead of modifying in place
+        collated_batch = {}
         for key, value in batch.items():
             if isinstance(value, list):
                 if len(value) == 0:
-                    del batch[key]
                     continue
 
                 if not isinstance(value[0], th.Tensor):
+                    collated_batch[key] = value
                     continue
 
-                batch[key] = th.stack(value, dim=0)
+                collated_batch[key] = th.stack(value, dim=0)
+            else:
+                collated_batch[key] = value
 
-        th.save(batch, output_filepath)
+        # Use atomic write: write to temp file first, then rename
+        # Note: output_filepath may end with .pt-temp, so we add .writing suffix
+        temp_filepath = output_filepath + ".writing"
+        th.save(collated_batch, temp_filepath)
+        # Ensure data is flushed to disk before renaming
+        with open(temp_filepath, "rb") as f:
+            os.fsync(f.fileno())
+        os.rename(temp_filepath, output_filepath)
 
         return output_filepath
 
