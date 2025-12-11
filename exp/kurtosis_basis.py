@@ -568,7 +568,7 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
     ax.grid(axis="y", alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig(os.path.join(KURTOSIS_DIR, f"{output_prefix}_residual_median.png"), dpi=150)
+    plt.savefig(os.path.join(KURTOSIS_DIR, f"{output_prefix}_residual.png"), dpi=150)
     plt.close()
 
     # 1.5. Plot: Residual stream kurtosis by layer, means + std
@@ -595,10 +595,11 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
     plt.savefig(os.path.join(KURTOSIS_DIR, f"{output_prefix}_residual_mean_std.png"), dpi=150)
     plt.close()
 
-    # 2. Plot: MLP projections kurtosis by layer (only dense layers)
+    # 2. Plot: MLP projections kurtosis by layer (only dense layers), box-and-whisker style and means + std
     dense_layers = [i for i in range(num_layers) if i not in router_layers]
 
     if dense_layers:
+        # Box-and-whisker style
         fig, axes = plt.subplots(3, 1, figsize=(12, 15))
 
         for ax, proj_type in zip(
@@ -610,23 +611,16 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
                 if f"layer_{layer_idx}_{proj_type}" in statistics
             ]
 
-            means = [s.mean for s in proj_stats]
+            medians = [s.median for s in proj_stats]
             q25s = [s.q25 for s in proj_stats]
             q75s = [s.q75 for s in proj_stats]
 
             x = np.arange(len(dense_layers))
-            ax.bar(x, means, color="coral", alpha=0.7, label="Mean kurtosis")
+            ax.bar(x, medians, color="coral", alpha=0.7, label="Median kurtosis")
 
-            yerr_lower = np.array(means) - np.array(q25s)
-            yerr_upper = np.array(q75s) - np.array(means)
-            ax.errorbar(
-                x,
-                means,
-                yerr=[yerr_lower, yerr_upper],
-                fmt="none",
-                ecolor="black",
-                capsize=3,
-            )
+            yerr_lower = np.array(medians) - np.array(q25s)
+            yerr_upper = np.array(q75s) - np.array(medians)
+            ax.errorbar(x, medians, yerr=[yerr_lower, yerr_upper], fmt="none", ecolor="black", capsize=3)
 
             ax.set_xlabel("Dense Layer Index")
             ax.set_ylabel("Kurtosis")
@@ -644,7 +638,35 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
         )
         plt.close()
 
-    # 3. Plot: Router kurtosis (per-layer and aggregated)
+        # Means + std
+        fig, ax = plt.subplots(3, 1, figsize=(12, 15))
+        for ax, proj_type in zip(axes, ["up_proj", "gate_proj", "down_proj"], strict=False):
+            proj_stats = [
+                statistics[f"layer_{layer_idx}_{proj_type}"]
+                for layer_idx in dense_layers
+                if f"layer_{layer_idx}_{proj_type}" in statistics
+            ]
+
+            means = [s.mean for s in proj_stats]
+            stds = [s.std for s in proj_stats]
+
+            x = np.arange(len(dense_layers))
+            ax.bar(x, means, color="coral", alpha=0.7, label="Mean kurtosis")
+            ax.errorbar(x, means, yerr=stds, fmt="none", ecolor="black", capsize=3)
+
+            ax.set_xlabel("Dense Layer Index")
+            ax.set_ylabel("Kurtosis")
+            ax.set_title(f"MLP {proj_type.replace('_', ' ').title()} Kurtosis by Dense Layer")
+            ax.set_xticks(x)
+            ax.set_xticklabels([str(layer_idx) for layer_idx in dense_layers])
+            ax.legend()
+            ax.grid(axis="y", alpha=0.3)
+
+        plt.tight_layout()
+        plt.savefig(os.path.join(KURTOSIS_DIR, f"{output_prefix}_mlp_projs_mean_std.png"), dpi=150)
+        plt.close()
+
+    # 3. Plot: Router kurtosis (per-layer and aggregated), box-and-whisker style and means + std
     if router_layers:
         fig, ax = plt.subplots(figsize=(12, 6))
 
@@ -652,20 +674,20 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
             statistics[f"layer_{layer_idx}_router"] for layer_idx in router_layers
         ]
 
-        means = [s.mean for s in router_stats_per_layer]
+        medians = [s.median for s in router_stats_per_layer]
         q25s = [s.q25 for s in router_stats_per_layer]
         q75s = [s.q75 for s in router_stats_per_layer]
 
         x = np.arange(len(router_layers))
         ax.bar(
-            x, means, color="mediumseagreen", alpha=0.7, label="Per-layer mean kurtosis"
+            x, medians, color="mediumseagreen", alpha=0.7, label="Per-layer median kurtosis"
         )
 
-        yerr_lower = np.array(means) - np.array(q25s)
-        yerr_upper = np.array(q75s) - np.array(means)
+        yerr_lower = np.array(medians) - np.array(q25s)
+        yerr_upper = np.array(q75s) - np.array(medians)
         ax.errorbar(
             x,
-            means,
+            medians,
             yerr=[yerr_lower, yerr_upper],
             fmt="none",
             ecolor="black",
@@ -678,17 +700,17 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
             agg_x = len(router_layers) + 0.5
             ax.bar(
                 agg_x,
-                agg_stats.mean,
+                agg_stats.median,
                 color="darkgreen",
                 alpha=0.7,
                 label="All layers aggregated",
             )
             ax.errorbar(
                 agg_x,
-                agg_stats.mean,
+                agg_stats.median,
                 yerr=[
-                    [agg_stats.mean - agg_stats.q25],
-                    [agg_stats.q75 - agg_stats.mean],
+                    [agg_stats.median - agg_stats.q25],
+                    [agg_stats.q75 - agg_stats.median],
                 ],
                 fmt="none",
                 ecolor="black",
@@ -705,6 +727,27 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
 
         plt.tight_layout()
         plt.savefig(os.path.join(KURTOSIS_DIR, f"{output_prefix}_router.png"), dpi=150)
+        plt.close()
+
+        # Means + std
+        fig, ax = plt.subplots(figsize=(12, 6))
+
+        router_stats_per_layer = [statistics[f"layer_{layer_idx}_router"] for layer_idx in router_layers]
+        means = [s.mean for s in router_stats_per_layer]
+        stds = [s.std for s in router_stats_per_layer]
+        x = np.arange(len(router_layers))
+        ax.bar(x, means, color="mediumseagreen", alpha=0.7, label="Mean kurtosis")
+        ax.errorbar(x, means, yerr=stds, fmt="none", ecolor="black", capsize=3)
+        ax.set_xlabel("Router Layer")
+        ax.set_ylabel("Kurtosis")
+        ax.set_title("Expert Router Kurtosis by Layer")
+        ax.set_xticks([*list(x), len(router_layers) + 0.5])
+        ax.set_xticklabels([str(layer_idx) for layer_idx in router_layers] + ["All"])
+        ax.legend()
+        ax.grid(axis="y", alpha=0.3)
+
+        plt.tight_layout()
+        plt.savefig(os.path.join(KURTOSIS_DIR, f"{output_prefix}_router_mean_std.png"), dpi=150)
         plt.close()
 
     # 4. Plot: Comparison across all basis types
