@@ -31,5 +31,5 @@ module load GCCcore/13.3.0 Python/3.12.3
 cd $SCRATCH/moe-router-study
 
 # Run the kurtosis basis analysis
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/kurtosis_basis.py kurtosis-basis --model-name olmoe --dataset-name lmsys --context-length 2048 --tokens-per-file 100000 --reshuffled-tokens-per-file 100000 --batch-size 4096 --max-samples 10000000 --device cuda
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/kurtosis_basis.py kurtosis-basis --context-length 2048 --tokens-per-file 100000 --reshuffled-tokens-per-file 100000 --batch-size 4096 --max-samples 10000000 --device cuda
 

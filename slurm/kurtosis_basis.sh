@@ -4,7 +4,7 @@
 # Usage: ./kurtosis_basis.sh [model_name] [dataset_name] [context_length] [tokens_per_file] [batch_size] [max_samples]
 
 # Set default values
-MODEL_NAME=${1:-"olmoe"}
+MODEL_NAME=${1:-"olmoe-i"}
 DATASET_NAME=${2:-"lmsys"}
 CONTEXT_LENGTH=${3:-2048}
 TOKENS_PER_FILE=${4:-10000}
