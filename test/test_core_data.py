@@ -157,13 +157,15 @@ class TestLmsysChatText:
 
         with patch("core.data.load_dataset") as mock_load_dataset:
             # Create a mock dataset that yields conversation data
-            mock_dataset = MagicMock()
-            mock_dataset.__getitem__.return_value = [
-                [
-                    {"role": "user", "content": "Hello"},
-                    {"role": "assistant", "content": "Hi there!"},
+            # In streaming mode, the function checks if ds is a dict
+            mock_dataset = {
+                "conversation": [
+                    [
+                        {"role": "user", "content": "Hello"},
+                        {"role": "assistant", "content": "Hi there!"},
+                    ]
                 ]
-            ]
+            }
             mock_load_dataset.return_value = mock_dataset
 
             result = lmsys_chat_1m_text(mock_tokenizer)
@@ -309,10 +311,12 @@ class TestLmsysChatText:
         mock_tokenizer.apply_chat_template.return_value = 123  # Not a string
 
         with patch("core.data.load_dataset") as mock_load_dataset:
-            mock_dataset = MagicMock()
-            mock_dataset.__getitem__.return_value = [
-                [{"role": "user", "content": "Hello"}]
-            ]
+            # In streaming mode, the function checks if ds is a dict
+            mock_dataset = {
+                "conversation": [
+                    [{"role": "user", "content": "Hello"}]
+                ]
+            }
             mock_load_dataset.return_value = mock_dataset
 
             result_iter = lmsys_chat_1m_text(mock_tokenizer)
@@ -333,8 +337,10 @@ class TestLmsysChatText:
         ]
 
         with patch("core.data.load_dataset") as mock_load_dataset:
-            mock_dataset = MagicMock()
-            mock_dataset.__getitem__.return_value = [test_conversation]
+            # In streaming mode, the function checks if ds is a dict
+            mock_dataset = {
+                "conversation": [test_conversation]
+            }
             mock_load_dataset.return_value = mock_dataset
 
             result_iter = lmsys_chat_1m_text(mock_tokenizer)

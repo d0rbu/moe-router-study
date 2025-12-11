@@ -660,7 +660,7 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
             q25s = [s.q25 for s in proj_stats]
             q75s = [s.q75 for s in proj_stats]
             x = np.arange(len(proj_stats))
-            ax.plot(x, medians, marker='o', label=label, color=color, alpha=0.7, linewidth=2)
+            ax.plot(x, medians, marker="o", label=label, color=color, alpha=0.7, linewidth=2)
             ax.fill_between(x, q25s, q75s, alpha=0.2, color=color)
 
     ax.set_xlabel("Layer")
@@ -681,10 +681,10 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
             means = [s.mean for s in proj_stats]
             stds = [s.std for s in proj_stats]
             x = np.arange(len(proj_stats))
-            ax.plot(x, means, marker='o', label=label, color=color, alpha=0.7, linewidth=2)
-            ax.fill_between(x, 
-                          np.array(means) - np.array(stds), 
-                          np.array(means) + np.array(stds), 
+            ax.plot(x, means, marker="o", label=label, color=color, alpha=0.7, linewidth=2)
+            ax.fill_between(x,
+                          np.array(means) - np.array(stds),
+                          np.array(means) + np.array(stds),
                           alpha=0.2, color=color)
 
     ax.set_xlabel("Layer")
