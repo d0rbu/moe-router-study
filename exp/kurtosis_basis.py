@@ -418,7 +418,8 @@ def kurtosis_basis(
 
     for basis_name, kurtosis_list in layerwise_kurtosis.items():
         # Concatenate all kurtosis values for this basis
-        all_kurtosis = th.cat(kurtosis_list, dim=0)
+        # Convert to float32 since quantile() requires float or double dtype
+        all_kurtosis = th.cat(kurtosis_list, dim=0).float()
 
         # Compute statistics
         statistics[basis_name] = FinalStats(
@@ -440,7 +441,8 @@ def kurtosis_basis(
             all_router_kurtosis.extend(layerwise_kurtosis[basis_name])
 
     if all_router_kurtosis:
-        all_router_kurtosis_cat = th.cat(all_router_kurtosis, dim=0)
+        # Convert to float32 since quantile() requires float or double dtype
+        all_router_kurtosis_cat = th.cat(all_router_kurtosis, dim=0).float()
         statistics["all_layers_router"] = FinalStats(
             mean=float(all_router_kurtosis_cat.mean().item()),
             median=float(all_router_kurtosis_cat.median().item()),
