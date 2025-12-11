@@ -484,25 +484,25 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
     num_layers = results["num_layers"]
     router_layers = results["router_layers"]
 
-    # 1. Plot: Residual stream kurtosis by layer
+    # 1. Plot: Residual stream kurtosis by layer, box-and-whisker style
     fig, ax = plt.subplots(figsize=(12, 6))
 
     residual_stats = [
         statistics[f"layer_{layer_idx}_residual"] for layer_idx in range(num_layers)
     ]
 
-    means = [s.mean for s in residual_stats]
+    medians = [s.median for s in residual_stats]
     q25s = [s.q25 for s in residual_stats]
     q75s = [s.q75 for s in residual_stats]
 
     x = np.arange(num_layers)
-    ax.bar(x, means, color="steelblue", alpha=0.7, label="Mean kurtosis")
+    ax.bar(x, medians, color="steelblue", alpha=0.7, label="Median kurtosis")
 
     # Add error bars for 25th-75th percentile
-    yerr_lower = np.array(means) - np.array(q25s)
-    yerr_upper = np.array(q75s) - np.array(means)
+    yerr_lower = np.array(medians) - np.array(q25s)
+    yerr_upper = np.array(q75s) - np.array(medians)
     ax.errorbar(
-        x, means, yerr=[yerr_lower, yerr_upper], fmt="none", ecolor="black", capsize=3
+        x, medians, yerr=[yerr_lower, yerr_upper], fmt="none", ecolor="black", capsize=3
     )
 
     ax.set_xlabel("Layer")
@@ -512,7 +512,31 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
     ax.grid(axis="y", alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig(os.path.join(KURTOSIS_DIR, f"{output_prefix}_residual.png"), dpi=150)
+    plt.savefig(os.path.join(KURTOSIS_DIR, f"{output_prefix}_residual_median.png"), dpi=150)
+    plt.close()
+
+    # 1.5. Plot: Residual stream kurtosis by layer, means + std
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    residual_stats = [
+        statistics[f"layer_{layer_idx}_residual"] for layer_idx in range(num_layers)
+    ]
+
+    means = [s.mean for s in residual_stats]
+    stds = [s.std for s in residual_stats]
+
+    x = np.arange(num_layers)
+    ax.bar(x, means, color="steelblue", alpha=0.7, label="Mean kurtosis")
+    ax.errorbar(x, means, yerr=stds, fmt="none", ecolor="black", capsize=3)
+
+    ax.set_xlabel("Layer")
+    ax.set_ylabel("Kurtosis")
+    ax.set_title("Residual Stream Kurtosis by Layer")
+    ax.legend()
+    ax.grid(axis="y", alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(KURTOSIS_DIR, f"{output_prefix}_residual_mean_std.png"), dpi=150)
     plt.close()
 
     # 2. Plot: MLP projections kurtosis by layer (only dense layers)
