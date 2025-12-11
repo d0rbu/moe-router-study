@@ -37,7 +37,7 @@ def path_eval_saebench(
     log_level: str = "INFO",
     skip_autointerp: bool = False,
     skip_sparse_probing: bool = False,
-    metric: CentroidMetric = "dot-product",
+    metric: CentroidMetric = CentroidMetric.DOT_PRODUCT,
     metric_p: float = 2.0,
     num_autointerp_latents: int = 1000,
 ) -> None:
