@@ -209,16 +209,10 @@ def compute_kurtosis_statistics(
     q_orthonormal, _ = th.linalg.qr(random_normal)
     random_orthonormal_matrix = q_orthonormal.T  # Transpose for right multiplication
 
-    # 2. Random orthogonal matrix (properly normalized rows)
-    random_orthogonal_matrix = th.randn(
-        hidden_dim, hidden_dim, device=device, dtype=th.float32
-    )
-    random_orthogonal_matrix = random_orthogonal_matrix / th.norm(
-        random_orthogonal_matrix, dim=1, keepdim=True
-    )
-    random_orthogonal_matrix = (
-        random_orthogonal_matrix.T
-    )  # Transpose for right multiplication
+    # 2. Random orthogonal matrix (QR decomposition of a different random matrix)
+    random_normal_2 = th.randn(hidden_dim, hidden_dim, device=device, dtype=th.float32)
+    q_orthogonal, _ = th.linalg.qr(random_normal_2)
+    random_orthogonal_matrix = q_orthogonal.T  # Transpose for right multiplication
 
     # 3. Completely random matrix from normal distribution
     random_normal_matrix = th.randn(
