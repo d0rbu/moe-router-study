@@ -643,11 +643,16 @@ class MultiGPULatentPathsCache(LatentPathsCache):
 
     def run(self, n_tokens: int, tokens: th.Tensor):
         """Run caching using multiple GPUs in parallel."""
+        logger.debug(f"Loading token batches for {n_tokens} tokens")
+
         token_batches = self.load_token_batches(n_tokens, tokens)
         total_batches = len(token_batches)
 
         # Check if we can resume from existing cache
         max_batch_idx = self.cache.get_max_batch_index()
+
+        logger.debug(f"Max batch index: {max_batch_idx}")
+
         start_batch_idx = 0
         if max_batch_idx is not None:
             start_batch_idx = max_batch_idx + 1
