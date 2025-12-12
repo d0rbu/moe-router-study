@@ -7,6 +7,7 @@ larger-than-memory datasets by periodically flushing to disk using async I/O.
 
 from collections import defaultdict
 import gc
+from multiprocessing.synchronize import Event as MPEvent
 from pathlib import Path
 import queue
 import time
@@ -18,7 +19,7 @@ import torch as th
 from torch import Tensor
 import torch.multiprocessing as mp
 
-from delphi.delphi.latents.cache import get_nonzeros_batch
+from delphi.delphi.latents.cache import get_nonzeros_batch  # type: ignore
 
 location_tensor_type = Int[Tensor, "batch_sequence 3"]
 activation_tensor_type = Float[Tensor, "batch_sequence"]
@@ -26,7 +27,7 @@ token_tensor_type = Int[Tensor, "batch sequence"]
 latent_tensor_type = Float[Tensor, "batch sequence num_latents"]
 
 
-def _disk_writer_process(write_queue: mp.Queue, done_event: mp.Event) -> None:
+def _disk_writer_process(write_queue: mp.Queue, done_event: MPEvent) -> None:
     """
     Background process that handles disk writes.
 
@@ -120,7 +121,7 @@ class DiskCache:
         if self._owns_cache_dir:
             self._cache_dir = self.DEFAULT_CACHE_DIR
         else:
-            self._cache_dir = cache_dir
+            self._cache_dir: Path = cache_dir
 
         self._cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -152,7 +153,7 @@ class DiskCache:
 
         # Set up async disk writer
         self._write_queue: mp.Queue = mp.Queue()
-        self._done_event: mp.Event = mp.Event()
+        self._done_event: MPEvent = mp.Event()
         self._writer_process: mp.Process | None = None
 
         logger.debug(
@@ -328,9 +329,9 @@ class DiskCache:
             # Send poison pill to ensure it exits
             self._write_queue.put(None)
 
-            num_polls = (
+            num_polls = int(
                 self.TIMEOUT_WHEN_WAITING_FOR_WRITES
-                // self.POLL_INTERVAL_WHEN_WAITING_FOR_WRITES
+                / self.POLL_INTERVAL_WHEN_WAITING_FOR_WRITES
             )
 
             for _ in range(num_polls):
@@ -406,11 +407,13 @@ class DiskCache:
                         # Batch index is stored in locations[:, 0]
                         # It's stored as batch_number * batch_size + offset (0 to batch_size-1)
                         # So dividing by batch_size gives us the batch_number
-                        max_stored_idx = locations[:, 0].max().item()
+                        max_stored_idx = int(locations[:, 0].max().item())
                         max_batch_in_file = max_stored_idx // self.batch_size
                         max_batch_idx = max(max_batch_idx, max_batch_in_file)
                 except Exception as e:
-                    logger.exception(f"Failed to read {batch_file} for batch index check: {e}")
+                    logger.exception(
+                        f"Failed to read {batch_file} for batch index check: {e}"
+                    )
                     raise e
 
         if not has_data:

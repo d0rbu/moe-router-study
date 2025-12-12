@@ -99,9 +99,8 @@ class CentroidProjection(nn.Module):
         """
         super().__init__()
         self.register_buffer("centroids", centroids)
-        self.metric = metric
-        self.p = p
-        self.metric_fn = CENTROID_METRICS[metric]
+        self.p = p  # type: ignore
+        self.metric_fn = CENTROID_METRICS[metric]  # type: ignore
 
     def forward(self, x: th.Tensor) -> th.Tensor:
         """

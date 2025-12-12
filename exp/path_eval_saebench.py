@@ -37,7 +37,7 @@ def path_eval_saebench(
     log_level: str = "INFO",
     skip_autointerp: bool = False,
     skip_sparse_probing: bool = False,
-    metric: CentroidMetric = "dot-product",
+    metric: str = "dot_product",
     metric_p: float = 2.0,
     num_autointerp_latents: int = 1000,
 ) -> None:
@@ -48,7 +48,7 @@ def path_eval_saebench(
     logger.add(sys.stderr, level=log_level)
     logger.info(f"Running with log level: {log_level}")
 
-    metric = CentroidMetric(metric.replace("-", "_"))
+    metric = CentroidMetric(metric)
 
     th_dtype = get_dtype(dtype)
     str_dtype = th_dtype.__str__().split(".")[-1]
