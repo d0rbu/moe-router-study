@@ -549,7 +549,7 @@ def kurtosis_basis(
     checkpoint_idx: int | None = None,
     device: str = "cpu",
     max_samples: int = 10_000_000,
-    batch_size: int = 10_000,
+    batch_size: int = 25_000,
     seed: int = 0,
     debug: bool = False,
     log_level: str = "INFO",
