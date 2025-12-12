@@ -673,7 +673,9 @@ class MultiGPULatentPathsCache(LatentPathsCache):
         log_queue: mp.Queue = ctx.Queue()
 
         # Fill work queue (skip already-processed batches)
-        for batch_idx, batch_tokens in enumerate(token_batches[start_batch_idx:], start=start_batch_idx):
+        for batch_idx, batch_tokens in enumerate(
+            token_batches[start_batch_idx:], start=start_batch_idx
+        ):
             work_queue.put((batch_idx, batch_tokens))
 
         # Add shutdown signals
@@ -721,7 +723,12 @@ class MultiGPULatentPathsCache(LatentPathsCache):
         log_worker.start()
 
         # Collect results
-        for _ in tqdm(range(batches_to_process), total=total_batches, desc="Caching (multi-GPU)", initial=start_batch_idx):
+        for _ in tqdm(
+            range(batches_to_process),
+            total=total_batches,
+            desc="Caching (multi-GPU)",
+            initial=start_batch_idx,
+        ):
             batch_idx, batch_tokens, results = result_queue.get(timeout=300)
 
             logger.debug(f"Received results for batch {batch_idx}")
@@ -740,7 +747,9 @@ class MultiGPULatentPathsCache(LatentPathsCache):
         logger.info(
             f"Total tokens processed: {total_batches * token_batches[0].numel():,}"
         )
-        logger.info(f"Tokens processed in this run: {batches_to_process * token_batches[0].numel():,}")
+        logger.info(
+            f"Tokens processed in this run: {batches_to_process * token_batches[0].numel():,}"
+        )
         self.cache.save()
 
 

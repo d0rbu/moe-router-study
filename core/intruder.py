@@ -410,7 +410,9 @@ class DiskCache:
                         max_batch_in_file = max_stored_idx // self.batch_size
                         max_batch_idx = max(max_batch_idx, max_batch_in_file)
                 except Exception as e:
-                    logger.exception(f"Failed to read {batch_file} for batch index check: {e}")
+                    logger.exception(
+                        f"Failed to read {batch_file} for batch index check: {e}"
+                    )
                     raise e
 
         if not has_data:

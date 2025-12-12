@@ -312,11 +312,7 @@ class TestLmsysChatText:
 
         with patch("core.data.load_dataset") as mock_load_dataset:
             # In streaming mode, the function checks if ds is a dict
-            mock_dataset = {
-                "conversation": [
-                    [{"role": "user", "content": "Hello"}]
-                ]
-            }
+            mock_dataset = {"conversation": [[{"role": "user", "content": "Hello"}]]}
             mock_load_dataset.return_value = mock_dataset
 
             result_iter = lmsys_chat_1m_text(mock_tokenizer)
@@ -338,9 +334,7 @@ class TestLmsysChatText:
 
         with patch("core.data.load_dataset") as mock_load_dataset:
             # In streaming mode, the function checks if ds is a dict
-            mock_dataset = {
-                "conversation": [test_conversation]
-            }
+            mock_dataset = {"conversation": [test_conversation]}
             mock_load_dataset.return_value = mock_dataset
 
             result_iter = lmsys_chat_1m_text(mock_tokenizer)

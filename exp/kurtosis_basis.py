@@ -210,12 +210,20 @@ def compute_kurtosis_statistics(
     random_orthonormal_matrix = q_orthonormal.T  # Transpose for right multiplication
 
     # 2. Random orthogonal matrix (properly normalized rows)
-    random_orthogonal_matrix = th.randn(hidden_dim, hidden_dim, device=device, dtype=th.float32)
-    random_orthogonal_matrix = random_orthogonal_matrix / th.norm(random_orthogonal_matrix, dim=1, keepdim=True)
-    random_orthogonal_matrix = random_orthogonal_matrix.T  # Transpose for right multiplication
+    random_orthogonal_matrix = th.randn(
+        hidden_dim, hidden_dim, device=device, dtype=th.float32
+    )
+    random_orthogonal_matrix = random_orthogonal_matrix / th.norm(
+        random_orthogonal_matrix, dim=1, keepdim=True
+    )
+    random_orthogonal_matrix = (
+        random_orthogonal_matrix.T
+    )  # Transpose for right multiplication
 
     # 3. Completely random matrix from normal distribution
-    random_normal_matrix = th.randn(hidden_dim, hidden_dim, device=device, dtype=th.float32)
+    random_normal_matrix = th.randn(
+        hidden_dim, hidden_dim, device=device, dtype=th.float32
+    )
     random_normal_matrix = random_normal_matrix.T  # Transpose for right multiplication
 
     # Two-pass approach: First pass to compute means and stds, second pass to compute kurtosis
@@ -236,7 +244,8 @@ def compute_kurtosis_statistics(
 
     with th.no_grad():
         for batch in tqdm(
-            activation_iterator, desc="First pass - computing statistics",
+            activation_iterator,
+            desc="First pass - computing statistics",
         ):
             # Get activations
             # layer_outputs: (batch, num_layers, hidden_dim)
@@ -268,13 +277,22 @@ def compute_kurtosis_statistics(
                 # Add random projections for this layer
                 layer_acts_dtype = layer_acts.to(dtype=random_orthonormal_matrix.dtype)
                 activations_to_process.append(
-                    (layer_acts_dtype @ random_orthonormal_matrix, f"layer_{layer_idx}_random_orthonormal")
+                    (
+                        layer_acts_dtype @ random_orthonormal_matrix,
+                        f"layer_{layer_idx}_random_orthonormal",
+                    )
                 )
                 activations_to_process.append(
-                    (layer_acts_dtype @ random_orthogonal_matrix, f"layer_{layer_idx}_random_orthogonal")
+                    (
+                        layer_acts_dtype @ random_orthogonal_matrix,
+                        f"layer_{layer_idx}_random_orthogonal",
+                    )
                 )
                 activations_to_process.append(
-                    (layer_acts_dtype @ random_normal_matrix, f"layer_{layer_idx}_random_normal")
+                    (
+                        layer_acts_dtype @ random_normal_matrix,
+                        f"layer_{layer_idx}_random_normal",
+                    )
                 )
 
                 # Get pre-MLP residuals: layer_output - mlp_output (needed for both cases)
@@ -357,7 +375,11 @@ def compute_kurtosis_statistics(
     second_pass_num_batches_processed = 0
 
     with th.no_grad():
-        for batch in tqdm(activation_iterator, desc="Second pass - computing kurtosis", total=num_batches_processed):
+        for batch in tqdm(
+            activation_iterator,
+            desc="Second pass - computing kurtosis",
+            total=num_batches_processed,
+        ):
             # Get activations
             layer_outputs = batch[ActivationKeys.LAYER_OUTPUT].to(device=device)
             mlp_outputs = batch[ActivationKeys.MLP_OUTPUT].to(device=device)
@@ -377,13 +399,22 @@ def compute_kurtosis_statistics(
                 # Add random projections for this layer
                 layer_acts_dtype = layer_acts.to(dtype=random_orthonormal_matrix.dtype)
                 activations_to_process.append(
-                    (layer_acts_dtype @ random_orthonormal_matrix, f"layer_{layer_idx}_random_orthonormal")
+                    (
+                        layer_acts_dtype @ random_orthonormal_matrix,
+                        f"layer_{layer_idx}_random_orthonormal",
+                    )
                 )
                 activations_to_process.append(
-                    (layer_acts_dtype @ random_orthogonal_matrix, f"layer_{layer_idx}_random_orthogonal")
+                    (
+                        layer_acts_dtype @ random_orthogonal_matrix,
+                        f"layer_{layer_idx}_random_orthogonal",
+                    )
                 )
                 activations_to_process.append(
-                    (layer_acts_dtype @ random_normal_matrix, f"layer_{layer_idx}_random_normal")
+                    (
+                        layer_acts_dtype @ random_normal_matrix,
+                        f"layer_{layer_idx}_random_normal",
+                    )
                 )
 
                 # Get pre-MLP residuals: layer_output - mlp_output (needed for both cases)
@@ -444,7 +475,9 @@ def compute_kurtosis_statistics(
 
             second_pass_num_batches_processed += 1
 
-    logger.info(f"Completed second pass with {second_pass_num_batches_processed} batches")
+    logger.info(
+        f"Completed second pass with {second_pass_num_batches_processed} batches"
+    )
 
     # Aggregate kurtosis values and compute statistics
     logger.info("Computing final statistics...")
@@ -634,7 +667,9 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
     ax.grid(axis="y", alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig(os.path.join(KURTOSIS_DIR, f"{output_prefix}_residual_mean_std.png"), dpi=150)
+    plt.savefig(
+        os.path.join(KURTOSIS_DIR, f"{output_prefix}_residual_mean_std.png"), dpi=150
+    )
     plt.close()
 
     # 1.75. Plot: Random projection kurtosis comparison (orthonormal, orthogonal, normal)
@@ -644,7 +679,7 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
     projection_types = [
         ("random_orthonormal", "Random Orthonormal (QR)", "purple"),
         ("random_orthogonal", "Random Orthogonal (Normalized)", "magenta"),
-        ("random_normal", "Random Normal", "pink")
+        ("random_normal", "Random Normal", "pink"),
     ]
 
     # First subplot: Medians with Q25/Q75
@@ -660,7 +695,9 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
             q25s = [s.q25 for s in proj_stats]
             q75s = [s.q75 for s in proj_stats]
             x = np.arange(len(proj_stats))
-            ax.plot(x, medians, marker="o", label=label, color=color, alpha=0.7, linewidth=2)
+            ax.plot(
+                x, medians, marker="o", label=label, color=color, alpha=0.7, linewidth=2
+            )
             ax.fill_between(x, q25s, q75s, alpha=0.2, color=color)
 
     ax.set_xlabel("Layer")
@@ -681,11 +718,16 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
             means = [s.mean for s in proj_stats]
             stds = [s.std for s in proj_stats]
             x = np.arange(len(proj_stats))
-            ax.plot(x, means, marker="o", label=label, color=color, alpha=0.7, linewidth=2)
-            ax.fill_between(x,
-                          np.array(means) - np.array(stds),
-                          np.array(means) + np.array(stds),
-                          alpha=0.2, color=color)
+            ax.plot(
+                x, means, marker="o", label=label, color=color, alpha=0.7, linewidth=2
+            )
+            ax.fill_between(
+                x,
+                np.array(means) - np.array(stds),
+                np.array(means) + np.array(stds),
+                alpha=0.2,
+                color=color,
+            )
 
     ax.set_xlabel("Layer")
     ax.set_ylabel("Kurtosis")
@@ -694,7 +736,9 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
     ax.grid(axis="y", alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig(os.path.join(KURTOSIS_DIR, f"{output_prefix}_random_projections.png"), dpi=150)
+    plt.savefig(
+        os.path.join(KURTOSIS_DIR, f"{output_prefix}_random_projections.png"), dpi=150
+    )
     plt.close()
 
     # 2. Plot: MLP projections kurtosis by layer (only dense layers), box-and-whisker style and means + std
@@ -722,7 +766,14 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
 
             yerr_lower = np.array(medians) - np.array(q25s)
             yerr_upper = np.array(q75s) - np.array(medians)
-            ax.errorbar(x, medians, yerr=[yerr_lower, yerr_upper], fmt="none", ecolor="black", capsize=3)
+            ax.errorbar(
+                x,
+                medians,
+                yerr=[yerr_lower, yerr_upper],
+                fmt="none",
+                ecolor="black",
+                capsize=3,
+            )
 
             ax.set_xlabel("Dense Layer Index")
             ax.set_ylabel("Kurtosis")
@@ -742,7 +793,9 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
 
         # Means + std
         fig, ax = plt.subplots(3, 1, figsize=(12, 15))
-        for ax, proj_type in zip(axes, ["up_proj", "gate_proj", "down_proj"], strict=False):
+        for ax, proj_type in zip(
+            axes, ["up_proj", "gate_proj", "down_proj"], strict=False
+        ):
             proj_stats = [
                 statistics[f"layer_{layer_idx}_{proj_type}"]
                 for layer_idx in dense_layers
@@ -758,14 +811,19 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
 
             ax.set_xlabel("Dense Layer Index")
             ax.set_ylabel("Kurtosis")
-            ax.set_title(f"MLP {proj_type.replace('_', ' ').title()} Kurtosis by Dense Layer")
+            ax.set_title(
+                f"MLP {proj_type.replace('_', ' ').title()} Kurtosis by Dense Layer"
+            )
             ax.set_xticks(x)
             ax.set_xticklabels([str(layer_idx) for layer_idx in dense_layers])
             ax.legend()
             ax.grid(axis="y", alpha=0.3)
 
         plt.tight_layout()
-        plt.savefig(os.path.join(KURTOSIS_DIR, f"{output_prefix}_mlp_projs_mean_std.png"), dpi=150)
+        plt.savefig(
+            os.path.join(KURTOSIS_DIR, f"{output_prefix}_mlp_projs_mean_std.png"),
+            dpi=150,
+        )
         plt.close()
 
     # 3. Plot: Router kurtosis (per-layer and aggregated), box-and-whisker style and means + std
@@ -782,7 +840,11 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
 
         x = np.arange(len(router_layers))
         ax.bar(
-            x, medians, color="mediumseagreen", alpha=0.7, label="Per-layer median kurtosis"
+            x,
+            medians,
+            color="mediumseagreen",
+            alpha=0.7,
+            label="Per-layer median kurtosis",
         )
 
         yerr_lower = np.array(medians) - np.array(q25s)
@@ -834,7 +896,9 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
         # Means + std
         fig, ax = plt.subplots(figsize=(12, 6))
 
-        router_stats_per_layer = [statistics[f"layer_{layer_idx}_router"] for layer_idx in router_layers]
+        router_stats_per_layer = [
+            statistics[f"layer_{layer_idx}_router"] for layer_idx in router_layers
+        ]
         means = [s.mean for s in router_stats_per_layer]
         stds = [s.std for s in router_stats_per_layer]
         x = np.arange(len(router_layers))
@@ -849,7 +913,9 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
         ax.grid(axis="y", alpha=0.3)
 
         plt.tight_layout()
-        plt.savefig(os.path.join(KURTOSIS_DIR, f"{output_prefix}_router_mean_std.png"), dpi=150)
+        plt.savefig(
+            os.path.join(KURTOSIS_DIR, f"{output_prefix}_router_mean_std.png"), dpi=150
+        )
         plt.close()
 
     # 4. Plot: Comparison across all basis types (grouped bar chart)
@@ -888,7 +954,10 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
             stats = statistics[basis_name]
             group_data_median["Residual"] = stats.median
             group_data_mean["Residual"] = stats.mean
-            group_errors_q25_q75["Residual"] = (stats.median - stats.q25, stats.q75 - stats.median)
+            group_errors_q25_q75["Residual"] = (
+                stats.median - stats.q25,
+                stats.q75 - stats.median,
+            )
             group_errors_std["Residual"] = stats.std
 
         # MLP projections (only for dense layers)
@@ -900,7 +969,10 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
                     category = proj_type.replace("_proj", "").title()
                     group_data_median[category] = stats.median
                     group_data_mean[category] = stats.mean
-                    group_errors_q25_q75[category] = (stats.median - stats.q25, stats.q75 - stats.median)
+                    group_errors_q25_q75[category] = (
+                        stats.median - stats.q25,
+                        stats.q75 - stats.median,
+                    )
                     group_errors_std[category] = stats.std
 
         # Router (only for router layers)
@@ -910,16 +982,21 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
                 stats = statistics[basis_name]
                 group_data_median["Router"] = stats.median
                 group_data_mean["Router"] = stats.mean
-                group_errors_q25_q75["Router"] = (stats.median - stats.q25, stats.q75 - stats.median)
+                group_errors_q25_q75["Router"] = (
+                    stats.median - stats.q25,
+                    stats.q75 - stats.median,
+                )
                 group_errors_std["Router"] = stats.std
 
         if group_data_median:  # Only add if we have data for this layer
-            layer_groups.append({
-                "median": group_data_median,
-                "mean": group_data_mean,
-                "q25_q75": group_errors_q25_q75,
-                "std": group_errors_std,
-            })
+            layer_groups.append(
+                {
+                    "median": group_data_median,
+                    "mean": group_data_mean,
+                    "q25_q75": group_errors_q25_q75,
+                    "std": group_errors_std,
+                }
+            )
             group_labels.append(f"L{layer_idx}")
 
     # Add aggregated group (if available)
@@ -948,8 +1025,12 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
         aggregated_data_median["Residual"] = np.mean(residual_medians)
         aggregated_data_mean["Residual"] = np.mean(residual_means)
         # Use mean of error ranges
-        mean_err_lower = np.mean([m - q25 for m, q25 in zip(residual_medians, residual_q25s, strict=False)])
-        mean_err_upper = np.mean([q75 - m for m, q75 in zip(residual_medians, residual_q75s, strict=False)])
+        mean_err_lower = np.mean(
+            [m - q25 for m, q25 in zip(residual_medians, residual_q25s, strict=False)]
+        )
+        mean_err_upper = np.mean(
+            [q75 - m for m, q75 in zip(residual_medians, residual_q75s, strict=False)]
+        )
         aggregated_errors_q25_q75["Residual"] = (mean_err_lower, mean_err_upper)
         aggregated_errors_std["Residual"] = np.mean(residual_stds)
         has_aggregated = True
@@ -974,8 +1055,12 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
             category = proj_type.replace("_proj", "").title()
             aggregated_data_median[category] = np.mean(proj_medians)
             aggregated_data_mean[category] = np.mean(proj_means)
-            mean_err_lower = np.mean([m - q25 for m, q25 in zip(proj_medians, proj_q25s, strict=False)])
-            mean_err_upper = np.mean([q75 - m for m, q75 in zip(proj_medians, proj_q75s, strict=False)])
+            mean_err_lower = np.mean(
+                [m - q25 for m, q25 in zip(proj_medians, proj_q25s, strict=False)]
+            )
+            mean_err_upper = np.mean(
+                [q75 - m for m, q75 in zip(proj_medians, proj_q75s, strict=False)]
+            )
             aggregated_errors_q25_q75[category] = (mean_err_lower, mean_err_upper)
             aggregated_errors_std[category] = np.mean(proj_stds)
             has_aggregated = True
@@ -985,17 +1070,22 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
         stats = statistics["all_layers_router"]
         aggregated_data_median["Router"] = stats.median
         aggregated_data_mean["Router"] = stats.mean
-        aggregated_errors_q25_q75["Router"] = (stats.median - stats.q25, stats.q75 - stats.median)
+        aggregated_errors_q25_q75["Router"] = (
+            stats.median - stats.q25,
+            stats.q75 - stats.median,
+        )
         aggregated_errors_std["Router"] = stats.std
         has_aggregated = True
 
     if has_aggregated:
-        layer_groups.append({
-            "median": aggregated_data_median,
-            "mean": aggregated_data_mean,
-            "q25_q75": aggregated_errors_q25_q75,
-            "std": aggregated_errors_std,
-        })
+        layer_groups.append(
+            {
+                "median": aggregated_data_median,
+                "mean": aggregated_data_mean,
+                "q25_q75": aggregated_errors_q25_q75,
+                "std": aggregated_errors_std,
+            }
+        )
         group_labels.append("All")
 
     if layer_groups:  # Only create plot if we have data
@@ -1021,7 +1111,10 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
                     x_positions.append(group_idx)
 
             if values:  # Only plot if we have values for this category
-                x_pos = x_base[x_positions] + (cat_idx - num_categories / 2 + 0.5) * bar_width
+                x_pos = (
+                    x_base[x_positions]
+                    + (cat_idx - num_categories / 2 + 0.5) * bar_width
+                )
                 ax.bar(
                     x_pos,
                     values,
@@ -1042,7 +1135,9 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
 
         ax.set_xlabel("Layer Group")
         ax.set_ylabel("Kurtosis")
-        ax.set_title("Kurtosis Comparison Across All Basis Types (Grouped by Layer) - Median with Q25/Q75")
+        ax.set_title(
+            "Kurtosis Comparison Across All Basis Types (Grouped by Layer) - Median with Q25/Q75"
+        )
         ax.set_xticks(x_base)
         ax.set_xticklabels(group_labels)
         ax.legend(title="Basis Type", loc="upper left")
@@ -1070,7 +1165,10 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
                     x_positions.append(group_idx)
 
             if values:  # Only plot if we have values for this category
-                x_pos = x_base[x_positions] + (cat_idx - num_categories / 2 + 0.5) * bar_width
+                x_pos = (
+                    x_base[x_positions]
+                    + (cat_idx - num_categories / 2 + 0.5) * bar_width
+                )
                 ax.bar(
                     x_pos,
                     values,
@@ -1091,7 +1189,9 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
 
         ax.set_xlabel("Layer Group")
         ax.set_ylabel("Kurtosis")
-        ax.set_title("Kurtosis Comparison Across All Basis Types (Grouped by Layer) - Mean with Std")
+        ax.set_title(
+            "Kurtosis Comparison Across All Basis Types (Grouped by Layer) - Mean with Std"
+        )
         ax.set_xticks(x_base)
         ax.set_xticklabels(group_labels)
         ax.legend(title="Basis Type", loc="upper left")
@@ -1099,7 +1199,8 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
 
         plt.tight_layout()
         plt.savefig(
-            os.path.join(KURTOSIS_DIR, f"{output_prefix}_comparison_mean_std.png"), dpi=150
+            os.path.join(KURTOSIS_DIR, f"{output_prefix}_comparison_mean_std.png"),
+            dpi=150,
         )
         plt.close()
 
