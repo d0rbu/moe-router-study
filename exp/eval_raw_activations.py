@@ -170,7 +170,7 @@ def run_intruder_eval(
 def eval_raw_activations(
     *,
     model_name: str = "olmoe-i",
-    activation_key: ActivationKeys = "layer-output",
+    activation_key: ActivationKeys = ActivationKeys.LAYER_OUTPUT,
     layers: list[int] | None = None,
     model_dtype: str = "bf16",
     dtype: str = "bf16",

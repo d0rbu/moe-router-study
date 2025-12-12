@@ -201,7 +201,7 @@ def compute_kurtosis_statistics(
     }
 
     # Get hidden dimension for random projections
-    hidden_dim = activation_dims[ActivationKeys.LAYER_OUTPUT][-1]
+    hidden_dim = activation_dims[ActivationKeys.LAYER_OUTPUT]
 
     # Generate random projection matrices (same for all layers)
     # 1. Random orthonormal matrix (QR decomposition of random matrix)

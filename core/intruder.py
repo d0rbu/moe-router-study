@@ -17,8 +17,9 @@ from safetensors.torch import load_file, save_file
 import torch as th
 from torch import Tensor
 import torch.multiprocessing as mp
+from multiprocessing.synchronize import Event as MPEvent
 
-from delphi.delphi.latents.cache import get_nonzeros_batch
+from delphi.delphi.latents.cache import get_nonzeros_batch  # type: ignore
 
 location_tensor_type = Int[Tensor, "batch_sequence 3"]
 activation_tensor_type = Float[Tensor, "batch_sequence"]
@@ -26,7 +27,7 @@ token_tensor_type = Int[Tensor, "batch sequence"]
 latent_tensor_type = Float[Tensor, "batch sequence num_latents"]
 
 
-def _disk_writer_process(write_queue: mp.Queue, done_event: mp.Event) -> None:
+def _disk_writer_process(write_queue: mp.Queue, done_event: MPEvent) -> None:
     """
     Background process that handles disk writes.
 
@@ -152,7 +153,7 @@ class DiskCache:
 
         # Set up async disk writer
         self._write_queue: mp.Queue = mp.Queue()
-        self._done_event: mp.Event = mp.Event()
+        self._done_event: MPEvent = mp.Event()
         self._writer_process: mp.Process | None = None
 
         logger.debug(
