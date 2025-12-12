@@ -643,7 +643,7 @@ class MultiGPULatentPathsCache(LatentPathsCache):
 
     def run(self, n_tokens: int, tokens: th.Tensor):
         """Run caching using multiple GPUs in parallel."""
-        logger.debug(f"Loading token batches for {n_tokens} tokens")
+        logger.debug(f"Loading token batches from shape {tokens.shape} for {n_tokens} tokens")
 
         token_batches = self.load_token_batches(n_tokens, tokens)
         total_batches = len(token_batches)
