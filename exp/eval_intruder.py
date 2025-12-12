@@ -655,8 +655,6 @@ class MultiGPULatentPathsCache(LatentPathsCache):
 
         token_batches = th.split(tokens_to_batch, self.batch_size)
 
-        logger.debug(f"Token batches: {token_batches.shape}")
-
         total_batches = len(token_batches)
 
         # Check if we can resume from existing cache
