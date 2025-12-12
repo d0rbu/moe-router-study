@@ -215,9 +215,7 @@ def compute_kurtosis_statistics(
     )
     random_orthogonal_normalized, _ = th.linalg.qr(random_orthogonal_base)
     # Scale each row by a random factor to break orthonormality while preserving orthogonality
-    random_scales = (
-        th.randn(hidden_dim, device=device, dtype=th.float32).abs() + 0.5
-    )  # Ensure positive scales
+    random_scales = th.randn(hidden_dim, device=device, dtype=th.float32).abs()
     random_orthogonal_matrix = random_orthogonal_normalized.T * random_scales.unsqueeze(
         1
     )  # Transpose for right multiplication
