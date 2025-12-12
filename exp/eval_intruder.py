@@ -647,7 +647,16 @@ class MultiGPULatentPathsCache(LatentPathsCache):
             f"Loading token batches from shape {tokens.shape} for {n_tokens} tokens on device {tokens.device} with dtype {tokens.dtype} and batch size {self.batch_size}"
         )
 
-        token_batches = self.load_token_batches(n_tokens, tokens)
+        max_batches = n_tokens // tokens.shape[1]
+        logger.debug(f"Max batches: {max_batches}")
+
+        tokens_to_batch = tokens[:max_batches]
+        logger.debug(f"Tokens to batch: {tokens_to_batch.shape}")
+
+        token_batches = th.split(tokens_to_batch, self.batch_size)
+
+        logger.debug(f"Token batches: {token_batches.shape}")
+
         total_batches = len(token_batches)
 
         # Check if we can resume from existing cache
