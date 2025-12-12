@@ -1,7 +1,6 @@
 # Configuration for ty type checker
 
 [rules]
-unresolved-import = "warn"
 
 [environment]
 # Add the delphi submodule to the search path

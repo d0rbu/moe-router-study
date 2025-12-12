@@ -170,7 +170,7 @@ def run_intruder_eval(
 def eval_raw_activations(
     *,
     model_name: str = "olmoe-i",
-    activation_key: ActivationKeys = ActivationKeys.LAYER_OUTPUT,
+    activation_key: str = "layer_output",
     layers: list[int] | None = None,
     model_dtype: str = "bf16",
     dtype: str = "bf16",
@@ -249,6 +249,8 @@ def eval_raw_activations(
     logger.remove()
     logger.add(sys.stderr, level=log_level)
     logger.info(f"Running with log level: {log_level}")
+
+    activation_key = ActivationKeys(activation_key)
 
     # Ensure at least one evaluation is enabled
     assert not (skip_intruder and skip_autointerp and skip_sparse_probing), (
