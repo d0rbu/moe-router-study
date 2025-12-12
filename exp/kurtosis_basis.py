@@ -275,22 +275,28 @@ def compute_kurtosis_statistics(
                 )
 
                 # Add random projections for this layer
-                layer_acts_dtype = layer_acts.to(dtype=random_orthonormal_matrix.dtype)
+                random_orthonormal_matrix = random_orthonormal_matrix.to(
+                    dtype=layer_acts.dtype
+                )
+                random_orthogonal_matrix = random_orthogonal_matrix.to(
+                    dtype=layer_acts.dtype
+                )
+                random_normal_matrix = random_normal_matrix.to(dtype=layer_acts.dtype)
                 activations_to_process.append(
                     (
-                        layer_acts_dtype @ random_orthonormal_matrix,
+                        layer_acts @ random_orthonormal_matrix,
                         f"layer_{layer_idx}_random_orthonormal",
                     )
                 )
                 activations_to_process.append(
                     (
-                        layer_acts_dtype @ random_orthogonal_matrix,
+                        layer_acts @ random_orthogonal_matrix,
                         f"layer_{layer_idx}_random_orthogonal",
                     )
                 )
                 activations_to_process.append(
                     (
-                        layer_acts_dtype @ random_normal_matrix,
+                        layer_acts @ random_normal_matrix,
                         f"layer_{layer_idx}_random_normal",
                     )
                 )
@@ -397,22 +403,28 @@ def compute_kurtosis_statistics(
                 )
 
                 # Add random projections for this layer
-                layer_acts_dtype = layer_acts.to(dtype=random_orthonormal_matrix.dtype)
+                random_orthonormal_matrix = random_orthonormal_matrix.to(
+                    dtype=layer_acts.dtype
+                )
+                random_orthogonal_matrix = random_orthogonal_matrix.to(
+                    dtype=layer_acts.dtype
+                )
+                random_normal_matrix = random_normal_matrix.to(dtype=layer_acts.dtype)
                 activations_to_process.append(
                     (
-                        layer_acts_dtype @ random_orthonormal_matrix,
+                        layer_acts @ random_orthonormal_matrix,
                         f"layer_{layer_idx}_random_orthonormal",
                     )
                 )
                 activations_to_process.append(
                     (
-                        layer_acts_dtype @ random_orthogonal_matrix,
+                        layer_acts @ random_orthogonal_matrix,
                         f"layer_{layer_idx}_random_orthogonal",
                     )
                 )
                 activations_to_process.append(
                     (
-                        layer_acts_dtype @ random_normal_matrix,
+                        layer_acts @ random_normal_matrix,
                         f"layer_{layer_idx}_random_normal",
                     )
                 )
