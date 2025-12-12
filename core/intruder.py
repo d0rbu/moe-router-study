@@ -121,7 +121,7 @@ class DiskCache:
         if self._owns_cache_dir:
             self._cache_dir = self.DEFAULT_CACHE_DIR
         else:
-            self._cache_dir = cache_dir
+            self._cache_dir: Path = cache_dir
 
         self._cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -329,9 +329,9 @@ class DiskCache:
             # Send poison pill to ensure it exits
             self._write_queue.put(None)
 
-            num_polls = (
+            num_polls = int(
                 self.TIMEOUT_WHEN_WAITING_FOR_WRITES
-                // self.POLL_INTERVAL_WHEN_WAITING_FOR_WRITES
+                / self.POLL_INTERVAL_WHEN_WAITING_FOR_WRITES
             )
 
             for _ in range(num_polls):
@@ -407,7 +407,7 @@ class DiskCache:
                         # Batch index is stored in locations[:, 0]
                         # It's stored as batch_number * batch_size + offset (0 to batch_size-1)
                         # So dividing by batch_size gives us the batch_number
-                        max_stored_idx = locations[:, 0].max().item()
+                        max_stored_idx = int(locations[:, 0].max().item())
                         max_batch_in_file = max_stored_idx // self.batch_size
                         max_batch_idx = max(max_batch_idx, max_batch_in_file)
                 except Exception as e:

@@ -1,7 +1,6 @@
 # Configuration for ty type checker
 
 [rules]
-possibly-unbound-attribute = "ignore"
 unresolved-import = "warn"
 
 [environment]
