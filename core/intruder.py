@@ -18,6 +18,7 @@ from safetensors.torch import load_file, save_file
 import torch as th
 from torch import Tensor
 import torch.multiprocessing as mp
+from tqdm import tqdm
 
 from delphi.delphi.latents.cache import get_nonzeros_batch  # type: ignore
 
@@ -387,7 +388,9 @@ class DiskCache:
         max_batch_idx = -1
         has_data = False
 
-        for hookpoint in self._hookpoints:
+        for hookpoint in tqdm(
+            self._hookpoints, desc="Checking batch indices", position=0, leave=False, total=len(self._hookpoints)
+        ):
             hookpoint_dir = self._get_hookpoint_dir(hookpoint)
             batch_files = sorted(
                 hookpoint_dir.glob("*.safetensors"),
@@ -398,23 +401,15 @@ class DiskCache:
                 continue
 
             has_data = True
-            # Check all files to find the maximum batch index
-            for batch_file in batch_files:
-                try:
-                    data = load_file(batch_file)
-                    locations = data["locations"]
-                    if locations.shape[0] > 0:
-                        # Batch index is stored in locations[:, 0]
-                        # It's stored as batch_number * batch_size + offset (0 to batch_size-1)
-                        # So dividing by batch_size gives us the batch_number
-                        max_stored_idx = int(locations[:, 0].max().item())
-                        max_batch_in_file = max_stored_idx // self.batch_size
-                        max_batch_idx = max(max_batch_idx, max_batch_in_file)
-                except Exception as e:
-                    logger.exception(
-                        f"Failed to read {batch_file} for batch index check: {e}"
-                    )
-                    raise e
+
+            # Check the highest-index file to find the maximum batch index
+            highest_index_file = batch_files[-1]
+            data = load_file(highest_index_file)
+            locations = data["locations"]
+
+            max_stored_idx = int(locations[:, 0].max().item())
+            max_batch_in_file = max_stored_idx // self.batch_size
+            max_batch_idx = max(max_batch_idx, max_batch_in_file)
 
         if not has_data:
             return None
