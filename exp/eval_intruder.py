@@ -429,8 +429,11 @@ class LatentPathsCache(LatentCache):
 
                 router_shape = self.model.routers[layer_with_router].weight.shape
                 flattened_path_dim = router_shape[0] * len(layers_with_routers)
-                for hookpoint in self.cache.hookpoints:
+                for hookpoint in self.hookpoint_to_sparse_encode:
                     self.widths[hookpoint] = flattened_path_dim
+
+                logger.debug(f"Widths: {self.widths}")
+                logger.debug(f"Hookpoints: {self.hookpoint_to_sparse_encode.keys()}")
 
                 return
 
