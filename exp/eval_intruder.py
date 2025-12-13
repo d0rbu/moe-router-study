@@ -659,6 +659,7 @@ class MultiGPULatentPathsCache(LatentPathsCache):
         total_batches = len(token_batches)
 
         # Check if we can resume from existing cache
+        logger.debug("Checking if we can resume from existing cache")
         max_batch_idx = self.cache.get_max_batch_index()
 
         logger.debug(f"Max batch index: {max_batch_idx}")
