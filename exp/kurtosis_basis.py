@@ -238,8 +238,7 @@ def compute_kurtosis_statistics(
     # Generate random projection matrix (same for all layers)
     # Random orthonormal matrix (QR decomposition of random matrix)
     random_normal = th.randn(hidden_dim, hidden_dim, device=device, dtype=th.float32)
-    q_orthonormal, _ = th.linalg.qr(random_normal)
-    random_orthonormal_matrix = q_orthonormal.T  # Transpose for right multiplication
+    random_orthonormal_matrix, _ = th.linalg.qr(random_normal)
 
     # Two-pass approach: First pass to compute means and stds, second pass to compute kurtosis
     logger.info("First pass: Computing means and standard deviations...")
@@ -291,7 +290,8 @@ def compute_kurtosis_statistics(
 
                 # Add random orthonormal projection for this layer
                 random_orthonormal_matrix = random_orthonormal_matrix.to(
-                    dtype=layer_acts.dtype
+                    dtype=layer_acts.dtype,
+                    device=layer_acts.device,
                 )
                 activations_to_process.append(
                     (
@@ -362,6 +362,8 @@ def compute_kurtosis_statistics(
         var = acc.M2 / count
         std = th.sqrt(th.clamp(var, min=1e-8))
 
+        logger.trace(f"Global stats for {basis_key}: mean={mean}, std={std}")
+
         global_stats[basis_key] = GlobalStats(mean=mean, std=std)
 
     logger.info(f"Completed first pass with {num_batches_processed} batches")
@@ -403,7 +405,8 @@ def compute_kurtosis_statistics(
 
                 # Add random orthonormal projection for this layer
                 random_orthonormal_matrix = random_orthonormal_matrix.to(
-                    dtype=layer_acts.dtype
+                    dtype=layer_acts.dtype,
+                    device=layer_acts.device,
                 )
                 activations_to_process.append(
                     (
@@ -476,6 +479,11 @@ def compute_kurtosis_statistics(
 
     # Aggregate kurtosis values and compute statistics
     logger.info("Computing final statistics...")
+
+    for basis_name, kurtosis_list in layerwise_kurtosis.items():
+        logger.trace(
+            f"Kurtosis for {basis_name}:\n{kurtosis_list}\n{len(kurtosis_list)}"
+        )
 
     layerwise_kurtosis = {
         basis_name: th.stack(kurtosis_list, dim=0).mean(dim=0).float()
