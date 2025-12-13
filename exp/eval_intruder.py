@@ -712,7 +712,6 @@ class MultiGPULatentPathsCache(LatentPathsCache):
                     self.hf_token,
                     self.quantization_config,
                 ),
-                daemon=True,
             )
             for gpu_id in self.gpu_ids
         ]
@@ -726,7 +725,6 @@ class MultiGPULatentPathsCache(LatentPathsCache):
             target=_log_worker,
             name="logging_worker",
             args=(log_queue,),
-            daemon=True,
         )
         log_worker.start()
 
