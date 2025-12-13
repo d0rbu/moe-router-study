@@ -41,19 +41,6 @@ class GlobalStats:
 
 
 @dataclass
-class Accumulator:
-    """Accumulator for computing global statistics using Welford's algorithm.
-
-    Uses running mean and M2 (sum of squared deviations from mean) for
-    numerical stability instead of running sums.
-    """
-
-    mean: th.Tensor | None = None
-    M2: th.Tensor | None = None  # Sum of squared deviations from mean
-    count: int = 0
-
-
-@dataclass
 class FinalStats:
     """Final kurtosis statistics."""
 
@@ -64,47 +51,6 @@ class FinalStats:
     q75: float
     min: float
     max: float
-
-
-def update_accumulator(
-    accumulator: Accumulator, tensor: th.Tensor, batch_size: int
-) -> None:
-    """Update accumulator with new batch data using Welford's parallel algorithm.
-
-    This is numerically stable compared to accumulating sums directly.
-    See: https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Parallel_algorithm
-    """
-    # Compute batch statistics
-    batch_count = batch_size
-    batch_mean = tensor.mean(dim=0)
-    # Use unbiased=False for population variance within batch
-    batch_var = tensor.var(dim=0, unbiased=False)
-    batch_M2 = batch_var * batch_count
-
-    if accumulator.mean is None:
-        # First batch - just store batch statistics
-        accumulator.mean = batch_mean
-        accumulator.M2 = batch_M2
-        accumulator.count = batch_count
-    else:
-        # Parallel algorithm to merge two sets of statistics
-        count_a = accumulator.count
-        count_b = batch_count
-        total_count = count_a + count_b
-
-        delta = batch_mean - accumulator.mean
-
-        # Update mean
-        new_mean = accumulator.mean + delta * (count_b / total_count)
-
-        # Update M2: M2 = M2_a + M2_b + delta^2 * count_a * count_b / total_count
-        new_M2 = (
-            accumulator.M2 + batch_M2 + (delta*delta) * (count_a * count_b / total_count)
-        )
-
-        accumulator.mean = new_mean
-        accumulator.M2 = new_M2
-        accumulator.count = total_count
 
 
 def compute_kurtosis(
@@ -139,6 +85,16 @@ def compute_kurtosis(
 
     # Compute normalized deviations
     z = (x - mean) / (std + 1e-8)
+
+    logger.trace(f"Z: {z}")
+    logger.trace(f"Z shape: {z.shape}")
+    logger.trace(f"Z mean: {z.mean(dim=dim)}")
+    logger.trace(f"Z std: {z.std(dim=dim)}")
+    logger.trace(f"Z min: {z.min(dim=dim)}")
+    logger.trace(f"Z max: {z.max(dim=dim)}")
+    logger.trace(f"Z median: {z.median(dim=dim)}")
+    logger.trace(f"Z quantile(0.25): {z.quantile(0.25, dim=dim)}")
+    logger.trace(f"Z quantile(0.75): {z.quantile(0.75, dim=dim)}")
 
     # Compute kurtosis (excess kurtosis)
     kurtosis = (z**4).mean(dim=dim) - 3.0  # type: ignore[misc]
@@ -247,7 +203,8 @@ def compute_kurtosis_statistics(
     global_stats: dict[str, GlobalStats] = {}
 
     # Accumulators for computing global statistics
-    accumulators: dict[str, Accumulator] = defaultdict(Accumulator)
+    means: dict[str, list[th.Tensor]] = defaultdict(list)
+    variances: dict[str, list[th.Tensor]] = defaultdict(list)
 
     # First pass: accumulate statistics
     activation_iterator = activations(
@@ -350,20 +307,23 @@ def compute_kurtosis_statistics(
 
             # Update all accumulators
             for tensor, basis_key in activations_to_process:
-                update_accumulator(accumulators[basis_key], tensor, batch_size_actual)
+                means[basis_key].append(tensor.mean(dim=0))
+                variances[basis_key].append(tensor.var(dim=0))
 
             num_batches_processed += 1
 
-    # Compute global means and stds from Welford accumulators
+    # Compute global means and stds
     logger.info("Computing global means and standard deviations...")
-    for basis_key, acc in accumulators.items():
-        count = acc.count
-        mean = acc.mean
-        var = acc.M2 / count
-        std = th.sqrt(th.clamp(var, min=1e-8))
+    logger.trace(f"Means: {means}")
+    logger.trace(f"Variances: {variances}")
+    for basis_key, mean_list in means.items():
+        variance_list = variances[basis_key]
+
+        mean = th.stack(mean_list, dim=0).mean(dim=0)
+        variance = th.stack(variance_list, dim=0).mean(dim=0)
+        std = th.sqrt(th.clamp(variance, min=1e-8))
 
         logger.trace(f"Global stats for {basis_key}: mean={mean}, std={std}")
-
         global_stats[basis_key] = GlobalStats(mean=mean, std=std)
 
     logger.info(f"Completed first pass with {num_batches_processed} batches")
