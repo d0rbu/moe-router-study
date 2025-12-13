@@ -307,7 +307,6 @@ def compute_kurtosis_statistics(
             for tensor, basis_key in activations_to_process:
                 means[basis_key].append(tensor.mean(dim=0))
                 variances[basis_key].append(tensor.var(dim=0))
-                logger.trace(tensor.shape)
 
             num_batches_processed += 1
 
