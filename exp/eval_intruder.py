@@ -421,7 +421,17 @@ class LatentPathsCache(LatentCache):
                 logger.info(
                     f"All batches already processed (0-{max_batch_idx}), nothing to do"
                 )
-                self.cache.save()
+
+                # set self.widths
+                layers_with_routers = self.model.layers_with_routers
+                assert len(layers_with_routers) > 0, "No router layers found"
+                layer_with_router = layers_with_routers[0]
+
+                router_shape = self.model.routers[layer_with_router].weight.shape
+                flattened_path_dim = router_shape[0] * len(layers_with_routers)
+                for hookpoint in self.cache.hookpoints:
+                    self.widths[hookpoint] = flattened_path_dim
+
                 return
 
         total_tokens = 0
