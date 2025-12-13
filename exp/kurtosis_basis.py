@@ -220,9 +220,9 @@ def compute_kurtosis_statistics(
         ):
             # Get activations
             # layer_outputs: (batch, num_layers, hidden_dim)
-            layer_outputs = batch[ActivationKeys.LAYER_OUTPUT].to(device=device)
+            layer_outputs = batch[ActivationKeys.LAYER_OUTPUT].to(dtype=th.float64, device=device)
             # mlp_outputs: (batch, num_layers, hidden_dim)
-            mlp_outputs = batch[ActivationKeys.MLP_OUTPUT].to(device=device)
+            mlp_outputs = batch[ActivationKeys.MLP_OUTPUT].to(dtype=th.float64, device=device)
 
             assert layer_outputs.shape[1] == mlp_outputs.shape[1] == num_layers, (
                 "Number of layers mismatch: "
@@ -230,8 +230,6 @@ def compute_kurtosis_statistics(
                 f"Number of layers: {num_layers}, "
                 f"Router layers: {router_layers}"
             )
-
-            batch_size_actual = layer_outputs.shape[0]
 
             # Create list of (activation_tensor, basis_key) pairs to process
             activations_to_process = []
@@ -309,6 +307,7 @@ def compute_kurtosis_statistics(
             for tensor, basis_key in activations_to_process:
                 means[basis_key].append(tensor.mean(dim=0))
                 variances[basis_key].append(tensor.var(dim=0))
+                logger.trace(tensor.shape)
 
             num_batches_processed += 1
 
@@ -348,8 +347,8 @@ def compute_kurtosis_statistics(
             total=num_batches_processed,
         ):
             # Get activations
-            layer_outputs = batch[ActivationKeys.LAYER_OUTPUT].to(device=device)
-            mlp_outputs = batch[ActivationKeys.MLP_OUTPUT].to(device=device)
+            layer_outputs = batch[ActivationKeys.LAYER_OUTPUT].to(dtype=th.float64, device=device)
+            mlp_outputs = batch[ActivationKeys.MLP_OUTPUT].to(dtype=th.float64, device=device)
 
             # Create list of (activation_tensor, basis_key) pairs to process (same as first pass)
             activations_to_process = []
@@ -446,7 +445,7 @@ def compute_kurtosis_statistics(
         )
 
     layerwise_kurtosis = {
-        basis_name: th.stack(kurtosis_list, dim=0).mean(dim=0).float()
+        basis_name: th.stack(kurtosis_list, dim=0).mean(dim=0)
         for basis_name, kurtosis_list in layerwise_kurtosis.items()
     }
 
