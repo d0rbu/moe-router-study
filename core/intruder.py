@@ -343,11 +343,11 @@ class DiskCache:
 
                 time.sleep(self.POLL_INTERVAL_WHEN_WAITING_FOR_WRITES)
 
-            self._writer_process.join(timeout=5)
+            self._writer_process.join(timeout=300)
             if self._writer_process.is_alive():
                 logger.warning("Writer process did not terminate, forcing...")
                 self._writer_process.terminate()
-                self._writer_process.join(timeout=5)
+                self._writer_process.join(timeout=300)
 
         logger.debug("DiskCache finalized - all data saved to disk")
         self._finalized = True
@@ -361,7 +361,7 @@ class DiskCache:
         ):
             self._done_event.set()
             self._write_queue.put(None)
-            self._writer_process.join(timeout=5)
+            self._writer_process.join(timeout=300)
             if self._writer_process.is_alive():
                 self._writer_process.terminate()
 
