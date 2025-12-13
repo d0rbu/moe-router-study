@@ -7,6 +7,7 @@ from pathlib import Path
 import queue
 import sys
 import traceback
+from typing import cast
 
 import arguably
 from dictionary_learning.utils import load_dictionary
@@ -690,11 +691,22 @@ class MultiGPULatentPathsCache(LatentPathsCache):
                 )
 
                 # set self.widths
-                layers_with_routers = self.model.layers_with_routers
+                model = StandardizedTransformer(
+                    self.model_name,
+                    check_attn_probs_with_trace=False,
+                    check_renaming=False,
+                    revision=self.model_revision,
+                    device_map={"": "meta"},
+                    quantization_config=self.quantization_config,
+                    torch_dtype=self.model_dtype,
+                    token=self.hf_token,
+                )
+
+                layers_with_routers = model.layers_with_routers
                 assert len(layers_with_routers) > 0, "No router layers found"
                 layer_with_router = layers_with_routers[0]
 
-                router_shape = self.model.routers[layer_with_router].weight.shape
+                router_shape = cast("th.Tensor", model.routers[layer_with_router].weight).shape
                 flattened_path_dim = router_shape[0] * len(layers_with_routers)
                 for hookpoint in self.hookpoint_to_sparse_encode:
                     self.widths[hookpoint] = flattened_path_dim
