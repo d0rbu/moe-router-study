@@ -688,7 +688,19 @@ class MultiGPULatentPathsCache(LatentPathsCache):
                 logger.info(
                     f"All batches already processed (0-{max_batch_idx}), nothing to do"
                 )
-                self.cache.save()
+
+                # set self.widths
+                layers_with_routers = self.model.layers_with_routers
+                assert len(layers_with_routers) > 0, "No router layers found"
+                layer_with_router = layers_with_routers[0]
+
+                router_shape = self.model.routers[layer_with_router].weight.shape
+                flattened_path_dim = router_shape[0] * len(layers_with_routers)
+                for hookpoint in self.hookpoint_to_sparse_encode:
+                    self.widths[hookpoint] = flattened_path_dim
+
+                logger.debug(f"Widths: {self.widths}")
+                logger.debug(f"Hookpoints: {self.hookpoint_to_sparse_encode.keys()}")
                 return
 
         batches_to_process = total_batches - start_batch_idx
