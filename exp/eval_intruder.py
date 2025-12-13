@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import queue
 import sys
+import traceback
 
 import arguably
 from dictionary_learning.utils import load_dictionary
@@ -730,13 +731,18 @@ class MultiGPULatentPathsCache(LatentPathsCache):
         log_worker.start()
 
         # Collect results
-        for _ in tqdm(
+        for relative_batch_idx in tqdm(
             range(batches_to_process),
             total=total_batches,
             desc="Caching (multi-GPU)",
             initial=start_batch_idx,
         ):
-            batch_idx, batch_tokens, results = result_queue.get(timeout=300)
+            try:
+                batch_idx, batch_tokens, results = result_queue.get(timeout=300)
+            except Exception as e:
+                logger.exception(f"Exception on relative batch {relative_batch_idx}")
+                traceback.print_exc()
+                raise e
 
             logger.debug(f"Received results for batch {batch_idx}")
 
