@@ -463,6 +463,8 @@ def compute_kurtosis_statistics(
             max=float(kurtosis.max().item()),
         )
 
+        logger.debug(f"{basis_name} kurtosis stats:\n{statistics[basis_name]}")
+
     # Also compute aggregated statistics across all router layers
     logger.info("Computing aggregated router statistics...")
     all_router_kurtosis = []
@@ -470,6 +472,8 @@ def compute_kurtosis_statistics(
         basis_name = f"layer_{layer_idx}_router"
         if basis_name in layerwise_kurtosis:
             all_router_kurtosis.extend(layerwise_kurtosis[basis_name])
+
+    logger.debug(f"All router kurtosis length: {len(all_router_kurtosis)}")
 
     all_router_kurtosis = th.cat(all_router_kurtosis, dim=0)
 
