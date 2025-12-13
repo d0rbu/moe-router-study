@@ -99,7 +99,7 @@ def update_accumulator(
 
         # Update M2: M2 = M2_a + M2_b + delta^2 * count_a * count_b / total_count
         new_M2 = (
-            accumulator.M2 + batch_M2 + (delta**2) * (count_a * count_b / total_count)
+            accumulator.M2 + batch_M2 + (delta*delta) * (count_a * count_b / total_count)
         )
 
         accumulator.mean = new_mean
