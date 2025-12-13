@@ -42,10 +42,14 @@ class GlobalStats:
 
 @dataclass
 class Accumulator:
-    """Accumulator for computing global statistics."""
+    """Accumulator for computing global statistics using Welford's algorithm.
 
-    sum: th.Tensor | None = None
-    sum_sq: th.Tensor | None = None
+    Uses running mean and M2 (sum of squared deviations from mean) for
+    numerical stability instead of running sums.
+    """
+
+    mean: th.Tensor | None = None
+    M2: th.Tensor | None = None  # Sum of squared deviations from mean
     count: int = 0
 
 
@@ -65,14 +69,42 @@ class FinalStats:
 def update_accumulator(
     accumulator: Accumulator, tensor: th.Tensor, batch_size: int
 ) -> None:
-    """Update accumulator with new batch data."""
-    if accumulator.sum is None:
-        accumulator.sum = tensor.sum(dim=0)
-        accumulator.sum_sq = (tensor * tensor).sum(dim=0)
+    """Update accumulator with new batch data using Welford's parallel algorithm.
+
+    This is numerically stable compared to accumulating sums directly.
+    See: https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Parallel_algorithm
+    """
+    # Compute batch statistics
+    batch_count = batch_size
+    batch_mean = tensor.mean(dim=0)
+    # Use unbiased=False for population variance within batch
+    batch_var = tensor.var(dim=0, unbiased=False)
+    batch_M2 = batch_var * batch_count
+
+    if accumulator.mean is None:
+        # First batch - just store batch statistics
+        accumulator.mean = batch_mean
+        accumulator.M2 = batch_M2
+        accumulator.count = batch_count
     else:
-        accumulator.sum += tensor.sum(dim=0)
-        accumulator.sum_sq += (tensor * tensor).sum(dim=0)
-    accumulator.count += batch_size
+        # Parallel algorithm to merge two sets of statistics
+        count_a = accumulator.count
+        count_b = batch_count
+        total_count = count_a + count_b
+
+        delta = batch_mean - accumulator.mean
+
+        # Update mean
+        new_mean = accumulator.mean + delta * (count_b / total_count)
+
+        # Update M2: M2 = M2_a + M2_b + delta^2 * count_a * count_b / total_count
+        new_M2 = (
+            accumulator.M2 + batch_M2 + (delta**2) * (count_a * count_b / total_count)
+        )
+
+        accumulator.mean = new_mean
+        accumulator.M2 = new_M2
+        accumulator.count = total_count
 
 
 def compute_kurtosis(
@@ -322,12 +354,12 @@ def compute_kurtosis_statistics(
 
             num_batches_processed += 1
 
-    # Compute global means and stds
+    # Compute global means and stds from Welford accumulators
     logger.info("Computing global means and standard deviations...")
     for basis_key, acc in accumulators.items():
         count = acc.count
-        mean = acc.sum / count
-        var = (acc.sum_sq / count) - (mean**2)
+        mean = acc.mean
+        var = acc.M2 / count
         std = th.sqrt(th.clamp(var, min=1e-8))
 
         global_stats[basis_key] = GlobalStats(mean=mean, std=std)
