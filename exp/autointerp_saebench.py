@@ -543,8 +543,12 @@ def _gpu_sparsity_worker(
             running_sum_F = th.zeros(paths.shape[0], dtype=th.float32, device=device)
             total_tokens = 0
 
-            for _batch_idx, tokens_BT in enumerate(
-                th.split(tokenized_dataset, batch_size, dim=0)
+            for _batch_idx, tokens_BT in tqdm(
+                enumerate(th.split(tokenized_dataset, batch_size, dim=0)),
+                total=tokenized_dataset.shape[0] // batch_size,
+                desc="Computing sparsity",
+                position=gpu_id + 1,
+                leave=False,
             ):
                 router_logits_set = []
 
