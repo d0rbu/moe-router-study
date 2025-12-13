@@ -190,12 +190,27 @@ MODELS: dict[str, ModelConfig] = {
         hf_name="microsoft/Phi-3.5-MoE-instruct",
         total_tokens=4900,  # 4.9T tokens
     ),
-    "q3_30b": ModelConfig(
+    "q3": ModelConfig(
         hf_name="Qwen/Qwen3-30B-A3B",
+        total_tokens=36000,  # 36T tokens
+    ),
+    "q3-large": ModelConfig(
+        hf_name="Qwen/Qwen3-235B-A22B",
+        total_tokens=36000,  # 36T tokens
+    ),
+    "q3-i": ModelConfig(
+        hf_name="Qwen/Qwen3-30B-A3B-Instruct-2507",
+        total_tokens=36000,  # 36T tokens
+    ),
+    "q3-large-i": ModelConfig(
+        hf_name="Qwen/Qwen3-235B-A22B-Instruct-2507",
         total_tokens=36000,  # 36T tokens
     ),
     "gpt": ModelConfig(
         hf_name="openai/gpt-oss-20b",
+    ),
+    "gpt-large": ModelConfig(
+        hf_name="openai/gpt-oss-120b",
     ),
     # posttrained model
     "olmoe-i": ModelConfig(

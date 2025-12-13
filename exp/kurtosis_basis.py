@@ -203,28 +203,11 @@ def compute_kurtosis_statistics(
     # Get hidden dimension for random projections
     hidden_dim = activation_dims[ActivationKeys.LAYER_OUTPUT]
 
-    # Generate random projection matrices (same for all layers)
-    # 1. Random orthonormal matrix (QR decomposition of random matrix)
+    # Generate random projection matrix (same for all layers)
+    # Random orthonormal matrix (QR decomposition of random matrix)
     random_normal = th.randn(hidden_dim, hidden_dim, device=device, dtype=th.float32)
     q_orthonormal, _ = th.linalg.qr(random_normal)
     random_orthonormal_matrix = q_orthonormal.T  # Transpose for right multiplication
-
-    # 2. Random orthogonal matrix (orthogonal but not orthonormal - gram-schmidt orthogonalization)
-    random_orthogonal_base = th.randn(
-        hidden_dim, hidden_dim, device=device, dtype=th.float32
-    )
-    random_orthogonal_normalized, _ = th.linalg.qr(random_orthogonal_base)
-    # Scale each row by a random factor to break orthonormality while preserving orthogonality
-    random_scales = th.randn(hidden_dim, device=device, dtype=th.float32).abs()
-    random_orthogonal_matrix = random_orthogonal_normalized.T * random_scales.unsqueeze(
-        1
-    )  # Transpose for right multiplication
-
-    # 3. Completely random matrix from normal distribution
-    random_normal_matrix = th.randn(
-        hidden_dim, hidden_dim, device=device, dtype=th.float32
-    )
-    random_normal_matrix = random_normal_matrix.T  # Transpose for right multiplication
 
     # Two-pass approach: First pass to compute means and stds, second pass to compute kurtosis
     logger.info("First pass: Computing means and standard deviations...")
@@ -274,30 +257,14 @@ def compute_kurtosis_statistics(
                     (layer_acts, f"layer_{layer_idx}_residual")
                 )
 
-                # Add random projections for this layer
+                # Add random orthonormal projection for this layer
                 random_orthonormal_matrix = random_orthonormal_matrix.to(
                     dtype=layer_acts.dtype
                 )
-                random_orthogonal_matrix = random_orthogonal_matrix.to(
-                    dtype=layer_acts.dtype
-                )
-                random_normal_matrix = random_normal_matrix.to(dtype=layer_acts.dtype)
                 activations_to_process.append(
                     (
                         layer_acts @ random_orthonormal_matrix,
                         f"layer_{layer_idx}_random_orthonormal",
-                    )
-                )
-                activations_to_process.append(
-                    (
-                        layer_acts @ random_orthogonal_matrix,
-                        f"layer_{layer_idx}_random_orthogonal",
-                    )
-                )
-                activations_to_process.append(
-                    (
-                        layer_acts @ random_normal_matrix,
-                        f"layer_{layer_idx}_random_normal",
                     )
                 )
 
@@ -402,30 +369,14 @@ def compute_kurtosis_statistics(
                     (layer_acts, f"layer_{layer_idx}_residual")
                 )
 
-                # Add random projections for this layer
+                # Add random orthonormal projection for this layer
                 random_orthonormal_matrix = random_orthonormal_matrix.to(
                     dtype=layer_acts.dtype
                 )
-                random_orthogonal_matrix = random_orthogonal_matrix.to(
-                    dtype=layer_acts.dtype
-                )
-                random_normal_matrix = random_normal_matrix.to(dtype=layer_acts.dtype)
                 activations_to_process.append(
                     (
                         layer_acts @ random_orthonormal_matrix,
                         f"layer_{layer_idx}_random_orthonormal",
-                    )
-                )
-                activations_to_process.append(
-                    (
-                        layer_acts @ random_orthogonal_matrix,
-                        f"layer_{layer_idx}_random_orthogonal",
-                    )
-                )
-                activations_to_process.append(
-                    (
-                        layer_acts @ random_normal_matrix,
-                        f"layer_{layer_idx}_random_normal",
                     )
                 )
 
@@ -494,22 +445,23 @@ def compute_kurtosis_statistics(
     # Aggregate kurtosis values and compute statistics
     logger.info("Computing final statistics...")
 
+    layerwise_kurtosis = {
+        basis_name: th.stack(kurtosis_list, dim=0).mean(dim=0).float()
+        for basis_name, kurtosis_list in layerwise_kurtosis.items()
+    }
+
     statistics: dict[str, FinalStats] = {}
 
-    for basis_name, kurtosis_list in layerwise_kurtosis.items():
-        # Concatenate all kurtosis values for this basis
-        # Convert to float32 since quantile() requires float or double dtype
-        all_kurtosis = th.cat(kurtosis_list, dim=0).float()
-
+    for basis_name, kurtosis in layerwise_kurtosis.items():
         # Compute statistics
         statistics[basis_name] = FinalStats(
-            mean=float(all_kurtosis.mean().item()),
-            median=float(all_kurtosis.median().item()),
-            std=float(all_kurtosis.std().item()),
-            q25=float(all_kurtosis.quantile(0.25).item()),
-            q75=float(all_kurtosis.quantile(0.75).item()),
-            min=float(all_kurtosis.min().item()),
-            max=float(all_kurtosis.max().item()),
+            mean=float(kurtosis.mean().item()),
+            median=float(kurtosis.median().item()),
+            std=float(kurtosis.std().item()),
+            q25=float(kurtosis.quantile(0.25).item()),
+            q75=float(kurtosis.quantile(0.75).item()),
+            min=float(kurtosis.min().item()),
+            max=float(kurtosis.max().item()),
         )
 
     # Also compute aggregated statistics across all router layers
@@ -520,17 +472,17 @@ def compute_kurtosis_statistics(
         if basis_name in layerwise_kurtosis:
             all_router_kurtosis.extend(layerwise_kurtosis[basis_name])
 
-    if all_router_kurtosis:
-        # Convert to float32 since quantile() requires float or double dtype
-        all_router_kurtosis_cat = th.cat(all_router_kurtosis, dim=0).float()
+    all_router_kurtosis = th.cat(all_router_kurtosis, dim=0)
+
+    if all_router_kurtosis.numel() > 0:
         statistics["all_layers_router"] = FinalStats(
-            mean=float(all_router_kurtosis_cat.mean().item()),
-            median=float(all_router_kurtosis_cat.median().item()),
-            std=float(all_router_kurtosis_cat.std().item()),
-            q25=float(all_router_kurtosis_cat.quantile(0.25).item()),
-            q75=float(all_router_kurtosis_cat.quantile(0.75).item()),
-            min=float(all_router_kurtosis_cat.min().item()),
-            max=float(all_router_kurtosis_cat.max().item()),
+            mean=float(all_router_kurtosis.mean().item()),
+            median=float(all_router_kurtosis.median().item()),
+            std=float(all_router_kurtosis.std().item()),
+            q25=float(all_router_kurtosis.quantile(0.25).item()),
+            q75=float(all_router_kurtosis.quantile(0.75).item()),
+            min=float(all_router_kurtosis.min().item()),
+            max=float(all_router_kurtosis.max().item()),
         )
 
     results["statistics"] = statistics
@@ -687,11 +639,9 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
     # 1.75. Plot: Random projection kurtosis comparison (orthonormal, orthogonal, normal)
     fig, axes = plt.subplots(2, 1, figsize=(12, 10))
 
-    # Get stats for each random projection type
+    # Get stats for random orthonormal projection
     projection_types = [
         ("random_orthonormal", "Random Orthonormal (QR)", "purple"),
-        ("random_orthogonal", "Random Orthogonal (Normalized)", "magenta"),
-        ("random_normal", "Random Normal", "pink"),
     ]
 
     # First subplot: Medians with Q25/Q75
@@ -714,7 +664,7 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
 
     ax.set_xlabel("Layer")
     ax.set_ylabel("Kurtosis")
-    ax.set_title("Random Projection Kurtosis Comparison - Median with Q25/Q75")
+    ax.set_title("Random Orthonormal Projection Kurtosis - Median with Q25/Q75")
     ax.legend()
     ax.grid(axis="y", alpha=0.3)
 
@@ -743,7 +693,7 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
 
     ax.set_xlabel("Layer")
     ax.set_ylabel("Kurtosis")
-    ax.set_title("Random Projection Kurtosis Comparison - Mean with Std")
+    ax.set_title("Random Orthonormal Projection Kurtosis - Mean with Std")
     ax.legend()
     ax.grid(axis="y", alpha=0.3)
 
