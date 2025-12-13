@@ -959,7 +959,7 @@ def eval_intruder(
     vllm_num_gpus: int = 1,
     cache_num_gpus: int = 0,
     cache_start_gpu: int = 0,
-    verbose: bool = True,
+    verbose: bool = False,
     seed: int = 0,
     hf_token: str = "",
     log_level: str = "INFO",
