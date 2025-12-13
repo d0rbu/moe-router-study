@@ -425,6 +425,7 @@ def compute_kurtosis_statistics(
             # Compute kurtosis for all activations
             for tensor, basis_key in activations_to_process:
                 stats = global_stats[basis_key]
+                logger.trace(f"Stats for {basis_key}: mean={stats.mean}, std={stats.std}")
                 kurtosis = compute_kurtosis(
                     tensor, dim=0, mean=stats.mean, std=stats.std
                 )
