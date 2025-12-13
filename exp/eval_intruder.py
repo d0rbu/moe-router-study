@@ -67,6 +67,7 @@ def _gpu_worker(
     work_queue: mp.Queue,
     result_queue: mp.Queue,
     log_queue: mp.Queue,
+    close_event: mp.Event,
     model_name: str,
     model_revision: str,
     model_dtype: th.dtype,
@@ -154,16 +155,17 @@ def _gpu_worker(
         th.cuda.empty_cache()
 
     log_queue.put(f"Worker {gpu_id}: Done")
+    close_event.wait()
 
 
 GPU_LOG_FILE = "gpu_log.txt"
 
 
-def _log_worker(log_queue: mp.Queue):
+def _log_worker(log_queue: mp.Queue, close_event: mp.Event):
     """Worker that logs messages from the log queue."""
     with open(GPU_LOG_FILE, "w") as f:
         f.write("Logging started\n")
-        while True:
+        while not close_event.is_set():
             try:
                 log = log_queue.get(timeout=60)
             except queue.Empty:
@@ -173,9 +175,14 @@ def _log_worker(log_queue: mp.Queue):
             if log is None:
                 f.write("Received stop signal\n")
                 break
+
             f.write(f"{log}\n")
+        else:
+            f.write("Received close event, stopping logging\n")
 
         f.write("Logging finished\n")
+
+    close_event.wait()
 
 
 def dataset_postprocess(record: LatentRecord) -> LatentRecord:
@@ -679,6 +686,7 @@ class MultiGPULatentPathsCache(LatentPathsCache):
         work_queue: mp.Queue = ctx.Queue()
         result_queue: mp.Queue = ctx.Queue(maxsize=self.RESULT_QUEUE_MAX_SIZE)
         log_queue: mp.Queue = ctx.Queue()
+        close_event: mp.Event = ctx.Event()
 
         # Fill work queue (skip already-processed batches)
         for batch_idx, batch_tokens in enumerate(
@@ -700,6 +708,7 @@ class MultiGPULatentPathsCache(LatentPathsCache):
                     work_queue,
                     result_queue,
                     log_queue,
+                    close_event,
                     self.model_name,
                     self.model_revision,
                     self.model_dtype,
@@ -724,7 +733,7 @@ class MultiGPULatentPathsCache(LatentPathsCache):
         log_worker = ctx.Process(
             target=_log_worker,
             name="logging_worker",
-            args=(log_queue,),
+            args=(log_queue, close_event),
         )
         log_worker.start()
 
@@ -748,11 +757,12 @@ class MultiGPULatentPathsCache(LatentPathsCache):
                 self.cache.add(latents, batch_tokens, batch_idx, hookpoint)
                 self.widths[hookpoint] = width
 
-        # Wait for workers
+        log_queue.put(None)
+        close_event.set()
+
         for w in workers:
             w.join(timeout=30)
 
-        log_queue.put(None)
         log_worker.join()
 
         logger.info(
