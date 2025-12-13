@@ -865,9 +865,6 @@ def populate_cache(
     )
     cache.run(cache_cfg.n_tokens, tokens, top_k=top_k, dtype=dtype)
 
-    if run_cfg.verbose:
-        cache.generate_statistics_cache()
-
     cache.save_splits(
         n_splits=cache_cfg.n_splits,
         save_dir=latents_path,
@@ -923,9 +920,6 @@ def populate_cache_multiprocess(
     )
 
     cache.run(n_tokens=cache_cfg.n_tokens, tokens=tokens)
-
-    if run_cfg.verbose:
-        cache.generate_statistics_cache()
 
     cache.save_splits(n_splits=cache_cfg.n_splits, save_dir=latents_path)
     cache.save_config(save_dir=latents_path, cfg=cache_cfg, model_name=run_cfg.model)
