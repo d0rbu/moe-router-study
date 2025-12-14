@@ -6,15 +6,12 @@ larger-than-memory datasets by periodically flushing to disk using async I/O.
 """
 
 from collections import defaultdict
+from collections.abc import Generator
 import gc
 from multiprocessing.synchronize import Event as MPEvent
 from pathlib import Path
 import queue
 import time
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from collections.abc import Generator
 
 from jaxtyping import Float, Int
 from loguru import logger
