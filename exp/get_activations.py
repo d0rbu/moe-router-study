@@ -169,6 +169,13 @@ def process_batch(
             padding_mask = attention_mask.cpu().bool()
             padding_mask_flat = padding_mask.flatten()
 
+            logger.trace(f"Padding mask shape: {padding_mask.shape}")
+            logger.trace(f"Padding mask: {padding_mask}")
+            logger.trace(f"Padding mask flattened shape: {padding_mask_flat.shape}")
+            logger.trace(f"Padding mask flattened: {padding_mask_flat}")
+            logger.trace(f"Input ids shape: {encoded_minibatch['input_ids'].shape}")
+            logger.trace(f"Input ids: {encoded_minibatch['input_ids']}")
+
             # Extract activations for each layer
             for layer_idx in tqdm(
                 range(num_layers),
@@ -240,6 +247,8 @@ def process_batch(
                     and layer_idx in layers_to_store
                 ):
                     layer_output = model.layers_output[layer_idx]
+                    logger.trace(f"Layer output shape: {layer_output.shape}")
+
                     flattened_layer_output = layer_output.cpu()[padding_mask].save()
                     activations[str(ActivationKeys.LAYER_OUTPUT)][layer_idx].append(
                         flattened_layer_output.clone().detach()
