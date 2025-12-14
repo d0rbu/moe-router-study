@@ -197,6 +197,10 @@ def process_batch(
                     if isinstance(router_output, tuple):
                         if len(router_output) == 2:
                             router_scores, _router_indices = router_output
+                        elif len(router_output) == 3:
+                            router_scores, _router_weights, _router_indices = (
+                                router_output
+                            )
                         else:
                             raise ValueError(
                                 f"Found tuple of length {len(router_output)} for router output at layer {layer_idx}"
@@ -213,7 +217,19 @@ def process_batch(
                     ActivationKeys.MLP_OUTPUT in activations_to_store
                     and layer_idx in layers_to_store
                 ):
-                    mlp_output = model.mlps_output[layer_idx]
+                    mlp_output_raw = model.mlps_output[layer_idx]
+
+                    # Handle different mlp output formats
+                    if isinstance(mlp_output_raw, tuple):
+                        if len(mlp_output_raw) == 2:
+                            mlp_output, _mlp_indices = mlp_output_raw
+                        else:
+                            raise ValueError(
+                                f"Found tuple of length {len(router_output)} for router output at layer {layer_idx}"
+                            )
+                    else:
+                        mlp_output = mlp_output_raw
+
                     flattened_mlp_output = mlp_output.cpu()[padding_mask].save()
                     activations[str(ActivationKeys.MLP_OUTPUT)][layer_idx].append(
                         flattened_mlp_output.clone().detach()
