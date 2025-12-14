@@ -423,6 +423,8 @@ class LatentPathsCache(LatentCache):
                     f"All batches already processed (0-{max_batch_idx}), nothing to do"
                 )
 
+                self.cache._finalized = True
+
                 # set self.widths
                 layers_with_routers = self.model.layers_with_routers
                 assert len(layers_with_routers) > 0, "No router layers found"
@@ -692,6 +694,8 @@ class MultiGPULatentPathsCache(LatentPathsCache):
                 logger.info(
                     f"All batches already processed (0-{max_batch_idx}), nothing to do"
                 )
+
+                self.cache._finalized = True
 
                 # set self.widths
                 model = StandardizedTransformer(
