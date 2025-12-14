@@ -176,9 +176,6 @@ def process_batch(
             logger.trace(f"Input ids shape: {encoded_minibatch['input_ids'].shape}")
             logger.trace(f"Input ids: {encoded_minibatch['input_ids']}")
             logger.trace(f"Layer 0 input shape: {model.layers_input[0].shape}")
-            logger.trace(f"Layer 0 output shape: {model.layers_output[0].shape}")
-            logger.trace(f"Layer -1 output shape: {model.layers_output[-1].shape}")
-            logger.trace(f"Layer -1 input shape: {model.layers_input[-1].shape}")
 
             # Extract activations for each layer
             for layer_idx in tqdm(
