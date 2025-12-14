@@ -621,6 +621,7 @@ class MultiGPULatentPathsCache(LatentPathsCache):
         postprocessor: RouterLogitsPostprocessor,
         top_k: int,
         hf_token: str,
+        hookpoints: list[str],
         quantization_config: BitsAndBytesConfig | None,
         log_path: Path | None = None,
         buffer_flush_size: int = 131072,
@@ -642,6 +643,7 @@ class MultiGPULatentPathsCache(LatentPathsCache):
             postprocessor: Router logits postprocessing method.
             top_k: Top k paths to cache.
             hf_token: HuggingFace token for model access.
+            hookpoints: List of hookpoints to cache.
             quantization_config: Optional quantization config.
             log_path: Path to save logging output.
             buffer_flush_size: Number of tokens before flushing to disk.
@@ -661,6 +663,7 @@ class MultiGPULatentPathsCache(LatentPathsCache):
         self.postprocessor = postprocessor
         self.top_k = top_k
         self.hf_token = hf_token
+        self.hookpoints = hookpoints
         self.quantization_config = quantization_config
 
     def run(self, n_tokens: int, tokens: th.Tensor):
@@ -706,13 +709,15 @@ class MultiGPULatentPathsCache(LatentPathsCache):
                 assert len(layers_with_routers) > 0, "No router layers found"
                 layer_with_router = layers_with_routers[0]
 
-                router_shape = cast("th.Tensor", model.routers[layer_with_router].weight).shape
+                router_shape = cast(
+                    "th.Tensor", model.routers[layer_with_router].weight
+                ).shape
                 flattened_path_dim = router_shape[0] * len(layers_with_routers)
-                for hookpoint in self.hookpoint_to_sparse_encode:
+                for hookpoint in self.hookpoints:
                     self.widths[hookpoint] = flattened_path_dim
 
                 logger.debug(f"Widths: {self.widths}")
-                logger.debug(f"Hookpoints: {self.hookpoint_to_sparse_encode.keys()}")
+                logger.debug(f"Hookpoints: {self.hookpoints}")
                 return
 
         batches_to_process = total_batches - start_batch_idx
@@ -924,6 +929,7 @@ def populate_cache_multiprocess(
     metric: CentroidMetric,
     metric_p: float,
     hf_token: str,
+    hookpoint_to_sparse_encode: dict[str, Callable],
     quantization_config: BitsAndBytesConfig | None,
     postprocessor: RouterLogitsPostprocessor,
 ) -> None:
@@ -952,6 +958,7 @@ def populate_cache_multiprocess(
         postprocessor=postprocessor,
         top_k=top_k,
         hf_token=hf_token,
+        hookpoints=list(hookpoint_to_sparse_encode.keys()),
         quantization_config=quantization_config,
         log_path=log_path,
     )
@@ -1131,6 +1138,7 @@ def eval_intruder(
                 metric=metric,
                 metric_p=metric_p,
                 hf_token=hf_token,
+                hookpoint_to_sparse_encode=nrh,
                 quantization_config=quantization_config,
                 postprocessor=postprocessor,
             )
