@@ -248,9 +248,6 @@ def process_batch(
                 ):
                     layer_output = model.layers_output[layer_idx]
                     logger.trace(f"Layer output shape: {layer_output.shape}")
-                    logger.trace(
-                        f"Layer input shape: {model.layers_input[layer_idx].shape}"
-                    )
 
                     flattened_layer_output = layer_output.cpu()[padding_mask].save()
                     activations[str(ActivationKeys.LAYER_OUTPUT)][layer_idx].append(
