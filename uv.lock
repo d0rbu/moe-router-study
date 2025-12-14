@@ -2651,8 +2651,8 @@ wheels = [
 
 [[package]]
 name = "nnterp"
-version = "0.1.dev270+gb30506517"
-source = { git = "https://github.com/d0rbu/nnterp.git#b3050651703d7eca705349201bf170e1c8be736c" }
+version = "0.1.dev271+g314fca35c"
+source = { git = "https://github.com/d0rbu/nnterp.git#314fca35cc1f290154dee4ccdce2108f2cb19323" }
 dependencies = [
     { name = "loguru" },
     { name = "nnsight" },
