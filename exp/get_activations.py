@@ -175,6 +175,10 @@ def process_batch(
             logger.trace(f"Padding mask flattened: {padding_mask_flat}")
             logger.trace(f"Input ids shape: {encoded_minibatch['input_ids'].shape}")
             logger.trace(f"Input ids: {encoded_minibatch['input_ids']}")
+            logger.trace(f"Layer 0 input shape: {model.layers_input[0].shape}")
+            logger.trace(f"Layer 0 output shape: {model.layers_output[0].shape}")
+            logger.trace(f"Layer -1 output shape: {model.layers_output[-1].shape}")
+            logger.trace(f"Layer -1 input shape: {model.layers_input[-1].shape}")
 
             # Extract activations for each layer
             for layer_idx in tqdm(
@@ -214,8 +218,8 @@ def process_batch(
                             )
                     else:
                         router_scores = router_output
-                    logits = router_scores.cpu()[padding_mask_flat].save()
 
+                    logits = router_scores.cpu()[padding_mask_flat].save()
                     activations[str(ActivationKeys.ROUTER_LOGITS)][layer_idx].append(
                         logits.clone().detach()
                     )
@@ -248,6 +252,9 @@ def process_batch(
                 ):
                     layer_output = model.layers_output[layer_idx]
                     logger.trace(f"Layer output shape: {layer_output.shape}")
+                    logger.trace(
+                        f"Layer input shape: {model.layers_input[layer_idx].shape}"
+                    )
 
                     flattened_layer_output = layer_output.cpu()[padding_mask].save()
                     activations[str(ActivationKeys.LAYER_OUTPUT)][layer_idx].append(
