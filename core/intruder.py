@@ -11,6 +11,10 @@ from multiprocessing.synchronize import Event as MPEvent
 from pathlib import Path
 import queue
 import time
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 from jaxtyping import Float, Int
 from loguru import logger
@@ -389,7 +393,11 @@ class DiskCache:
         has_data = False
 
         for hookpoint in tqdm(
-            self._hookpoints, desc="Checking batch indices", position=0, leave=False, total=len(self._hookpoints)
+            self._hookpoints,
+            desc="Checking batch indices",
+            position=0,
+            leave=False,
+            total=len(self._hookpoints),
         ):
             hookpoint_dir = self._get_hookpoint_dir(hookpoint)
             batch_files = sorted(
@@ -417,26 +425,29 @@ class DiskCache:
         # Return the maximum batch index (0-indexed)
         return max_batch_idx if max_batch_idx >= 0 else None
 
-    def get_hookpoint_data(
+    def iter_hookpoint_batches(
         self, hookpoint: str
-    ) -> tuple[location_tensor_type, activation_tensor_type, token_tensor_type]:
+    ) -> Generator[
+        tuple[location_tensor_type, activation_tensor_type, token_tensor_type],
+        None,
+        None,
+    ]:
         """
-        Load all data for a hookpoint from disk.
+        Iterate over batch files for a hookpoint, yielding data one batch at a time.
+
+        This is memory-efficient for large datasets as it only loads one batch file
+        at a time.
 
         Args:
-            hookpoint: The hookpoint to load data for.
+            hookpoint: The hookpoint to iterate over.
 
-        Returns:
-            Tuple of (locations, activations, tokens) tensors.
+        Yields:
+            Tuple of (locations, activations, tokens) tensors for each batch file.
         """
         if not self._finalized:
             raise RuntimeError("Must call save() before accessing data")
 
         hookpoint_dir = self._get_hookpoint_dir(hookpoint)
-
-        locations_list = []
-        activations_list = []
-        tokens_list = []
 
         # Load all batch files for this hookpoint (sorted by flush index)
         batch_files = sorted(
@@ -444,14 +455,38 @@ class DiskCache:
             key=lambda p: int(p.stem),
         )
 
+        if not batch_files:
+            raise KeyError(f"No data found for hookpoint: {hookpoint}")
+
         for batch_file in batch_files:
             data = load_file(batch_file)
-            locations_list.append(data["locations"])
-            activations_list.append(data["activations"])
-            tokens_list.append(data["tokens"])
+            yield data["locations"], data["activations"], data["tokens"]
+            del data
+            gc.collect()
 
-        if not locations_list:
-            raise KeyError(f"No data found for hookpoint: {hookpoint}")
+    def get_hookpoint_data(
+        self, hookpoint: str
+    ) -> tuple[location_tensor_type, activation_tensor_type, token_tensor_type]:
+        """
+        Load all data for a hookpoint from disk.
+
+        WARNING: This loads all data into memory at once. For large datasets,
+        use iter_hookpoint_batches() instead.
+
+        Args:
+            hookpoint: The hookpoint to load data for.
+
+        Returns:
+            Tuple of (locations, activations, tokens) tensors.
+        """
+        locations_list = []
+        activations_list = []
+        tokens_list = []
+
+        for locations, activations, tokens in self.iter_hookpoint_batches(hookpoint):
+            locations_list.append(locations)
+            activations_list.append(activations)
+            tokens_list.append(tokens)
 
         locations = th.cat(locations_list, dim=0)
         activations = th.cat(activations_list, dim=0)

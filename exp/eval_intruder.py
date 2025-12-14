@@ -522,6 +522,8 @@ class LatentPathsCache(LatentCache):
         """
         Save the cached non-zero latent activations and locations in splits.
 
+        Uses streaming to avoid loading all data into memory at once.
+
         Args:
             n_splits: Number of splits to generate.
             save_dir: Directory to save the splits.
@@ -530,32 +532,77 @@ class LatentPathsCache(LatentCache):
         """
         width_splits = self._generate_split_indices(n_splits)
         for hookpoint in self.cache.hookpoints:
-            # Load all data for this hookpoint in a single disk read
-            latent_locations, latent_activations, tokens = (
-                self.cache.get_hookpoint_data(hookpoint)
-            )
-            tokens_np = tokens.numpy()
             split_indices = width_splits[hookpoint]
 
-            latent_indices = latent_locations[:, 2]
+            # Initialize accumulators for each split
+            split_locations: dict[tuple, list[th.Tensor]] = {
+                (start.item(), end.item()): [] for start, end in split_indices
+            }
+            split_activations: dict[tuple, list[th.Tensor]] = {
+                (start.item(), end.item()): [] for start, end in split_indices
+            }
+            tokens_list: list[th.Tensor] = []
 
+            # Stream through batch files and accumulate filtered data for each split
+            for batch_locations, batch_activations, batch_tokens in tqdm(
+                self.cache.iter_hookpoint_batches(hookpoint),
+                desc=f"Processing {hookpoint}",
+            ):
+                tokens_list.append(batch_tokens)
+                latent_indices = batch_locations[:, 2]
+
+                for start, end in split_indices:
+                    start_val, end_val = start.item(), end.item()
+                    mask = (latent_indices >= start) & (latent_indices <= end)
+
+                    if mask.any():
+                        # Clone to avoid memory issues with sliced tensors
+                        masked_locs = batch_locations[mask].clone()
+                        masked_acts = batch_activations[mask].clone()
+
+                        split_locations[(start_val, end_val)].append(masked_locs)
+                        split_activations[(start_val, end_val)].append(masked_acts)
+
+                # Clear batch data to free memory
+                del batch_locations, batch_activations, batch_tokens, latent_indices
+                gc.collect()
+
+            # Concatenate tokens once (they're the same across splits)
+            if tokens_list:
+                tokens_np = th.cat(tokens_list, dim=0).numpy()
+            else:
+                tokens_np = np.array([], dtype=np.int64)
+            del tokens_list
+
+            # Save each split
             for start, end in split_indices:
-                mask = (latent_indices >= start) & (latent_indices <= end)
+                start_val, end_val = start.item(), end.item()
+                key = (start_val, end_val)
 
-                masked_activations = latent_activations[mask].half().numpy()
+                if not split_locations[key]:
+                    # No data for this split
+                    continue
 
-                masked_locations = latent_locations[mask].numpy()
+                masked_locations = th.cat(split_locations[key], dim=0)
+                masked_activations = th.cat(split_activations[key], dim=0)
+
+                # Free the lists early
+                del split_locations[key], split_activations[key]
+
+                masked_activations_np = masked_activations.half().numpy()
+                masked_locations_np = masked_locations.numpy()
+                del masked_activations, masked_locations
 
                 # Optimization to reduce the max value to enable a smaller dtype
-                masked_locations[:, 2] = masked_locations[:, 2] - start.item()
+                masked_locations_np[:, 2] = masked_locations_np[:, 2] - start_val
 
                 if (
-                    masked_locations[:, 2].max() < 2**16
-                    and masked_locations[:, 0].max() < 2**16
+                    masked_locations_np[:, 2].max() < 2**16
+                    and masked_locations_np[:, 0].max() < 2**16
                 ):
-                    masked_locations = masked_locations.astype(np.uint16)
+                    masked_locations_np = masked_locations_np.astype(np.uint16)
                 else:
-                    masked_locations = masked_locations.astype(np.uint32)
+                    masked_locations_np = masked_locations_np.astype(np.uint32)
                     logger.warning(
                         "Increasing the number of splits might reduce the"
                         "memory usage of the cache."
@@ -564,16 +611,20 @@ class LatentPathsCache(LatentCache):
                 hookpoint_dir = save_dir / hookpoint
                 hookpoint_dir.mkdir(parents=True, exist_ok=True)
 
-                output_file = hookpoint_dir / f"{start}_{end}.safetensors"
+                output_file = hookpoint_dir / f"{start_val}_{end_val}.safetensors"
 
                 split_data = {
-                    "locations": masked_locations,
-                    "activations": masked_activations,
+                    "locations": masked_locations_np,
+                    "activations": masked_activations_np,
                 }
                 if save_tokens:
                     split_data["tokens"] = tokens_np
 
                 save_file(split_data, output_file)
+                del split_data, masked_locations_np, masked_activations_np
+
+            del tokens_np
+            gc.collect()
 
     def generate_statistics_cache(self):
         """
