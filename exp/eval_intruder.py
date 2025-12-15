@@ -432,8 +432,11 @@ class LatentPathsCache(LatentCache):
 
                 router_shape = self.model.routers[layer_with_router].weight.shape
                 flattened_path_dim = router_shape[0] * len(layers_with_routers)
-                for hookpoint in self.hookpoint_to_sparse_encode:
-                    self.widths[hookpoint] = flattened_path_dim
+                sample_activation = th.randn((1, 1, flattened_path_dim))
+
+                for hookpoint, sparse_encode in self.hookpoint_to_sparse_encode.items():
+                    sample_sae_latents = sparse_encode(sample_activation)
+                    self.widths[hookpoint] = sample_sae_latents.shape[2]
 
                 logger.debug(f"Widths: {self.widths}")
                 logger.debug(f"Hookpoints: {self.hookpoint_to_sparse_encode.keys()}")
@@ -768,8 +771,11 @@ class MultiGPULatentPathsCache(LatentPathsCache):
                     "th.Tensor", model.routers[layer_with_router].weight
                 ).shape
                 flattened_path_dim = router_shape[0] * len(layers_with_routers)
-                for hookpoint in self.hookpoints:
-                    self.widths[hookpoint] = flattened_path_dim
+                sample_activation = th.randn((1, 1, flattened_path_dim))
+
+                for hookpoint, sparse_encode in self.hookpoint_to_sparse_encode.items():
+                    sample_sae_latents = sparse_encode(sample_activation)
+                    self.widths[hookpoint] = sample_sae_latents.shape[2]
 
                 logger.debug(f"Widths: {self.widths}")
                 logger.debug(f"Hookpoints: {self.hookpoints}")
@@ -1060,6 +1066,7 @@ def eval_intruder(
     postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
     metric: str = "dot_product",
     metric_p: float = 2.0,
+    n_splits: int = 500,
 ) -> None:
     logger.remove()
     logger.add(sys.stderr, level=log_level)
@@ -1134,6 +1141,7 @@ def eval_intruder(
             cache_ctx_len=ctxlen,
             batch_size=batchsize,
             n_tokens=n_tokens,
+            n_splits=n_splits,
         ),
         constructor_cfg=ConstructorConfig(
             example_ctx_len=example_ctx_len,
