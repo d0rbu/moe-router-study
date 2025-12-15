@@ -677,7 +677,7 @@ class MultiGPULatentPathsCache(LatentPathsCache):
         postprocessor: RouterLogitsPostprocessor,
         top_k: int,
         hf_token: str,
-        hookpoints: list[str],
+        hookpoint_to_sparse_encode: dict[str, Callable],
         quantization_config: BitsAndBytesConfig | None,
         log_path: Path | None = None,
         buffer_flush_size: int = 131072,
@@ -719,7 +719,7 @@ class MultiGPULatentPathsCache(LatentPathsCache):
         self.postprocessor = postprocessor
         self.top_k = top_k
         self.hf_token = hf_token
-        self.hookpoints = hookpoints
+        self.hookpoint_to_sparse_encode = hookpoint_to_sparse_encode
         self.quantization_config = quantization_config
 
     def run(self, n_tokens: int, tokens: th.Tensor):
@@ -778,7 +778,7 @@ class MultiGPULatentPathsCache(LatentPathsCache):
                     self.widths[hookpoint] = sample_sae_latents.shape[2]
 
                 logger.debug(f"Widths: {self.widths}")
-                logger.debug(f"Hookpoints: {self.hookpoints}")
+                logger.debug(f"Hookpoints: {self.hookpoint_to_sparse_encode.keys()}")
                 return
 
         batches_to_process = total_batches - start_batch_idx
@@ -1019,7 +1019,7 @@ def populate_cache_multiprocess(
         postprocessor=postprocessor,
         top_k=top_k,
         hf_token=hf_token,
-        hookpoints=list(hookpoint_to_sparse_encode.keys()),
+        hookpoint_to_sparse_encode=hookpoint_to_sparse_encode,
         quantization_config=quantization_config,
         log_path=log_path,
     )

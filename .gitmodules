@@ -1,6 +1,3 @@
 [submodule "delphi"]
 	path = delphi
 	url = https://github.com/d0rbu/delphi
-[submodule "axbench"]
-	path = axbench
-	url = https://github.com/d0rbu/axbench
