@@ -459,7 +459,7 @@ def extract_metrics(results: list[EvaluationResults]) -> pd.DataFrame:
                     if isinstance(metric_value, int | float):
                         row[f"saebench_{eval_name}_{metric_name}"] = metric_value
                         saebench_metrics_count += 1
-        logger.debug(f"  SAEBench metrics extracted: {saebench_metrcs_count}")
+        logger.debug(f"  SAEBench metrics extracted: {saebench_metrics_count}")
 
         # Extract intruder metrics (average score)
         if result.intruder_results:
