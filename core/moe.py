@@ -112,7 +112,7 @@ class CentroidProjection(nn.Module):
         Returns:
             Tensor of shape (..., C) containing centroid activations/distances
         """
-        self.centroids = self.centroids.to(x.device)
+        self.centroids = self.centroids.to(device=x.device, dtype=x.dtype)
         return self.metric_fn(x, self.centroids, self.p)
 
 
