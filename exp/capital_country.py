@@ -164,7 +164,10 @@ PROMPT_TEMPLATES = [
         {"role": "assistant", "content": "The capital of {country} is "},
     ],
     [
-        {"role": "user", "content": "Can you tell me what the capital of {country} is?"},
+        {
+            "role": "user",
+            "content": "Can you tell me what the capital of {country} is?",
+        },
         {"role": "assistant", "content": "Sure! The capital of {country} is "},
     ],
     [

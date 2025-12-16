@@ -310,7 +310,12 @@ class TestModelConfig:
 
     def test_get_checkpoint_no_params(self):
         """Test get_checkpoint with no parameters."""
-        config = ModelConfig(hf_name="test/model", total_steps=2000, total_tokens=10000, eager_fetch=False)
+        config = ModelConfig(
+            hf_name="test/model",
+            total_steps=2000,
+            total_tokens=10000,
+            eager_fetch=False,
+        )
         config.checkpoints = [
             Checkpoint(1000, 5000, config),
             Checkpoint(2000, 10000, config),
