@@ -22,18 +22,17 @@ Usage:
         --alpha 2.0
 """
 
-import arguably
 from dataclasses import dataclass
+import sys
+from typing import Any, cast
+
+import arguably
 from loguru import logger
 from nnterp import StandardizedTransformer
-import sys
 import torch as th
-from typing import cast
 
 from core.dtype import get_dtype
 from core.model import get_model_config
-from core.moe import convert_router_logits_to_paths
-
 
 # List of well-known countries for the experiment
 COUNTRIES = [
@@ -279,7 +278,6 @@ def capital_country(
     # Get model architecture info
     model_config_hf = cast("Any", model.config)
     num_experts = model_config_hf.num_experts
-    num_router_layers = len(model.layers_with_routers)
     top_k = model_config_hf.num_experts_per_tok
 
     logger.info(f"Number of experts: {num_experts}")
@@ -316,7 +314,7 @@ def capital_country(
                     capital=capital,
                     template_idx=template_idx,
                     messages=messages,
-                    formatted_text=cast(str, formatted),
+                    formatted_text=cast("str", formatted),
                     token_ids=token_ids,
                 )
             )
