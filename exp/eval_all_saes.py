@@ -278,7 +278,7 @@ def load_saebench_results(
 
     # SAEBench saves results in the experiment directory
     # Look for result files
-    result_files = list(experiment_dir.glob("**/results*.json"))
+    result_files = list(experiment_dir.glob("**/*results*.json"))
     logger.debug(f"Found {len(result_files)} potential SAEBench result files")
     if result_files:
         logger.trace(f"SAEBench result files: {[f.name for f in result_files]}")
@@ -387,7 +387,7 @@ def aggregate_results(
             # If no results at SAE level, try at eval_results directory
             if not saebench_results and not intruder_results:
                 logger.debug(
-                    f"    No results at SAE level, trying eval_results directory: {sae_info.sae_dir / 'eval_results'}"
+                    f"    No results at SAE level, trying default directory: {DEFAULT_EVAL_RESULTS_DIR}"
                 )
                 saebench_results = load_saebench_results(Path(DEFAULT_EVAL_RESULTS_DIR), sae_id)
                 intruder_results = load_intruder_results(Path(DEFAULT_EVAL_RESULTS_DIR), sae_id)
@@ -460,7 +460,7 @@ def extract_metrics(results: list[EvaluationResults]) -> pd.DataFrame:
                     if isinstance(metric_value, int | float):
                         row[f"saebench_{eval_name}_{metric_name}"] = metric_value
                         saebench_metrics_count += 1
-        logger.debug(f"  SAEBench metrics extracted: {saebench_metrics_count}")
+        logger.debug(f"  SAEBench metrics extracted: {saebench_metrcs_count}")
 
         # Extract intruder metrics (average score)
         if result.intruder_results:
