@@ -347,6 +347,9 @@ def load_intruder_results(
     return results
 
 
+DEFAULT_EVAL_RESULTS_DIR = "eval_results"
+
+
 def aggregate_results(
     experiments: list[SAEExperiment],
 ) -> list[EvaluationResults]:
@@ -380,6 +383,14 @@ def aggregate_results(
                 )
                 saebench_results = load_saebench_results(sae_info.sae_dir, sae_id)
                 intruder_results = load_intruder_results(sae_info.sae_dir, sae_id)
+
+            # If no results at SAE level, try at eval_results directory
+            if not saebench_results and not intruder_results:
+                logger.debug(
+                    f"    No results at SAE level, trying eval_results directory: {sae_info.sae_dir / 'eval_results'}"
+                )
+                saebench_results = load_saebench_results(Path(DEFAULT_EVAL_RESULTS_DIR), sae_id)
+                intruder_results = load_intruder_results(Path(DEFAULT_EVAL_RESULTS_DIR), sae_id)
 
             # Check if we still have no evaluation results after trying both locations
             if not saebench_results and not intruder_results:
