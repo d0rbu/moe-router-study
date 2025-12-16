@@ -267,18 +267,17 @@ def run_intruder_eval(
 
 
 def load_saebench_results(
-    experiment_dir: Path, sae_id: str | None = None
+    experiment_dir: Path, sae_id: str
 ) -> dict[str, Any]:
     """Load SAEBench evaluation results."""
     results = {}
     logger.debug(
-        f"Loading SAEBench results from {experiment_dir}"
-        + (f" for SAE {sae_id}" if sae_id else "")
+        f"Loading SAEBench results from {experiment_dir} for SAE {sae_id}"
     )
 
     # SAEBench saves results in the experiment directory
     # Look for result files
-    result_files = list(experiment_dir.glob("**/*results*.json"))
+    result_files = list(experiment_dir.glob(f"**/*_{sae_id}_*results*.json"))
     logger.debug(f"Found {len(result_files)} potential SAEBench result files")
     if result_files:
         logger.trace(f"SAEBench result files: {[f.name for f in result_files]}")
