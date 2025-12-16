@@ -506,7 +506,7 @@ def run_eval(
     name = f"raw_{activation_key}_layers_{layers_str}"
 
     # Get total feature dimension
-    total_dim = layers * cast("PretrainedConfig", model.config).d_model
+    total_dim = layers * model.config.d_model
 
     sae_result_path = os.path.join(output_path, f"{name}_eval_results.json")
 
