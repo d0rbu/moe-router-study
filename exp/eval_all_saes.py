@@ -266,14 +266,10 @@ def run_intruder_eval(
         return False
 
 
-def load_saebench_results(
-    experiment_dir: Path, sae_id: str
-) -> dict[str, Any]:
+def load_saebench_results(experiment_dir: Path, sae_id: str) -> dict[str, Any]:
     """Load SAEBench evaluation results."""
     results = {}
-    logger.debug(
-        f"Loading SAEBench results from {experiment_dir} for SAE {sae_id}"
-    )
+    logger.debug(f"Loading SAEBench results from {experiment_dir} for SAE {sae_id}")
 
     # SAEBench saves results in the experiment directory
     # Look for result files
@@ -388,8 +384,12 @@ def aggregate_results(
                 logger.debug(
                     f"    No results at SAE level, trying default directory: {DEFAULT_EVAL_RESULTS_DIR}"
                 )
-                saebench_results = load_saebench_results(Path(DEFAULT_EVAL_RESULTS_DIR), sae_id)
-                intruder_results = load_intruder_results(Path(DEFAULT_EVAL_RESULTS_DIR), sae_id)
+                saebench_results = load_saebench_results(
+                    Path(DEFAULT_EVAL_RESULTS_DIR), sae_id
+                )
+                intruder_results = load_intruder_results(
+                    Path(DEFAULT_EVAL_RESULTS_DIR), sae_id
+                )
 
             # Check if we still have no evaluation results after trying both locations
             if not saebench_results and not intruder_results:
@@ -459,6 +459,7 @@ def extract_metrics(results: list[EvaluationResults]) -> pd.DataFrame:
                     if isinstance(metric_value, int | float):
                         row[f"saebench_{eval_name}_{metric_name}"] = metric_value
                         saebench_metrics_count += 1
+
         logger.debug(f"  SAEBench metrics extracted: {saebench_metrics_count}")
 
         # Extract intruder metrics (average score)

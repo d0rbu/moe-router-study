@@ -35,13 +35,7 @@ def main(
 
     if not eval_types:
         eval_types = [
-            "absorption",
             "autointerp",
-            "core",
-            "scr",
-            "tpp",
-            "sparse_probing",
-            "unlearning",
         ]
 
     th_dtype = get_dtype(dtype)
