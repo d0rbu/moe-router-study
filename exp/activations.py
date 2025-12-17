@@ -32,7 +32,7 @@ def broadcast_variable_length_list[T](
         kwargs = {}
 
     # In non-distributed mode, just call the function directly
-    if not dist.is_initialized():  # type: ignore[possibly-unbound-attribute]
+    if not dist.is_initialized():
         return list_fn(*args, **kwargs)
 
     # Broadcast the number of items first
@@ -41,7 +41,7 @@ def broadcast_variable_length_list[T](
         items = list_fn(*args, **kwargs)
         num_items[0] = len(items)
 
-    dist.broadcast_object_list(num_items, src=src)  # type: ignore[possibly-unbound-attribute]
+    dist.broadcast_object_list(num_items, src=src)
     num_items = num_items[0]
     assert isinstance(num_items, int), "num_items should be an integer after broadcast"
 
@@ -54,7 +54,7 @@ def broadcast_variable_length_list[T](
     if get_rank() != 0:
         items = [None] * num_items
 
-    dist.broadcast_object_list(items, src=src)  # type: ignore[possibly-unbound-attribute]
+    dist.broadcast_object_list(items, src=src)
     logger.trace(f"Rank {src} broadcasted {num_items} items")
 
     # At this point, items contains the actual values from rank 0
@@ -93,7 +93,7 @@ class Activations:
         debug: bool = False,
         device_type: DeviceType = "cuda",
     ) -> "Activations":
-        if world_size > 1 and not (dist.is_available() and dist.is_initialized()):  # type: ignore[possibly-unbound-attribute]
+        if world_size > 1 and not (dist.is_available() and dist.is_initialized()):
             raise RuntimeError(
                 "PyTorch distributed training is not initialized. "
                 "Ensure that PyTorch distributed training is initialized with "
@@ -140,8 +140,8 @@ class Activations:
             activations = th.load(filepath, weights_only=False)
             num_tokens += activations[ActivationKeys.MLP_OUTPUT].shape[0]
 
-        if dist.is_initialized():  # type: ignore[possibly-unbound-attribute]
-            dist.all_reduce(num_tokens, op=dist.ReduceOp.SUM)  # type: ignore[possibly-unbound-attribute]
+        if dist.is_initialized():
+            dist.all_reduce(num_tokens, op=dist.ReduceOp.SUM)
         self._total_tokens = num_tokens.item()
 
         return self._total_tokens
@@ -351,8 +351,8 @@ class Activations:
         activation_files_dir = os.path.join(activation_dir, shuffle_dirname)
         if get_rank() == 0:
             os.makedirs(activation_files_dir, exist_ok=True)
-        if dist.is_initialized():  # type: ignore[possibly-unbound-attribute]
-            dist.barrier()  # type: ignore[possibly-unbound-attribute]
+        if dist.is_initialized():
+            dist.barrier()
 
         activation_filepaths = cls.get_activation_filepaths(
             activation_files_dir, debug=debug
@@ -454,7 +454,7 @@ class Activations:
         backend = get_backend(device_type)
 
         # Set rank and world_size based on cpu_only mode or distributed initialization
-        if cpu_only or not dist.is_initialized():  # type: ignore[possibly-unbound-attribute]
+        if cpu_only or not dist.is_initialized():
             rank = 0
             world_size = 1
             activation_filepaths = cls.get_activation_filepaths(activation_dir, debug)
@@ -503,8 +503,8 @@ class Activations:
                 del data
                 del future
 
-        if not cpu_only and dist.is_initialized():  # type: ignore[possibly-unbound-attribute]
-            dist.all_reduce(all_batch_sizes, op=dist.ReduceOp.SUM)  # type: ignore[possibly-unbound-attribute]
+        if not cpu_only and dist.is_initialized():
+            dist.all_reduce(all_batch_sizes, op=dist.ReduceOp.SUM)
 
         current_batch = defaultdict(list)
         current_batch_idx = 0
@@ -623,11 +623,11 @@ class Activations:
         total_tokens += num_batch_tokens
         total_tokens = th.tensor(total_tokens, dtype=th.int32)
 
-        if cpu_only or not dist.is_initialized():  # type: ignore[possibly-unbound-attribute]
+        if cpu_only or not dist.is_initialized():
             remaining_stacked_batches = [cls._stack_batch_for_gather(current_batch)]
             logger.debug(f"Total tokens: {total_tokens.item()}")
         else:
-            dist.reduce(total_tokens, dst=0, op=dist.ReduceOp.SUM)  # type: ignore[possibly-unbound-attribute]
+            dist.reduce(total_tokens, dst=0, op=dist.ReduceOp.SUM)
 
             if rank == 0:
                 remaining_stacked_batches = [None] * world_size
@@ -637,7 +637,7 @@ class Activations:
 
             # Stack lists of tensors before gathering to improve performance
             stacked_current_batch = cls._stack_batch_for_gather(current_batch)
-            dist.gather_object(stacked_current_batch, remaining_stacked_batches, dst=0)  # type: ignore[possibly-unbound-attribute]
+            dist.gather_object(stacked_current_batch, remaining_stacked_batches, dst=0)
 
         if rank == 0:
             assert remaining_stacked_batches is not None
@@ -713,7 +713,7 @@ class Activations:
         else:
             renamed_activation_filepaths = []
 
-        if not cpu_only and dist.is_initialized():  # type: ignore[possibly-unbound-attribute]
+        if not cpu_only and dist.is_initialized():
             renamed_activation_filepaths = broadcast_variable_length_list(
                 lambda: renamed_activation_filepaths,
                 src=0,
@@ -816,7 +816,7 @@ async def load_activations_and_init_dist(
 
     if world_size > 1:
         logger.debug("Initializing distributed process group")
-        dist.init_process_group(backend="gloo", rank=rank, world_size=world_size)  # type: ignore[possibly-unbound-attribute]
+        dist.init_process_group(backend="gloo", rank=rank, world_size=world_size)
         logger.info(f"Rank {rank} initialized gloo group")
     else:
         logger.debug(
@@ -830,11 +830,11 @@ async def load_activations_and_init_dist(
         num_devices = backend.device_count()
         logger.debug(f"Number of devices: {num_devices}")
 
-    if dist.is_initialized():  # type: ignore[possibly-unbound-attribute]
+    if dist.is_initialized():
         init_distributed_logging()
 
     # Log whether we're running in distributed mode or not
-    if dist.is_initialized():  # type: ignore[possibly-unbound-attribute]
+    if dist.is_initialized():
         logger.info(f"Running in distributed mode with {get_world_size()} nodes")
     else:
         logger.info("Running in non-distributed mode (world_size=1)")
