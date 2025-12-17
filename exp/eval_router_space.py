@@ -7,7 +7,6 @@ and runs eval_all_paths on it to evaluate the raw MoE router output space.
 
 import os
 import sys
-from typing import TYPE_CHECKING, cast
 
 import arguably
 from loguru import logger
@@ -21,9 +20,6 @@ from core.moe import RouterLogitsPostprocessor
 from exp import OUTPUT_DIR
 from exp.eval_all_paths import eval_all_paths
 from exp.kmeans import KMEANS_FILENAME, KMEANS_TYPE, METADATA_FILENAME
-
-if TYPE_CHECKING:
-    from transformers import PretrainedConfig
 
 
 @arguably.command()
@@ -85,7 +81,7 @@ def eval_router_space(
 
     # Get architecture info
     num_layers = len(model.layers_with_routers)
-    model_config = cast("PretrainedConfig", model.config)
+    model_config = model.config
     num_experts = model_config.num_experts
 
     assert isinstance(num_experts, int), (

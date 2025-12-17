@@ -89,7 +89,7 @@ class TestMlpGpu:
 
                 for component in router_components:
                     assert component in result
-                    assert result[component] == 0  # GPU device 0
+                    assert result[component] == "0"  # GPU device 0
 
     def test_mlp_gpu_expert_components(self):
         """Test that MLP expert components are mapped to GPU."""
@@ -108,7 +108,7 @@ class TestMlpGpu:
 
                 for component in expert_components:
                     assert component in result
-                    assert result[component] == 0  # GPU device 0
+                    assert result[component] == "0"  # GPU device 0
 
     def test_mlp_gpu_layernorm_components(self):
         """Test that layer norm components are mapped to CPU."""
@@ -179,7 +179,7 @@ class TestAttnGpu:
 
         for component in base_components:
             assert component in result
-            assert result[component] == 0  # GPU device 0
+            assert result[component] == "0"  # GPU device 0
 
     def test_attn_gpu_attention_components(self):
         """Test that attention components are mapped to GPU."""
@@ -199,7 +199,7 @@ class TestAttnGpu:
 
                 for component in attention_components:
                     assert component in result
-                    assert result[component] == 0  # GPU device 0
+                    assert result[component] == "0"  # GPU device 0
 
     def test_attn_gpu_mlp_router_components(self):
         """Test that MLP router components are mapped to GPU."""
@@ -215,7 +215,7 @@ class TestAttnGpu:
 
                 for component in router_components:
                     assert component in result
-                    assert result[component] == 0  # GPU device 0
+                    assert result[component] == "0"  # GPU device 0
 
     def test_attn_gpu_expert_components(self):
         """Test that MLP expert components are mapped to CPU."""
@@ -250,7 +250,7 @@ class TestAttnGpu:
 
                 for component in layernorm_components:
                     assert component in result
-                    assert result[component] == 0  # GPU device 0
+                    assert result[component] == "0"  # GPU device 0
 
 
 class TestDeviceMappingComparison:
@@ -274,22 +274,22 @@ class TestDeviceMappingComparison:
 
         for component in base_components:
             assert mlp_result[component] == "cpu"
-            assert attn_result[component] == 0
+            assert attn_result[component] == "0"
 
         # Attention components: mlp_gpu -> CPU, attn_gpu -> GPU
         attn_component = "model.layers.0.self_attn.q_proj.weight"
         assert mlp_result[attn_component] == "cpu"
-        assert attn_result[attn_component] == 0
+        assert attn_result[attn_component] == "0"
 
         # Expert components: mlp_gpu -> GPU, attn_gpu -> CPU
         expert_component = "model.layers.0.mlp.experts.0.gate_proj.weight"
-        assert mlp_result[expert_component] == 0
+        assert mlp_result[expert_component] == "0"
         assert attn_result[expert_component] == "cpu"
 
         # Router components: both -> GPU
         router_component = "model.layers.0.mlp.router.weight"
-        assert mlp_result[router_component] == 0
-        assert attn_result[router_component] == 0
+        assert mlp_result[router_component] == "0"
+        assert attn_result[router_component] == "0"
 
     def test_device_mapping_completeness(self):
         """Test that device mappings cover all expected component types."""
@@ -360,7 +360,7 @@ class TestCustomDevicesIntegration:
 
             # All values should be valid device specifications
             for value in device_map.values():
-                assert value in ["cpu", 0] or isinstance(value, int)
+                assert value in ["cpu", "0", 0] or isinstance(value, int)
 
 
 class TestDeviceMappingEdgeCases:

@@ -3,6 +3,7 @@ from collections.abc import Callable
 from functools import partial
 import gc
 import json
+from multiprocessing.synchronize import Event
 from pathlib import Path
 import queue
 import sys
@@ -68,7 +69,7 @@ def _gpu_worker(
     work_queue: mp.Queue,
     result_queue: mp.Queue,
     log_queue: mp.Queue,
-    close_event: mp.Event,
+    close_event: Event,
     model_name: str,
     model_revision: str,
     model_dtype: th.dtype,
@@ -162,7 +163,7 @@ def _gpu_worker(
 GPU_LOG_FILE = "gpu_log.txt"
 
 
-def _log_worker(log_queue: mp.Queue, close_event: mp.Event):
+def _log_worker(log_queue: mp.Queue, close_event: Event):
     """Worker that logs messages from the log queue."""
     with open(GPU_LOG_FILE, "w") as f:
         f.write("Logging started\n")
@@ -790,7 +791,7 @@ class MultiGPULatentPathsCache(LatentPathsCache):
         work_queue: mp.Queue = ctx.Queue()
         result_queue: mp.Queue = ctx.Queue(maxsize=self.RESULT_QUEUE_MAX_SIZE)
         log_queue: mp.Queue = ctx.Queue()
-        close_event: mp.Event = ctx.Event()
+        close_event: Event = ctx.Event()
 
         # Fill work queue (skip already-processed batches)
         for batch_idx, batch_tokens in enumerate(
