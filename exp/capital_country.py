@@ -25,16 +25,12 @@ Usage:
 from dataclasses import dataclass
 from enum import Enum
 import sys
-from typing import TYPE_CHECKING, cast
 
 import arguably
 from loguru import logger
 from nnterp import StandardizedTransformer
 import torch as th
 from tqdm import tqdm
-
-if TYPE_CHECKING:
-    from transformers import PreTrainedConfig
 
 from core.dtype import get_dtype
 from core.model import get_model_config
@@ -95,7 +91,7 @@ COUNTRY_TO_CAPITAL = {
 
 
 # Single-turn phrasings for asking about capitals
-SINGLE_TURN_PROMPT_TEMPLATES = [
+SINGLE_TURN_PROMPT_TEMPLATES = {
     # Direct questions with varied responses
     [
         {"role": "user", "content": "What is the capital of {country}?"},
@@ -106,7 +102,10 @@ SINGLE_TURN_PROMPT_TEMPLATES = [
         {"role": "assistant", "content": "{country}'s capital city is "},
     ],
     [
-        {"role": "user", "content": "Which city serves as the capital of {country}?"},
+        {
+            "role": "user",
+            "content": "Which city serves as the capital of {country}?",
+        },
         {
             "role": "assistant",
             "content": "The city that serves as {country}'s capital is ",
@@ -146,7 +145,10 @@ SINGLE_TURN_PROMPT_TEMPLATES = [
         {"role": "assistant", "content": "Yes, it's "},
     ],
     [
-        {"role": "user", "content": "I'm trying to remember the capital of {country}."},
+        {
+            "role": "user",
+            "content": "I'm trying to remember the capital of {country}.",
+        },
         {"role": "assistant", "content": "The capital of {country} is "},
     ],
     [
@@ -178,7 +180,10 @@ SINGLE_TURN_PROMPT_TEMPLATES = [
         {"role": "assistant", "content": "The answer is "},
     ],
     [
-        {"role": "user", "content": "Trivia question: Name {country}'s capital city."},
+        {
+            "role": "user",
+            "content": "Trivia question: Name {country}'s capital city.",
+        },
         {"role": "assistant", "content": "{country}'s capital city is "},
     ],
     [
@@ -201,7 +206,10 @@ SINGLE_TURN_PROMPT_TEMPLATES = [
             "role": "user",
             "content": "Where is the government of {country} located?",
         },
-        {"role": "assistant", "content": "The government of {country} is located in "},
+        {
+            "role": "assistant",
+            "content": "The government of {country} is located in ",
+        },
     ],
     [
         {
@@ -267,10 +275,10 @@ SINGLE_TURN_PROMPT_TEMPLATES = [
         },
         {"role": "assistant", "content": "The capital of {country} is "},
     ],
-]
+}
 
 # Multi-turn phrasings with conversational context
-MULTI_TURN_PROMPT_TEMPLATES = [
+MULTI_TURN_PROMPT_TEMPLATES = {
     # Learning context
     [
         {"role": "user", "content": "I'm learning about {country}."},
@@ -441,10 +449,10 @@ MULTI_TURN_PROMPT_TEMPLATES = [
         {"role": "user", "content": "Where's the capital located?"},
         {"role": "assistant", "content": "The capital of {country} is "},
     ],
-]
+}
 
 # Combined templates for convenience
-PROMPT_TEMPLATES = SINGLE_TURN_PROMPT_TEMPLATES + MULTI_TURN_PROMPT_TEMPLATES
+PROMPT_TEMPLATES = SINGLE_TURN_PROMPT_TEMPLATES | MULTI_TURN_PROMPT_TEMPLATES
 
 
 class ExperimentType(Enum):
@@ -552,7 +560,7 @@ def capital_country(
     logger.info(f"Layers with routers: {model.layers_with_routers}")
 
     # Get model architecture info
-    model_config_hf = cast("PreTrainedConfig", model.config)
+    model_config_hf = model.config
     num_experts = model_config_hf.num_experts
     top_k = model_config_hf.num_experts_per_tok
 
@@ -561,7 +569,7 @@ def capital_country(
 
     # Generate prompts for all countries
     logger.info("Generating prompts for all countries...")
-    all_prompts: list[CountryPrompt] = []
+    all_prompts: set[CountryPrompt] = set()
 
     for country, capital in tqdm(
         COUNTRY_TO_CAPITAL.items(),
@@ -570,8 +578,8 @@ def capital_country(
         leave=False,
         position=1,
     ):
-        for template_idx, template in tqdm(
-            enumerate(PROMPT_TEMPLATES),
+        for template in tqdm(
+            PROMPT_TEMPLATES,
             desc=f"Generating prompts for {country}",
             total=len(PROMPT_TEMPLATES),
             leave=False,
@@ -598,11 +606,10 @@ def capital_country(
             # Tokenize
             token_ids = tokenizer(formatted, return_tensors="pt").input_ids[0]
 
-            all_prompts.append(
+            all_prompts.add(
                 CountryPrompt(
                     country=country,
                     capital=capital,
-                    template_idx=template_idx,
                     messages=messages,
                     formatted_text=formatted,
                     token_ids=token_ids,
