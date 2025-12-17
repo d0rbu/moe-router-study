@@ -23,6 +23,7 @@ Usage:
 """
 
 from dataclasses import dataclass
+from enum import Enum
 import sys
 from typing import TYPE_CHECKING, cast
 
@@ -30,66 +31,13 @@ import arguably
 from loguru import logger
 from nnterp import StandardizedTransformer
 import torch as th
+from tqdm import tqdm
 
 if TYPE_CHECKING:
     from transformers import PreTrainedConfig
 
 from core.dtype import get_dtype
 from core.model import get_model_config
-
-# List of well-known countries for the experiment
-COUNTRIES = [
-    "France",
-    "Germany",
-    "Italy",
-    "Spain",
-    "United Kingdom",
-    "United States",
-    "Canada",
-    "Mexico",
-    "Brazil",
-    "Argentina",
-    "China",
-    "Japan",
-    "South Korea",
-    "India",
-    "Australia",
-    "Russia",
-    "Egypt",
-    "South Africa",
-    "Nigeria",
-    "Kenya",
-    "Saudi Arabia",
-    "Turkey",
-    "Israel",
-    "Greece",
-    "Poland",
-    "Sweden",
-    "Norway",
-    "Denmark",
-    "Finland",
-    "Netherlands",
-    "Belgium",
-    "Switzerland",
-    "Austria",
-    "Portugal",
-    "Ireland",
-    "New Zealand",
-    "Singapore",
-    "Thailand",
-    "Vietnam",
-    "Indonesia",
-    "Malaysia",
-    "Philippines",
-    "Pakistan",
-    "Bangladesh",
-    "Iran",
-    "Iraq",
-    "Afghanistan",
-    "Ukraine",
-    "Czech Republic",
-    "Hungary",
-]
 
 # Map countries to their capitals
 COUNTRY_TO_CAPITAL = {
@@ -499,11 +447,24 @@ MULTI_TURN_PROMPT_TEMPLATES = [
 PROMPT_TEMPLATES = SINGLE_TURN_PROMPT_TEMPLATES + MULTI_TURN_PROMPT_TEMPLATES
 
 
+class ExperimentType(Enum):
+    """Type of experiment for path extraction."""
+
+    PRE_ANSWER = "pre_answer"
+    """Extract paths from the token right before the answer (e.g., "is")."""
+
+    ASSISTANT_RESPONSE = "assistant_response"
+    """Extract paths from all tokens in the assistant response."""
+
+    FROM_COUNTRY_MENTION = "from_country_mention"
+    """Extract paths from all tokens starting from the first country mention."""
+
+
 @dataclass
 class PathExtractionConfig:
     """Configuration for path extraction experiments."""
 
-    experiment_type: str  # "pre_answer", "assistant_response", "from_country_mention"
+    experiment_type: ExperimentType
 
 
 @dataclass
@@ -512,7 +473,6 @@ class CountryPrompt:
 
     country: str
     capital: str
-    template_idx: int
     messages: list[dict[str, str]]
     formatted_text: str
     token_ids: th.Tensor  # (seq_len,)
@@ -525,7 +485,7 @@ class RouterPath:
     country: str
     template_idx: int
     paths: th.Tensor  # (num_layers, num_experts) - binary activation patterns
-    token_positions: list[int]  # Positions of tokens used for averaging
+    experiment_type: ExperimentType
 
 
 @arguably.command()
@@ -562,8 +522,8 @@ def capital_country(
     th.manual_seed(seed)
 
     # Validate target country
-    if target_country not in COUNTRIES:
-        raise ValueError(f"Target country '{target_country}' not in COUNTRIES list")
+    if target_country not in COUNTRY_TO_CAPITAL:
+        raise ValueError(f"Target country '{target_country}' not in COUNTRY_TO_CAPITAL")
 
     # Get model configuration
     model_config = get_model_config(model_name)
@@ -603,10 +563,20 @@ def capital_country(
     logger.info("Generating prompts for all countries...")
     all_prompts: list[CountryPrompt] = []
 
-    for country in COUNTRIES:
-        capital = COUNTRY_TO_CAPITAL[country]
-
-        for template_idx, template in enumerate(PROMPT_TEMPLATES):
+    for country, capital in tqdm(
+        COUNTRY_TO_CAPITAL.items(),
+        desc="Generating prompts for all countries",
+        total=len(COUNTRY_TO_CAPITAL),
+        leave=False,
+        position=1,
+    ):
+        for template_idx, template in tqdm(
+            enumerate(PROMPT_TEMPLATES),
+            desc=f"Generating prompts for {country}",
+            total=len(PROMPT_TEMPLATES),
+            leave=False,
+            position=0,
+        ):
             # Format messages with country
             messages = [
                 {
@@ -655,7 +625,7 @@ def capital_country(
     logger.info("EXPERIMENT SKELETON COMPLETE")
     logger.info("=" * 80)
     logger.info(f"Total prompts generated: {len(all_prompts)}")
-    logger.info(f"Countries tested: {len(COUNTRIES)}")
+    logger.info(f"Countries tested: {len(COUNTRY_TO_CAPITAL)}")
     logger.info(f"Templates per country: {len(PROMPT_TEMPLATES)}")
     logger.info(f"Target country for analysis: {target_country}")
     logger.info("Next steps:")
