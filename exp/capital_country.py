@@ -24,12 +24,15 @@ Usage:
 
 from dataclasses import dataclass
 import sys
-from typing import Any, cast
+from typing import TYPE_CHECKING, cast
 
 import arguably
 from loguru import logger
 from nnterp import StandardizedTransformer
 import torch as th
+
+if TYPE_CHECKING:
+    from transformers import PreTrainedConfig
 
 from core.dtype import get_dtype
 from core.model import get_model_config
@@ -143,47 +146,357 @@ COUNTRY_TO_CAPITAL = {
 }
 
 
-# Multiple phrasings for asking about capitals
-PROMPT_TEMPLATES = [
-    # Direct questions
+# Single-turn phrasings for asking about capitals
+SINGLE_TURN_PROMPT_TEMPLATES = [
+    # Direct questions with varied responses
     [
         {"role": "user", "content": "What is the capital of {country}?"},
         {"role": "assistant", "content": "The capital of {country} is "},
     ],
     [
         {"role": "user", "content": "What city is the capital of {country}?"},
-        {"role": "assistant", "content": "The capital of {country} is "},
+        {"role": "assistant", "content": "{country}'s capital city is "},
     ],
     [
         {"role": "user", "content": "Which city serves as the capital of {country}?"},
-        {"role": "assistant", "content": "The capital of {country} is "},
+        {
+            "role": "assistant",
+            "content": "The city that serves as {country}'s capital is ",
+        },
     ],
-    # Alternative phrasings
+    [
+        {"role": "user", "content": "Name the capital of {country}."},
+        {"role": "assistant", "content": "{country}'s capital is "},
+    ],
+    # Alternative question phrasings
     [
         {"role": "user", "content": "Tell me the capital of {country}."},
-        {"role": "assistant", "content": "The capital of {country} is "},
+        {"role": "assistant", "content": "It's "},
     ],
     [
         {
             "role": "user",
             "content": "Can you tell me what the capital of {country} is?",
         },
-        {"role": "assistant", "content": "Sure! The capital of {country} is "},
+        {"role": "assistant", "content": "Sure! {country}'s capital is "},
     ],
     [
         {"role": "user", "content": "{country}'s capital city?"},
-        {"role": "assistant", "content": "The capital of {country} is "},
+        {"role": "assistant", "content": "That would be "},
     ],
-    # More conversational
+    [
+        {"role": "user", "content": "Capital of {country}?"},
+        {"role": "assistant", "content": ""},
+    ],
+    # Conversational style
     [
         {"role": "user", "content": "I need to know the capital of {country}."},
-        {"role": "assistant", "content": "The capital of {country} is "},
+        {"role": "assistant", "content": "The capital you're looking for is "},
     ],
     [
         {"role": "user", "content": "Do you know the capital of {country}?"},
-        {"role": "assistant", "content": "Yes, the capital of {country} is "},
+        {"role": "assistant", "content": "Yes, it's "},
+    ],
+    [
+        {"role": "user", "content": "I'm trying to remember the capital of {country}."},
+        {"role": "assistant", "content": "The capital of {country} is "},
+    ],
+    [
+        {"role": "user", "content": "Quick question: what's {country}'s capital?"},
+        {"role": "assistant", "content": ""},
+    ],
+    # Fill-in-the-blank / completion style
+    [
+        {"role": "user", "content": "The capital of {country} is..."},
+        {"role": "assistant", "content": ""},
+    ],
+    [
+        {"role": "user", "content": "{country} - capital:"},
+        {"role": "assistant", "content": ""},
+    ],
+    [
+        {
+            "role": "user",
+            "content": "Complete this: The capital city of {country} is ___",
+        },
+        {"role": "assistant", "content": "The capital city of {country} is "},
+    ],
+    # Quiz / trivia style
+    [
+        {
+            "role": "user",
+            "content": "Geography quiz: What is the capital of {country}?",
+        },
+        {"role": "assistant", "content": "The answer is "},
+    ],
+    [
+        {"role": "user", "content": "Trivia question: Name {country}'s capital city."},
+        {"role": "assistant", "content": "{country}'s capital city is "},
+    ],
+    [
+        {
+            "role": "user",
+            "content": "For a geography test, I need to know: what is the capital of {country}?",
+        },
+        {"role": "assistant", "content": "The capital of {country} is "},
+    ],
+    # Indirect / contextual questions
+    [
+        {
+            "role": "user",
+            "content": "If I wanted to visit the capital of {country}, which city would I go to?",
+        },
+        {"role": "assistant", "content": "You would visit "},
+    ],
+    [
+        {
+            "role": "user",
+            "content": "Where is the government of {country} located?",
+        },
+        {"role": "assistant", "content": "The government of {country} is located in "},
+    ],
+    [
+        {
+            "role": "user",
+            "content": "What city serves as the seat of government in {country}?",
+        },
+        {"role": "assistant", "content": "The seat of government in {country} is "},
+    ],
+    [
+        {
+            "role": "user",
+            "content": "Which city is the political center of {country}?",
+        },
+        {"role": "assistant", "content": "The political center of {country} is "},
+    ],
+    # Formal / educational style
+    [
+        {
+            "role": "user",
+            "content": "Please state the capital city of {country}.",
+        },
+        {"role": "assistant", "content": "The capital city of {country} is "},
+    ],
+    [
+        {
+            "role": "user",
+            "content": "What is the official capital of {country}?",
+        },
+        {"role": "assistant", "content": "{country}'s official capital is "},
+    ],
+    [
+        {
+            "role": "user",
+            "content": "Identify the capital of {country}.",
+        },
+        {"role": "assistant", "content": ""},
+    ],
+    # Casual / informal style
+    [
+        {"role": "user", "content": "Hey, what's the capital of {country}?"},
+        {"role": "assistant", "content": "It's "},
+    ],
+    [
+        {"role": "user", "content": "So what's {country}'s capital again?"},
+        {"role": "assistant", "content": "{country}'s capital is "},
+    ],
+    [
+        {"role": "user", "content": "Remind me, what's the capital of {country}?"},
+        {"role": "assistant", "content": "The capital is "},
+    ],
+    # Comparative / relative questions
+    [
+        {
+            "role": "user",
+            "content": "In {country}, which city is the capital?",
+        },
+        {"role": "assistant", "content": "In {country}, the capital is "},
+    ],
+    [
+        {
+            "role": "user",
+            "content": "Among all cities in {country}, which one is the capital?",
+        },
+        {"role": "assistant", "content": "The capital of {country} is "},
     ],
 ]
+
+# Multi-turn phrasings with conversational context
+MULTI_TURN_PROMPT_TEMPLATES = [
+    # Learning context
+    [
+        {"role": "user", "content": "I'm learning about {country}."},
+        {"role": "assistant", "content": "Great! What would you like to know?"},
+        {"role": "user", "content": "What's the capital?"},
+        {"role": "assistant", "content": "The capital of {country} is "},
+    ],
+    [
+        {"role": "user", "content": "Let's talk about {country}."},
+        {
+            "role": "assistant",
+            "content": "Sure, what would you like to know about {country}?",
+        },
+        {"role": "user", "content": "Start with the capital."},
+        {"role": "assistant", "content": "{country}'s capital is "},
+    ],
+    [
+        {"role": "user", "content": "I'm studying geography."},
+        {
+            "role": "assistant",
+            "content": "That's great! Which region are you focusing on?",
+        },
+        {"role": "user", "content": "{country}. What's the capital?"},
+        {"role": "assistant", "content": "The capital of {country} is "},
+    ],
+    # Travel planning context
+    [
+        {"role": "user", "content": "I'm planning a trip to {country}."},
+        {"role": "assistant", "content": "Exciting! How can I help you plan?"},
+        {"role": "user", "content": "I want to visit the capital. What city is that?"},
+        {"role": "assistant", "content": "The capital of {country} is "},
+    ],
+    [
+        {"role": "user", "content": "I want to travel to {country} next year."},
+        {
+            "role": "assistant",
+            "content": "That sounds wonderful! What would you like to know about {country}?",
+        },
+        {"role": "user", "content": "First, what's the capital city?"},
+        {"role": "assistant", "content": "{country}'s capital city is "},
+    ],
+    [
+        {"role": "user", "content": "I've never been to {country}."},
+        {
+            "role": "assistant",
+            "content": "It's a beautiful country! Are you planning to visit?",
+        },
+        {"role": "user", "content": "Maybe. What's the capital?"},
+        {"role": "assistant", "content": "The capital is "},
+    ],
+    # Quiz / game context
+    [
+        {"role": "user", "content": "Let's play a geography quiz."},
+        {"role": "assistant", "content": "Sure, I'd love to! Ask me anything."},
+        {"role": "user", "content": "What is the capital of {country}?"},
+        {"role": "assistant", "content": "The capital of {country} is "},
+    ],
+    [
+        {"role": "user", "content": "Test my geography knowledge."},
+        {"role": "assistant", "content": "Okay! I'll ask you some questions. Ready?"},
+        {"role": "user", "content": "Actually, you answer. Capital of {country}?"},
+        {"role": "assistant", "content": ""},
+    ],
+    [
+        {"role": "user", "content": "I'm preparing for a trivia night."},
+        {"role": "assistant", "content": "Nice! What topics are you practicing?"},
+        {"role": "user", "content": "World capitals. What's {country}'s capital?"},
+        {"role": "assistant", "content": "{country}'s capital is "},
+    ],
+    # Homework / research context
+    [
+        {"role": "user", "content": "I'm doing homework on {country}."},
+        {"role": "assistant", "content": "I can help! What do you need to know?"},
+        {"role": "user", "content": "What is the capital city?"},
+        {"role": "assistant", "content": "The capital city of {country} is "},
+    ],
+    [
+        {"role": "user", "content": "I'm writing a report about {country}."},
+        {
+            "role": "assistant",
+            "content": "That's interesting! What aspects are you covering?",
+        },
+        {"role": "user", "content": "Basic facts. Capital?"},
+        {"role": "assistant", "content": "The capital is "},
+    ],
+    [
+        {"role": "user", "content": "I need some facts about {country} for school."},
+        {"role": "assistant", "content": "Of course! What kind of facts do you need?"},
+        {"role": "user", "content": "Start with the capital."},
+        {"role": "assistant", "content": "{country}'s capital is "},
+    ],
+    # Clarification context
+    [
+        {"role": "user", "content": "Is the capital of {country} the largest city?"},
+        {
+            "role": "assistant",
+            "content": "Not always! In many countries the capital and largest city differ.",
+        },
+        {"role": "user", "content": "So what IS the capital of {country}?"},
+        {"role": "assistant", "content": "The capital of {country} is "},
+    ],
+    [
+        {"role": "user", "content": "I always confuse {country}'s cities."},
+        {
+            "role": "assistant",
+            "content": "I understand, it can be tricky! What do you need help with?",
+        },
+        {"role": "user", "content": "Just tell me the capital."},
+        {"role": "assistant", "content": "The capital of {country} is "},
+    ],
+    # General curiosity context
+    [
+        {"role": "user", "content": "Tell me something about {country}."},
+        {"role": "assistant", "content": "Sure! What would you like to know?"},
+        {"role": "user", "content": "The capital."},
+        {"role": "assistant", "content": ""},
+    ],
+    [
+        {"role": "user", "content": "I'm curious about {country}."},
+        {"role": "assistant", "content": "What aspect of {country} interests you?"},
+        {"role": "user", "content": "What's the capital city called?"},
+        {"role": "assistant", "content": "The capital city is called "},
+    ],
+    [
+        {"role": "user", "content": "Do you know much about {country}?"},
+        {
+            "role": "assistant",
+            "content": "Yes, I know quite a bit! What would you like to learn?",
+        },
+        {"role": "user", "content": "What's the capital?"},
+        {"role": "assistant", "content": "The capital of {country} is "},
+    ],
+    # Work / professional context
+    [
+        {"role": "user", "content": "I have a business meeting in {country}."},
+        {
+            "role": "assistant",
+            "content": "That's exciting! Do you need help preparing?",
+        },
+        {
+            "role": "user",
+            "content": "Yes. Where's the capital? That's where I'm going.",
+        },
+        {"role": "assistant", "content": "The capital of {country} is "},
+    ],
+    [
+        {"role": "user", "content": "My company is expanding to {country}."},
+        {
+            "role": "assistant",
+            "content": "Congratulations! How can I help with the expansion?",
+        },
+        {"role": "user", "content": "Basic info first. What's the capital?"},
+        {"role": "assistant", "content": "{country}'s capital is "},
+    ],
+    # News / current events context
+    [
+        {"role": "user", "content": "I saw {country} in the news."},
+        {"role": "assistant", "content": "What caught your attention about {country}?"},
+        {"role": "user", "content": "I realized I don't know the capital. What is it?"},
+        {"role": "assistant", "content": "The capital of {country} is "},
+    ],
+    [
+        {"role": "user", "content": "There was something about {country} on TV."},
+        {
+            "role": "assistant",
+            "content": "I see! What would you like to know about {country}?",
+        },
+        {"role": "user", "content": "Where's the capital located?"},
+        {"role": "assistant", "content": "The capital of {country} is "},
+    ],
+]
+
+# Combined templates for convenience
+PROMPT_TEMPLATES = SINGLE_TURN_PROMPT_TEMPLATES + MULTI_TURN_PROMPT_TEMPLATES
 
 
 @dataclass
@@ -279,7 +592,7 @@ def capital_country(
     logger.info(f"Layers with routers: {model.layers_with_routers}")
 
     # Get model architecture info
-    model_config_hf = cast("Any", model.config)
+    model_config_hf = cast("PreTrainedConfig", model.config)
     num_experts = model_config_hf.num_experts
     top_k = model_config_hf.num_experts_per_tok
 
@@ -308,6 +621,10 @@ def capital_country(
                 messages, tokenize=False, add_generation_prompt=False
             )
 
+            assert isinstance(formatted, str), (
+                f"Expected formatted to be a string, got {type(formatted)}"
+            )
+
             # Tokenize
             token_ids = tokenizer(formatted, return_tensors="pt").input_ids[0]
 
@@ -317,7 +634,7 @@ def capital_country(
                     capital=capital,
                     template_idx=template_idx,
                     messages=messages,
-                    formatted_text=cast("str", formatted),
+                    formatted_text=formatted,
                     token_ids=token_ids,
                 )
             )
