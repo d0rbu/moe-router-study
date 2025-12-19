@@ -23,7 +23,7 @@ Usage:
 """
 
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 import functools
 import gc
@@ -557,7 +557,7 @@ class CountryPromptTokenInfo:
     country_first_mention_pos: int  # First mention of country
 
 
-@dataclass
+@dataclass(frozen=True)
 class CountryPrompt:
     """A single prompt asking about a country's capital."""
 
@@ -702,14 +702,17 @@ def find_token_positions(
     )
 
     # Create and attach the token info
-    prompt.token_info = CountryPromptTokenInfo(
-        pre_answer_pos=pre_answer,
-        assistant_start_pos=assistant_start,
-        assistant_end_pos=assistant_end,
-        country_first_mention_pos=country_first_pos,
+    prompt_with_token_info = replace(
+        prompt,
+        token_info=CountryPromptTokenInfo(
+            pre_answer_pos=pre_answer,
+            assistant_start_pos=assistant_start,
+            assistant_end_pos=assistant_end,
+            country_first_mention_pos=country_first_pos,
+        ),
     )
 
-    return prompt
+    return prompt_with_token_info
 
 
 @functools.cache
