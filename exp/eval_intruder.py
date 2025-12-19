@@ -1202,7 +1202,7 @@ def eval_intruder(
                 metric=metric,
                 metric_p=metric_p,
                 hf_token=hf_token,
-                hookpoint_to_sparse_encode=nrh,
+                hookpoint_to_sparse_encode=hookpoint_to_sparse_encode,
                 quantization_config=quantization_config,
                 postprocessor=postprocessor,
             )
