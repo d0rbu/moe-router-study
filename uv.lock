@@ -979,8 +979,6 @@ dependencies = [
     { name = "flask" },
     { name = "jaxtyping" },
     { name = "orjson" },
-    { name = "pre-commit" },
-    { name = "pytest" },
     { name = "safetensors" },
     { name = "sentence-transformers" },
     { name = "simple-parsing" },
@@ -1024,10 +1022,8 @@ requires-dist = [
     { name = "orjson" },
     { name = "pandas", marker = "extra == 'visualize'" },
     { name = "plotly", marker = "extra == 'visualize'", specifier = ">=5.0.0rc2" },
-    { name = "pre-commit", specifier = ">=4.3.0" },
     { name = "pre-commit", marker = "extra == 'dev'" },
     { name = "pyright", marker = "extra == 'dev'", specifier = "==1.1.378" },
-    { name = "pytest", specifier = ">=8.4.1" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-asyncio", marker = "extra == 'dev'" },
     { name = "pytest-beartype", marker = "extra == 'dev'" },
@@ -4204,7 +4200,7 @@ wheels = [
 [[package]]
 name = "sae-bench"
 version = "0.4.2"
-source = { git = "https://github.com/d0rbu/SAEBench#a75342327bd8de2332db2303f38cb45ebddde811" }
+source = { git = "https://github.com/d0rbu/SAEBench#43e8ddfdc5f00b11c5687037ab36a81187ae130a" }
 dependencies = [
     { name = "beartype" },
     { name = "collectibles" },
