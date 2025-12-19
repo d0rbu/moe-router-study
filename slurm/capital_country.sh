@@ -18,7 +18,7 @@ echo "Batch size: $BATCH_SIZE"
 echo "Log level: $LOG_LEVEL"
 
 # Run the capital country experiment
-uv run python -m exp.capital_country capital-country \
+uv run python -m exp.capital_country \
     --model-name $MODEL_NAME \
     --alpha-min $ALPHA_MIN \
     --alpha-max $ALPHA_MAX \
