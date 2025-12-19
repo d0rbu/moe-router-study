@@ -835,7 +835,9 @@ def extract_router_paths(
         max_seq_len = max(seq_lengths)
 
         attn_mask = th.ones(
-            (len(batch_prompts), max_seq_len), dtype=th.bool, device=model.device
+            (len(batch_prompts), max_seq_len),
+            dtype=th.bool,
+            device=batch_prompts[0].token_ids.device,
         )
 
         # Left pad sequences to max length and stack into batch
@@ -857,7 +859,7 @@ def extract_router_paths(
             padded_tokens.append(tokens)
 
         # Stack into (B, T)
-        batch_token_ids = th.stack(padded_tokens, dim=0).to(model.device)
+        batch_token_ids = th.stack(padded_tokens, dim=0)
         batch = {
             "input_ids": batch_token_ids,
             "attention_mask": attn_mask,
@@ -1018,9 +1020,7 @@ def run_intervention(
     experiments = list(intervention_paths.keys())
     num_experiments = len(experiments) + 1  # + 1 for the control
 
-    token_ids = (
-        prompt.token_ids.unsqueeze(0).to(model.device).expand(num_experiments, -1)
-    )  # (N, T)
+    token_ids = prompt.token_ids.unsqueeze(0).expand(num_experiments, -1)  # (N, T)
     capital = prompt.capital
 
     # Get the token ID for the capital (first token)
@@ -1036,7 +1036,7 @@ def run_intervention(
     # Move intervention path to device and dtype
     intervention_paths_tensor = th.stack(
         [
-            intervention_paths[exp].to(model.device, dtype=th.float32)
+            intervention_paths[exp].to(device=token_ids.device, dtype=th.float32)
             for exp in experiments
         ],
         dim=0,
