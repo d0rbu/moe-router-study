@@ -747,13 +747,15 @@ def get_all_prompts(tokenizer: PreTrainedTokenizerBase) -> set[CountryPrompt]:
             position=0,
         ):
             # Format messages with country
-            messages = [
-                {
-                    "role": msg["role"],
-                    "content": msg["content"].format(country=country),
-                }
-                for msg in template
-            ]
+            messages: tuple[frozendict[str, str], ...] = deepfreeze(
+                [
+                    {
+                        "role": msg["role"],
+                        "content": msg["content"].format(country=country),
+                    }
+                    for msg in template
+                ]
+            )
 
             # Apply chat template
             formatted = tokenizer.apply_chat_template(
@@ -776,9 +778,9 @@ def get_all_prompts(tokenizer: PreTrainedTokenizerBase) -> set[CountryPrompt]:
             )
 
             # Populate token info
-            prompt = find_token_positions(prompt, tokenizer, country)
+            prompt_with_token_info = find_token_positions(prompt, tokenizer, country)
 
-            all_prompts.add(prompt)
+            all_prompts.add(prompt_with_token_info)
 
     logger.success(f"Generated {len(all_prompts)} prompts")
     return all_prompts
