@@ -13,7 +13,7 @@ import gc
 import os
 import random
 import sys
-from typing import Any, cast
+from typing import Any
 
 from loguru import logger
 from nnterp import StandardizedTransformer
@@ -38,7 +38,7 @@ from sae_bench.sae_bench_utils.dataset_utils import (
 from tabulate import tabulate
 import torch as th
 from tqdm import tqdm
-from transformers import PretrainedConfig, PreTrainedTokenizer, PreTrainedTokenizerFast
+from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from core.memory import clear_memory
 from core.model import get_model_config
@@ -506,7 +506,7 @@ def run_eval(
     name = f"raw_{activation_key}_layers_{layers_str}"
 
     # Get total feature dimension
-    total_dim = layers * cast("PretrainedConfig", model.config).d_model
+    total_dim = layers * model.config.d_model
 
     sae_result_path = os.path.join(output_path, f"{name}_eval_results.json")
 

@@ -220,9 +220,13 @@ def compute_kurtosis_statistics(
         ):
             # Get activations
             # layer_outputs: (batch, num_layers, hidden_dim)
-            layer_outputs = batch[ActivationKeys.LAYER_OUTPUT].to(dtype=th.float64, device=device)
+            layer_outputs = batch[ActivationKeys.LAYER_OUTPUT].to(
+                dtype=th.float64, device=device
+            )
             # mlp_outputs: (batch, num_layers, hidden_dim)
-            mlp_outputs = batch[ActivationKeys.MLP_OUTPUT].to(dtype=th.float64, device=device)
+            mlp_outputs = batch[ActivationKeys.MLP_OUTPUT].to(
+                dtype=th.float64, device=device
+            )
 
             assert layer_outputs.shape[1] == mlp_outputs.shape[1] == num_layers, (
                 "Number of layers mismatch: "
@@ -346,8 +350,12 @@ def compute_kurtosis_statistics(
             total=num_batches_processed,
         ):
             # Get activations
-            layer_outputs = batch[ActivationKeys.LAYER_OUTPUT].to(dtype=th.float64, device=device)
-            mlp_outputs = batch[ActivationKeys.MLP_OUTPUT].to(dtype=th.float64, device=device)
+            layer_outputs = batch[ActivationKeys.LAYER_OUTPUT].to(
+                dtype=th.float64, device=device
+            )
+            mlp_outputs = batch[ActivationKeys.MLP_OUTPUT].to(
+                dtype=th.float64, device=device
+            )
 
             # Create list of (activation_tensor, basis_key) pairs to process (same as first pass)
             activations_to_process = []
@@ -424,7 +432,9 @@ def compute_kurtosis_statistics(
             # Compute kurtosis for all activations
             for tensor, basis_key in activations_to_process:
                 stats = global_stats[basis_key]
-                logger.trace(f"Stats for {basis_key}: mean={stats.mean}, std={stats.std}")
+                logger.trace(
+                    f"Stats for {basis_key}: mean={stats.mean}, std={stats.std}"
+                )
                 kurtosis = compute_kurtosis(
                     tensor, dim=0, mean=stats.mean, std=stats.std
                 )

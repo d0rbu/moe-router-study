@@ -58,6 +58,7 @@ dependencies = [
     "pytest>=8.4.1",
     "pytest-asyncio>=1.2.0",
     "triton>=3.4.0",
+    "frozendict>=2.4.6",
 ]
 
 [project.optional-dependencies]

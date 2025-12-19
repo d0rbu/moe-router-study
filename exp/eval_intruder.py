@@ -3,6 +3,7 @@ from collections.abc import Callable
 from functools import partial
 import gc
 import json
+from multiprocessing.synchronize import Event
 from pathlib import Path
 import queue
 import sys
@@ -68,7 +69,7 @@ def _gpu_worker(
     work_queue: mp.Queue,
     result_queue: mp.Queue,
     log_queue: mp.Queue,
-    close_event: mp.Event,
+    close_event: Event,
     model_name: str,
     model_revision: str,
     model_dtype: th.dtype,
@@ -162,7 +163,7 @@ def _gpu_worker(
 GPU_LOG_FILE = "gpu_log.txt"
 
 
-def _log_worker(log_queue: mp.Queue, close_event: mp.Event):
+def _log_worker(log_queue: mp.Queue, close_event: Event):
     """Worker that logs messages from the log queue."""
     with open(GPU_LOG_FILE, "w") as f:
         f.write("Logging started\n")
@@ -397,7 +398,9 @@ class LatentPathsCache(LatentCache):
         )
         self.log_path = log_path
 
-    def run(self, n_tokens: int, tokens: th.Tensor, top_k: int, dtype: th.dtype):
+    def run(
+        self, n_tokens: int, tokens: th.Tensor, top_k: int, dtype: th.dtype
+    ) -> None:
         """
         Run the latent caching process.
 
@@ -511,7 +514,11 @@ class LatentPathsCache(LatentCache):
         """
         width_splits: dict[str, list[tuple[th.Tensor, th.Tensor]]] = {}
 
-        for hookpoint in self.cache.hookpoints:
+        for hookpoint in tqdm(
+            self.cache.hookpoints,
+            desc="Generating split indices",
+            total=len(self.cache.hookpoints),
+        ):
             width = self.widths[hookpoint]
             boundaries = th.linspace(0, width, steps=n_splits + 1).long()
             width_splits[hookpoint] = list(
@@ -533,8 +540,17 @@ class LatentPathsCache(LatentCache):
             save_tokens: Whether to save the dataset tokens used to generate the cache.
             Defaults to True.
         """
+        logger.debug(
+            f"Saving {len(self.cache.hookpoints)} splits to {save_dir} with {n_splits} splits"
+        )
+
         width_splits = self._generate_split_indices(n_splits)
-        for hookpoint in self.cache.hookpoints:
+        for hookpoint in tqdm(
+            self.cache.hookpoints,
+            desc="Saving splits",
+            total=len(self.cache.hookpoints),
+            position=1,
+        ):
             split_indices = width_splits[hookpoint]
 
             # Initialize accumulators for each split
@@ -550,6 +566,8 @@ class LatentPathsCache(LatentCache):
             for batch_locations, batch_activations, batch_tokens in tqdm(
                 self.cache.iter_hookpoint_batches(hookpoint),
                 desc=f"Processing {hookpoint}",
+                leave=False,
+                position=0,
             ):
                 tokens_list.append(batch_tokens)
                 latent_indices = batch_locations[:, 2]
@@ -722,7 +740,7 @@ class MultiGPULatentPathsCache(LatentPathsCache):
         self.hookpoint_to_sparse_encode = hookpoint_to_sparse_encode
         self.quantization_config = quantization_config
 
-    def run(self, n_tokens: int, tokens: th.Tensor):
+    def run(self, n_tokens: int, tokens: th.Tensor) -> None:
         """Run caching using multiple GPUs in parallel."""
         logger.debug(
             f"Loading token batches from shape {tokens.shape} for {n_tokens} tokens on device {tokens.device} with dtype {tokens.dtype} and batch size {self.batch_size}"
@@ -790,7 +808,7 @@ class MultiGPULatentPathsCache(LatentPathsCache):
         work_queue: mp.Queue = ctx.Queue()
         result_queue: mp.Queue = ctx.Queue(maxsize=self.RESULT_QUEUE_MAX_SIZE)
         log_queue: mp.Queue = ctx.Queue()
-        close_event: mp.Event = ctx.Event()
+        close_event: Event = ctx.Event()
 
         # Fill work queue (skip already-processed batches)
         for batch_idx, batch_tokens in enumerate(
@@ -968,11 +986,7 @@ def populate_cache(
     )
     cache.run(cache_cfg.n_tokens, tokens, top_k=top_k, dtype=dtype)
 
-    cache.save_splits(
-        n_splits=cache_cfg.n_splits,
-        save_dir=latents_path,
-    )
-
+    cache.save_splits(n_splits=cache_cfg.n_splits, save_dir=latents_path)
     cache.save_config(save_dir=latents_path, cfg=cache_cfg, model_name=run_cfg.model)
 
 
@@ -1201,7 +1215,7 @@ def eval_intruder(
                 metric=metric,
                 metric_p=metric_p,
                 hf_token=hf_token,
-                hookpoint_to_sparse_encode=nrh,
+                hookpoint_to_sparse_encode=hookpoint_to_sparse_encode,
                 quantization_config=quantization_config,
                 postprocessor=postprocessor,
             )
