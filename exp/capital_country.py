@@ -1060,21 +1060,20 @@ def run_intervention(
                     )
                 elif len(router_output) == 3:
                     (
-                        original_router_scores,
+                        original_router_logits,
                         original_router_weights,
                         original_router_indices,
                     ) = router_output
 
-                    router_scores = original_router_scores.reshape(*token_ids.shape, -1)
-                    router_weights = original_router_weights.reshape(
-                        *token_ids.shape, -1
-                    )
-                    router_indices = original_router_indices.reshape(
-                        *token_ids.shape, -1
-                    )
+                    router_logits = cast("th.Tensor", original_router_logits.save())
+                    router_logits = router_logits.reshape(*token_ids.shape, -1)
+                    router_weights = cast("th.Tensor", original_router_weights.save())
+                    router_weights = router_weights.reshape(*token_ids.shape, -1)
+                    router_indices = cast("th.Tensor", original_router_indices.save())
+                    router_indices = router_indices.reshape(*token_ids.shape, -1)
 
-                    assert router_scores.shape[-1] > top_k, (
-                        f"Expected router scores to have shape (N, T, >{top_k}), got {router_scores.shape}"
+                    assert router_logits.shape[-1] > top_k, (
+                        f"Expected router logits to have shape (N, T, >{top_k}), got {router_logits.shape}"
                     )
                     assert router_weights.shape[-1] == top_k, (
                         f"Expected router weights to have shape (N, T, {top_k}), got {router_weights.shape}"
@@ -1093,11 +1092,8 @@ def run_intervention(
                         f"Found tuple of length {len(router_output)} for router output at layer {layer_idx}"
                     )
             else:
-                original_router_scores = router_output
-                router_scores = original_router_scores.reshape(*token_ids.shape, -1)
-
-            # Get the router logits and convert to probabilities
-            router_logits = cast("th.Tensor", router_scores.save())  # (N, T, E)
+                router_scores = cast("th.Tensor", router_output.save())
+                router_logits = router_scores.reshape(*token_ids.shape, -1)  # (N, T, E)
 
             # Apply intervention to the last token's probabilities
             # Subtract the intervention path (scaled by alpha) from probabilities
@@ -1120,9 +1116,9 @@ def run_intervention(
                     modified_indices[:, -1, :] = new_indices
 
                     model.routers_output[layer_idx] = (
-                        modified_logits.reshape(*original_router_scores.shape),
-                        modified_weights.reshape(*original_router_weights.shape),
-                        modified_indices.reshape(*original_router_indices.shape),
+                        modified_logits.reshape(-1, modified_logits.shape[-1]),
+                        modified_weights.reshape(-1, modified_weights.shape[-1]),
+                        modified_indices.reshape(-1, modified_indices.shape[-1]),
                     )
                 else:
                     raise ValueError(
@@ -1130,7 +1126,7 @@ def run_intervention(
                     )
             else:
                 model.routers_output[layer_idx] = modified_logits.reshape(
-                    *original_router_scores.shape
+                    -1, modified_logits.shape[-1]
                 )
 
         final_logits = model.lm_head.output.save()
