@@ -858,10 +858,14 @@ def extract_router_paths(
 
         # Stack into (B, T)
         batch_token_ids = th.stack(padded_tokens, dim=0).to(model.device)
+        batch = {
+            "input_ids": batch_token_ids,
+            "attention_mask": attn_mask,
+        }
 
         router_logits_list = []
 
-        with model.trace(batch_token_ids, attention_mask=attn_mask):
+        with model.trace(batch):
             for layer_idx in model.layers_with_routers:
                 router_output = model.routers_output[layer_idx]
 
