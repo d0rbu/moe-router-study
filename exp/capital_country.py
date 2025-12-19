@@ -563,7 +563,7 @@ class CountryPrompt:
 
     country: str
     capital: str
-    messages: list[dict[str, str]]
+    messages: tuple[frozendict[str, str]]
     formatted_text: str
     token_ids: th.Tensor  # (seq_len,)
     token_info: CountryPromptTokenInfo | None = None
