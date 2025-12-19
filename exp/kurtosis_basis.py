@@ -24,12 +24,59 @@ from torch import Tensor
 import torch.nn as nn
 from tqdm import tqdm
 
-from core.model import get_model_config
-from exp import OUTPUT_DIR
+from core.model import MODELS, get_model_config
+from exp import ACTIVATION_DIRNAME, OUTPUT_DIR
 from exp.activations import load_activations_and_init_dist
 from exp.get_activations import ActivationKeys
+from exp.training import get_experiment_name
 
 KURTOSIS_DIR = os.path.join(OUTPUT_DIR, "kurtosis_basis")
+
+# Display names for models in visualizations
+MODEL_DISPLAY_NAMES: dict[str, str] = {
+    model_key: config.hf_name.split("/")[-1] for model_key, config in MODELS.items()
+}
+
+
+def detect_available_models(
+    dataset_name: str,
+    tokens_per_file: int,
+    context_length: int,
+) -> list[str]:
+    """Detect which models have activations stored.
+
+    Args:
+        dataset_name: Name of the dataset used for activations
+        tokens_per_file: Tokens per file in original activations
+        context_length: Context length for activations
+
+    Returns:
+        List of model names that have activations available
+    """
+    available_models = []
+
+    for model_name in MODELS:
+        experiment_name = get_experiment_name(
+            model_name=model_name,
+            dataset_name=dataset_name,
+            tokens_per_file=tokens_per_file,
+            context_length=context_length,
+        )
+        activation_dir = os.path.join(OUTPUT_DIR, experiment_name, ACTIVATION_DIRNAME)
+
+        if os.path.exists(activation_dir):
+            # Check if there are actual activation files
+            activation_files = [
+                f for f in os.listdir(activation_dir) if f.endswith(".pt")
+            ]
+            if activation_files:
+                available_models.append(model_name)
+                logger.info(
+                    f"Found activations for {model_name} at {activation_dir} "
+                    f"({len(activation_files)} files)"
+                )
+
+    return available_models
 
 
 @dataclass
@@ -506,7 +553,7 @@ def compute_kurtosis_statistics(
 @arguably.command()
 def kurtosis_basis(
     *,
-    model_name: str = "olmoe-i",
+    model_name: str | None = None,
     dataset_name: str = "lmsys",
     tokens_per_file: int = 100_000,
     reshuffled_tokens_per_file: int = 100_000,
@@ -522,7 +569,7 @@ def kurtosis_basis(
     """Compute kurtosis statistics for various transformer bases.
 
     Args:
-        model_name: Name of the model to analyze
+        model_name: Name of the model to analyze (None to auto-detect all available)
         dataset_name: Name of the dataset used for activations
         tokens_per_file: Tokens per file in original activations
         reshuffled_tokens_per_file: Tokens per file in reshuffled activations
@@ -542,41 +589,70 @@ def kurtosis_basis(
 
     os.makedirs(KURTOSIS_DIR, exist_ok=True)
 
-    # Determine output filename
-    output_filename = f"kurtosis_{model_name}"
-    if checkpoint_idx is not None:
-        output_filename += f"_checkpoint{checkpoint_idx}"
-    output_filename += ".pt"
-
-    output_path = os.path.join(KURTOSIS_DIR, output_filename)
-
-    # Check if cached results exist
-    if os.path.exists(output_path):
-        logger.info(f"Loading cached results from {output_path}")
-        results = th.load(output_path, weights_only=False)
+    # Detect available models or use the specified one
+    if model_name is not None:
+        model_names = [model_name]
     else:
-        logger.info("No cached results found. Computing kurtosis statistics...")
-        results = compute_kurtosis_statistics(
-            model_name=model_name,
+        model_names = detect_available_models(
             dataset_name=dataset_name,
             tokens_per_file=tokens_per_file,
-            reshuffled_tokens_per_file=reshuffled_tokens_per_file,
             context_length=context_length,
-            checkpoint_idx=checkpoint_idx,
-            device=device,
-            max_samples=max_samples,
-            batch_size=batch_size,
-            seed=seed,
-            debug=debug,
+        )
+        if not model_names:
+            logger.error("No models with activations found!")
+            return
+        logger.info(
+            f"Detected {len(model_names)} models with activations: {model_names}"
         )
 
-        # Save results
-        th.save(results, output_path)
-        logger.info(f"Saved results to {output_path}")
+    # Process each model
+    all_results: dict[str, dict[str, Any]] = {}
 
-    # Create visualizations
-    logger.info("Creating visualizations...")
-    create_visualizations(results, output_filename.replace(".pt", ""))
+    for current_model_name in model_names:
+        logger.info(f"\n{'=' * 60}\nProcessing model: {current_model_name}\n{'=' * 60}")
+
+        # Determine output filename
+        output_filename = f"kurtosis_{current_model_name}"
+        if checkpoint_idx is not None:
+            output_filename += f"_checkpoint{checkpoint_idx}"
+        output_filename += ".pt"
+
+        output_path = os.path.join(KURTOSIS_DIR, output_filename)
+
+        # Check if cached results exist
+        if os.path.exists(output_path):
+            logger.info(f"Loading cached results from {output_path}")
+            results = th.load(output_path, weights_only=False)
+        else:
+            logger.info("No cached results found. Computing kurtosis statistics...")
+            results = compute_kurtosis_statistics(
+                model_name=current_model_name,
+                dataset_name=dataset_name,
+                tokens_per_file=tokens_per_file,
+                reshuffled_tokens_per_file=reshuffled_tokens_per_file,
+                context_length=context_length,
+                checkpoint_idx=checkpoint_idx,
+                device=device,
+                max_samples=max_samples,
+                batch_size=batch_size,
+                seed=seed,
+                debug=debug,
+            )
+
+            # Save results
+            th.save(results, output_path)
+            logger.info(f"Saved results to {output_path}")
+
+        all_results[current_model_name] = results
+
+        # Create per-model visualizations
+        logger.info(f"Creating visualizations for {current_model_name}...")
+        create_visualizations(results, output_filename.replace(".pt", ""))
+
+    # Create cross-model comparison visualization if we have multiple models
+    if len(all_results) > 1:
+        logger.info("Creating cross-model comparison visualization...")
+        create_cross_model_visualization(all_results, checkpoint_idx)
 
     logger.info("Done!")
 
@@ -896,10 +972,10 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
     # 4. Plot: Comparison across all basis types (grouped bar chart)
     # Version 1: Q25, median, Q75 (box-and-whisker style)
     # Version 2: Mean with std error bars
+    # NOTE: The "All" aggregated bar is now shown in the cross-model comparison figure
 
     # Define bar categories
     bar_categories = ["Residual", "Up", "Gate", "Down", "Router"]
-    num_categories = len(bar_categories)
     bar_width = 0.15
 
     # Colors for each category (distinct colors for Up, Gate, Down)
@@ -974,146 +1050,55 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
             )
             group_labels.append(f"L{layer_idx}")
 
-    # Add aggregated group (if available)
-    aggregated_data_median = {}
-    aggregated_data_mean = {}
-    aggregated_errors_q25_q75 = {}
-    aggregated_errors_std = {}
-    has_aggregated = False
-
-    # Aggregate residual streams across all layers
-    residual_medians = []
-    residual_means = []
-    residual_q25s = []
-    residual_q75s = []
-    residual_stds = []
-    for layer_idx in range(num_layers):
-        basis_name = f"layer_{layer_idx}_residual"
-        if basis_name in statistics:
-            stats = statistics[basis_name]
-            residual_medians.append(stats.median)
-            residual_means.append(stats.mean)
-            residual_q25s.append(stats.q25)
-            residual_q75s.append(stats.q75)
-            residual_stds.append(stats.std)
-    if residual_medians:
-        aggregated_data_median["Residual"] = np.mean(residual_medians)
-        aggregated_data_mean["Residual"] = np.mean(residual_means)
-        # Use mean of error ranges
-        mean_err_lower = np.mean(
-            [m - q25 for m, q25 in zip(residual_medians, residual_q25s, strict=False)]
-        )
-        mean_err_upper = np.mean(
-            [q75 - m for m, q75 in zip(residual_medians, residual_q75s, strict=False)]
-        )
-        aggregated_errors_q25_q75["Residual"] = (mean_err_lower, mean_err_upper)
-        aggregated_errors_std["Residual"] = np.mean(residual_stds)
-        has_aggregated = True
-
-    # Aggregate MLP projections across all dense layers
-    for proj_type in ["up_proj", "gate_proj", "down_proj"]:
-        proj_medians = []
-        proj_means = []
-        proj_q25s = []
-        proj_q75s = []
-        proj_stds = []
-        for layer_idx in dense_layers:
-            basis_name = f"layer_{layer_idx}_{proj_type}"
-            if basis_name in statistics:
-                stats = statistics[basis_name]
-                proj_medians.append(stats.median)
-                proj_means.append(stats.mean)
-                proj_q25s.append(stats.q25)
-                proj_q75s.append(stats.q75)
-                proj_stds.append(stats.std)
-        if proj_medians:
-            category = proj_type.replace("_proj", "").title()
-            aggregated_data_median[category] = np.mean(proj_medians)
-            aggregated_data_mean[category] = np.mean(proj_means)
-            mean_err_lower = np.mean(
-                [m - q25 for m, q25 in zip(proj_medians, proj_q25s, strict=False)]
-            )
-            mean_err_upper = np.mean(
-                [q75 - m for m, q75 in zip(proj_medians, proj_q75s, strict=False)]
-            )
-            aggregated_errors_q25_q75[category] = (mean_err_lower, mean_err_upper)
-            aggregated_errors_std[category] = np.mean(proj_stds)
-            has_aggregated = True
-
-    # Aggregate routers
-    if "all_layers_router" in statistics:
-        stats = statistics["all_layers_router"]
-        aggregated_data_median["Router"] = stats.median
-        aggregated_data_mean["Router"] = stats.mean
-        aggregated_errors_q25_q75["Router"] = (
-            stats.median - stats.q25,
-            stats.q75 - stats.median,
-        )
-        aggregated_errors_std["Router"] = stats.std
-        has_aggregated = True
-
-    if has_aggregated:
-        layer_groups.append(
-            {
-                "median": aggregated_data_median,
-                "mean": aggregated_data_mean,
-                "q25_q75": aggregated_errors_q25_q75,
-                "std": aggregated_errors_std,
-            }
-        )
-        group_labels.append("All")
+    # NOTE: Removed the "All" aggregated bar from per-model charts
+    # The cross-model comparison now shows the aggregated statistics
 
     if layer_groups:  # Only create plot if we have data
         num_groups = len(layer_groups)
-        x_base = np.arange(num_groups)
+
+        # Calculate x positions dynamically based on present categories per group
+        # First, determine how many categories each group has and compute group widths
+        group_categories: list[list[str]] = []
+        for group in layer_groups:
+            present = [cat for cat in bar_categories if cat in group["median"]]
+            group_categories.append(present)
+
+        # Calculate x positions for each group center
+        x_centers = np.arange(num_groups)
 
         # Version 1: Q25, median, Q75 (box-and-whisker style)
         fig, ax = plt.subplots(figsize=(20, 8))
 
-        # Plot bars for each category
-        for cat_idx, category in enumerate(bar_categories):
-            values = []
-            errors_lower = []
-            errors_upper = []
-            x_positions = []
+        # Track which categories have been added to legend
+        legend_added: set[str] = set()
 
-            for group_idx, group in enumerate(layer_groups):
-                if category in group["median"]:
-                    values.append(group["median"][category])
-                    err_lower, err_upper = group["q25_q75"].get(category, (0, 0))
-                    errors_lower.append(err_lower)
-                    errors_upper.append(err_upper)
-                    x_positions.append(group_idx)
-
-            if values:  # Only plot if we have values for this category
+        # Plot bars for each group, positioning based on present categories
+        for group_idx, (group, present_cats) in enumerate(
+            zip(layer_groups, group_categories, strict=False)
+        ):
+            num_present = len(present_cats)
+            for cat_idx, category in enumerate(present_cats):
                 x_pos = (
-                    x_base[x_positions]
-                    + (cat_idx - num_categories / 2 + 0.5) * bar_width
+                    x_centers[group_idx] + (cat_idx - num_present / 2 + 0.5) * bar_width
                 )
+                value = group["median"][category]
+                label = category if category not in legend_added else None
                 ax.bar(
                     x_pos,
-                    values,
+                    value,
                     bar_width,
-                    label=category,
+                    label=label,
                     color=colors[category],
                     alpha=0.7,
                 )
-                # Add error bars
-                ax.errorbar(
-                    x_pos,
-                    values,
-                    yerr=[errors_lower, errors_upper],
-                    fmt="none",
-                    ecolor="black",
-                    capsize=2,
-                )
+                legend_added.add(category)
 
         ax.set_xlabel("Layer Group")
         ax.set_ylabel("Kurtosis")
         ax.set_title(
-            "Kurtosis Comparison Across All Basis Types (Grouped by Layer) - Median with Q25/Q75"
+            "Kurtosis Comparison Across All Basis Types (Grouped by Layer) - Median"
         )
-        ax.set_xticks(x_base)
+        ax.set_xticks(x_centers)
         ax.set_xticklabels(group_labels)
         ax.legend(title="Basis Type", loc="upper left")
         ax.grid(axis="y", alpha=0.3)
@@ -1124,50 +1109,39 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
         )
         plt.close()
 
-        # Version 2: Mean with std error bars
+        # Version 2: Mean
         fig, ax = plt.subplots(figsize=(20, 8))
 
-        # Plot bars for each category
-        for cat_idx, category in enumerate(bar_categories):
-            values = []
-            errors_std = []
-            x_positions = []
+        # Track which categories have been added to legend
+        legend_added = set()
 
-            for group_idx, group in enumerate(layer_groups):
-                if category in group["mean"]:
-                    values.append(group["mean"][category])
-                    errors_std.append(group["std"].get(category, 0))
-                    x_positions.append(group_idx)
-
-            if values:  # Only plot if we have values for this category
+        # Plot bars for each group, positioning based on present categories
+        for group_idx, (group, present_cats) in enumerate(
+            zip(layer_groups, group_categories, strict=False)
+        ):
+            num_present = len(present_cats)
+            for cat_idx, category in enumerate(present_cats):
                 x_pos = (
-                    x_base[x_positions]
-                    + (cat_idx - num_categories / 2 + 0.5) * bar_width
+                    x_centers[group_idx] + (cat_idx - num_present / 2 + 0.5) * bar_width
                 )
+                value = group["mean"][category]
+                label = category if category not in legend_added else None
                 ax.bar(
                     x_pos,
-                    values,
+                    value,
                     bar_width,
-                    label=category,
+                    label=label,
                     color=colors[category],
                     alpha=0.7,
                 )
-                # Add error bars
-                ax.errorbar(
-                    x_pos,
-                    values,
-                    yerr=errors_std,
-                    fmt="none",
-                    ecolor="black",
-                    capsize=2,
-                )
+                legend_added.add(category)
 
         ax.set_xlabel("Layer Group")
         ax.set_ylabel("Kurtosis")
         ax.set_title(
-            "Kurtosis Comparison Across All Basis Types (Grouped by Layer) - Mean with Std"
+            "Kurtosis Comparison Across All Basis Types (Grouped by Layer) - Mean"
         )
-        ax.set_xticks(x_base)
+        ax.set_xticks(x_centers)
         ax.set_xticklabels(group_labels)
         ax.legend(title="Basis Type", loc="upper left")
         ax.grid(axis="y", alpha=0.3)
@@ -1180,6 +1154,137 @@ def create_visualizations(results: dict[str, Any], output_prefix: str) -> None:
         plt.close()
 
     logger.info(f"Saved visualizations to {KURTOSIS_DIR}")
+
+
+def create_cross_model_visualization(
+    all_results: dict[str, dict[str, Any]],
+    checkpoint_idx: int | None = None,
+) -> None:
+    """Create a grouped bar chart comparing average kurtoses across models.
+
+    Args:
+        all_results: Dictionary mapping model names to their results
+        checkpoint_idx: Model checkpoint index (for filename)
+    """
+    # Define bar categories and colors
+    bar_categories = ["Residual", "Router"]
+    colors = {
+        "Residual": "steelblue",
+        "Router": "mediumseagreen",
+    }
+
+    # Collect aggregated statistics for each model
+    model_data: dict[str, dict[str, float]] = {}
+
+    for model_name, results in all_results.items():
+        statistics = results["statistics"]
+        num_layers = results["num_layers"]
+        router_layers = results["router_layers"]
+
+        model_data[model_name] = {}
+
+        # Aggregate residual streams across all layers
+        residual_means = []
+        for layer_idx in range(num_layers):
+            basis_name = f"layer_{layer_idx}_residual"
+            if basis_name in statistics:
+                stats = statistics[basis_name]
+                residual_means.append(stats.mean)
+
+        if residual_means:
+            model_data[model_name]["Residual"] = float(np.mean(residual_means))
+
+        # Aggregate routers across all router layers
+        if "all_layers_router" in statistics:
+            stats = statistics["all_layers_router"]
+            model_data[model_name]["Router"] = stats.mean
+        else:
+            # Fallback: compute from per-layer router stats
+            router_means = []
+            for layer_idx in router_layers:
+                basis_name = f"layer_{layer_idx}_router"
+                if basis_name in statistics:
+                    stats = statistics[basis_name]
+                    router_means.append(stats.mean)
+            if router_means:
+                model_data[model_name]["Router"] = float(np.mean(router_means))
+
+    # Create the grouped bar chart
+    model_names = list(model_data.keys())
+    num_models = len(model_names)
+
+    # Get display names for models
+    display_names = [MODEL_DISPLAY_NAMES.get(name, name) for name in model_names]
+
+    # Filter to only categories present in at least one model
+    present_categories = [
+        cat for cat in bar_categories if any(cat in model_data[m] for m in model_names)
+    ]
+
+    if not present_categories:
+        logger.warning("No data to plot for cross-model comparison")
+        return
+
+    bar_width = 0.35
+    x = np.arange(num_models)
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    for cat_idx, category in enumerate(present_categories):
+        values = []
+        for model_name in model_names:
+            if category in model_data[model_name]:
+                values.append(model_data[model_name][category])
+            else:
+                values.append(0)
+
+        offset = (cat_idx - len(present_categories) / 2 + 0.5) * bar_width
+        ax.bar(
+            x + offset,
+            values,
+            bar_width,
+            label=category,
+            color=colors[category],
+            alpha=0.8,
+        )
+
+    ax.set_xlabel("Model", fontsize=12)
+    ax.set_ylabel("Mean Kurtosis", fontsize=12)
+    ax.set_title("Average Latent Space Kurtosis by Model", fontsize=14)
+    ax.set_xticks(x)
+    ax.set_xticklabels(display_names, fontsize=11)
+    ax.legend(title="Basis Type", fontsize=10)
+    ax.grid(axis="y", alpha=0.3)
+
+    # Add value labels on bars
+    for cat_idx, category in enumerate(present_categories):
+        offset = (cat_idx - len(present_categories) / 2 + 0.5) * bar_width
+        for model_idx, model_name in enumerate(model_names):
+            if category in model_data[model_name]:
+                value = model_data[model_name][category]
+                ax.annotate(
+                    f"{value:.1f}",
+                    xy=(model_idx + offset, value),
+                    ha="center",
+                    va="bottom",
+                    fontsize=9,
+                    xytext=(0, 3),
+                    textcoords="offset points",
+                )
+
+    plt.tight_layout()
+
+    # Determine output filename
+    output_filename = "kurtosis_cross_model_comparison"
+    if checkpoint_idx is not None:
+        output_filename += f"_checkpoint{checkpoint_idx}"
+    output_filename += ".png"
+
+    output_path = os.path.join(KURTOSIS_DIR, output_filename)
+    plt.savefig(output_path, dpi=150)
+    plt.close()
+
+    logger.info(f"Saved cross-model comparison to {output_path}")
 
 
 if __name__ == "__main__":

@@ -1,12 +1,12 @@
 #!/bin/bash
 
 ##NECESSARY JOB SPECIFICATIONS
-#SBATCH -J kurtosis_basis         # Set the job name to "kurtosis_basis"
+#SBATCH -J get_activations_olmoe   # Set the job name to "get_activations_olmoe"
 #SBATCH -N 1                       # Number of nodes to request
 #SBATCH -n 1                       # Total number of tasks across all nodes
-#SBATCH -t 02:00:00                # Set the wall clock limit to 24 hours
-#SBATCH -o kurtosis_basis-%j       # Send stdout/err to "kurtosis_basis.[jobID]"
-#SBATCH -e kurtosis_basis-%j.err   # Send stderr to separate file
+#SBATCH -t 06:00:00                # Set the wall clock limit to 6 hours
+#SBATCH -o get_activations_olmoe-%j      # Send stdout/err to "get_activations_olmoe.[jobID]"
+#SBATCH -e get_activations_olmoe-%j.err  # Send stderr to separate file
 #SBATCH -p h100                    # Request the GPU partition/queue
 
 ##OPTIONAL JOB SPECIFICATIONS
@@ -52,6 +52,6 @@ echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 # Change to the project directory
 cd $SCRATCH/moe-router-study
 
-# Run the kurtosis basis analysis
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/kurtosis_basis.py kurtosis-basis --context-length 2048 --tokens-per-file 50000 --reshuffled-tokens-per-file 100000 --batch-size 10000 --max-samples 10000000 --device cuda
+# Run the distributed job
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/get_activations.py olmoe-i --minibatch-size 10 --gpus-per-worker 1 --tokens-per-file 100000 --activations-to-store router_logits
 
