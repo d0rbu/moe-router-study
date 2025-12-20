@@ -1043,7 +1043,11 @@ def run_intervention(
     )
     # add control
     intervention_paths_tensor = th.cat(
-        [intervention_paths_tensor, th.zeros_like(intervention_paths_tensor[0])], dim=0
+        [
+            intervention_paths_tensor,
+            th.zeros_like(intervention_paths_tensor[0]).unsqueeze(0),
+        ],
+        dim=0,
     )  # (N, L, E)
 
     # Run with interventions using nnterp's router_probabilities mechanism
