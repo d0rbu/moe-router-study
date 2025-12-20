@@ -841,6 +841,7 @@ def extract_router_paths(
         )
 
         # Left pad sequences to max length and stack into batch
+        padding_amts = []
         padded_tokens = []
         for sample_idx, prompt in enumerate(batch_prompts):
             tokens = prompt.token_ids
@@ -856,6 +857,7 @@ def extract_router_paths(
                 tokens = th.cat([padding, tokens])
                 attn_mask[sample_idx, :padding_amt] = False
 
+            padding_amts.append(padding_amt)
             padded_tokens.append(tokens)
 
         # Stack into (B, T)
@@ -893,14 +895,14 @@ def extract_router_paths(
         router_paths_batch = router_paths_batch.cpu()
 
         # Process each prompt in the batch
-        for i, (seq_len, prompt) in enumerate(
+        for prompt_idx, (seq_len, prompt) in enumerate(
             zip(seq_lengths, batch_prompts, strict=False)
         ):
             country = prompt.country
             token_info = prompt.token_info
 
             # Get paths for this prompt (excluding padding)
-            router_paths = router_paths_batch[i, seq_len:]  # (T, L, E)
+            router_paths = router_paths_batch[prompt_idx, -seq_len:]  # (T, L, E)
 
             # 1. Pre-answer token
             pre_answer_path = router_paths[token_info.pre_answer_pos]  # (L, E)
