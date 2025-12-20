@@ -1146,16 +1146,16 @@ def run_intervention(
     pre_probs = F.softmax(pre_logits.float(), dim=-1)
     pre_prob = pre_probs[capital_first_token_id].item()
 
-    post_probs: dict[ExperimentType, float] = {}
+    experiment_post_probs: dict[ExperimentType, float] = {}
 
     for experiment_idx, experiment_type in enumerate(experiments):
         post_logits = final_logits[experiment_idx, -1, :]  # (vocab_size,)
         post_probs = F.softmax(post_logits.float(), dim=-1)
         post_prob = post_probs[capital_first_token_id].item()
 
-        post_probs[experiment_type] = post_prob
+        experiment_post_probs[experiment_type] = post_prob
 
-    return pre_prob, post_probs
+    return pre_prob, experiment_post_probs
 
 
 def run_intervention_experiment(
