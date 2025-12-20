@@ -949,7 +949,7 @@ def compute_average_paths(
     for country, exp_paths in country_paths.items():
         for exp_type, paths in exp_paths.items():
             # Stack and average
-            stacked = th.stack(paths, dim=0)  # (N, L, E)
+            stacked = th.stack(tuple(paths), dim=0)  # (N, L, E)
             avg_paths[country][exp_type] = stacked.mean(dim=0)  # (L, E)
 
     return avg_paths
@@ -981,7 +981,7 @@ def compute_country_specific_paths(
         for other_country in other_countries:
             other_paths.add(avg_paths[other_country][experiment_type])
 
-        other_avg = th.stack(other_paths, dim=0).mean(dim=0)  # (L, E)
+        other_avg = th.stack(tuple(other_paths), dim=0).mean(dim=0)  # (L, E)
         country_specific_paths[experiment_type] = target_path - other_avg
 
     return country_specific_paths
