@@ -979,6 +979,8 @@ dependencies = [
     { name = "flask" },
     { name = "jaxtyping" },
     { name = "orjson" },
+    { name = "pre-commit" },
+    { name = "pytest" },
     { name = "safetensors" },
     { name = "sentence-transformers" },
     { name = "simple-parsing" },
@@ -1022,8 +1024,10 @@ requires-dist = [
     { name = "orjson" },
     { name = "pandas", marker = "extra == 'visualize'" },
     { name = "plotly", marker = "extra == 'visualize'", specifier = ">=5.0.0rc2" },
+    { name = "pre-commit", specifier = ">=4.3.0" },
     { name = "pre-commit", marker = "extra == 'dev'" },
     { name = "pyright", marker = "extra == 'dev'", specifier = "==1.1.378" },
+    { name = "pytest", specifier = ">=8.4.1" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-asyncio", marker = "extra == 'dev'" },
     { name = "pytest-beartype", marker = "extra == 'dev'" },
@@ -2649,8 +2653,8 @@ wheels = [
 
 [[package]]
 name = "nnterp"
-version = "0.1.dev272+g47adeabbe"
-source = { git = "https://github.com/d0rbu/nnterp.git#47adeabbeae4a7ac62182ac1f699dca5ea65d56e" }
+version = "0.1.dev273+gb80049a52"
+source = { git = "https://github.com/d0rbu/nnterp.git#b80049a52b1443b506070849d21966ed57ad9c85" }
 dependencies = [
     { name = "loguru" },
     { name = "nnsight" },
