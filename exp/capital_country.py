@@ -1105,6 +1105,9 @@ def run_intervention(
 
             # Apply intervention to the last token's probabilities
             # Subtract the intervention path (scaled by alpha) from probabilities
+            intervention_paths_tensor = intervention_paths_tensor.to(
+                device=router_logits.device
+            )
             layer_intervention = intervention_paths_tensor[:, i]  # (N, E)
             modified_logits = router_logits.clone()
             modified_logits[:, -1, :] -= alpha * layer_intervention
