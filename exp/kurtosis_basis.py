@@ -195,7 +195,7 @@ def compute_kurtosis_statistics(
         model_config.hf_name,
         check_attn_probs_with_trace=False,
         check_renaming=False,
-        device_map={"": device},
+        device_map="auto",
         revision=revision,
         dispatch=True,
     )
