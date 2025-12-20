@@ -989,16 +989,16 @@ def compute_country_specific_paths(
 
 @th.no_grad()
 def run_intervention(
-    prompt: CountryPrompt,
+    prompts: list[CountryPrompt],
     model: StandardizedTransformer,
     intervention_paths: dict[
         ExperimentType, th.Tensor
     ],  # ExperimentType -> (L, E) - the country-specific path to subtract
     alpha: float,
     top_k: int,
-) -> tuple[float, dict[ExperimentType, float]]:
+) -> tuple[list[float], dict[ExperimentType, list[float]]]:
     """
-    Run the model with and without intervention, returning probabilities for the correct capital.
+    Run the model with and without intervention for multiple prompts, returning probabilities for the correct capitals.
 
     The intervention works by modifying the router probabilities to make certain experts
     less likely to be selected. We do this by:
@@ -1008,52 +1008,112 @@ def run_intervention(
     4. Using nnterp's copy_ mechanism to update router probabilities in-place
 
     Args:
-        prompt: The prompt to run
+        prompts: List of prompts to run
         model: The model
-        intervention_path: The path to subtract from router outputs (L, E)
+        intervention_paths: The paths to subtract from router outputs (L, E) per experiment type
         alpha: Scaling factor for the intervention
         top_k: Number of top experts to select
 
     Returns:
-        Tuple of (pre_intervention_prob, dictionary mapping experiment type to post_intervention_prob) for the correct capital
+        Tuple of (pre_intervention_probs, dictionary mapping experiment type to post_intervention_probs)
+        where each list has one probability per prompt in the same order as input prompts
     """
     experiments = list(intervention_paths.keys())
     num_experiments = len(experiments) + 1  # + 1 for the control
+    num_prompts = len(prompts)
 
-    token_ids = prompt.token_ids.unsqueeze(0).expand(num_experiments, -1)  # (N, T)
-    capital = prompt.capital
+    # Get the token ID for the capital (first token) for each prompt
+    capital_token_ids: th.Tensor = th.empty(
+        num_prompts, dtype=th.long, device=prompts[0].token_ids.device
+    )
+    for prompt_idx, prompt in enumerate(prompts):
+        capital_tokens = model.tokenizer(
+            prompt.capital, add_special_tokens=False
+        ).input_ids
+        assert isinstance(capital_tokens, list) and capital_tokens, (
+            f"Capital '{prompt.capital}' not found in tokenizer"
+        )
+        capital_first_token_id = capital_tokens[0]
+        assert isinstance(capital_first_token_id, int), (
+            f"Capital '{prompt.capital}' first token ID is not an integer"
+        )
+        capital_token_ids[prompt_idx] = capital_first_token_id
 
-    # Get the token ID for the capital (first token)
-    capital_tokens = model.tokenizer(capital, add_special_tokens=False).input_ids
-    assert isinstance(capital_tokens, list) and capital_tokens, (
-        f"Capital '{capital}' not found in tokenizer"
+    # Pad prompts to the same length (left padding)
+    pad_token_id = model.tokenizer.pad_token_id
+    if pad_token_id is None:
+        pad_token_id = model.tokenizer.eos_token_id
+
+    seq_lengths = [len(p.token_ids) for p in prompts]
+    max_seq_len = max(seq_lengths)
+
+    # Left-pad sequences and create attention mask
+    padded_tokens: list[th.Tensor] = []
+    prompt_attn_mask = th.ones(  # (P, N, T)
+        (num_prompts, num_experiments, max_seq_len),
+        dtype=th.bool,
+        device=prompts[0].token_ids.device,
     )
-    capital_first_token_id = next(iter(capital_tokens))
-    assert isinstance(capital_first_token_id, int), (
-        f"Capital '{capital}' first token ID is not an integer"
-    )
+
+    for prompt_idx, prompt in enumerate(prompts):
+        tokens = prompt.token_ids
+        padding_amt = max_seq_len - len(tokens)
+
+        if padding_amt > 0:
+            padding = th.full(
+                (padding_amt,),
+                pad_token_id,
+                dtype=tokens.dtype,
+                device=tokens.device,
+            )
+            tokens = th.cat([padding, tokens])
+            prompt_attn_mask[prompt_idx, :, :padding_amt] = False
+
+        padded_tokens.append(tokens)
+
+    # Stack into (P, T)
+    prompt_token_ids_single = th.stack(padded_tokens, dim=0)
+
+    # Expand for all experiments: (P, T) -> (P, N, T)
+    prompt_token_ids = prompt_token_ids_single.unsqueeze(1).repeat(
+        1, num_experiments, 1
+    )  # (P, N, T)
 
     # Move intervention path to device and dtype
-    intervention_paths_tensor = th.stack(
+    prompt_intervention_paths_tensor = th.stack(  # (N, L, E)
         [
-            intervention_paths[exp].to(device=token_ids.device, dtype=th.float32)
+            intervention_paths[exp].to(device=prompt_token_ids.device, dtype=th.float32)
             for exp in experiments
         ],
         dim=0,
     )
-    # add control
-    intervention_paths_tensor = th.cat(
+    prompt_intervention_paths_tensor = prompt_intervention_paths_tensor.unsqueeze(
+        0
+    ).repeat(num_prompts, 1, 1, 1)  # (P, N-1, L, E)
+
+    # add control (zero intervention)
+    prompt_intervention_paths_tensor = th.cat(
         [
-            intervention_paths_tensor,
-            th.zeros_like(intervention_paths_tensor[0]).unsqueeze(0),
+            prompt_intervention_paths_tensor,
+            th.zeros_like(prompt_intervention_paths_tensor[:1]),
         ],
-        dim=0,
-    )  # (N, L, E)
+        dim=1,
+    )  # (P, N, L, E)
 
     # Run with interventions using nnterp's router_probabilities mechanism
     layers_with_routers = list(model.layers_with_routers)
 
-    with model.trace(token_ids):
+    token_ids = prompt_token_ids.view(-1, max_seq_len)  # (P*N, T)
+    attn_mask = prompt_attn_mask.view(-1, max_seq_len)  # (P*N, T)
+    batch = {
+        "input_ids": token_ids,
+        "attention_mask": attn_mask,
+    }
+    intervention_paths_tensor = prompt_intervention_paths_tensor.view(
+        -1, *prompt_intervention_paths_tensor.shape[2:]
+    )  # (P*N, L, E)
+
+    with model.trace(batch):
         for i, layer_idx in enumerate(layers_with_routers):
             router_output = model.routers_output[layer_idx]
 
@@ -1081,13 +1141,13 @@ def run_intervention(
                     router_indices = router_indices.reshape(*token_ids.shape, -1)
 
                     assert router_logits.shape[-1] > top_k, (
-                        f"Expected router logits to have shape (N, T, >{top_k}), got {router_logits.shape}"
+                        f"Expected router logits to have shape (P*N, T, >{top_k}), got {router_logits.shape}"
                     )
                     assert router_weights.shape[-1] == top_k, (
-                        f"Expected router weights to have shape (N, T, {top_k}), got {router_weights.shape}"
+                        f"Expected router weights to have shape (P*N, T, {top_k}), got {router_weights.shape}"
                     )
                     assert router_indices.shape[-1] == top_k, (
-                        f"Expected router indices to have shape (N, T, {top_k}), got {router_indices.shape}"
+                        f"Expected router indices to have shape (P*N, T, {top_k}), got {router_indices.shape}"
                     )
                     assert th.allclose(router_weights.sum(dim=-1), 1.0), (
                         "Router weights must sum to 1.0"
@@ -1101,16 +1161,20 @@ def run_intervention(
                     )
             else:
                 router_scores = cast("th.Tensor", router_output.save())
-                router_logits = router_scores.reshape(*token_ids.shape, -1)  # (N, T, E)
+                router_logits = router_scores.reshape(
+                    *token_ids.shape, -1
+                )  # (P*N, T, E)
 
             # Apply intervention to the last token's probabilities
             # Subtract the intervention path (scaled by alpha) from probabilities
             intervention_paths_tensor = intervention_paths_tensor.to(
                 device=router_logits.device
             )
-            layer_intervention = intervention_paths_tensor[:, i]  # (N, E)
+
+            layer_intervention = intervention_paths_tensor[:, i]  # (P*N, E)
+
             modified_logits = router_logits.clone()
-            modified_logits[:, -1, :] -= alpha * layer_intervention
+            modified_logits[:, -1] -= alpha * layer_intervention
 
             if router_output_is_tuple:
                 if router_output_len == 3:
@@ -1140,22 +1204,27 @@ def run_intervention(
                     -1, modified_logits.shape[-1]
                 )
 
-        final_logits = model.lm_head.output.save()
+        final_logits = model.lm_head.output.save()  # (P*N, T, vocab_size)
 
-    pre_logits = final_logits[-1, -1, :]  # (vocab_size,)
-    pre_probs = F.softmax(pre_logits.float(), dim=-1)
-    pre_prob = pre_probs[capital_first_token_id].item()
+    # Extract control probabilities (last N-1 experiment, i.e., last P elements in batch)
+    final_prompt_logits = final_logits.view(
+        num_prompts, num_experiments, -1, final_logits.shape[-1]
+    )  # (P, N, T, vocab_size)
+    final_prompt_probs = F.softmax(final_prompt_logits.float(), dim=-1)
 
-    experiment_post_probs: dict[ExperimentType, float] = {}
+    # Extract pre-intervention probabilities for each prompt's capital
+    pre_probs: th.Tensor = final_prompt_probs[:, -1, -1, capital_token_ids]  # (P,)
+
+    # Extract post-intervention probabilities for each experiment type
+    experiment_post_probs: dict[ExperimentType, list[float]] = {}
 
     for experiment_idx, experiment_type in enumerate(experiments):
-        post_logits = final_logits[experiment_idx, -1, :]  # (vocab_size,)
-        post_probs = F.softmax(post_logits.float(), dim=-1)
-        post_prob = post_probs[capital_first_token_id].item()
+        post_probs = final_prompt_probs[
+            :, experiment_idx, -1, capital_token_ids
+        ]  # (P,)
+        experiment_post_probs[experiment_type] = post_probs.cpu().tolist()
 
-        experiment_post_probs[experiment_type] = post_prob
-
-    return pre_prob, experiment_post_probs
+    return pre_probs, experiment_post_probs
 
 
 def run_intervention_experiment(
@@ -1163,6 +1232,7 @@ def run_intervention_experiment(
     avg_paths: dict[str, dict[ExperimentType, th.Tensor]],
     alphas: set[float],
     top_k: int,
+    batch_size: int = 64,
 ) -> dict[ExperimentType, set[ExperimentResults]]:
     """
     Run the full intervention experiment across multiple alpha values.
@@ -1170,9 +1240,9 @@ def run_intervention_experiment(
     Args:
         model: The MoE model
         avg_paths: Average paths per country and experiment type
-        experiment_type: Which experiment type to use for paths
-        alphas: List of alpha values to test
+        alphas: Set of alpha values to test
         top_k: Number of top experts to select
+        batch_size: Number of prompts to process at once
 
     Returns:
         Dictionary mapping experiment type to set of ExperimentResults
@@ -1194,34 +1264,37 @@ def run_intervention_experiment(
             country_specific_paths = compute_country_specific_paths(
                 avg_paths, target_country
             )
-            for prompt in tqdm(
-                prompts,
-                desc="Testing prompts",
-                total=len(prompts),
+
+            # Process prompts in batches
+            prompt_batches = list(batched(prompts, batch_size))
+            for batch_prompts in tqdm(
+                prompt_batches,
+                desc="Testing prompt batches",
+                total=len(prompt_batches),
                 position=1,
                 leave=False,
             ):
-                pre_prob, post_probs = run_intervention(
-                    prompt, model, country_specific_paths, alpha, top_k
+                batch_prompts_list = list(batch_prompts)
+                pre_probs, post_probs_dict = run_intervention(
+                    batch_prompts_list, model, country_specific_paths, alpha, top_k
                 )
-                for experiment_type, post_prob in tqdm(
-                    post_probs.items(),
-                    desc="Testing experiment types",
-                    total=len(post_probs),
-                    position=0,
-                    leave=False,
-                ):
-                    all_results[experiment_type].add(
-                        InterventionResult(
-                            country=prompt.country,
-                            intervention_country=target_country,
-                            pre_intervention_prob=pre_prob,
-                            post_intervention_prob=post_prob,
-                            forgetfulness=InterventionMetric(
-                                alpha=alpha, value=pre_prob - post_prob
-                            ),
+
+                # Process results for each prompt in the batch
+                for prompt_idx, prompt in enumerate(batch_prompts_list):
+                    pre_prob = pre_probs[prompt_idx]
+                    for experiment_type, post_probs in post_probs_dict.items():
+                        post_prob = post_probs[prompt_idx]
+                        all_results[experiment_type].add(
+                            InterventionResult(
+                                country=prompt.country,
+                                intervention_country=target_country,
+                                pre_intervention_prob=pre_prob,
+                                post_intervention_prob=post_prob,
+                                forgetfulness=InterventionMetric(
+                                    alpha=alpha, value=pre_prob - post_prob
+                                ),
+                            )
                         )
-                    )
 
     structured_results: dict[ExperimentType, set[ExperimentResults]] = defaultdict(set)
 
@@ -1590,7 +1663,8 @@ def capital_country(
     alpha_max: float = 5.0,
     alpha_steps: int = 11,
     postprocessor: str = "masks",
-    batch_size: int = 64,
+    router_path_batch_size: int = 128,
+    intervention_batch_size: int = 8,
     seed: int = 0,
     hf_token: str = "",
     output_dir: str = "out/capital_country",
@@ -1670,7 +1744,7 @@ def capital_country(
     country_paths = extract_router_paths(
         model,
         top_k=top_k,
-        batch_size=batch_size,
+        batch_size=router_path_batch_size,
         postprocessor=postprocessor_enum,
     )
 
@@ -1695,6 +1769,7 @@ def capital_country(
         avg_paths,
         alphas,
         top_k,
+        batch_size=intervention_batch_size,
     )
 
     # Save results
