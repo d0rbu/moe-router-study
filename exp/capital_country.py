@@ -759,7 +759,7 @@ def get_all_prompts(tokenizer: PreTrainedTokenizerBase) -> set[CountryPrompt]:
 
             # Apply chat template
             formatted = tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=False
+                messages, tokenize=False, continue_final_message=True
             )
 
             assert isinstance(formatted, str), (
@@ -790,7 +790,7 @@ def get_all_prompts(tokenizer: PreTrainedTokenizerBase) -> set[CountryPrompt]:
 def extract_router_paths(
     model: StandardizedTransformer,
     top_k: int,
-    batch_size: int = 8,
+    batch_size: int = 64,
     postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
 ) -> dict[str, dict[ExperimentType, set[th.Tensor]]]:
     """
@@ -841,7 +841,6 @@ def extract_router_paths(
         )
 
         # Left pad sequences to max length and stack into batch
-        padding_amts = []
         padded_tokens = []
         for sample_idx, prompt in enumerate(batch_prompts):
             tokens = prompt.token_ids
@@ -857,7 +856,6 @@ def extract_router_paths(
                 tokens = th.cat([padding, tokens])
                 attn_mask[sample_idx, :padding_amt] = False
 
-            padding_amts.append(padding_amt)
             padded_tokens.append(tokens)
 
         # Stack into (B, T)
@@ -885,7 +883,7 @@ def extract_router_paths(
                     router_scores = router_output
 
                 logits = router_scores.save()
-                router_logits_list.append(logits)
+                router_logits_list.append(logits.reshape(*batch_token_ids.shape, -1))
 
         # Stack into (B, T, L, E)
         router_logits = th.stack(router_logits_list, dim=2)
@@ -1585,7 +1583,7 @@ def capital_country(
     alpha_max: float = 5.0,
     alpha_steps: int = 11,
     postprocessor: str = "masks",
-    batch_size: int = 8,
+    batch_size: int = 64,
     seed: int = 0,
     hf_token: str = "",
     output_dir: str = "out/capital_country",
