@@ -203,7 +203,6 @@ def run_intruder_eval(
     batchsize: int,
     n_latents: int,
     vllm_num_gpus: int,
-    cache_device_idx: int,
     seed: int,
 ) -> bool:
     """Run intruder evaluation on an experiment."""
@@ -718,7 +717,6 @@ def main(
     intruder_batchsize: int,
     intruder_n_latents: int,
     intruder_vllm_num_gpus: int,
-    intruder_cache_device_idx: int,
     dtype: str,
     seed: int,
     skip_evaluation: bool,
@@ -762,21 +760,24 @@ def main(
                     )
 
             if run_intruder:
-                intruder_success = run_intruder_eval(
-                    exp.experiment_name,
-                    model_name,
-                    dtype,
-                    intruder_n_tokens,
-                    intruder_batchsize,
-                    intruder_n_latents,
-                    intruder_vllm_num_gpus,
-                    intruder_cache_device_idx,
-                    seed,
-                )
-                if not intruder_success:
-                    raise RuntimeError(
-                        f"Intruder evaluation failed for {exp.experiment_name}"
+                for sae_info in exp.saes:
+                    sae_experiment_dir = (
+                        f"{exp.experiment_name}/{sae_info.sae_dir.name}"
                     )
+                    intruder_success = run_intruder_eval(
+                        sae_experiment_dir,
+                        model_name,
+                        dtype,
+                        intruder_n_tokens,
+                        intruder_batchsize,
+                        intruder_n_latents,
+                        intruder_vllm_num_gpus,
+                        seed,
+                    )
+                    if not intruder_success:
+                        raise RuntimeError(
+                            f"Intruder evaluation failed for {sae_experiment_dir}"
+                        )
 
         logger.debug("🏁 Evaluation phase complete!")
     else:
@@ -819,7 +820,6 @@ def eval_all_saes(
     intruder_batchsize: int = 32,
     intruder_n_latents: int = 1000,
     intruder_vllm_num_gpus: int = 1,
-    intruder_cache_device_idx: int = 1,
     dtype: str = "fp32",
     seed: int = 0,
     skip_evaluation: bool = False,
@@ -837,7 +837,6 @@ def eval_all_saes(
         intruder_batchsize: Batch size for intruder evaluation
         intruder_n_latents: Number of latents for intruder evaluation
         intruder_vllm_num_gpus: Number of GPUs for VLLM (default: 1, uses device 0)
-        intruder_cache_device_idx: Device index for caching model (default: 1, reserves 0 for VLLM)
         dtype: Data type for evaluation
         seed: Random seed
         skip_evaluation: Whether to skip evaluation and only aggregate results
@@ -859,7 +858,6 @@ def eval_all_saes(
         intruder_batchsize=intruder_batchsize,
         intruder_n_latents=intruder_n_latents,
         intruder_vllm_num_gpus=intruder_vllm_num_gpus,
-        intruder_cache_device_idx=intruder_cache_device_idx,
         dtype=dtype,
         seed=seed,
         skip_evaluation=skip_evaluation,
