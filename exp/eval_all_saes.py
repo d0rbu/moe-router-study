@@ -230,8 +230,6 @@ def run_intruder_eval(
         str(n_latents),
         "--vllm-num-gpus",
         str(vllm_num_gpus),
-        "--cache-device-idx",
-        str(cache_device_idx),
         "--seed",
         str(seed),
     ]

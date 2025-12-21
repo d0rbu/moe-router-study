@@ -117,8 +117,6 @@ def run_intruder_eval(
         str(pipeline_num_proc),
         "--vllm-num-gpus",
         str(vllm_num_gpus),
-        "--cache-device-idx",
-        str(cache_device_idx),
         "--seed",
         str(seed),
         "--log-level",
