@@ -323,8 +323,8 @@ def load_hookpoints(
     """
     Loads the hookpoints from the config file.
     """
-    sae_config_path = root_dir / "config.yaml"
-    logger.info(f"Loading hookpoints from {sae_config_path}")
+    logger.info(f"Loading hookpoints from {root_dir}")
+    sae_config_path = root_dir / "config.json"
     if sae_config_path.is_file():
         # this is a sae experiment, not paths
         return load_hookpoints_and_saes(root_dir, dtype=dtype), None
@@ -949,7 +949,7 @@ def populate_cache(
     """
     Populates an on-disk cache in `latents_path` with latent activations.
     """
-    sae_config_path = root_dir / "config.yaml"
+    sae_config_path = root_dir / "config.json"
     if sae_config_path.is_file():
         # this is a sae experiment, not paths
         logger.debug(
