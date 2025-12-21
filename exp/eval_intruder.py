@@ -324,6 +324,7 @@ def load_hookpoints(
     Loads the hookpoints from the config file.
     """
     sae_config_path = root_dir / "config.yaml"
+    logger.info(f"Loading hookpoints from {sae_config_path}")
     if sae_config_path.is_file():
         # this is a sae experiment, not paths
         return load_hookpoints_and_saes(root_dir, dtype=dtype), None
@@ -1122,7 +1123,9 @@ def eval_intruder(
     if load_in_8bit:
         quantization_config = BitsAndBytesConfig(load_in_8bit=load_in_8bit)
 
-    root_dir = Path(OUTPUT_DIR, experiment_dir)
+    # check if experiment_dir is an absolute path
+    raw_path = Path(experiment_dir)
+    root_dir = raw_path if raw_path.is_absolute() else Path(OUTPUT_DIR, experiment_dir)
     base_path = root_dir / "delphi"
     latents_path = base_path / "latents"
     scores_path = base_path / "scores"

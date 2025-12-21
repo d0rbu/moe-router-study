@@ -764,8 +764,9 @@ def main(
                     sae_experiment_dir = (
                         f"{exp.experiment_name}/{sae_info.sae_dir.name}"
                     )
+                    sae_experiment_path = Path(OUTPUT_DIR, sae_experiment_dir)
                     intruder_success = run_intruder_eval(
-                        sae_experiment_dir,
+                        sae_experiment_path.absolute().as_posix(),
                         model_name,
                         dtype,
                         intruder_n_tokens,
