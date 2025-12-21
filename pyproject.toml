@@ -59,6 +59,8 @@ dependencies = [
     "pytest-asyncio>=1.2.0",
     "triton>=3.4.0",
     "frozendict>=2.4.6",
+    "anthropic>=0.75.0",
+    "openai>=1.109.1",
 ]
 
 [project.optional-dependencies]

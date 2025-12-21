@@ -4,7 +4,7 @@
 #SBATCH -J get_activations_qwen   # Set the job name to "get_activations_qwen"
 #SBATCH -N 1                       # Number of nodes to request
 #SBATCH -n 1                       # Total number of tasks across all nodes
-#SBATCH -t 06:00:00                # Set the wall clock limit to 6 hours
+#SBATCH -t 02:30:00                # Set the wall clock limit to 6 hours
 #SBATCH -o get_activations_qwen-%j      # Send stdout/err to "get_activations_qwen.[jobID]"
 #SBATCH -e get_activations_qwen-%j.err  # Send stderr to separate file
 #SBATCH -p h100                    # Request the GPU partition/queue
