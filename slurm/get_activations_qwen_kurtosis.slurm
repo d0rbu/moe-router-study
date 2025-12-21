@@ -53,5 +53,5 @@ echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 cd $SCRATCH/moe-router-study
 
 # Run the distributed job
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/get_activations.py q3-i --minibatch-size 10 --gpus-per-worker 1 --tokens-per-file 50000 --layers-to-store 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47 --activations-to-store router_logits,mlp_output,layer_output --num-tokens 11000000
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/get_activations.py q3-i --minibatch-size 5 --gpus-per-worker 1 --tokens-per-file 50000 --layers-to-store 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47 --activations-to-store router_logits,mlp_output,layer_output --num-tokens 11000000
 
