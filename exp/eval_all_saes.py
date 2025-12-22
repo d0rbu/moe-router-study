@@ -19,7 +19,6 @@ from typing import Any
 import arguably
 from loguru import logger
 import matplotlib.pyplot as plt
-import numpy as np
 import orjson
 import pandas as pd
 import seaborn as sns
@@ -263,13 +262,18 @@ def run_intruder_eval(
         return False
 
 
-def load_saebench_results(experiment_dir: Path, sae_id: str) -> dict[str, Any]:
+SAE_CONFIG_KEYS = {"dict_size", "layer", "dict_class", "submodule_name", "k"}
+
+
+def load_saebench_results(
+    experiment_dir: Path, results_dir: Path, sae_id: str
+) -> dict[str, Any]:
     """Load SAEBench evaluation results."""
-    logger.debug(f"Loading SAEBench results from {experiment_dir} for SAE {sae_id}")
+    logger.debug(f"Loading SAEBench results from {results_dir} for SAE {sae_id}")
 
     # SAEBench saves results in the experiment directory
     # Look for result files
-    result_files = list(experiment_dir.glob(f"**/*_{sae_id}_*results*.json"))
+    result_files = list(results_dir.glob(f"**/*_{sae_id}_*results*.json"))
     logger.debug(f"Found {len(result_files)} potential SAEBench result files")
     if result_files:
         logger.trace(f"SAEBench result files: {[f.name for f in result_files]}")
@@ -279,7 +283,7 @@ def load_saebench_results(experiment_dir: Path, sae_id: str) -> dict[str, Any]:
     )
 
     if len(result_files) <= 0:
-        logger.debug(f"  ❌ No SAEBench results found in {experiment_dir}")
+        logger.debug(f"  ❌ No SAEBench results found in {results_dir}")
         return {}
 
     with open(result_files[0]) as f:
@@ -288,27 +292,42 @@ def load_saebench_results(experiment_dir: Path, sae_id: str) -> dict[str, Any]:
 
     metrics = results["eval_result_metrics"]
     flat_metrics = {
-        eval_key: eval_metric
+        f"saebench_metric_{eval_key}": eval_metric
         for _metric_key, metric_value in metrics.items()
         for eval_key, eval_metric in metric_value.items()
         if isinstance(metric_value, dict)
     }
 
-    return flat_metrics
+    experiment_config_path = experiment_dir / "config.json"
+    assert experiment_config_path.exists(), (
+        f"❌ Experiment config file does not exist: {experiment_config_path}"
+    )
+
+    with open(experiment_config_path) as f:
+        experiment_config = json.load(f)
+        experiment_config = {
+            k: v
+            for k, v in experiment_config["trainer"].items()
+            if k in SAE_CONFIG_KEYS
+        }
+
+    output = {**experiment_config, **flat_metrics}
+
+    return output
 
 
 def load_intruder_results(
-    experiment_dir: Path, sae_id: str | None = None
+    experiment_dir: Path, results_dir: Path, sae_id: str | None = None
 ) -> dict[str, Any]:
     """Load intruder evaluation results."""
     results = {}
     logger.debug(
-        f"Loading intruder results from {experiment_dir}"
+        f"Loading intruder results from {results_dir}"
         + (f" for SAE {sae_id}" if sae_id else "")
     )
 
     # Intruder results are saved in delphi/scores/
-    scores_dir = experiment_dir / "delphi" / "scores"
+    scores_dir = results_dir / "delphi" / "scores"
     logger.debug(f"Looking for intruder results in {scores_dir}")
 
     if not scores_dir.exists():
@@ -367,16 +386,20 @@ def aggregate_results(
 
             # Load evaluation results - try both experiment level and SAE level
             # First try at experiment level (for backward compatibility)
-            saebench_results = load_saebench_results(exp_dir, sae_id)
-            intruder_results = load_intruder_results(exp_dir, sae_id)
+            saebench_results = load_saebench_results(exp_dir, exp_dir, sae_id)
+            intruder_results = load_intruder_results(exp_dir, exp_dir, sae_id)
 
             # If no results at experiment level, try at SAE level
             if not saebench_results and not intruder_results:
                 logger.debug(
                     f"    No results at experiment level, trying SAE directory: {sae_info.sae_dir}"
                 )
-                saebench_results = load_saebench_results(sae_info.sae_dir, sae_id)
-                intruder_results = load_intruder_results(sae_info.sae_dir, sae_id)
+                saebench_results = load_saebench_results(
+                    exp_dir, sae_info.sae_dir, sae_id
+                )
+                intruder_results = load_intruder_results(
+                    exp_dir, sae_info.sae_dir, sae_id
+                )
 
             # If no results at SAE level, try at eval_results directory
             if not saebench_results and not intruder_results:
@@ -384,10 +407,10 @@ def aggregate_results(
                     f"    No results at SAE level, trying default directory: {DEFAULT_EVAL_RESULTS_DIR}"
                 )
                 saebench_results = load_saebench_results(
-                    Path(DEFAULT_EVAL_RESULTS_DIR), sae_id
+                    exp_dir, Path(DEFAULT_EVAL_RESULTS_DIR), sae_id
                 )
                 intruder_results = load_intruder_results(
-                    Path(DEFAULT_EVAL_RESULTS_DIR), sae_id
+                    exp_dir, Path(DEFAULT_EVAL_RESULTS_DIR), sae_id
                 )
 
             # Check if we still have no evaluation results after trying both locations
@@ -420,66 +443,8 @@ def aggregate_results(
 
 def extract_metrics(results: list[EvaluationResults]) -> pd.DataFrame:
     """Extract key metrics from results into a DataFrame."""
-    rows = []
     logger.info(f"Extracting metrics from {len(results)} evaluation results")
-
-    for i, result in enumerate(results):
-        logger.debug(
-            f"Processing result {i + 1}/{len(results)}: {result.experiment_name}/{result.sae_id}"
-        )
-
-        row = {
-            "experiment": result.experiment_name,
-            "sae_id": result.sae_id,
-        }
-
-        # Extract config parameters
-        if "trainer" in result.config:
-            trainer_config = result.config["trainer"]
-            row.update(
-                {
-                    "expansion_factor": trainer_config.get("dict_size", 0)
-                    / trainer_config.get("activation_dim", 1),
-                    "k": trainer_config.get("k", 0),
-                    "layer": trainer_config.get("layer", 0),
-                    "lr": trainer_config.get("lr", 0),
-                    "seed": trainer_config.get("seed", 0),
-                }
-            )
-            logger.debug(
-                f"  Config extracted: expansion_factor={row.get('expansion_factor')}, k={row.get('k')}"
-            )
-
-        # Extract SAEBench metrics
-        saebench_metrics_count = 0
-        for eval_name, eval_data in result.saebench_results.items():
-            if isinstance(eval_data, dict):
-                for metric_name, metric_value in eval_data.items():
-                    if isinstance(metric_value, int | float):
-                        row[f"saebench_{eval_name}_{metric_name}"] = metric_value
-                        saebench_metrics_count += 1
-
-        logger.debug(f"  SAEBench metrics extracted: {saebench_metrics_count}")
-
-        # Extract intruder metrics (average score)
-        if result.intruder_results:
-            scores = [
-                score
-                for score in result.intruder_results.values()
-                if isinstance(score, int | float)
-            ]
-            if scores:
-                row["intruder_avg_score"] = np.mean(scores)
-                row["intruder_std_score"] = np.std(scores)
-                logger.debug(
-                    f"  Intruder metrics extracted: avg={row['intruder_avg_score']:.4f}, std={row['intruder_std_score']:.4f}"
-                )
-            else:
-                logger.debug("  No valid intruder scores found")
-        else:
-            logger.debug("  No intruder results found")
-
-        rows.append(row)
+    rows = [{**result.config, **result.saebench_results} for result in results]
 
     df = pd.DataFrame(rows)
     logger.info(
@@ -549,9 +514,91 @@ def compute_rankings(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     return rankings
 
 
+def create_metric_line_graphs(df: pd.DataFrame) -> None:
+    """Create line graphs for saebench metrics sliced by config keys."""
+    viz_dir = Path(FIGURE_DIR) / "eval_all_saes" / "metric_line_graphs"
+    viz_dir.mkdir(exist_ok=True, parents=True)
+
+    # Set style
+    sns.set_style("whitegrid")
+    plt.rcParams["figure.figsize"] = (12, 8)
+
+    # Find all saebench metric columns
+    metric_cols = [col for col in df.columns if col.startswith("saebench_metric_")]
+
+    if not metric_cols:
+        logger.warning("No saebench_metric_ columns found for visualization")
+        return
+
+    logger.info(f"Creating line graphs for {len(metric_cols)} metrics")
+
+    # For each metric, create line graphs sliced by each config key
+    for metric in metric_cols:
+        if metric not in df.columns:
+            continue
+
+        # Check if we have valid data for this metric
+        if df[metric].notna().sum() == 0:
+            logger.debug(f"Skipping {metric} - no valid values")
+            continue
+
+        logger.debug(f"Creating visualizations for {metric}")
+
+        # For each config key, create a line graph
+        for config_key in SAE_CONFIG_KEYS:
+            if config_key not in df.columns:
+                logger.debug(f"Skipping {config_key} - not in DataFrame columns")
+                continue
+
+            # Group by config_key and compute average metric value
+            grouped = df.groupby(config_key)[metric].mean()
+
+            if len(grouped) == 0:
+                logger.debug(
+                    f"Skipping {metric} vs {config_key} - no data after grouping"
+                )
+                continue
+
+            # Try to sort numerically if possible, otherwise sort by index
+            try:
+                # Try converting index to numeric for proper sorting
+                numeric_index = pd.to_numeric(grouped.index, errors="coerce")
+                if numeric_index.notna().all():
+                    # If all values can be converted to numeric, sort by numeric values
+                    grouped = grouped.iloc[numeric_index.argsort()]
+                else:
+                    # Otherwise sort by index as-is
+                    grouped = grouped.sort_index()
+            except Exception:
+                # Fallback to regular sort
+                grouped = grouped.sort_index()
+
+            # Create line graph
+            plt.figure(figsize=(12, 8))
+            plt.plot(
+                grouped.index, grouped.values, marker="o", linewidth=2, markersize=8
+            )
+            plt.xlabel(config_key, fontsize=12)
+            plt.ylabel(f"Average {metric}", fontsize=12)
+            plt.title(f"{metric} by {config_key}", fontsize=14, fontweight="bold")
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+
+            # Save figure
+            safe_metric = metric.replace("/", "_").replace(" ", "_")
+            safe_config = config_key.replace("/", "_").replace(" ", "_")
+            plt.savefig(
+                viz_dir / f"{safe_metric}_by_{safe_config}.png",
+                dpi=300,
+                bbox_inches="tight",
+            )
+            plt.close()
+
+    logger.info(f"Line graph visualizations saved to {viz_dir}")
+
+
 def create_visualizations(
     df: pd.DataFrame,
-    rankings: dict[str, pd.DataFrame],
 ) -> None:
     """Create visualizations for the evaluation results."""
     viz_dir = Path(FIGURE_DIR) / "eval_all_saes"
@@ -560,26 +607,6 @@ def create_visualizations(
     # Set style
     sns.set_style("whitegrid")
     plt.rcParams["figure.figsize"] = (12, 8)
-
-    # 1. Overall ranking bar chart
-    if "overall" in rankings:
-        plt.figure(figsize=(14, 8))
-        overall = rankings["overall"].head(20)  # Top 20
-        plt.barh(
-            range(len(overall)),
-            overall["overall_rank"],
-            color=sns.color_palette("viridis", len(overall)),
-        )
-        plt.yticks(
-            range(len(overall)),
-            [f"{row['experiment']}/{row['sae_id']}" for _, row in overall.iterrows()],
-        )
-        plt.xlabel("Overall Rank (lower is better)")
-        plt.title("Top 20 SAEs by Overall Ranking")
-        plt.gca().invert_yaxis()
-        plt.tight_layout()
-        plt.savefig(viz_dir / "overall_ranking.png", dpi=300, bbox_inches="tight")
-        plt.close()
 
     # 2. Metric comparison heatmap
     metric_cols = [
@@ -689,7 +716,6 @@ def create_visualizations(
 
 def save_results(
     df: pd.DataFrame,
-    rankings: dict[str, pd.DataFrame],
     output_dir: Path,
 ) -> None:
     """Save aggregated results and rankings to files."""
@@ -699,11 +725,6 @@ def save_results(
     # Save full results DataFrame
     df.to_csv(results_dir / "all_results.csv", index=False)
     df.to_json(results_dir / "all_results.json", orient="records", indent=2)
-
-    # Save rankings
-    for metric, ranking_df in rankings.items():
-        safe_metric = metric.replace("/", "_").replace(" ", "_")
-        ranking_df.to_csv(results_dir / f"ranking_{safe_metric}.csv", index=False)
 
     logger.info(f"Results saved to {results_dir}")
 
@@ -795,17 +816,17 @@ def main(
     df = extract_metrics(results)
     logger.info(f"Extracted metrics for {len(df)} SAEs")
 
-    # Compute rankings
-    logger.info("Computing rankings...")
-    rankings = compute_rankings(df)
-    logger.info(f"Computed {len(rankings)} ranking tables")
+    # Create metric line graph visualizations
+    logger.info("Creating metric line graph visualizations...")
+    create_metric_line_graphs(df)
+    logger.info("Metric line graph visualizations complete")
 
-    # Save results
-    save_results(df, rankings, output_path)
+    # Save results (rankings replaced with line graph visualizations)
+    save_results(df, output_path)
 
     # Create visualizations
     logger.info("Creating visualizations...")
-    create_visualizations(df, rankings)
+    create_visualizations(df)
 
     logger.info("✅ Evaluation complete!")
 
