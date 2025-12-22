@@ -581,123 +581,6 @@ def create_metric_line_graphs(df: pd.DataFrame) -> None:
     logger.info(f"Line graph visualizations saved to {viz_dir}")
 
 
-def create_visualizations(
-    df: pd.DataFrame,
-) -> None:
-    """Create visualizations for the evaluation results."""
-    viz_dir = Path(FIGURE_DIR) / "eval_all_saes"
-    viz_dir.mkdir(exist_ok=True, parents=True)
-
-    # Set style
-    sns.set_style("whitegrid")
-    plt.rcParams["figure.figsize"] = (12, 8)
-
-    # 2. Metric comparison heatmap
-    metric_cols = [
-        col
-        for col in df.columns
-        if col.startswith("saebench_") or col.startswith("intruder_")
-    ]
-    if metric_cols:
-        # Normalize metrics to 0-1 scale for comparison
-        normalized_df = df[["experiment", "sae_id", *metric_cols]].copy()
-        for col in metric_cols:
-            if col in normalized_df.columns:
-                min_val = normalized_df[col].min()
-                max_val = normalized_df[col].max()
-                if max_val > min_val:
-                    normalized_df[col] = (normalized_df[col] - min_val) / (
-                        max_val - min_val
-                    )
-
-        # Create heatmap
-        plt.figure(figsize=(16, 10))
-        heatmap_data = normalized_df.set_index(
-            normalized_df["experiment"] + "/" + normalized_df["sae_id"]
-        )[metric_cols]
-
-        # Only show top 30 SAEs for readability
-        if len(heatmap_data) > 30:
-            heatmap_data = heatmap_data.head(30)
-
-        sns.heatmap(
-            heatmap_data.T,
-            cmap="RdYlGn",
-            center=0.5,
-            cbar_kws={"label": "Normalized Score"},
-            linewidths=0.5,
-        )
-        plt.title("Metric Comparison Heatmap (Normalized)")
-        plt.xlabel("SAE")
-        plt.ylabel("Metric")
-        plt.xticks(rotation=45, ha="right")
-        plt.tight_layout()
-        plt.savefig(viz_dir / "metric_heatmap.png", dpi=300, bbox_inches="tight")
-        plt.close()
-
-    # 3. Individual metric rankings
-    for metric in metric_cols:
-        if metric in df.columns and df[metric].notna().sum() > 0:
-            plt.figure(figsize=(12, 8))
-            top_saes = df.nlargest(15, metric)
-
-            plt.barh(
-                range(len(top_saes)),
-                top_saes[metric],
-                color=sns.color_palette("coolwarm", len(top_saes)),
-            )
-            plt.yticks(
-                range(len(top_saes)),
-                [
-                    f"{row['experiment']}/{row['sae_id']}"
-                    for _, row in top_saes.iterrows()
-                ],
-            )
-            plt.xlabel(metric)
-            plt.title(f"Top 15 SAEs by {metric}")
-            plt.gca().invert_yaxis()
-            plt.tight_layout()
-
-            safe_filename = metric.replace("/", "_").replace(" ", "_")
-            plt.savefig(
-                viz_dir / f"{safe_filename}_ranking.png", dpi=300, bbox_inches="tight"
-            )
-            plt.close()
-
-    # 4. Hyperparameter correlation plots
-    hparam_cols = ["expansion_factor", "k", "layer", "lr"]
-    available_hparams = [col for col in hparam_cols if col in df.columns]
-
-    if available_hparams and metric_cols:
-        for hparam in available_hparams:
-            for metric in metric_cols[:3]:  # Only plot top 3 metrics
-                if metric in df.columns:
-                    plt.figure(figsize=(10, 6))
-                    valid_data = df[[hparam, metric]].dropna()
-
-                    if len(valid_data) > 0:
-                        plt.scatter(
-                            valid_data[hparam],
-                            valid_data[metric],
-                            alpha=0.6,
-                            s=100,
-                        )
-                        plt.xlabel(hparam)
-                        plt.ylabel(metric)
-                        plt.title(f"{metric} vs {hparam}")
-                        plt.tight_layout()
-
-                        safe_metric = metric.replace("/", "_").replace(" ", "_")
-                        plt.savefig(
-                            viz_dir / f"{hparam}_vs_{safe_metric}.png",
-                            dpi=300,
-                            bbox_inches="tight",
-                        )
-                        plt.close()
-
-    logger.info(f"Visualizations saved to {viz_dir}")
-
-
 def save_results(
     df: pd.DataFrame,
     output_dir: Path,
@@ -807,10 +690,6 @@ def main(
 
     # Save results (rankings replaced with line graph visualizations)
     save_results(df, output_path)
-
-    # Create visualizations
-    logger.info("Creating visualizations...")
-    create_visualizations(df)
 
     logger.info("✅ Evaluation complete!")
 

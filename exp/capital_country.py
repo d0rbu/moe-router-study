@@ -1457,8 +1457,9 @@ def _plot_single_country_results(
         assert len(other_results_averaged_for_alpha) == 1, (
             f"Expected 1 other result averaged for alpha {alpha}, got {len(other_results_averaged_for_alpha)}"
         )
-        other_forgetfulness = other_results_averaged_for_alpha[0].forgetfulness.value
-        other_forgetfulnesses[other_results_averaged_for_alpha[0].country].append(
+        other_result_averaged_for_alpha = next(iter(other_results_averaged_for_alpha))
+        other_forgetfulness = other_result_averaged_for_alpha.forgetfulness.value
+        other_forgetfulnesses[other_result_averaged_for_alpha.country].append(
             other_forgetfulness
         )
 
@@ -1471,7 +1472,7 @@ def _plot_single_country_results(
         assert len(specificity_scores_for_alpha) == 1, (
             f"Expected 1 specificity score for alpha {alpha}, got {len(specificity_scores_for_alpha)}"
         )
-        specificity_score = specificity_scores_for_alpha[0].value
+        specificity_score = next(iter(specificity_scores_for_alpha)).value
         specificity_scores.append(specificity_score)
 
     target_capital = COUNTRY_TO_CAPITAL[results.target_country]
@@ -1815,7 +1816,7 @@ def capital_country(
             assert len(all_country_results) == 1, (
                 f"Expected 1 country result for {country}, got {len(all_country_results)}"
             )
-            country_results = all_country_results[0]
+            country_results = next(iter(all_country_results))
 
             assert isinstance(country_results, ExperimentResults), (
                 f"Expected ExperimentResults for {country}, got {type(country_results)}"
@@ -1866,13 +1867,13 @@ def capital_country(
                 )
 
                 target_forgetfulness.append(
-                    target_results_for_alpha[0].forgetfulness.value
+                    next(iter(target_results_for_alpha)).forgetfulness.value
                 )
                 other_average_forgetfulness.append(
-                    other_results_averaged_for_alpha[0].forgetfulness.value
+                    next(iter(other_results_averaged_for_alpha)).forgetfulness.value
                 )
                 specificity_scores.append(
-                    specificity_scores_for_alpha[0].forgetfulness.value
+                    next(iter(specificity_scores_for_alpha)).forgetfulness.value
                 )
 
                 for other_result_for_alpha in other_results_for_alpha:
