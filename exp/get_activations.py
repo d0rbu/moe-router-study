@@ -606,11 +606,9 @@ def gpu_worker(
         # Process batch
         batch_idx, encoded_batch, batch_tokens, tokens_count = item
 
-        # Move tensors to device (use local_device_ids since CUDA_VISIBLE_DEVICES remaps indices)
+        # Move tensors to device
         if gpu_available:
-            encoded_batch = {
-                k: v.to(local_device_ids[0]) for k, v in encoded_batch.items()
-            }
+            encoded_batch = {k: v.to(device_ids[0]) for k, v in encoded_batch.items()}
 
         # Process batch and get router logits
         logger.debug(f"Rank {rank} processing batch {batch_idx}")
