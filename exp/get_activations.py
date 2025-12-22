@@ -258,6 +258,7 @@ def process_batch(
     return activations
 
 
+@th.no_grad()
 def tokenizer_worker(
     model_name: str,
     dataset_name: str,
@@ -395,6 +396,7 @@ def tokenizer_worker(
         main_queue.put(None)
 
 
+@th.no_grad()
 def multiplexer_worker(
     main_queue: mp.Queue,
     gpu_queues: list[mp.Queue],
@@ -481,6 +483,7 @@ def multiplexer_worker(
         output_queue.put(None)
 
 
+@th.no_grad()
 def gpu_worker(
     rank: int,
     device_ids: list[int],
@@ -608,7 +611,9 @@ def gpu_worker(
 
         # Move tensors to device
         if gpu_available:
-            encoded_batch = {k: v.to(device_ids[0]) for k, v in encoded_batch.items()}
+            encoded_batch = {
+                k: v.to(local_device_ids[0]) for k, v in encoded_batch.items()
+            }
 
         # Process batch and get router logits
         logger.debug(f"Rank {rank} processing batch {batch_idx}")
@@ -746,6 +751,7 @@ async def disk_worker_async(
         )
 
 
+@th.no_grad()
 def disk_worker(
     output_queue: mp.Queue,
     experiment_name: str,
