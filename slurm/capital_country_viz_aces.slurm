@@ -34,6 +34,6 @@ module load GCCcore/13.3.0 Python/3.12.3 WebProxy
 cd $SCRATCH/moe-router-study
 
 # Run the capital country visualization experiment
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run python -m exp.capital_country_viz --model-name olmoe-i --router-path-batch-size 5000 --log-level INFO
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run python -m exp.capital_country_viz capital-country-viz --model-name olmoe-i --router-path-batch-size 5000 --log-level INFO
 
 

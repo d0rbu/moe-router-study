@@ -16,7 +16,7 @@ echo "Postprocessor: $POSTPROCESSOR"
 echo "Log level: $LOG_LEVEL"
 
 # Run the capital country visualization experiment
-uv run python -m exp.capital_country_viz \
+uv run python -m exp.capital_country_viz capital-country-viz \
     --model-name $MODEL_NAME \
     --router-path-batch-size $ROUTER_PATH_BATCH_SIZE \
     --postprocessor $POSTPROCESSOR \
