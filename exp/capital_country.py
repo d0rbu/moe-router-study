@@ -1853,11 +1853,13 @@ def capital_country(
                     if specificity_score.alpha == alpha
                 }
 
-                assert len(target_results_for_alpha) == 1, (
-                    f"Expected 1 target result for alpha {alpha}, got {len(target_results_for_alpha)}"
+                assert len(target_results_for_alpha) == len(PROMPT_TEMPLATES), (
+                    f"Expected {len(PROMPT_TEMPLATES)} target results for alpha {alpha}, got {len(target_results_for_alpha)}"
                 )
-                assert len(other_results_for_alpha) == len(country_results) - 1, (
-                    f"Expected {len(country_results) - 1} other results for alpha {alpha}, got {len(other_results_for_alpha)}"
+                assert len(other_results_for_alpha) == len(country_results) - len(
+                    target_results_for_alpha
+                ), (
+                    f"Expected {len(country_results) - len(target_results_for_alpha)} other results for alpha {alpha}, got {len(other_results_for_alpha)}"
                 )
                 assert len(other_results_averaged_for_alpha) == 1, (
                     f"Expected 1 other result averaged for alpha {alpha}, got {len(other_results_averaged_for_alpha)}"
