@@ -1871,7 +1871,7 @@ def capital_country(
                     next(iter(other_results_averaged_for_alpha)).forgetfulness.value
                 )
                 specificity_scores.append(
-                    next(iter(specificity_scores_for_alpha)).forgetfulness.value
+                    next(iter(specificity_scores_for_alpha)).value
                 )
 
                 for other_result_for_alpha in other_results_for_alpha:
