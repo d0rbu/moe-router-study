@@ -12,6 +12,7 @@ Usage:
         --model-name "olmoe-i"
 """
 
+from collections import defaultdict
 import gc
 from itertools import batched
 from pathlib import Path
@@ -37,7 +38,7 @@ def extract_pre_answer_paths(
     top_k: int,
     batch_size: int = 64,
     postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
-) -> dict[str, th.Tensor]:
+) -> dict[str, set[th.Tensor]]:
     """
     Extract only PRE_ANSWER router paths for all prompts in batches.
     More efficient than extracting all experiment types.
@@ -64,7 +65,7 @@ def extract_pre_answer_paths(
     )
 
     # Group prompts by country
-    country_paths: dict[str, th.Tensor] = {}
+    country_paths: dict[str, set[th.Tensor]] = defaultdict(set)
 
     # Sort prompts by sequence length for more efficient batching
     sorted_prompts = sorted(prompts, key=lambda p: len(p.token_ids))
@@ -141,7 +142,8 @@ def extract_pre_answer_paths(
         router_paths_batch = postprocessor_fn(router_logits, top_k)  # (B, L, E)
         router_paths_batch = router_paths_batch.cpu()
 
-        country_paths[prompt.country] = router_paths_batch
+        for prompt, router_paths in zip(batch_prompts, router_paths_batch, strict=True):
+            country_paths[prompt.country].add(router_paths)
 
         # Clean up batch tensors
         del router_logits, router_paths_batch
@@ -152,7 +154,7 @@ def extract_pre_answer_paths(
 
 
 def compute_average_paths_pre_answer(
-    country_paths: dict[str, th.Tensor],
+    country_paths: dict[str, set[th.Tensor]],
 ) -> dict[str, th.Tensor]:
     """
     Compute average PRE_ANSWER path for each country.
@@ -160,9 +162,9 @@ def compute_average_paths_pre_answer(
     Returns:
         Dictionary mapping country -> average path tensor (L, E)
     """
-    avg_paths: dict[str, th.Tensor] = {
-        country: path.mean(dim=0) for country, path in country_paths.items()
-    }
+    avg_paths: dict[str, th.Tensor] = defaultdict(set)
+    for country, paths in country_paths.items():
+        avg_paths[country] = th.stack(tuple(paths), dim=0).mean(dim=0)  # (L, E)
 
     return avg_paths
 
