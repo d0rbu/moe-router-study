@@ -265,9 +265,7 @@ def run_intruder_eval(
 SAE_CONFIG_KEYS = {"dict_size", "layer", "dict_class", "submodule_name", "k"}
 
 
-def load_saebench_results(
-    experiment_dir: Path, results_dir: Path, sae_id: str
-) -> dict[str, Any]:
+def load_saebench_results(results_dir: Path, sae_id: str) -> dict[str, Any]:
     """Load SAEBench evaluation results."""
     logger.debug(f"Loading SAEBench results from {results_dir} for SAE {sae_id}")
 
@@ -298,27 +296,10 @@ def load_saebench_results(
         if isinstance(metric_value, dict)
     }
 
-    experiment_config_path = experiment_dir / "config.json"
-    assert experiment_config_path.exists(), (
-        f"❌ Experiment config file does not exist: {experiment_config_path}"
-    )
-
-    with open(experiment_config_path) as f:
-        experiment_config = json.load(f)
-        experiment_config = {
-            k: v
-            for k, v in experiment_config["trainer"].items()
-            if k in SAE_CONFIG_KEYS
-        }
-
-    output = {**experiment_config, **flat_metrics}
-
-    return output
+    return flat_metrics
 
 
-def load_intruder_results(
-    experiment_dir: Path, results_dir: Path, sae_id: str | None = None
-) -> dict[str, Any]:
+def load_intruder_results(results_dir: Path, sae_id: str) -> dict[str, Any]:
     """Load intruder evaluation results."""
     results = {}
     logger.debug(
@@ -386,20 +367,16 @@ def aggregate_results(
 
             # Load evaluation results - try both experiment level and SAE level
             # First try at experiment level (for backward compatibility)
-            saebench_results = load_saebench_results(exp_dir, exp_dir, sae_id)
-            intruder_results = load_intruder_results(exp_dir, exp_dir, sae_id)
+            saebench_results = load_saebench_results(exp_dir, sae_id)
+            intruder_results = load_intruder_results(exp_dir, sae_id)
 
             # If no results at experiment level, try at SAE level
             if not saebench_results and not intruder_results:
                 logger.debug(
                     f"    No results at experiment level, trying SAE directory: {sae_info.sae_dir}"
                 )
-                saebench_results = load_saebench_results(
-                    exp_dir, sae_info.sae_dir, sae_id
-                )
-                intruder_results = load_intruder_results(
-                    exp_dir, sae_info.sae_dir, sae_id
-                )
+                saebench_results = load_saebench_results(sae_info.sae_dir, sae_id)
+                intruder_results = load_intruder_results(sae_info.sae_dir, sae_id)
 
             # If no results at SAE level, try at eval_results directory
             if not saebench_results and not intruder_results:
@@ -407,10 +384,10 @@ def aggregate_results(
                     f"    No results at SAE level, trying default directory: {DEFAULT_EVAL_RESULTS_DIR}"
                 )
                 saebench_results = load_saebench_results(
-                    exp_dir, Path(DEFAULT_EVAL_RESULTS_DIR), sae_id
+                    Path(DEFAULT_EVAL_RESULTS_DIR), sae_id
                 )
                 intruder_results = load_intruder_results(
-                    exp_dir, Path(DEFAULT_EVAL_RESULTS_DIR), sae_id
+                    Path(DEFAULT_EVAL_RESULTS_DIR), sae_id
                 )
 
             # Check if we still have no evaluation results after trying both locations
@@ -444,7 +421,10 @@ def aggregate_results(
 def extract_metrics(results: list[EvaluationResults]) -> pd.DataFrame:
     """Extract key metrics from results into a DataFrame."""
     logger.info(f"Extracting metrics from {len(results)} evaluation results")
-    rows = [{**result.config, **result.saebench_results} for result in results]
+    rows = [
+        {**result.config, **result.saebench_results, **result.intruder_results}
+        for result in results
+    ]
 
     df = pd.DataFrame(rows)
     logger.info(
