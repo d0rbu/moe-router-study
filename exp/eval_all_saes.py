@@ -286,7 +286,15 @@ def load_saebench_results(experiment_dir: Path, sae_id: str) -> dict[str, Any]:
         results = json.load(f)
         logger.debug(f"  ✅ Loaded SAEBench results from {result_files[0].name}")
 
-    return results
+    metrics = results["eval_result_metrics"]
+    flat_metrics = {
+        eval_key: eval_metric
+        for _metric_key, metric_value in metrics.items()
+        for eval_key, eval_metric in metric_value.items()
+        if isinstance(metric_value, dict)
+    }
+
+    return flat_metrics
 
 
 def load_intruder_results(
