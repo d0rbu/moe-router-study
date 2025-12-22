@@ -1211,7 +1211,9 @@ def run_intervention(
     final_prompt_probs = F.softmax(final_prompt_logits.float(), dim=-1)
 
     # Extract pre-intervention probabilities for each prompt's capital
-    capital_token_ids = capital_token_ids.to(device=final_prompt_probs.device)
+    capital_token_ids = capital_token_ids.to(
+        device=final_prompt_probs.device
+    ).unsqueeze(-1)
     pre_probs_tensor = final_prompt_probs[:, -1, -1].gather(
         dim=-1,
         index=capital_token_ids,
