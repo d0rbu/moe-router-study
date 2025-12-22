@@ -610,7 +610,7 @@ class InterventionResult:
     intervention_country: str  # the country whose knowledge is being "forgotten"
     pre_intervention_prob: float
     post_intervention_prob: float
-    forgetfulness: InterventionMetric  # pre - post
+    forgetfulness: InterventionMetric  # (pre - post) / pre, normalized forgetfulness
 
 
 @dataclass(frozen=True)
@@ -1291,6 +1291,11 @@ def run_intervention_experiment(
                     pre_prob = pre_probs[prompt_idx]
                     for experiment_type, post_probs in post_probs_dict.items():
                         post_prob = post_probs[prompt_idx]
+                        # Calculate normalized forgetfulness: (pre - post) / pre
+                        # 1.0 = full forgetting, 0.0 = no change, -1.0 = doubling
+                        normalized_forgetfulness = (
+                            (pre_prob - post_prob) / pre_prob if pre_prob > 0 else 0.0
+                        )
                         all_results[experiment_type].add(
                             InterventionResult(
                                 country=prompt.country,
@@ -1298,7 +1303,7 @@ def run_intervention_experiment(
                                 pre_intervention_prob=pre_prob,
                                 post_intervention_prob=post_prob,
                                 forgetfulness=InterventionMetric(
-                                    alpha=alpha, value=pre_prob - post_prob
+                                    alpha=alpha, value=normalized_forgetfulness
                                 ),
                             )
                         )
@@ -1352,8 +1357,13 @@ def run_intervention_experiment(
                         for result in other_results_for_alpha
                     ]
                 ) / len(other_results_for_alpha)
+                # Calculate normalized forgetfulness: (pre - post) / pre
+                # 1.0 = full forgetting, 0.0 = no change, -1.0 = doubling
                 avg_forgetfulness = (
-                    avg_pre_intervention_prob - avg_post_intervention_prob
+                    (avg_pre_intervention_prob - avg_post_intervention_prob)
+                    / avg_pre_intervention_prob
+                    if avg_pre_intervention_prob > 0
+                    else 0.0
                 )
 
                 other_results_averaged.add(
@@ -1388,8 +1398,16 @@ def run_intervention_experiment(
                         for result in target_results_for_alpha
                     ]
                 ) / len(target_results_for_alpha)
+                # Calculate normalized forgetfulness: (pre - post) / pre
+                # 1.0 = full forgetting, 0.0 = no change, -1.0 = doubling
                 avg_target_forgetfulness = (
-                    avg_target_pre_intervention_prob - avg_target_post_intervention_prob
+                    (
+                        avg_target_pre_intervention_prob
+                        - avg_target_post_intervention_prob
+                    )
+                    / avg_target_pre_intervention_prob
+                    if avg_target_pre_intervention_prob > 0
+                    else 0.0
                 )
                 specificity_scores.add(
                     InterventionMetric(
@@ -1494,7 +1512,7 @@ def _plot_single_country_results(
         markersize=8,
     )
     ax1.set_xlabel("Alpha (intervention strength)", fontsize=12)
-    ax1.set_ylabel("Forgetfulness (pre - post probability)", fontsize=12)
+    ax1.set_ylabel("Forgetfulness (normalized: (pre-post)/pre)", fontsize=12)
     ax1.set_title(
         f"Forgetfulness vs Intervention Strength\n({experiment_type.value})",
         fontsize=14,
@@ -1613,7 +1631,7 @@ def _plot_average_results(
         markersize=8,
     )
     ax1.set_xlabel("Alpha (intervention strength)", fontsize=12)
-    ax1.set_ylabel("Forgetfulness (pre - post probability)", fontsize=12)
+    ax1.set_ylabel("Forgetfulness (normalized: (pre-post)/pre)", fontsize=12)
     ax1.set_title(
         f"Average Forgetfulness Across All Countries\n({experiment_type.value})",
         fontsize=14,
