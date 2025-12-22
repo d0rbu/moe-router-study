@@ -423,7 +423,9 @@ def extract_metrics(results: list[EvaluationResults]) -> pd.DataFrame:
     logger.info(f"Extracting metrics from {len(results)} evaluation results")
     rows = [
         {
-            **result.config["trainer"],
+            "experiment": result.experiment_name,
+            "sae_id": result.sae_id,
+            **result.config.get("trainer", {}),
             **result.saebench_results,
             **result.intruder_results,
         }
@@ -596,6 +598,51 @@ def save_results(
     logger.info(f"Results saved to {results_dir}")
 
 
+def print_top_rows_by_metric(df: pd.DataFrame) -> None:
+    """Print the row with the highest value for each metric."""
+    # Get all metric columns
+    metric_cols = [
+        col
+        for col in df.columns
+        if col.startswith("saebench_") or col.startswith("intruder_")
+    ]
+
+    if not metric_cols:
+        logger.warning("No metric columns found to print top rows")
+        return
+
+    logger.info("\n" + "=" * 80)
+    logger.info("TOP ROWS BY METRIC")
+    logger.info("=" * 80)
+
+    for metric in metric_cols:
+        if metric not in df.columns:
+            continue
+
+        # Filter out NaN values and find the row with maximum value
+        non_null_df = df[df[metric].notna()]
+
+        if len(non_null_df) == 0:
+            logger.warning(f"No valid values for metric: {metric}")
+            continue
+
+        # Find the row with the highest value
+        max_idx = non_null_df[metric].idxmax()
+        top_row = df.loc[max_idx]
+
+        logger.info(f"\n📊 Metric: {metric}")
+        logger.info(f"   Highest value: {top_row[metric]}")
+        logger.info(f"   Experiment: {top_row.get('experiment', 'N/A')}")
+        logger.info(f"   SAE ID: {top_row.get('sae_id', 'N/A')}")
+
+        # Print other relevant config keys if available
+        for key in SAE_CONFIG_KEYS:
+            if key in top_row and pd.notna(top_row[key]):
+                logger.info(f"   {key}: {top_row[key]}")
+
+    logger.info("\n" + "=" * 80)
+
+
 def main(
     model_name: str,
     run_saebench: bool,
@@ -690,6 +737,9 @@ def main(
 
     # Save results (rankings replaced with line graph visualizations)
     save_results(df, output_path)
+
+    # Print top rows for each metric
+    print_top_rows_by_metric(df)
 
     logger.info("✅ Evaluation complete!")
 

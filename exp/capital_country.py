@@ -1218,7 +1218,7 @@ def run_intervention(
         dim=-1,
         index=capital_token_ids,
     )
-    pre_probs: list[float] = pre_probs_tensor.cpu().squeeze().tolist()  # (P,)
+    pre_probs: list[float] = pre_probs_tensor.cpu().squeeze(-1).tolist()  # (P,)
 
     # Extract post-intervention probabilities for each experiment type
     experiment_post_probs: dict[ExperimentType, list[float]] = {}
@@ -1228,7 +1228,7 @@ def run_intervention(
             dim=-1,
             index=capital_token_ids,
         )
-        post_probs: list[float] = post_probs_tensor.cpu().squeeze().tolist()  # (P,)
+        post_probs: list[float] = post_probs_tensor.cpu().squeeze(-1).tolist()  # (P,)
         experiment_post_probs[experiment_type] = post_probs
 
     return pre_probs, experiment_post_probs
