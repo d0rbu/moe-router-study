@@ -43,5 +43,5 @@ fi
 cd $SCRATCH/moe-router-study
 
 # Run the activation shuffling
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run scripts/shuffle_activations.py shuffle-activations --model-name q3-i --num-workers 128 --tokens-per-file 50000 --reshuffled-tokens-per-file 100000
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run scripts/shuffle_activations.py shuffle-activations --model-name q3-i --num-workers 4 --tokens-per-file 50000 --reshuffled-tokens-per-file 50000
 
