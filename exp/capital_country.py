@@ -1433,7 +1433,7 @@ def _plot_single_country_results(
 
     # Build forgetfulness values sorted by alpha
     target_forgetfulnesses: list[float] = []
-    other_forgetfulnesses: dict[str, list[float]] = defaultdict(list)
+    other_forgetfulnesses: list[float] = []
     specificity_scores: list[float] = []
 
     for alpha in alphas:
@@ -1458,11 +1458,10 @@ def _plot_single_country_results(
         assert len(other_results_averaged_for_alpha) == 1, (
             f"Expected 1 other result averaged for alpha {alpha}, got {len(other_results_averaged_for_alpha)}"
         )
-        other_result_averaged_for_alpha = next(iter(other_results_averaged_for_alpha))
-        other_forgetfulness = other_result_averaged_for_alpha.forgetfulness.value
-        other_forgetfulnesses[other_result_averaged_for_alpha.country].append(
-            other_forgetfulness
-        )
+        other_forgetfulness = next(
+            iter(other_results_averaged_for_alpha)
+        ).forgetfulness.value
+        other_forgetfulnesses.append(other_forgetfulness)
 
         # Get specificity score for this alpha
         specificity_scores_for_alpha = {
@@ -1488,7 +1487,7 @@ def _plot_single_country_results(
     )
     ax1.plot(
         alphas,
-        other_forgetfulnesses[results.target_country],
+        other_forgetfulnesses,
         "r-s",
         label="Other countries (avg)",
         linewidth=2,
@@ -1826,7 +1825,7 @@ def capital_country(
             )
 
             target_forgetfulness: list[float] = []
-            other_forgetfulness: dict[str, list[float]] = defaultdict(list)
+            other_forgetfulness: list[float] = []
             other_average_forgetfulness: list[float] = []
             specificity_scores: list[float] = []
             for alpha in alphas:
@@ -1871,10 +1870,9 @@ def capital_country(
                     next(iter(specificity_scores_for_alpha)).value
                 )
 
-                for other_result_for_alpha in other_results_for_alpha:
-                    other_forgetfulness[other_result_for_alpha.country].append(
-                        other_result_for_alpha.forgetfulness.value
-                    )
+                other_forgetfulness.append(
+                    next(iter(other_results_for_alpha)).forgetfulness.value
+                )
 
             results_dict = {
                 "target_country": country,
@@ -1883,7 +1881,6 @@ def capital_country(
                 "target_forgetfulness": target_forgetfulness,
                 "other_average_forgetfulness": other_average_forgetfulness,
                 "specificity_scores": specificity_scores,
-                "other_forgetfulness": other_forgetfulness,
             }
             with open(results_file, "w") as f:
                 yaml.dump(results_dict, f)
