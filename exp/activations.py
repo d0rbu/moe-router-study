@@ -138,7 +138,7 @@ class Activations:
 
         for filepath in local_activation_filepath_iterator:
             activations = th.load(filepath, weights_only=False)
-            num_tokens += activations[ActivationKeys.MLP_OUTPUT].shape[0]
+            num_tokens += activations[ActivationKeys.LAYER_OUTPUT].shape[0]
 
         if dist.is_initialized():
             dist.all_reduce(num_tokens, op=dist.ReduceOp.SUM)
@@ -191,11 +191,11 @@ class Activations:
                 return
             else:
                 logger.debug(
-                    f"Loaded data with shape {current_data[ActivationKeys.MLP_OUTPUT].shape}"
+                    f"Loaded data with shape {current_data[ActivationKeys.LAYER_OUTPUT].shape}"
                 )
 
             current_local_idx = 0
-            current_data_size = current_data[ActivationKeys.MLP_OUTPUT].shape[0]
+            current_data_size = current_data[ActivationKeys.LAYER_OUTPUT].shape[0]
 
             current_batch = {}
             remaining_batch_size = start_idx
@@ -251,7 +251,9 @@ class Activations:
                         return
 
                     current_local_idx = 0
-                    current_data_size = current_data[ActivationKeys.MLP_OUTPUT].shape[0]
+                    current_data_size = current_data[ActivationKeys.LAYER_OUTPUT].shape[
+                        0
+                    ]
                 else:
                     for key, value in current_data.items():
                         match value:
@@ -499,7 +501,7 @@ class Activations:
             ):
                 future = futures.popleft()
                 data = future.result()
-                all_batch_sizes[future_idx] = data[ActivationKeys.MLP_OUTPUT].shape[0]
+                all_batch_sizes[future_idx] = data[ActivationKeys.LAYER_OUTPUT].shape[0]
                 del data
                 del future
 
@@ -660,7 +662,9 @@ class Activations:
                         else:
                             concatenated_batch[key] = value
 
-                total_extra_tokens = len(concatenated_batch[ActivationKeys.MLP_OUTPUT])
+                total_extra_tokens = len(
+                    concatenated_batch[ActivationKeys.LAYER_OUTPUT]
+                )
                 num_extra_batches = total_extra_tokens // tokens_per_file_in_reshuffled
                 tokens_skipped = total_extra_tokens % tokens_per_file_in_reshuffled
 
@@ -862,13 +866,13 @@ async def load_activations_and_init_dist(
             try:
                 sample_data = th.load(first_file, weights_only=False)
                 logger.debug(f"Sample data keys: {list(sample_data.keys())}")
-                if ActivationKeys.MLP_OUTPUT in sample_data:
+                if ActivationKeys.LAYER_OUTPUT in sample_data:
                     logger.debug(
-                        f"MLP output shape: {sample_data[ActivationKeys.MLP_OUTPUT].shape}"
+                        f"Layer output shape: {sample_data[ActivationKeys.LAYER_OUTPUT].shape}"
                     )
                 else:
                     logger.error(
-                        f"{ActivationKeys.MLP_OUTPUT} key not found in activation data"
+                        f"{ActivationKeys.LAYER_OUTPUT} key not found in activation data"
                     )
             except Exception as e:
                 logger.error(f"Error loading first file {first_file}: {e}")
