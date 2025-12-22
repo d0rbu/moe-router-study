@@ -6,10 +6,10 @@
 # Set default values
 MODEL_NAME=${1:-"olmoe-i"}
 ALPHA_MIN=${2:-0.0}
-ALPHA_MAX=${3:-5.0}
+ALPHA_MAX=${3:-10.0}
 ALPHA_STEPS=${4:-11}
-ROUTER_PATH_BATCH_SIZE=${5:-8}
-INTERVENTION_BATCH_SIZE=${6:-2}
+ROUTER_PATH_BATCH_SIZE=${5:-500}
+INTERVENTION_BATCH_SIZE=${6:-50}
 LOG_LEVEL=${6:-"INFO"}
 
 echo "Running capital country experiment locally..."
