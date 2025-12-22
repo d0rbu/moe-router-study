@@ -190,7 +190,7 @@ def plot_route_heatmaps(
 
     plt.figure(figsize=(18, 6))
     plt.imshow(
-        target_route.cpu().numpy(),
+        target_route.cpu().float().numpy(),
         aspect="auto",
         cmap="viridis",
         interpolation="nearest",
@@ -204,7 +204,7 @@ def plot_route_heatmaps(
 
     plt.figure(figsize=(18, 6))
     plt.imshow(
-        other_route.cpu().numpy(),
+        other_route.cpu().float().numpy(),
         aspect="auto",
         cmap="viridis",
         interpolation="nearest",
@@ -218,7 +218,7 @@ def plot_route_heatmaps(
 
     plt.figure(figsize=(18, 6))
     plt.imshow(
-        diff_route.cpu().numpy(),
+        diff_route.cpu().float().numpy(),
         aspect="auto",
         cmap="RdBu_r",
         interpolation="nearest",
