@@ -339,7 +339,7 @@ def capital_country_viz(
     logger.info(f"Generating heatmaps for {len(all_countries)} countries")
 
     for target_country, target_route in tqdm(
-        all_countries.items(), total=len(all_countries), desc="Generating heatmaps"
+        avg_paths.items(), total=len(avg_paths), desc="Generating heatmaps"
     ):
         other_countries = set(all_countries) - {target_country}
         other_routes = th.stack(
@@ -350,28 +350,14 @@ def capital_country_viz(
 
         # Create output filename
         country_slug = target_country.lower().replace(" ", "_")
-        country_output_path = output_path / country_slug
+        output_country_path = Path(FIGURE_DIR) / "capital_country_viz" / country_slug
 
         plot_route_heatmaps(
             target_route=target_route,
             other_route=other_route,
             diff_route=diff_route,
             target_country=target_country,
-            output_path=country_output_path,
-        )
-
-        # Also save to figure directory
-        fig_output_file = (
-            Path(FIGURE_DIR)
-            / "capital_country_viz"
-            / f"{country_slug}_pre_answer_heatmaps.png"
-        )
-        plot_route_heatmaps(
-            target_route=target_route,
-            other_route=other_route,
-            diff_route=diff_route,
-            target_country=target_country,
-            output_path=fig_output_file,
+            output_country_path=output_country_path,
         )
 
     # Print summary
@@ -379,10 +365,6 @@ def capital_country_viz(
     logger.info("EXPERIMENT COMPLETE")
     logger.info("=" * 80)
     logger.info(f"Generated heatmaps for {len(all_countries)} countries")
-    logger.info(
-        f"Route shape: {target_route.shape} (L={target_route.shape[0]}, E={target_route.shape[1]})"
-    )
-    logger.info(f"Results saved to: {output_path}")
     logger.info(f"Figures saved to: {Path(FIGURE_DIR) / 'capital_country_viz'}")
 
 
