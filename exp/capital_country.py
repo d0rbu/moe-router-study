@@ -1023,9 +1023,7 @@ def run_intervention(
     num_prompts = len(prompts)
 
     # Get the token ID for the capital (first token) for each prompt
-    capital_token_ids: th.Tensor = th.empty(
-        num_prompts, dtype=th.long, device=prompts[0].token_ids.device
-    )
+    capital_token_ids: th.Tensor = th.empty(num_prompts, dtype=th.long)
     for prompt_idx, prompt in enumerate(prompts):
         capital_tokens = model.tokenizer(
             prompt.capital, add_special_tokens=False
@@ -1213,6 +1211,7 @@ def run_intervention(
     final_prompt_probs = F.softmax(final_prompt_logits.float(), dim=-1)
 
     # Extract pre-intervention probabilities for each prompt's capital
+    capital_token_ids = capital_token_ids.to(device=final_prompt_probs.device)
     pre_probs_tensor = final_prompt_probs[:, -1, -1].gather(
         dim=-1,
         index=capital_token_ids,
