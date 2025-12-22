@@ -1466,9 +1466,7 @@ def _plot_single_country_results(
 
         # Get specificity score for this alpha
         specificity_scores_for_alpha = {
-            result
-            for result in results.specificity_scores
-            if result.forgetfulness.alpha == alpha
+            result for result in results.specificity_scores if result.alpha == alpha
         }
         assert len(specificity_scores_for_alpha) == 1, (
             f"Expected 1 specificity score for alpha {alpha}, got {len(specificity_scores_for_alpha)}"
