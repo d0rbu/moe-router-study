@@ -1809,10 +1809,9 @@ def capital_country(
             all_country_results = {
                 result for result in all_results if result.target_country == country
             }
-            results_file = (
-                output_path / country.lower() / f"{experiment_type.value}.yaml"
-            )
-            results_file.mkdir(parents=True, exist_ok=True)
+            results_dir = output_path / country.lower()
+            results_dir.mkdir(parents=True, exist_ok=True)
+            results_file = results_dir / f"{experiment_type.value}.yaml"
 
             assert len(all_country_results) == 1, (
                 f"Expected 1 country result for {country}, got {len(all_country_results)}"
