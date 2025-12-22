@@ -587,10 +587,10 @@ class CountryPaths:
 
     country: str
     # Average path across all templates for each experiment type
-    avg_paths: dict[ExperimentType, th.Tensor] = field(default_factory=dict)
+    avg_paths: frozendict[ExperimentType, th.Tensor] = field(default_factory=frozendict)
     # Individual paths per template
-    template_paths: dict[ExperimentType, set[RouterPath]] = field(
-        default_factory=lambda: defaultdict(set)
+    template_paths: frozendict[ExperimentType, tuple[RouterPath, ...]] = field(
+        default_factory=frozendict
     )
 
 
@@ -618,11 +618,11 @@ class ExperimentResults:
     """Complete results for a single intervention experiment."""
 
     target_country: str
-    target_results: set[InterventionResult]
-    other_results: set[InterventionResult]
-    other_results_averaged: set[InterventionResult]
-    specificity_scores: set[
-        InterventionMetric
+    target_results: tuple[InterventionResult, ...]
+    other_results: tuple[InterventionResult, ...]
+    other_results_averaged: tuple[InterventionResult, ...]
+    specificity_scores: tuple[
+        InterventionMetric, ...
     ]  # target forgetfulness - avg other forgetfulness
 
 
@@ -1240,7 +1240,7 @@ def run_intervention_experiment(
     alphas: set[float],
     top_k: int,
     batch_size: int = 64,
-) -> dict[ExperimentType, set[ExperimentResults]]:
+) -> frozendict[ExperimentType, tuple[ExperimentResults, ...]]:
     """
     Run the full intervention experiment across multiple alpha values.
 
@@ -1409,14 +1409,14 @@ def run_intervention_experiment(
             structured_results[experiment_type].add(
                 ExperimentResults(
                     target_country=target_country,
-                    target_results=self_intervention_results,
-                    other_results=other_intervention_results,
-                    other_results_averaged=other_results_averaged,
-                    specificity_scores=specificity_scores,
+                    target_results=tuple(self_intervention_results),
+                    other_results=tuple(other_intervention_results),
+                    other_results_averaged=tuple(other_results_averaged),
+                    specificity_scores=tuple(specificity_scores),
                 )
             )
 
-    return structured_results
+    return deepfreeze(structured_results)
 
 
 def _plot_single_country_results(
