@@ -1372,18 +1372,40 @@ def run_intervention_experiment(
                     for result in self_intervention_results
                     if result.forgetfulness.alpha == alpha
                 }
-                assert len(target_results_for_alpha) == 1, (
-                    f"Expected 1 target result for alpha {alpha}, got {len(target_results_for_alpha)}"
+                assert len(target_results_for_alpha) == len(PROMPT_TEMPLATES), (
+                    f"Expected {len(PROMPT_TEMPLATES)} target result for alpha {alpha}, got {len(target_results_for_alpha)}"
                 )
-                target_forgetfulness = next(
-                    iter(target_results_for_alpha)
-                ).forgetfulness.value
+                avg_target_pre_intervention_prob = sum(
+                    [
+                        result.pre_intervention_prob
+                        for result in target_results_for_alpha
+                    ]
+                ) / len(target_results_for_alpha)
+                avg_target_post_intervention_prob = sum(
+                    [
+                        result.post_intervention_prob
+                        for result in target_results_for_alpha
+                    ]
+                ) / len(target_results_for_alpha)
+                avg_target_forgetfulness = (
+                    avg_target_pre_intervention_prob - avg_target_post_intervention_prob
+                )
                 specificity_scores.add(
                     InterventionMetric(
-                        alpha=alpha, value=target_forgetfulness - avg_forgetfulness
+                        alpha=alpha, value=avg_target_forgetfulness - avg_forgetfulness
                     )
                 )
-
+                self_intervention_results.add(
+                    InterventionResult(
+                        country=target_country,
+                        intervention_country=target_country,
+                        pre_intervention_prob=avg_target_pre_intervention_prob,
+                        post_intervention_prob=avg_target_post_intervention_prob,
+                        forgetfulness=InterventionMetric(
+                            alpha=alpha, value=avg_target_forgetfulness
+                        ),
+                    )
+                )
             structured_results[experiment_type].add(
                 ExperimentResults(
                     target_country=target_country,
