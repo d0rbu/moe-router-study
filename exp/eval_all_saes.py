@@ -265,7 +265,6 @@ def run_intruder_eval(
 
 def load_saebench_results(experiment_dir: Path, sae_id: str) -> dict[str, Any]:
     """Load SAEBench evaluation results."""
-    results = {}
     logger.debug(f"Loading SAEBench results from {experiment_dir} for SAE {sae_id}")
 
     # SAEBench saves results in the experiment directory
@@ -275,22 +274,17 @@ def load_saebench_results(experiment_dir: Path, sae_id: str) -> dict[str, Any]:
     if result_files:
         logger.trace(f"SAEBench result files: {[f.name for f in result_files]}")
 
-    for result_file in result_files:
-        try:
-            with open(result_file) as f:
-                result_data = json.load(f)
-                results[result_file.stem] = result_data
-                logger.debug(f"  ✅ Loaded SAEBench results from {result_file.name}")
-        except Exception as exception:
-            traceback_lines = traceback.format_tb(exception.__traceback__)
-            traceback_str = "".join(traceback_lines)
-            exception_str = str(exception)
-            logger.warning(
-                f"Failed to load {result_file}:\n{traceback_str}{exception_str}"
-            )
+    assert len(result_files) <= 1, (
+        f"Expected at most 1 SAEBench result file, got {len(result_files)}"
+    )
 
-    if not results:
+    if len(result_files) <= 0:
         logger.debug(f"  ❌ No SAEBench results found in {experiment_dir}")
+        return {}
+
+    with open(result_files[0]) as f:
+        results = json.load(f)
+        logger.debug(f"  ✅ Loaded SAEBench results from {result_files[0].name}")
 
     return results
 
