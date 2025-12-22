@@ -422,7 +422,11 @@ def extract_metrics(results: list[EvaluationResults]) -> pd.DataFrame:
     """Extract key metrics from results into a DataFrame."""
     logger.info(f"Extracting metrics from {len(results)} evaluation results")
     rows = [
-        {**result.config, **result.saebench_results, **result.intruder_results}
+        {
+            **result.config["trainer"],
+            **result.saebench_results,
+            **result.intruder_results,
+        }
         for result in results
     ]
 
