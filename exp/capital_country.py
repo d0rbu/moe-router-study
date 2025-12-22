@@ -1213,7 +1213,9 @@ def run_intervention(
     final_prompt_probs = F.softmax(final_prompt_logits.float(), dim=-1)
 
     # Extract pre-intervention probabilities for each prompt's capital
-    pre_probs: th.Tensor = final_prompt_probs[:, -1, -1, capital_token_ids]  # (P,)
+    pre_probs: list[float] = (
+        final_prompt_probs[:, -1, -1, capital_token_ids].cpu().tolist()
+    )  # (P,)
 
     # Extract post-intervention probabilities for each experiment type
     experiment_post_probs: dict[ExperimentType, list[float]] = {}
