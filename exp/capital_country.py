@@ -1095,7 +1095,7 @@ def run_intervention(
     prompt_intervention_paths_tensor = th.cat(
         [
             prompt_intervention_paths_tensor,
-            th.zeros_like(prompt_intervention_paths_tensor[:1]),
+            th.zeros_like(prompt_intervention_paths_tensor[:, :1]),
         ],
         dim=1,
     )  # (P, N, L, E)
