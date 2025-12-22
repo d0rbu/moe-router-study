@@ -8,13 +8,15 @@ MODEL_NAME=${1:-"olmoe-i"}
 ALPHA_MIN=${2:-0.0}
 ALPHA_MAX=${3:-5.0}
 ALPHA_STEPS=${4:-11}
-BATCH_SIZE=${5:-8}
+ROUTER_PATH_BATCH_SIZE=${5:-8}
+INTERVENTION_BATCH_SIZE=${6:-2}
 LOG_LEVEL=${6:-"INFO"}
 
 echo "Running capital country experiment locally..."
 echo "Model: $MODEL_NAME"
 echo "Alpha range: $ALPHA_MIN to $ALPHA_MAX ($ALPHA_STEPS steps)"
-echo "Batch size: $BATCH_SIZE"
+echo "Router path batch size: $ROUTER_PATH_BATCH_SIZE"
+echo "Intervention batch size: $INTERVENTION_BATCH_SIZE"
 echo "Log level: $LOG_LEVEL"
 
 # Run the capital country experiment
@@ -23,7 +25,8 @@ uv run python -m exp.capital_country \
     --alpha-min $ALPHA_MIN \
     --alpha-max $ALPHA_MAX \
     --alpha-steps $ALPHA_STEPS \
-    --batch-size $BATCH_SIZE \
+    --router-path-batch-size $ROUTER_PATH_BATCH_SIZE \
+    --intervention-batch-size $INTERVENTION_BATCH_SIZE \
     --log-level $LOG_LEVEL
 
 echo "Capital country experiment completed!"
