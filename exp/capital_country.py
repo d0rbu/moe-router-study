@@ -1335,6 +1335,7 @@ def run_intervention_experiment(
             }
 
             other_results_averaged = set()
+            target_results_averaged = set()
             specificity_scores = set()
             for alpha in alphas:
                 other_results_for_alpha = {
@@ -1395,7 +1396,7 @@ def run_intervention_experiment(
                         alpha=alpha, value=avg_target_forgetfulness - avg_forgetfulness
                     )
                 )
-                self_intervention_results.add(
+                target_results_averaged.add(
                     InterventionResult(
                         country=target_country,
                         intervention_country=target_country,
@@ -1409,7 +1410,7 @@ def run_intervention_experiment(
             structured_results[experiment_type].add(
                 ExperimentResults(
                     target_country=target_country,
-                    target_results=tuple(self_intervention_results),
+                    target_results=tuple(target_results_averaged),
                     other_results=tuple(other_intervention_results),
                     other_results_averaged=tuple(other_results_averaged),
                     specificity_scores=tuple(specificity_scores),
@@ -1853,13 +1854,8 @@ def capital_country(
                     if specificity_score.alpha == alpha
                 }
 
-                assert len(target_results_for_alpha) == len(PROMPT_TEMPLATES), (
-                    f"Expected {len(PROMPT_TEMPLATES)} target results for alpha {alpha}, got {len(target_results_for_alpha)}"
-                )
-                assert len(other_results_for_alpha) == len(country_results) - len(
-                    target_results_for_alpha
-                ), (
-                    f"Expected {len(country_results) - len(target_results_for_alpha)} other results for alpha {alpha}, got {len(other_results_for_alpha)}"
+                assert len(target_results_for_alpha) == 1, (
+                    f"Expected 1 target result (averaged) for alpha {alpha}, got {len(target_results_for_alpha)}"
                 )
                 assert len(other_results_averaged_for_alpha) == 1, (
                     f"Expected 1 other result averaged for alpha {alpha}, got {len(other_results_averaged_for_alpha)}"
