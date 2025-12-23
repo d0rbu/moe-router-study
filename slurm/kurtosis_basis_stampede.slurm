@@ -4,7 +4,7 @@
 #SBATCH -J kurtosis_basis         # Set the job name to "kurtosis_basis"
 #SBATCH -N 1                       # Number of nodes to request
 #SBATCH -n 1                       # Total number of tasks across all nodes
-#SBATCH -t 02:00:00                # Set the wall clock limit to 24 hours
+#SBATCH -t 12:00:00                # Set the wall clock limit to 24 hours
 #SBATCH -o kurtosis_basis-%j       # Send stdout/err to "kurtosis_basis.[jobID]"
 #SBATCH -e kurtosis_basis-%j.err   # Send stderr to separate file
 #SBATCH -p h100                    # Request the GPU partition/queue
