@@ -91,8 +91,8 @@ def compute_expert_importance(
     diff_masks_tensor = th.stack(diff_masks, dim=0)  # (A, L, E)
     diff_changes = diff_masks_tensor[1:] - diff_masks_tensor[:-1]  # (A-1, L, E)
     forgetfulness_changes = (
-        forgetfulness_tensor[:-1] - forgetfulness_tensor[1:]
-    ).expand(-1, 1, 1)  # (A-1, 1, 1)]
+        (forgetfulness_tensor[:-1] - forgetfulness_tensor[1:]).unsqueeze(1).unsqueeze(1)
+    )  # (A-1, 1, 1)
 
     importance_scores = (diff_changes * forgetfulness_changes).sum(dim=0)  # (L, E)
 
