@@ -25,7 +25,6 @@ import arguably
 from loguru import logger
 import matplotlib.pyplot as plt
 import torch as th
-from tqdm import tqdm
 
 
 def compute_expert_importance(
@@ -79,7 +78,7 @@ def compute_expert_importance(
     # Compute difference masks for each alpha
     diff_masks: list[th.Tensor] = []
     for pre_mask, post_mask in zip(pre_masks, post_masks, strict=True):
-        diff_mask = post_mask - pre_mask  # -1: removed, 0: unchanged, +1: added
+        diff_mask = post_mask - pre_mask
         diff_masks.append(diff_mask)
 
     # Initialize importance scores to zero
@@ -88,29 +87,14 @@ def compute_expert_importance(
     # Convert forgetfulness scores to tensor for easier computation
     forgetfulness_tensor = th.tensor(forgetfulness_scores, dtype=th.float32)
 
-    # For each expert (layer, expert), compute cumulative dot product
-    for layer_idx in tqdm(range(num_layers), desc="Processing layers"):
-        for expert_idx in tqdm(
-            range(num_experts),
-            desc=f"Processing experts in layer {layer_idx}",
-            leave=False,
-        ):
-            # Extract the diff_mask values for this expert across all alphas
-            diff_values = th.stack(
-                [diff_masks[i][layer_idx, expert_idx] for i in range(len(diff_masks))]
-            )  # (num_alphas,)
+    # Convert diff_masks to tensor for easier computation
+    diff_masks_tensor = th.stack(diff_masks, dim=0)  # (A, L, E)
+    diff_changes = diff_masks_tensor[1:] - diff_masks_tensor[:-1]  # (A-1, L, E)
+    forgetfulness_changes = (
+        forgetfulness_tensor[:-1] - forgetfulness_tensor[1:]
+    ).expand(-1, 1, 1)  # (A-1, 1, 1)]
 
-            # Compute changes in diff_mask between consecutive alphas
-            diff_changes = diff_values[1:] - diff_values[:-1]  # (num_alphas - 1,)
-
-            # Compute changes in forgetfulness between consecutive alphas
-            forgetfulness_changes = (
-                forgetfulness_tensor[1:] - forgetfulness_tensor[:-1]
-            )  # (num_alphas - 1,)
-
-            # Compute dot product: sum of (diff_change * forgetfulness_change) for all pairs
-            importance = (diff_changes * forgetfulness_changes).sum().item()
-            importance_scores[layer_idx, expert_idx] = importance
+    importance_scores = (diff_changes * forgetfulness_changes).sum(dim=0)  # (L, E)
 
     metadata = {
         "target_country": target_country,
@@ -154,8 +138,8 @@ def visualize_importance(
     ax.set_ylabel("Layer Index", fontsize=12)
     ax.set_title(
         f"Expert Importance Scores\n{target_country}\n"
-        "(Positive: activation increases forgetfulness, "
-        "Negative: deactivation increases forgetfulness)",
+        "(Positive: deactivation increases forgetfulness, "
+        "Negative: activation increases forgetfulness)",
         fontsize=14,
     )
     plt.colorbar(im, ax=ax, label="Importance Score")
@@ -172,7 +156,7 @@ def capital_country_expert_importance(
     *,
     input_dir: str = "out/capital_country_expert_diff/south_korea",
     output_file: str = "out/capital_country_expert_importance/south_korea.pt",
-    output_viz: str | None = None,
+    output_viz: str = "fig/capital_country_expert_importance/south_korea.png",
     log_level: str = "INFO",
 ) -> None:
     """
