@@ -138,10 +138,8 @@ def extract_expert_masks_with_intervention(
 
         # Get pre-intervention probability for the capital
         final_logits = model.lm_head.output.save()  # (1, T, vocab_size)
-        final_probs = F.softmax(final_logits.float(), dim=-1)
-        pre_intervention_capital_prob = final_probs[
-            0, -1, capital_first_token_id
-        ].item()
+    final_probs = F.softmax(final_logits.float(), dim=-1)
+    pre_intervention_capital_prob = final_probs[0, -1, capital_first_token_id].item()
 
     # Stack pre-intervention logits: (1, L, E)
     pre_intervention_logits = th.stack(pre_intervention_logits_list, dim=1)  # (1, L, E)
