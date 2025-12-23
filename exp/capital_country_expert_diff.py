@@ -209,6 +209,9 @@ def extract_expert_masks_with_intervention(
                     router_logits = router_scores.reshape(1, seq_len, -1)  # (1, T, E)
 
                 # Apply intervention to the last token's logits
+                intervention_path_device = intervention_path_device.to(
+                    device=router_logits.device, dtype=router_logits.dtype
+                )
                 layer_intervention = intervention_path_device[i]  # (E,)
                 modified_logits = router_logits.clone()
                 modified_logits[:, -1, :] -= alpha * layer_intervention
