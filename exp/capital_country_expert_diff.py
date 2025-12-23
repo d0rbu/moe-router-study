@@ -61,205 +61,238 @@ def extract_expert_masks_with_intervention(
     top_k: int,
 ) -> ExpertMasks:
     """
-    Extract binary masks of chosen experts before and after intervention.
+    Extract binary masks of chosen experts before and after intervention, averaged over all prompts.
 
     Args:
-        prompts: List of prompts to run (we'll use the first one for simplicity)
+        prompts: List of prompts to run (averaged over all)
         model: The model
         intervention_path: The path to subtract from router outputs (L, E)
         alpha: Scaling factor for the intervention
         top_k: Number of top experts to select
 
     Returns:
-        ExpertMasks containing pre and post intervention binary masks
+        ExpertMasks containing averaged pre and post intervention binary masks
     """
-    # Use the first prompt for simplicity
-    prompt = prompts[0]
-
     pad_token_id = model.tokenizer.pad_token_id
     if pad_token_id is None:
         pad_token_id = model.tokenizer.eos_token_id
 
-    seq_len = len(prompt.token_ids)
-
-    # Left-pad sequence
-    tokens = prompt.token_ids
-    batch_token_ids = tokens.unsqueeze(0)  # (1, T)
-    attn_mask = th.ones((1, seq_len), dtype=th.bool, device=tokens.device)
-
-    batch = {
-        "input_ids": batch_token_ids,
-        "attention_mask": attn_mask,
-    }
-
     layers_with_routers = list(model.layers_with_routers)
 
-    # Get the capital token ID for forgetfulness computation
-    capital_tokens = model.tokenizer(prompt.capital, add_special_tokens=False).input_ids
-    assert isinstance(capital_tokens, list) and capital_tokens, (
-        f"Capital '{prompt.capital}' not found in tokenizer"
-    )
-    capital_first_token_id = capital_tokens[0]
-    assert isinstance(capital_first_token_id, int), (
-        f"Capital '{prompt.capital}' first token ID is not an integer"
-    )
+    # Collect masks and probabilities for all prompts
+    pre_intervention_masks_list = []
+    post_intervention_masks_list = []
+    pre_intervention_probs = []
+    post_intervention_probs = []
 
-    # First pass: get pre-intervention masks and probabilities
-    pre_intervention_logits_list = []
-    pre_intervention_capital_prob = None
+    # Process each prompt
+    for prompt in tqdm(prompts, desc="Processing prompts", leave=False):
+        seq_len = len(prompt.token_ids)
 
-    with model.trace(batch):
-        for layer_idx in layers_with_routers:
-            router_output = model.routers_output[layer_idx]
+        # Left-pad sequence
+        tokens = prompt.token_ids
+        batch_token_ids = tokens.unsqueeze(0)  # (1, T)
+        attn_mask = th.ones((1, seq_len), dtype=th.bool, device=tokens.device)
 
-            # Handle different router output formats
-            if isinstance(router_output, tuple):
-                if len(router_output) == 2:
-                    router_scores, _router_indices = router_output
-                elif len(router_output) == 3:
-                    original_router_logits, _, _ = router_output
-                    router_scores = original_router_logits
+        batch = {
+            "input_ids": batch_token_ids,
+            "attention_mask": attn_mask,
+        }
+
+        # Get the capital token ID for forgetfulness computation
+        capital_tokens = model.tokenizer(
+            prompt.capital, add_special_tokens=False
+        ).input_ids
+        assert isinstance(capital_tokens, list) and capital_tokens, (
+            f"Capital '{prompt.capital}' not found in tokenizer"
+        )
+        capital_first_token_id = capital_tokens[0]
+        assert isinstance(capital_first_token_id, int), (
+            f"Capital '{prompt.capital}' first token ID is not an integer"
+        )
+
+        # First pass: get pre-intervention masks and probabilities
+        pre_intervention_logits_list = []
+
+        with model.trace(batch):
+            for layer_idx in layers_with_routers:
+                router_output = model.routers_output[layer_idx]
+
+                # Handle different router output formats
+                if isinstance(router_output, tuple):
+                    if len(router_output) == 2:
+                        router_scores, _router_indices = router_output
+                    elif len(router_output) == 3:
+                        original_router_logits, _, _ = router_output
+                        router_scores = original_router_logits
+                    else:
+                        raise ValueError(
+                            f"Found tuple of length {len(router_output)} for router output at layer {layer_idx}"
+                        )
                 else:
-                    raise ValueError(
-                        f"Found tuple of length {len(router_output)} for router output at layer {layer_idx}"
-                    )
-            else:
-                router_scores = router_output
+                    router_scores = router_output
 
-            # Save the traced tensor
-            if hasattr(router_scores, "save"):
-                logits = router_scores.save()
-            else:
-                logits = router_scores
-
-            # Get logits for the last token: (1, T, E) -> (1, E)
-            last_token_logits = logits.reshape(1, seq_len, -1)[:, -1, :]  # (1, E)
-            pre_intervention_logits_list.append(last_token_logits)
-
-        # Get pre-intervention probability for the capital
-        final_logits = model.lm_head.output.save()  # (1, T, vocab_size)
-    final_probs = F.softmax(final_logits.float(), dim=-1)
-    pre_intervention_capital_prob = final_probs[0, -1, capital_first_token_id].item()
-
-    # Stack pre-intervention logits: (1, L, E)
-    pre_intervention_logits = th.stack(pre_intervention_logits_list, dim=1)  # (1, L, E)
-    pre_intervention_logits = pre_intervention_logits.squeeze(0)  # (L, E)
-
-    # Convert to binary mask
-    pre_intervention_mask = convert_router_logits_to_paths(
-        pre_intervention_logits.unsqueeze(0), top_k
-    ).squeeze(0)  # (L, E)
-
-    # Second pass: get post-intervention masks
-    intervention_path = intervention_path.to(
-        device=batch_token_ids.device, dtype=th.float32
-    )
-
-    post_intervention_logits_list = []
-
-    with model.trace(batch):
-        for i, layer_idx in enumerate(layers_with_routers):
-            router_output = model.routers_output[layer_idx]
-
-            # Handle different router output formats
-            router_output_is_tuple = isinstance(router_output, tuple)
-            router_output_len = len(router_output) if router_output_is_tuple else 0
-
-            if router_output_is_tuple:
-                if router_output_len == 2:
-                    router_scores, _router_indices = router_output
-                    raise ValueError(
-                        "Cannot run this experiment on a model whose routers do not return raw logits"
-                    )
-                elif router_output_len == 3:
-                    (
-                        original_router_logits,
-                        original_router_weights,
-                        original_router_indices,
-                    ) = router_output
-
-                    router_logits = cast("th.Tensor", original_router_logits.save())
-                    router_logits = router_logits.reshape(1, seq_len, -1)
-                    router_weights = cast("th.Tensor", original_router_weights.save())
-                    router_weights = router_weights.reshape(1, seq_len, -1)
-                    router_indices = cast("th.Tensor", original_router_indices.save())
-                    router_indices = router_indices.reshape(1, seq_len, -1)
+                # Save the traced tensor
+                if hasattr(router_scores, "save"):
+                    logits = router_scores.save()
                 else:
-                    raise ValueError(
-                        f"Found tuple of length {len(router_output)} for router output at layer {layer_idx}"
-                    )
-            else:
-                router_scores = cast("th.Tensor", router_output.save())
-                router_logits = router_scores.reshape(1, seq_len, -1)  # (1, T, E)
+                    logits = router_scores
 
-            # Apply intervention to the last token's logits
-            intervention_path = intervention_path.to(
-                device=router_logits.device, dtype=router_logits.dtype
-            )
-            layer_intervention = intervention_path[i]  # (E,)
-            modified_logits = router_logits.clone()
-            modified_logits[:, -1, :] -= alpha * layer_intervention
+                # Get logits for the last token: (1, T, E) -> (1, E)
+                last_token_logits = logits.reshape(1, seq_len, -1)[:, -1, :]  # (1, E)
+                pre_intervention_logits_list.append(last_token_logits)
 
-            if router_output_is_tuple:
-                if router_output_len == 3:
-                    new_weights, new_indices = th.topk(
-                        modified_logits[:, -1, :], k=top_k, dim=-1
-                    )
-                    new_weights = F.softmax(
-                        new_weights, dim=-1, dtype=new_weights.dtype
-                    )
+            # Get pre-intervention probability for the capital
+            final_logits = model.lm_head.output.save()  # (1, T, vocab_size)
+            final_probs = F.softmax(final_logits.float(), dim=-1)
+            pre_intervention_capital_prob = final_probs[
+                0, -1, capital_first_token_id
+            ].item()
+            pre_intervention_probs.append(pre_intervention_capital_prob)
 
-                    modified_weights = cast("th.Tensor", router_weights.save())
-                    modified_weights[:, -1, :] = new_weights
-                    modified_indices = cast("th.Tensor", router_indices.save())
-                    modified_indices[:, -1, :] = new_indices
+        # Stack pre-intervention logits: (1, L, E)
+        pre_intervention_logits = th.stack(
+            pre_intervention_logits_list, dim=1
+        )  # (1, L, E)
+        pre_intervention_logits = pre_intervention_logits.squeeze(0)  # (L, E)
 
-                    model.routers_output[layer_idx] = (
-                        modified_logits.reshape(-1, modified_logits.shape[-1]),
-                        modified_weights.reshape(-1, modified_weights.shape[-1]),
-                        modified_indices.reshape(-1, modified_indices.shape[-1]),
-                    )
+        # Convert to binary mask
+        pre_intervention_mask = convert_router_logits_to_paths(
+            pre_intervention_logits.unsqueeze(0), top_k
+        ).squeeze(0)  # (L, E)
+        pre_intervention_masks_list.append(pre_intervention_mask)
+
+        # Second pass: get post-intervention masks
+        intervention_path_device = intervention_path.to(
+            device=batch_token_ids.device, dtype=th.float32
+        )
+
+        post_intervention_logits_list = []
+
+        with model.trace(batch):
+            for i, layer_idx in enumerate(layers_with_routers):
+                router_output = model.routers_output[layer_idx]
+
+                # Handle different router output formats
+                router_output_is_tuple = isinstance(router_output, tuple)
+                router_output_len = len(router_output) if router_output_is_tuple else 0
+
+                if router_output_is_tuple:
+                    if router_output_len == 2:
+                        router_scores, _router_indices = router_output
+                        raise ValueError(
+                            "Cannot run this experiment on a model whose routers do not return raw logits"
+                        )
+                    elif router_output_len == 3:
+                        (
+                            original_router_logits,
+                            original_router_weights,
+                            original_router_indices,
+                        ) = router_output
+
+                        router_logits = cast("th.Tensor", original_router_logits.save())
+                        router_logits = router_logits.reshape(1, seq_len, -1)
+                        router_weights = cast(
+                            "th.Tensor", original_router_weights.save()
+                        )
+                        router_weights = router_weights.reshape(1, seq_len, -1)
+                        router_indices = cast(
+                            "th.Tensor", original_router_indices.save()
+                        )
+                        router_indices = router_indices.reshape(1, seq_len, -1)
+                    else:
+                        raise ValueError(
+                            f"Found tuple of length {len(router_output)} for router output at layer {layer_idx}"
+                        )
                 else:
-                    raise ValueError(
-                        f"Found tuple of length {len(router_output)} for router output at layer {layer_idx}"
+                    router_scores = cast("th.Tensor", router_output.save())
+                    router_logits = router_scores.reshape(1, seq_len, -1)  # (1, T, E)
+
+                # Apply intervention to the last token's logits
+                layer_intervention = intervention_path_device[i]  # (E,)
+                modified_logits = router_logits.clone()
+                modified_logits[:, -1, :] -= alpha * layer_intervention
+
+                if router_output_is_tuple:
+                    if router_output_len == 3:
+                        new_weights, new_indices = th.topk(
+                            modified_logits[:, -1, :], k=top_k, dim=-1
+                        )
+                        new_weights = F.softmax(
+                            new_weights, dim=-1, dtype=new_weights.dtype
+                        )
+
+                        modified_weights = cast("th.Tensor", router_weights.save())
+                        modified_weights[:, -1, :] = new_weights
+                        modified_indices = cast("th.Tensor", router_indices.save())
+                        modified_indices[:, -1, :] = new_indices
+
+                        model.routers_output[layer_idx] = (
+                            modified_logits.reshape(-1, modified_logits.shape[-1]),
+                            modified_weights.reshape(-1, modified_weights.shape[-1]),
+                            modified_indices.reshape(-1, modified_indices.shape[-1]),
+                        )
+                    else:
+                        raise ValueError(
+                            f"Found tuple of length {len(router_output)} for router output at layer {layer_idx}"
+                        )
+                else:
+                    model.routers_output[layer_idx] = modified_logits.reshape(
+                        -1, modified_logits.shape[-1]
                     )
-            else:
-                model.routers_output[layer_idx] = modified_logits.reshape(
-                    -1, modified_logits.shape[-1]
-                )
 
-            # Save the modified logits for mask extraction
-            last_token_logits = modified_logits[:, -1, :]  # (1, E)
-            post_intervention_logits_list.append(last_token_logits)
+                # Save the modified logits for mask extraction
+                last_token_logits = modified_logits[:, -1, :]  # (1, E)
+                post_intervention_logits_list.append(last_token_logits)
 
-        # Get post-intervention probability for the capital
-        final_logits = model.lm_head.output.save()  # (1, T, vocab_size)
+            # Get post-intervention probability for the capital
+            final_logits = model.lm_head.output.save()  # (1, T, vocab_size)
+            final_probs = F.softmax(final_logits.float(), dim=-1)
+            post_intervention_capital_prob = final_probs[
+                0, -1, capital_first_token_id
+            ].item()
+            post_intervention_probs.append(post_intervention_capital_prob)
 
-    final_probs = F.softmax(final_logits.float(), dim=-1)
-    post_intervention_capital_prob = final_probs[0, -1, capital_first_token_id].item()
+        # Stack post-intervention logits: (1, L, E)
+        post_intervention_logits = th.stack(
+            post_intervention_logits_list, dim=1
+        )  # (1, L, E)
+        post_intervention_logits = post_intervention_logits.squeeze(0)  # (L, E)
 
-    # Stack post-intervention logits: (1, L, E)
-    post_intervention_logits = th.stack(
-        post_intervention_logits_list, dim=1
-    )  # (1, L, E)
-    post_intervention_logits = post_intervention_logits.squeeze(0)  # (L, E)
+        # Convert to binary mask
+        post_intervention_mask = convert_router_logits_to_paths(
+            post_intervention_logits.unsqueeze(0), top_k
+        ).squeeze(0)  # (L, E)
+        post_intervention_masks_list.append(post_intervention_mask)
 
-    # Convert to binary mask
-    post_intervention_mask = convert_router_logits_to_paths(
-        post_intervention_logits.unsqueeze(0), top_k
-    ).squeeze(0)  # (L, E)
+    # Average masks across all prompts
+    # Stack all masks: (N, L, E) where N is number of prompts
+    pre_intervention_masks_stacked = th.stack(
+        pre_intervention_masks_list, dim=0
+    )  # (N, L, E)
+    post_intervention_masks_stacked = th.stack(
+        post_intervention_masks_list, dim=0
+    )  # (N, L, E)
 
-    # Compute forgetfulness: (pre - post) / pre
+    # Average: (N, L, E) -> (L, E)
+    # This gives us the fraction of prompts where each expert was selected
+    pre_intervention_mask_avg = pre_intervention_masks_stacked.float().mean(
+        dim=0
+    )  # (L, E)
+    post_intervention_mask_avg = post_intervention_masks_stacked.float().mean(
+        dim=0
+    )  # (L, E)
+
+    # Average forgetfulness across all prompts
+    avg_pre_prob = sum(pre_intervention_probs) / len(pre_intervention_probs)
+    avg_post_prob = sum(post_intervention_probs) / len(post_intervention_probs)
     forgetfulness = (
-        (pre_intervention_capital_prob - post_intervention_capital_prob)
-        / pre_intervention_capital_prob
-        if pre_intervention_capital_prob > 0
-        else 0.0
+        (avg_pre_prob - avg_post_prob) / avg_pre_prob if avg_pre_prob > 0 else 0.0
     )
 
     return ExpertMasks(
-        pre_intervention=pre_intervention_mask.cpu(),
-        post_intervention=post_intervention_mask.cpu(),
+        pre_intervention=pre_intervention_mask_avg.cpu(),
+        post_intervention=post_intervention_mask_avg.cpu(),
         forgetfulness=forgetfulness,
     )
 
