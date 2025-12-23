@@ -34,6 +34,6 @@ module load GCCcore/13.3.0 Python/3.12.3 WebProxy
 cd $SCRATCH/moe-router-study
 
 # Run the capital country expert diff experiment with identity postprocessor
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run python -m exp.capital_country_expert_diff --model-name olmoe-i --target-country "South Korea" --router-path-batch-size 5000 --postprocessor identity --log-level INFO
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run python -m exp.capital_country_expert_diff capital-country-expert-diff --model-name olmoe-i --target-country "South Korea" --router-path-batch-size 5000 --postprocessor identity --log-level INFO
 
 
