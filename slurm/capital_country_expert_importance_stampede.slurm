@@ -1,12 +1,12 @@
 #!/bin/bash
 
 ##NECESSARY JOB SPECIFICATIONS
-#SBATCH -J capital_country_viz          # Set the job name to "capital_country_viz"
+#SBATCH -J capital_country_expert_importance          # Set the job name
 #SBATCH -N 1                        # Number of nodes to request
 #SBATCH -n 1                        # Total number of tasks across all nodes
-#SBATCH -t 02:00:00                 # Set the wall clock limit to 12 hours
-#SBATCH -o capital_country_viz-%j       # Send stdout/err to "capital_country_viz.[jobID]"
-#SBATCH -e capital_country_viz-%j.err   # Send stderr to separate file
+#SBATCH -t 02:00:00                 # Set the wall clock limit to 2 hours (much faster than diff)
+#SBATCH -o capital_country_expert_importance-%j       # Send stdout/err to "capital_country_expert_importance.[jobID]"
+#SBATCH -e capital_country_expert_importance-%j.err   # Send stderr to separate file
 #SBATCH -p h100                     # Request the GPU partition/queue
 
 ##OPTIONAL JOB SPECIFICATIONS
@@ -20,7 +20,7 @@ set -x
 # Enable CUDA debugging for better error messages
 export CUDA_LAUNCH_BLOCKING=1
 
-export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
+export MASTER_ADDR=$(scontrol show hostnames "$SLURM_NODELIST" | head -n 1)
 export MASTER_PORT=$(expr 10000 + $(echo -n $SLURM_JOBID | tail -c 4))
 export RANK=$SLURM_PROCID
 export WORLD_SIZE=$SLURM_NTASKS
@@ -38,7 +38,7 @@ if [ -z "$SLURM_NTASKS_PER_NODE" ]; then
 fi
 
 # Print SLURM environment information for debugging
-echo "SLURM Job ID: $SLURM_JOB_ID"
+echo "SLURM Job ID: $SLURM_JOBID"
 echo "SLURM Node List: $SLURM_NODELIST"
 echo "SLURM Number of Nodes: $SLURM_NNODES"
 echo "SLURM Number of Tasks: $SLURM_NTASKS"
@@ -55,7 +55,8 @@ echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 # Change to the project directory
 cd $SCRATCH/moe-router-study
 
-# Run the capital country visualization experiment
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run python -m exp.capital_country_viz capital-country-viz --model-name olmoe-i --router-path-batch-size 5000 --log-level INFO
+# Run the capital country expert importance computation
+# Adjust input-dir and output-file as needed for your specific country
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run python -m exp.capital_country_expert_importance --input-dir "out/capital_country_expert_diff/south_korea" --output-file "out/capital_country_expert_importance/south_korea.pt" --log-level INFO
 
 
