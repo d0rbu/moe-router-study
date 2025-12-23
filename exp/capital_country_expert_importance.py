@@ -85,42 +85,31 @@ def compute_expert_importance(
     # Initialize importance scores to zero
     importance_scores = th.zeros((num_layers, num_experts), dtype=th.float32)
 
-    # For each expert (layer, expert), find the transition point
+    # Convert forgetfulness scores to tensor for easier computation
+    forgetfulness_tensor = th.tensor(forgetfulness_scores, dtype=th.float32)
+
+    # For each expert (layer, expert), compute cumulative dot product
     for layer_idx in tqdm(range(num_layers), desc="Processing layers"):
         for expert_idx in tqdm(
             range(num_experts),
             desc=f"Processing experts in layer {layer_idx}",
             leave=False,
         ):
-            # Find the last alpha where difference is zero
-            last_zero_alpha_idx = None
-            for alpha_idx in range(len(diff_masks) - 1, -1, -1):
-                if diff_masks[alpha_idx][layer_idx, expert_idx] == 0:
-                    last_zero_alpha_idx = alpha_idx
-                    break
+            # Extract the diff_mask values for this expert across all alphas
+            diff_values = th.stack(
+                [diff_masks[i][layer_idx, expert_idx] for i in range(len(diff_masks))]
+            )  # (num_alphas,)
 
-            # If the last zero is the last alpha, expert never changes
-            if last_zero_alpha_idx == len(diff_masks) - 1:
-                continue  # Leave importance at 0
-            elif last_zero_alpha_idx >= len(diff_masks) or last_zero_alpha_idx is None:
-                raise ValueError(
-                    f"Last zero alpha index {last_zero_alpha_idx} is greater than the number of alphas {len(diff_masks)}"
-                )
+            # Compute changes in diff_mask between consecutive alphas
+            diff_changes = diff_values[1:] - diff_values[:-1]  # (num_alphas - 1,)
 
-            # Find the next alpha where the expert changes (the transition point)
-            transition_alpha_idx = last_zero_alpha_idx + 1
+            # Compute changes in forgetfulness between consecutive alphas
+            forgetfulness_changes = (
+                forgetfulness_tensor[1:] - forgetfulness_tensor[:-1]
+            )  # (num_alphas - 1,)
 
-            # Get the difference mask value at the transition
-            diff_value = diff_masks[transition_alpha_idx][layer_idx, expert_idx].item()
-
-            # Get forgetfulness scores
-            # pre_forgetfulness is at the last alpha where difference is 0
-            pre_forgetfulness = forgetfulness_scores[last_zero_alpha_idx]
-            # post_forgetfulness is at the alpha where the expert changes
-            post_forgetfulness = forgetfulness_scores[transition_alpha_idx]
-
-            # Compute importance: difference_mask_value * (pre_forgetfulness - post_forgetfulness)
-            importance = diff_value * (pre_forgetfulness - post_forgetfulness)
+            # Compute dot product: sum of (diff_change * forgetfulness_change) for all pairs
+            importance = (diff_changes * forgetfulness_changes).sum().item()
             importance_scores[layer_idx, expert_idx] = importance
 
     metadata = {
