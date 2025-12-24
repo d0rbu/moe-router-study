@@ -119,6 +119,149 @@ class FinalStats:
     max: float
 
 
+def get_stats_checkpoint_path(
+    model_name: str,
+    checkpoint_idx: int | None,
+    dataset_name: str,
+    max_samples: int,
+    seed: int,
+) -> str:
+    """Get the path for the statistics checkpoint file.
+
+    Args:
+        model_name: Name of the model
+        checkpoint_idx: Model checkpoint index (None for latest)
+        dataset_name: Name of the dataset used for activations
+        max_samples: Maximum number of activation samples to use
+        seed: Random seed for reshuffling
+
+    Returns:
+        Path to the checkpoint file
+    """
+    checkpoint_filename = f"stats_checkpoint_{model_name}"
+    if checkpoint_idx is not None:
+        checkpoint_filename += f"_checkpoint{checkpoint_idx}"
+    checkpoint_filename += f"_{dataset_name}_max{max_samples}_seed{seed}.pt"
+    return os.path.join(KURTOSIS_DIR, checkpoint_filename)
+
+
+def save_stats_checkpoint(
+    global_stats: dict[str, GlobalStats],
+    random_orthonormal_matrix: th.Tensor,
+    model_name: str,
+    checkpoint_idx: int | None,
+    dataset_name: str,
+    max_samples: int,
+    seed: int,
+    num_batches_processed: int,
+) -> None:
+    """Save statistics checkpoint after first pass.
+
+    Args:
+        global_stats: Global statistics dictionary
+        random_orthonormal_matrix: Random orthonormal matrix used for projections
+        model_name: Name of the model
+        checkpoint_idx: Model checkpoint index (None for latest)
+        dataset_name: Name of the dataset used for activations
+        max_samples: Maximum number of activation samples to use
+        seed: Random seed for reshuffling
+        num_batches_processed: Number of batches processed in first pass
+    """
+    checkpoint_path = get_stats_checkpoint_path(
+        model_name=model_name,
+        checkpoint_idx=checkpoint_idx,
+        dataset_name=dataset_name,
+        max_samples=max_samples,
+        seed=seed,
+    )
+
+    # Convert GlobalStats to tensors for saving
+    # Move tensors to CPU for device portability
+    checkpoint_data = {
+        "global_stats": {
+            key: {
+                "mean": stats.mean.cpu(),
+                "std": stats.std.cpu(),
+            }
+            for key, stats in global_stats.items()
+        },
+        "random_orthonormal_matrix": random_orthonormal_matrix.cpu(),
+        "num_batches_processed": num_batches_processed,
+        "model_name": model_name,
+        "checkpoint_idx": checkpoint_idx,
+        "dataset_name": dataset_name,
+        "max_samples": max_samples,
+        "seed": seed,
+    }
+
+    th.save(checkpoint_data, checkpoint_path)
+    logger.info(f"Saved statistics checkpoint to {checkpoint_path}")
+
+
+def load_stats_checkpoint(
+    model_name: str,
+    checkpoint_idx: int | None,
+    dataset_name: str,
+    max_samples: int,
+    seed: int,
+) -> tuple[dict[str, GlobalStats], th.Tensor, int] | None:
+    """Load statistics checkpoint if it exists.
+
+    Args:
+        model_name: Name of the model
+        checkpoint_idx: Model checkpoint index (None for latest)
+        dataset_name: Name of the dataset used for activations
+        max_samples: Maximum number of activation samples to use
+        seed: Random seed for reshuffling
+
+    Returns:
+        Tuple of (global_stats, random_orthonormal_matrix, num_batches_processed) if found,
+        None otherwise
+    """
+    checkpoint_path = get_stats_checkpoint_path(
+        model_name=model_name,
+        checkpoint_idx=checkpoint_idx,
+        dataset_name=dataset_name,
+        max_samples=max_samples,
+        seed=seed,
+    )
+
+    if not os.path.exists(checkpoint_path):
+        return None
+
+    logger.info(f"Loading statistics checkpoint from {checkpoint_path}")
+    checkpoint_data = th.load(checkpoint_path, weights_only=False)
+
+    # Verify that the checkpoint matches the current run
+    if (
+        checkpoint_data.get("model_name") != model_name
+        or checkpoint_data.get("checkpoint_idx") != checkpoint_idx
+        or checkpoint_data.get("dataset_name") != dataset_name
+        or checkpoint_data.get("max_samples") != max_samples
+        or checkpoint_data.get("seed") != seed
+    ):
+        logger.warning(
+            "Checkpoint parameters don't match current run. Ignoring checkpoint."
+        )
+        return None
+
+    # Reconstruct GlobalStats objects
+    global_stats = {
+        key: GlobalStats(mean=data["mean"], std=data["std"])
+        for key, data in checkpoint_data["global_stats"].items()
+    }
+
+    random_orthonormal_matrix = checkpoint_data["random_orthonormal_matrix"]
+    num_batches_processed = checkpoint_data["num_batches_processed"]
+
+    logger.info(
+        f"Loaded checkpoint with {len(global_stats)} basis types, "
+        f"{num_batches_processed} batches processed"
+    )
+
+    return global_stats, random_orthonormal_matrix, num_batches_processed
+
+
 def compute_kurtosis(
     x: th.Tensor,
     dim: int = 0,
@@ -166,6 +309,350 @@ def compute_kurtosis(
     kurtosis = (z**4).mean(dim=dim) - 3.0  # type: ignore[misc]
 
     return kurtosis
+
+
+@dataclass
+class FirstPassResult:
+    """Result of the first pass: global statistics for each basis type."""
+
+    global_stats: dict[str, GlobalStats]
+    random_orthonormal_matrix: th.Tensor
+    num_batches_processed: int
+
+
+def run_first_pass(
+    model: StandardizedTransformer,
+    activations: Any,
+    random_orthonormal_matrix: th.Tensor,
+    num_layers: int,
+    router_layers: list[int],
+    device: str,
+    batch_size: int,
+    max_samples: int,
+) -> FirstPassResult:
+    """Run the first pass to compute means and standard deviations.
+
+    Args:
+        model: The transformer model
+        activations: Activation loader callable
+        random_orthonormal_matrix: Random orthonormal matrix for projections
+        num_layers: Number of layers in the model
+        router_layers: List of layer indices that have routers
+        device: Device to load activations on
+        batch_size: Batch size for loading activations
+        max_samples: Maximum number of activation samples to use
+
+    Returns:
+        FirstPassResult containing global statistics
+    """
+    logger.info("First pass: Computing means and standard deviations...")
+
+    # Accumulators for computing global statistics
+    means: dict[str, list[th.Tensor]] = defaultdict(list)
+    variances: dict[str, list[th.Tensor]] = defaultdict(list)
+
+    activation_iterator = activations(
+        batch_size=batch_size, start_idx=0, max_samples=max_samples
+    )
+
+    num_batches_processed = 0
+
+    with th.no_grad():
+        for batch in tqdm(
+            activation_iterator,
+            desc="First pass - computing statistics",
+        ):
+            # Get activations
+            # layer_outputs: (batch, num_layers, hidden_dim)
+            layer_outputs = batch[ActivationKeys.LAYER_OUTPUT].to(
+                dtype=th.float64, device=device
+            )
+            # mlp_outputs: (batch, num_layers, hidden_dim)
+            mlp_outputs = batch[ActivationKeys.MLP_OUTPUT].to(
+                dtype=th.float64, device=device
+            )
+
+            assert layer_outputs.shape[1] == mlp_outputs.shape[1] == num_layers, (
+                "Number of layers mismatch: "
+                f"Layer outputs shape: {layer_outputs.shape}, MLP outputs shape: {mlp_outputs.shape}, "
+                f"Number of layers: {num_layers}, "
+                f"Router layers: {router_layers}"
+            )
+
+            # Create list of (activation_tensor, basis_key) pairs to process
+            activations_to_process = _build_activations_to_process(
+                model=model,
+                layer_outputs=layer_outputs,
+                mlp_outputs=mlp_outputs,
+                random_orthonormal_matrix=random_orthonormal_matrix,
+                num_layers=num_layers,
+                router_layers=router_layers,
+            )
+
+            # Update all accumulators
+            for tensor, basis_key in activations_to_process:
+                means[basis_key].append(tensor.mean(dim=0).cpu())
+                variances[basis_key].append(tensor.var(dim=0).cpu())
+
+            num_batches_processed += 1
+
+    # Compute global means and stds
+    logger.info("Computing global means and standard deviations...")
+    logger.trace(f"Means: {means}")
+    logger.trace(f"Variances: {variances}")
+
+    global_stats: dict[str, GlobalStats] = {}
+    for basis_key, mean_list in means.items():
+        variance_list = variances[basis_key]
+
+        mean = th.stack(mean_list, dim=0).mean(dim=0)
+        variance = th.stack(variance_list, dim=0).mean(dim=0)
+        std = th.sqrt(th.clamp(variance, min=1e-8))
+
+        logger.trace(f"Global stats for {basis_key}: mean={mean}, std={std}")
+        global_stats[basis_key] = GlobalStats(mean=mean, std=std)
+
+    logger.info(f"Completed first pass with {num_batches_processed} batches")
+
+    return FirstPassResult(
+        global_stats=global_stats,
+        random_orthonormal_matrix=random_orthonormal_matrix,
+        num_batches_processed=num_batches_processed,
+    )
+
+
+def _build_activations_to_process(
+    model: StandardizedTransformer,
+    layer_outputs: th.Tensor,
+    mlp_outputs: th.Tensor,
+    random_orthonormal_matrix: th.Tensor,
+    num_layers: int,
+    router_layers: list[int],
+) -> list[tuple[th.Tensor, str]]:
+    """Build list of (activation_tensor, basis_key) pairs for processing.
+
+    Args:
+        model: The transformer model
+        layer_outputs: Layer output activations (batch, num_layers, hidden_dim)
+        mlp_outputs: MLP output activations (batch, num_layers, hidden_dim)
+        random_orthonormal_matrix: Random orthonormal matrix for projections
+        num_layers: Number of layers in the model
+        router_layers: List of layer indices that have routers
+
+    Returns:
+        List of (activation_tensor, basis_key) tuples
+    """
+    activations_to_process: list[tuple[th.Tensor, str]] = []
+
+    for layer_idx in range(num_layers):
+        # 1. Raw residual stream activations per layer
+        layer_acts = layer_outputs[:, layer_idx, :]
+        activations_to_process.append((layer_acts, f"layer_{layer_idx}_residual"))
+
+        # Add random orthonormal projection for this layer
+        proj_matrix = random_orthonormal_matrix.to(
+            dtype=layer_acts.dtype,
+            device=layer_acts.device,
+        )
+        activations_to_process.append(
+            (layer_acts @ proj_matrix, f"layer_{layer_idx}_random_orthonormal")
+        )
+
+        # Get pre-MLP residuals: layer_output - mlp_output
+        pre_mlp_residuals = (
+            layer_outputs[:, layer_idx, :] - mlp_outputs[:, layer_idx, :]
+        )
+
+        # MLP projections (dense layers) vs Expert routers (MoE layers)
+        if layer_idx not in router_layers:
+            # Dense MLP layer
+            up_w = (
+                cast("Tensor", model.mlps[layer_idx].up_proj.weight)
+                .detach()
+                .to(dtype=pre_mlp_residuals.dtype)
+            )
+            gate_w = (
+                cast("Tensor", model.mlps[layer_idx].gate_proj.weight)
+                .detach()
+                .to(dtype=pre_mlp_residuals.dtype)
+            )
+            down_w = (
+                cast("Tensor", model.mlps[layer_idx].down_proj.weight)
+                .detach()
+                .to(dtype=pre_mlp_residuals.dtype)
+            )
+
+            activations_to_process.append(
+                (pre_mlp_residuals @ up_w.T, f"layer_{layer_idx}_up_proj")
+            )
+            activations_to_process.append(
+                (pre_mlp_residuals @ gate_w.T, f"layer_{layer_idx}_gate_proj")
+            )
+            activations_to_process.append(
+                (layer_acts @ down_w, f"layer_{layer_idx}_down_proj")
+            )
+        else:
+            # MoE layer - expert routers
+            router_weight = (
+                cast("Tensor", model.routers[layer_idx].weight)
+                .detach()
+                .to(device=pre_mlp_residuals.device, dtype=pre_mlp_residuals.dtype)
+            )
+            router_logits = pre_mlp_residuals @ router_weight.T
+            activations_to_process.append((router_logits, f"layer_{layer_idx}_router"))
+
+    return activations_to_process
+
+
+def run_second_pass(
+    model: StandardizedTransformer,
+    activations: Any,
+    global_stats: dict[str, GlobalStats],
+    random_orthonormal_matrix: th.Tensor,
+    num_layers: int,
+    router_layers: list[int],
+    device: str,
+    batch_size: int,
+    max_samples: int,
+    num_batches_expected: int,
+) -> dict[str, th.Tensor]:
+    """Run the second pass to compute kurtosis using global statistics.
+
+    Args:
+        model: The transformer model
+        activations: Activation loader callable
+        global_stats: Global statistics from first pass
+        random_orthonormal_matrix: Random orthonormal matrix for projections
+        num_layers: Number of layers in the model
+        router_layers: List of layer indices that have routers
+        device: Device to load activations on
+        batch_size: Batch size for loading activations
+        max_samples: Maximum number of activation samples to use
+        num_batches_expected: Expected number of batches (for progress bar)
+
+    Returns:
+        Dictionary mapping basis names to aggregated kurtosis tensors
+    """
+    logger.info("Second pass: Computing kurtosis...")
+
+    # Track kurtosis values by basis
+    layerwise_kurtosis: dict[str, list[th.Tensor]] = defaultdict(list)
+
+    # Make a mutable copy of global_stats for device transfers
+    stats_cache: dict[str, GlobalStats] = dict(global_stats)
+
+    activation_iterator = activations(
+        batch_size=batch_size, start_idx=0, max_samples=max_samples
+    )
+
+    num_batches_processed = 0
+
+    with th.no_grad():
+        for batch in tqdm(
+            activation_iterator,
+            desc="Second pass - computing kurtosis",
+            total=num_batches_expected,
+        ):
+            layer_outputs = batch[ActivationKeys.LAYER_OUTPUT].to(
+                dtype=th.float64, device=device
+            )
+            mlp_outputs = batch[ActivationKeys.MLP_OUTPUT].to(
+                dtype=th.float64, device=device
+            )
+
+            activations_to_process = _build_activations_to_process(
+                model=model,
+                layer_outputs=layer_outputs,
+                mlp_outputs=mlp_outputs,
+                random_orthonormal_matrix=random_orthonormal_matrix,
+                num_layers=num_layers,
+                router_layers=router_layers,
+            )
+
+            # Compute kurtosis for all activations
+            for tensor, basis_key in activations_to_process:
+                stats = stats_cache[basis_key].to(device=tensor.device)
+                logger.trace(
+                    f"Stats for {basis_key}: mean={stats.mean}, std={stats.std}"
+                )
+                kurtosis = compute_kurtosis(
+                    tensor, dim=0, mean=stats.mean, std=stats.std
+                )
+                stats_cache[basis_key] = stats
+                layerwise_kurtosis[basis_key].append(kurtosis)
+
+            num_batches_processed += 1
+
+    logger.info(f"Completed second pass with {num_batches_processed} batches")
+
+    # Aggregate kurtosis values
+    for basis_name, kurtosis_list in layerwise_kurtosis.items():
+        logger.trace(
+            f"Kurtosis for {basis_name}:\n{kurtosis_list}\n{len(kurtosis_list)}"
+        )
+
+    aggregated_kurtosis = {
+        basis_name: th.stack(kurtosis_list, dim=0).mean(dim=0)
+        for basis_name, kurtosis_list in layerwise_kurtosis.items()
+    }
+
+    return aggregated_kurtosis
+
+
+def compute_final_statistics(
+    layerwise_kurtosis: dict[str, th.Tensor],
+    router_layers: list[int],
+) -> dict[str, FinalStats]:
+    """Compute final statistics from aggregated kurtosis values.
+
+    Args:
+        layerwise_kurtosis: Dictionary mapping basis names to kurtosis tensors
+        router_layers: List of layer indices that have routers
+
+    Returns:
+        Dictionary mapping basis names to FinalStats
+    """
+    logger.info("Computing final statistics...")
+
+    statistics: dict[str, FinalStats] = {}
+
+    for basis_name, kurtosis in layerwise_kurtosis.items():
+        statistics[basis_name] = FinalStats(
+            mean=float(kurtosis.mean().item()),
+            median=float(kurtosis.median().item()),
+            std=float(kurtosis.std().item()),
+            q25=float(kurtosis.quantile(0.25).item()),
+            q75=float(kurtosis.quantile(0.75).item()),
+            min=float(kurtosis.min().item()),
+            max=float(kurtosis.max().item()),
+        )
+        logger.debug(f"{basis_name} kurtosis stats:\n{statistics[basis_name]}")
+
+    # Compute aggregated statistics across all router layers
+    logger.info("Computing aggregated router statistics...")
+    all_router_kurtosis = []
+    for layer_idx in router_layers:
+        basis_name = f"layer_{layer_idx}_router"
+        if basis_name in layerwise_kurtosis:
+            all_router_kurtosis.append(layerwise_kurtosis[basis_name])
+
+    logger.debug(f"All router kurtosis length: {len(all_router_kurtosis)}")
+
+    if all_router_kurtosis:
+        all_router_kurtosis_tensor = th.cat(all_router_kurtosis, dim=0)
+
+        if all_router_kurtosis_tensor.numel() > 0:
+            statistics["all_layers_router"] = FinalStats(
+                mean=float(all_router_kurtosis_tensor.mean().item()),
+                median=float(all_router_kurtosis_tensor.median().item()),
+                std=float(all_router_kurtosis_tensor.std().item()),
+                q25=float(all_router_kurtosis_tensor.quantile(0.25).item()),
+                q75=float(all_router_kurtosis_tensor.quantile(0.75).item()),
+                min=float(all_router_kurtosis_tensor.min().item()),
+                max=float(all_router_kurtosis_tensor.max().item()),
+            )
+
+    return statistics
 
 
 def compute_kurtosis_statistics(
@@ -244,7 +731,7 @@ def compute_kurtosis_statistics(
 
     logger.info(f"Activation dimensions: {activation_dims}")
 
-    # Storage for kurtosis values
+    # Storage for results
     results: dict[str, Any] = {
         "model_name": model_name,
         "checkpoint_idx": checkpoint_idx,
@@ -257,320 +744,77 @@ def compute_kurtosis_statistics(
     # Get hidden dimension for random projections
     hidden_dim = activation_dims[ActivationKeys.LAYER_OUTPUT]
 
-    # Generate random projection matrix (same for all layers)
-    # Random orthonormal matrix (QR decomposition of random matrix)
-    random_normal = th.randn(hidden_dim, hidden_dim, device=device, dtype=th.float32)
-    random_orthonormal_matrix, _ = th.linalg.qr(random_normal)
-
-    # Two-pass approach: First pass to compute means and stds, second pass to compute kurtosis
-    logger.info("First pass: Computing means and standard deviations...")
-
-    # Storage for means and stds for each basis type
-    global_stats: dict[str, GlobalStats] = {}
-
-    # Accumulators for computing global statistics
-    means: dict[str, list[th.Tensor]] = defaultdict(list)
-    variances: dict[str, list[th.Tensor]] = defaultdict(list)
-
-    # First pass: accumulate statistics
-    activation_iterator = activations(
-        batch_size=batch_size, start_idx=0, max_samples=max_samples
+    # Try to load checkpoint from previous first pass
+    checkpoint_result = load_stats_checkpoint(
+        model_name=model_name,
+        checkpoint_idx=checkpoint_idx,
+        dataset_name=dataset_name,
+        max_samples=max_samples,
+        seed=seed,
     )
 
-    num_batches_processed = 0
+    if checkpoint_result is not None:
+        global_stats, random_orthonormal_matrix, num_batches_processed = (
+            checkpoint_result
+        )
+        random_orthonormal_matrix = random_orthonormal_matrix.to(device=device)
+        logger.info(
+            f"Using checkpointed statistics. Skipping first pass. "
+            f"Checkpoint had {num_batches_processed} batches."
+        )
+    else:
+        # Generate random projection matrix with fixed seed for reproducibility
+        rng = th.Generator()
+        rng.manual_seed(hash(f"{model_name}_{seed}") % (2**31))
+        random_normal = th.randn(
+            hidden_dim, hidden_dim, device=device, dtype=th.float32, generator=rng
+        )
+        random_orthonormal_matrix, _ = th.linalg.qr(random_normal)
 
-    with th.no_grad():
-        for batch in tqdm(
-            activation_iterator,
-            desc="First pass - computing statistics",
-        ):
-            # Get activations
-            # layer_outputs: (batch, num_layers, hidden_dim)
-            layer_outputs = batch[ActivationKeys.LAYER_OUTPUT].to(
-                dtype=th.float64, device=device
-            )
-            # mlp_outputs: (batch, num_layers, hidden_dim)
-            mlp_outputs = batch[ActivationKeys.MLP_OUTPUT].to(
-                dtype=th.float64, device=device
-            )
+        # Run first pass
+        first_pass_result = run_first_pass(
+            model=model,
+            activations=activations,
+            random_orthonormal_matrix=random_orthonormal_matrix,
+            num_layers=num_layers,
+            router_layers=router_layers,
+            device=device,
+            batch_size=batch_size,
+            max_samples=max_samples,
+        )
 
-            assert layer_outputs.shape[1] == mlp_outputs.shape[1] == num_layers, (
-                "Number of layers mismatch: "
-                f"Layer outputs shape: {layer_outputs.shape}, MLP outputs shape: {mlp_outputs.shape}, "
-                f"Number of layers: {num_layers}, "
-                f"Router layers: {router_layers}"
-            )
+        global_stats = first_pass_result.global_stats
+        random_orthonormal_matrix = first_pass_result.random_orthonormal_matrix
+        num_batches_processed = first_pass_result.num_batches_processed
 
-            # Create list of (activation_tensor, basis_key) pairs to process
-            activations_to_process = []
+        # Save checkpoint after first pass
+        save_stats_checkpoint(
+            global_stats=global_stats,
+            random_orthonormal_matrix=random_orthonormal_matrix,
+            model_name=model_name,
+            checkpoint_idx=checkpoint_idx,
+            dataset_name=dataset_name,
+            max_samples=max_samples,
+            seed=seed,
+            num_batches_processed=num_batches_processed,
+        )
 
-            # Process all layers in one loop
-            for layer_idx in range(num_layers):
-                # 1. Raw residual stream activations per layer
-                # layer_acts: (batch, hidden_dim)
-                layer_acts = layer_outputs[:, layer_idx, :]
-                activations_to_process.append(
-                    (layer_acts, f"layer_{layer_idx}_residual")
-                )
-
-                # Add random orthonormal projection for this layer
-                random_orthonormal_matrix = random_orthonormal_matrix.to(
-                    dtype=layer_acts.dtype,
-                    device=layer_acts.device,
-                )
-                activations_to_process.append(
-                    (
-                        layer_acts @ random_orthonormal_matrix,
-                        f"layer_{layer_idx}_random_orthonormal",
-                    )
-                )
-
-                # Get pre-MLP residuals: layer_output - mlp_output (needed for both cases)
-                pre_mlp_residuals = (
-                    layer_outputs[:, layer_idx, :] - mlp_outputs[:, layer_idx, :]
-                )
-
-                # 2-3. MLP projections (dense layers) vs 4. Expert routers (MoE layers)
-                if layer_idx not in router_layers:
-                    # Dense MLP layer
-                    up_w = (
-                        cast("Tensor", model.mlps[layer_idx].up_proj.weight)
-                        .detach()
-                        .to(dtype=pre_mlp_residuals.dtype)
-                    )
-                    gate_w = (
-                        cast("Tensor", model.mlps[layer_idx].gate_proj.weight)
-                        .detach()
-                        .to(dtype=pre_mlp_residuals.dtype)
-                    )
-                    down_w = (
-                        cast("Tensor", model.mlps[layer_idx].down_proj.weight)
-                        .detach()
-                        .to(dtype=pre_mlp_residuals.dtype)
-                    )
-
-                    # Add projections to processing list
-                    activations_to_process.append(
-                        (pre_mlp_residuals @ up_w.T, f"layer_{layer_idx}_up_proj")
-                    )
-                    activations_to_process.append(
-                        (pre_mlp_residuals @ gate_w.T, f"layer_{layer_idx}_gate_proj")
-                    )
-                    activations_to_process.append(
-                        (layer_acts @ down_w, f"layer_{layer_idx}_down_proj")
-                    )
-                else:
-                    # MoE layer - expert routers
-                    router_weight = (
-                        cast("Tensor", model.routers[layer_idx].weight)
-                        .detach()
-                        .to(
-                            device=pre_mlp_residuals.device,
-                            dtype=pre_mlp_residuals.dtype,
-                        )
-                    )
-
-                    # Compute router logits
-                    router_logits = pre_mlp_residuals @ router_weight.T
-                    activations_to_process.append(
-                        (router_logits, f"layer_{layer_idx}_router")
-                    )
-
-            # Update all accumulators
-            for tensor, basis_key in activations_to_process:
-                means[basis_key].append(tensor.mean(dim=0).cpu())
-                variances[basis_key].append(tensor.var(dim=0).cpu())
-
-            num_batches_processed += 1
-
-    # Compute global means and stds
-    logger.info("Computing global means and standard deviations...")
-    logger.trace(f"Means: {means}")
-    logger.trace(f"Variances: {variances}")
-    for basis_key, mean_list in means.items():
-        variance_list = variances[basis_key]
-
-        mean = th.stack(mean_list, dim=0).mean(dim=0)
-        variance = th.stack(variance_list, dim=0).mean(dim=0)
-        std = th.sqrt(th.clamp(variance, min=1e-8))
-
-        logger.trace(f"Global stats for {basis_key}: mean={mean}, std={std}")
-        global_stats[basis_key] = GlobalStats(mean=mean, std=std)
-
-    logger.info(f"Completed first pass with {num_batches_processed} batches")
-
-    # Second pass: compute kurtosis using global statistics
-    logger.info("Second pass: Computing kurtosis...")
-
-    # Track kurtosis values by basis
-    layerwise_kurtosis: dict[str, list[th.Tensor]] = defaultdict(list)
-
-    # Second pass
-    activation_iterator = activations(
-        batch_size=batch_size, start_idx=0, max_samples=max_samples
+    # Run second pass
+    layerwise_kurtosis = run_second_pass(
+        model=model,
+        activations=activations,
+        global_stats=global_stats,
+        random_orthonormal_matrix=random_orthonormal_matrix,
+        num_layers=num_layers,
+        router_layers=router_layers,
+        device=device,
+        batch_size=batch_size,
+        max_samples=max_samples,
+        num_batches_expected=num_batches_processed,
     )
 
-    second_pass_num_batches_processed = 0
-
-    with th.no_grad():
-        for batch in tqdm(
-            activation_iterator,
-            desc="Second pass - computing kurtosis",
-            total=num_batches_processed,
-        ):
-            # Get activations
-            layer_outputs = batch[ActivationKeys.LAYER_OUTPUT].to(
-                dtype=th.float64, device=device
-            )
-            mlp_outputs = batch[ActivationKeys.MLP_OUTPUT].to(
-                dtype=th.float64, device=device
-            )
-
-            # Create list of (activation_tensor, basis_key) pairs to process (same as first pass)
-            activations_to_process = []
-
-            # Process all layers in one loop
-            for layer_idx in range(num_layers):
-                # 1. Raw residual stream activations per layer
-                # layer_acts: (batch, hidden_dim)
-                layer_acts = layer_outputs[:, layer_idx, :]
-                activations_to_process.append(
-                    (layer_acts, f"layer_{layer_idx}_residual")
-                )
-
-                # Add random orthonormal projection for this layer
-                random_orthonormal_matrix = random_orthonormal_matrix.to(
-                    dtype=layer_acts.dtype,
-                    device=layer_acts.device,
-                )
-                activations_to_process.append(
-                    (
-                        layer_acts @ random_orthonormal_matrix,
-                        f"layer_{layer_idx}_random_orthonormal",
-                    )
-                )
-
-                # Get pre-MLP residuals: layer_output - mlp_output (needed for both cases)
-                pre_mlp_residuals = (
-                    layer_outputs[:, layer_idx, :] - mlp_outputs[:, layer_idx, :]
-                )
-
-                # 2-3. MLP projections (dense layers) vs 4. Expert routers (MoE layers)
-                if layer_idx not in router_layers:
-                    # Dense MLP layer
-                    up_w = (
-                        cast("Tensor", model.mlps[layer_idx].up_proj.weight)
-                        .detach()
-                        .to(dtype=pre_mlp_residuals.dtype)
-                    )
-                    gate_w = (
-                        cast("Tensor", model.mlps[layer_idx].gate_proj.weight)
-                        .detach()
-                        .to(dtype=pre_mlp_residuals.dtype)
-                    )
-                    down_w = (
-                        cast("Tensor", model.mlps[layer_idx].down_proj.weight)
-                        .detach()
-                        .to(dtype=pre_mlp_residuals.dtype)
-                    )
-
-                    # Add projections to processing list
-                    activations_to_process.append(
-                        (pre_mlp_residuals @ up_w.T, f"layer_{layer_idx}_up_proj")
-                    )
-                    activations_to_process.append(
-                        (pre_mlp_residuals @ gate_w.T, f"layer_{layer_idx}_gate_proj")
-                    )
-                    activations_to_process.append(
-                        (layer_acts @ down_w, f"layer_{layer_idx}_down_proj")
-                    )
-                else:
-                    # MoE layer - expert routers
-                    router_weight = (
-                        cast("Tensor", model.routers[layer_idx].weight)
-                        .detach()
-                        .to(
-                            device=pre_mlp_residuals.device,
-                            dtype=pre_mlp_residuals.dtype,
-                        )
-                    )
-
-                    # Compute router logits
-                    router_logits = pre_mlp_residuals @ router_weight.T
-                    activations_to_process.append(
-                        (router_logits, f"layer_{layer_idx}_router")
-                    )
-
-            # Compute kurtosis for all activations
-            for tensor, basis_key in activations_to_process:
-                stats = global_stats[basis_key].to(device=tensor.device)
-                logger.trace(
-                    f"Stats for {basis_key}: mean={stats.mean}, std={stats.std}"
-                )
-                kurtosis = compute_kurtosis(
-                    tensor, dim=0, mean=stats.mean, std=stats.std
-                )
-                global_stats[basis_key] = stats
-                layerwise_kurtosis[basis_key].append(kurtosis)
-
-            second_pass_num_batches_processed += 1
-
-    logger.info(
-        f"Completed second pass with {second_pass_num_batches_processed} batches"
-    )
-
-    # Aggregate kurtosis values and compute statistics
-    logger.info("Computing final statistics...")
-
-    for basis_name, kurtosis_list in layerwise_kurtosis.items():
-        logger.trace(
-            f"Kurtosis for {basis_name}:\n{kurtosis_list}\n{len(kurtosis_list)}"
-        )
-
-    layerwise_kurtosis = {
-        basis_name: th.stack(kurtosis_list, dim=0).mean(dim=0)
-        for basis_name, kurtosis_list in layerwise_kurtosis.items()
-    }
-
-    statistics: dict[str, FinalStats] = {}
-
-    for basis_name, kurtosis in layerwise_kurtosis.items():
-        # Compute statistics
-        statistics[basis_name] = FinalStats(
-            mean=float(kurtosis.mean().item()),
-            median=float(kurtosis.median().item()),
-            std=float(kurtosis.std().item()),
-            q25=float(kurtosis.quantile(0.25).item()),
-            q75=float(kurtosis.quantile(0.75).item()),
-            min=float(kurtosis.min().item()),
-            max=float(kurtosis.max().item()),
-        )
-
-        logger.debug(f"{basis_name} kurtosis stats:\n{statistics[basis_name]}")
-
-    # Also compute aggregated statistics across all router layers
-    logger.info("Computing aggregated router statistics...")
-    all_router_kurtosis = []
-    for layer_idx in router_layers:
-        basis_name = f"layer_{layer_idx}_router"
-        if basis_name in layerwise_kurtosis:
-            all_router_kurtosis.extend(layerwise_kurtosis[basis_name])
-
-    logger.debug(f"All router kurtosis length: {len(all_router_kurtosis)}")
-
-    all_router_kurtosis = th.cat(all_router_kurtosis, dim=0)
-
-    if all_router_kurtosis.numel() > 0:
-        statistics["all_layers_router"] = FinalStats(
-            mean=float(all_router_kurtosis.mean().item()),
-            median=float(all_router_kurtosis.median().item()),
-            std=float(all_router_kurtosis.std().item()),
-            q25=float(all_router_kurtosis.quantile(0.25).item()),
-            q75=float(all_router_kurtosis.quantile(0.75).item()),
-            min=float(all_router_kurtosis.min().item()),
-            max=float(all_router_kurtosis.max().item()),
-        )
-
+    # Compute final statistics
+    statistics = compute_final_statistics(layerwise_kurtosis, router_layers)
     results["statistics"] = statistics
 
     return results
