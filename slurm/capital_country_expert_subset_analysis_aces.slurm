@@ -35,7 +35,7 @@ cd $SCRATCH/moe-router-study
 
 # Run the capital country expert subset analysis
 # Adjust parameters as needed for your specific country and analysis
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run python -m exp.capital_country_expert_subset_analysis \
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run python -m exp.capital_country_expert_subset_analysis capital-country-expert-subset-analysis \
     --model-name "olmoe-i" \
     --model-dtype "bf16" \
     --importance-file "out/capital_country_expert_importance/south_korea.pt" \
