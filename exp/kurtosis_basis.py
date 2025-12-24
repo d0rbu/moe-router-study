@@ -345,7 +345,10 @@ def compute_kurtosis_statistics(
                     router_weight = (
                         cast("Tensor", model.routers[layer_idx].weight)
                         .detach()
-                        .to(dtype=pre_mlp_residuals.dtype)
+                        .to(
+                            device=pre_mlp_residuals.device,
+                            dtype=pre_mlp_residuals.dtype,
+                        )
                     )
 
                     # Compute router logits
@@ -356,8 +359,8 @@ def compute_kurtosis_statistics(
 
             # Update all accumulators
             for tensor, basis_key in activations_to_process:
-                means[basis_key].append(tensor.mean(dim=0))
-                variances[basis_key].append(tensor.var(dim=0))
+                means[basis_key].append(tensor.mean(dim=0).cpu())
+                variances[basis_key].append(tensor.var(dim=0).cpu())
 
             num_batches_processed += 1
 
@@ -467,7 +470,10 @@ def compute_kurtosis_statistics(
                     router_weight = (
                         cast("Tensor", model.routers[layer_idx].weight)
                         .detach()
-                        .to(dtype=pre_mlp_residuals.dtype)
+                        .to(
+                            device=pre_mlp_residuals.device,
+                            dtype=pre_mlp_residuals.dtype,
+                        )
                     )
 
                     # Compute router logits
@@ -478,13 +484,14 @@ def compute_kurtosis_statistics(
 
             # Compute kurtosis for all activations
             for tensor, basis_key in activations_to_process:
-                stats = global_stats[basis_key]
+                stats = global_stats[basis_key].to(device=tensor.device)
                 logger.trace(
                     f"Stats for {basis_key}: mean={stats.mean}, std={stats.std}"
                 )
                 kurtosis = compute_kurtosis(
                     tensor, dim=0, mean=stats.mean, std=stats.std
                 )
+                global_stats[basis_key] = stats
                 layerwise_kurtosis[basis_key].append(kurtosis)
 
             second_pass_num_batches_processed += 1
