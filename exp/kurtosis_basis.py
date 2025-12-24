@@ -86,6 +86,25 @@ class GlobalStats:
     mean: th.Tensor
     std: th.Tensor
 
+    def to(
+        self, device: th.device | None = None, dtype: th.dtype | None = None
+    ) -> "GlobalStats":
+        assert device is not None or dtype is not None, (
+            "Either device or dtype must be provided"
+        )
+
+        if device is None:
+            new_mean = self.mean.to(dtype=dtype)
+            new_std = self.std.to(dtype=dtype)
+        elif dtype is None:
+            new_mean = self.mean.to(device=device)
+            new_std = self.std.to(device=device)
+        else:
+            new_mean = self.mean.to(device=device, dtype=dtype)
+            new_std = self.std.to(device=device, dtype=dtype)
+
+        return GlobalStats(mean=new_mean, std=new_std)
+
 
 @dataclass
 class FinalStats:
