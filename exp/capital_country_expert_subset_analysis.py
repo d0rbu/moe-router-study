@@ -176,16 +176,16 @@ def run_subset_intervention_experiment(
     all_results: set[InterventionResult] = set()
 
     for alpha in tqdm(
-        alphas, desc="Testing alpha values", total=len(alphas), leave=False
+        alphas, desc="Testing alpha values", total=len(alphas), leave=False, position=1
     ):
         # Process prompts in batches
         prompt_batches = list(batched(prompts, batch_size))
         for batch_prompts in tqdm(
             prompt_batches,
-            desc="Testing prompt batches",
+            desc=f"Testing prompt batches for alpha {alpha}",
             total=len(prompt_batches),
             leave=False,
-            position=1,
+            position=0,
         ):
             batch_prompts_list = list(batch_prompts)
 
