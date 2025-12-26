@@ -639,7 +639,11 @@ def compute_final_statistics(
     logger.debug(f"All router kurtosis length: {len(all_router_kurtosis)}")
 
     if all_router_kurtosis:
-        all_router_kurtosis_tensor = th.cat(all_router_kurtosis, dim=0)
+        # Use th.cat for 1D+ tensors, th.stack for 0D tensors
+        if all_router_kurtosis[0].dim() == 0:
+            all_router_kurtosis_tensor = th.stack(all_router_kurtosis, dim=0)
+        else:
+            all_router_kurtosis_tensor = th.cat(all_router_kurtosis, dim=0)
 
         if all_router_kurtosis_tensor.numel() > 0:
             statistics["all_layers_router"] = FinalStats(
@@ -710,6 +714,7 @@ def compute_kurtosis_statistics(
     num_layers = len(cast("nn.ModuleList", model.layers))
 
     logger.info(f"Model has {num_layers} layers, {len(router_layers)} with routers")
+    logger.debug(f"Router layers: {router_layers}")
 
     # Load activations
     logger.info("Loading activations...")
