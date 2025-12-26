@@ -769,7 +769,7 @@ def compute_kurtosis_statistics(
         )
     else:
         # Generate random projection matrix with fixed seed for reproducibility
-        rng = th.Generator()
+        rng = th.Generator(device=device)
         rng.manual_seed(hash(f"{model_name}_{seed}") % (2**31))
         random_normal = th.randn(
             hidden_dim, hidden_dim, device=device, dtype=th.float32, generator=rng
