@@ -727,7 +727,10 @@ class Activations:
 
     @staticmethod
     def _stack_batch_for_gather(batch: dict) -> dict:
-        """Stack lists of tensors into single tensors for efficient gathering."""
+        """Stack lists of tensors into single tensors for efficient gathering.
+
+        Preserves non-tensor metadata (like 'layers') alongside tensor data.
+        """
         stacked_batch = {}
         for key, value in batch.items():
             if (
@@ -736,6 +739,9 @@ class Activations:
                 and isinstance(value[0], th.Tensor)
             ):
                 stacked_batch[key] = th.stack(value, dim=0)
+            else:
+                # Preserve non-tensor metadata (e.g., 'layers', 'router_layers')
+                stacked_batch[key] = value
 
         return stacked_batch
 
