@@ -183,8 +183,10 @@ def generate_with_intervention(
 
                 if router_output_is_tuple:
                     if router_output_len == 2:
-                        # Can't intervene without raw logits
-                        continue
+                        raise ValueError(
+                            "Cannot run intervention on a model whose routers "
+                            "do not return raw logits (got 2-tuple instead of 3-tuple)"
+                        )
                     elif router_output_len == 3:
                         (
                             original_router_logits,
@@ -203,30 +205,35 @@ def generate_with_intervention(
                         )
                         router_indices = router_indices.reshape(1, seq_len, -1)
                     else:
-                        continue
+                        raise ValueError(
+                            f"Unexpected router output tuple length {router_output_len} "
+                            f"at layer {layer_idx}"
+                        )
                 else:
                     router_scores = cast("th.Tensor", router_output.save())
                     router_logits = router_scores.reshape(1, seq_len, -1)
 
-                # Apply intervention to the last token's logits
-                intervention_path_layer = intervention_path_device.to(
-                    device=router_logits.device, dtype=router_logits.dtype
-                )
-                layer_intervention = intervention_path_layer[i]  # (E,)
+                # Apply intervention to the last token's logits only
+                # Use the layer's intervention vector (already on correct device)
+                layer_intervention = intervention_path_device[i]  # (E,)
+
+                # Clone logits and modify only the last token
                 modified_logits = router_logits.clone()
-                modified_logits[:, -1, :] -= alpha * layer_intervention
+                modified_logits[:, -1, :] = (
+                    modified_logits[:, -1, :] - alpha * layer_intervention
+                )
 
                 if router_output_is_tuple and router_output_len == 3:
+                    # Recompute top-k weights and indices based on modified logits
                     new_weights, new_indices = th.topk(
                         modified_logits[:, -1, :], k=top_k, dim=-1
                     )
-                    new_weights = F.softmax(
-                        new_weights, dim=-1, dtype=new_weights.dtype
-                    )
+                    new_weights = F.softmax(new_weights, dim=-1)
 
-                    modified_weights = cast("th.Tensor", router_weights.save())
+                    # Create modified weights/indices by copying original and updating last token
+                    modified_weights = router_weights.clone()
                     modified_weights[:, -1, :] = new_weights
-                    modified_indices = cast("th.Tensor", router_indices.save())
+                    modified_indices = router_indices.clone()
                     modified_indices[:, -1, :] = new_indices
 
                     model.routers_output[layer_idx] = (
@@ -322,7 +329,7 @@ def capital_country_chat(
     max_new_tokens: int = 512,
     temperature: float = 0.7,
     top_p: float = 0.9,
-    system_prompt: str = "You are a helpful assistant.",
+    system_prompt: str = "",
     hf_token: str = "",
     log_level: str = "WARNING",
 ) -> None:
@@ -344,6 +351,7 @@ def capital_country_chat(
     # Setup logging
     logger.remove()
     logger.add(sys.stderr, level=log_level)
+    logger.info(f"Running capital_country_chat with log level: {log_level}")
 
     # Parse expert specifications
     expert_specs = parse_experts(experts)
