@@ -188,7 +188,6 @@ def generate_with_intervention(
             # Only intervene on layers that have interventions
             if has_interventions:
                 for layer_idx in intervention_layers:
-                    expert_indices = layer_interventions[layer_idx]
                     router_output = model.routers_output[layer_idx]
 
                     # Handle different router output formats
@@ -234,8 +233,10 @@ def generate_with_intervention(
                     # Subtract alpha from only the specific expert logits
                     # Only modify the last token's logits
                     modified_logits = router_logits.clone()
-                    for expert_idx in expert_indices:
-                        modified_logits[:, -1, expert_idx] -= alpha
+                    expert_indices = th.tensor(
+                        layer_interventions[layer_idx], device=modified_logits.device
+                    )
+                    modified_logits[:, -1, expert_indices] -= alpha
 
                     if router_output_is_tuple and router_output_len == 3:
                         # Recompute top-k weights and indices
@@ -294,7 +295,7 @@ def generate_with_intervention(
         # Update for next iteration - only pass the new token (KV cache handles history)
         current_input_ids = next_token
         attention_mask = th.cat(
-            [attention_mask, th.ones((1, 1), dtype=th.bool, device=model.device)],
+            [attention_mask, th.ones((1, 1), dtype=th.bool, device=next_token.device)],
             dim=1,
         )
 
@@ -394,6 +395,7 @@ def capital_country_chat(
         device_map={"": "cuda"},
         torch_dtype=model_dtype_torch,
         token=hf_token,
+        dispatch=True,
     )
     tokenizer = model.tokenizer
 
