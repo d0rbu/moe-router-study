@@ -2,7 +2,7 @@
 
 ##NECESSARY JOB SPECIFICATIONS
 #SBATCH --job-name=capital_country_generate_path          # Set the job name
-#SBATCH --time=06:00:00                     # Set the wall clock limit to 6 hours
+#SBATCH --time=02:00:00                     # Set the wall clock limit to 2 hours
 #SBATCH --ntasks=1                          # Total number of tasks (processes) across all nodes
 #SBATCH --ntasks-per-node=1                 # Number of tasks per node
 #SBATCH --cpus-per-task=16                  # Number of CPUs per task
