@@ -12,12 +12,19 @@ Usage:
         --alpha 1.0 \\
         --experts "L12E45,L14E2"
 
+    # Chat with intervention from a saved path file
+    uv run python -m exp.capital_country_chat \\
+        --model-name "olmoe-i" \\
+        --alpha 1.0 \\
+        --intervention-path "out/capital_country_expert_importance/south_korea.pt"
+
     # No intervention (baseline)
     uv run python -m exp.capital_country_chat \\
         --model-name "olmoe-i"
 """
 
 from dataclasses import dataclass
+from pathlib import Path
 import re
 import sys
 from typing import cast
@@ -31,6 +38,65 @@ from transformers import PreTrainedTokenizerBase
 
 from core.dtype import get_dtype
 from core.model import get_model_config
+
+
+def load_intervention_path(
+    path: str,
+    layers_with_routers: list[int],
+    num_experts: int,
+    device: th.device,
+) -> th.Tensor:
+    """
+    Load an intervention path tensor from a .pt file.
+
+    The file should contain either:
+    - 'intervention_path': Direct intervention tensor of shape (L, E)
+    - 'importance_scores': From capital_country_expert_importance.py, shape (L, E)
+
+    Args:
+        path: Path to the .pt file
+        layers_with_routers: List of layer indices with routers (for validation)
+        num_experts: Number of experts per layer (for validation)
+        device: Device to load the tensor to
+
+    Returns:
+        Intervention path tensor of shape (L, E)
+
+    Raises:
+        ValueError: If the file format is invalid or dimensions don't match
+    """
+    file_path = Path(path)
+    if not file_path.exists():
+        raise ValueError(f"Intervention path file not found: {path}")
+
+    data = th.load(file_path, map_location=device, weights_only=False)
+
+    # Try to extract the intervention tensor
+    if isinstance(data, dict):
+        if "intervention_path" in data:
+            tensor = data["intervention_path"]
+        elif "importance_scores" in data:
+            # Use importance scores directly as intervention path
+            tensor = data["importance_scores"]
+        else:
+            raise ValueError(
+                f"File {path} must contain 'intervention_path' or 'importance_scores' key. "
+                f"Found keys: {list(data.keys())}"
+            )
+    elif isinstance(data, th.Tensor):
+        tensor = data
+    else:
+        raise ValueError(f"File {path} must contain a dict or tensor, got {type(data)}")
+
+    # Validate dimensions
+    expected_layers = len(layers_with_routers)
+    if tensor.shape != (expected_layers, num_experts):
+        raise ValueError(
+            f"Intervention path has shape {tuple(tensor.shape)}, "
+            f"expected ({expected_layers}, {num_experts}) for this model"
+        )
+
+    return tensor.to(device=device, dtype=th.float32)
 
 
 @dataclass(frozen=True)
@@ -134,9 +200,15 @@ def generate_with_intervention(
     max_new_tokens: int = 512,
     temperature: float = 0.7,
     top_p: float = 0.9,
+    intervention_tensor: th.Tensor
+    | None = None,  # (L, E) tensor for continuous intervention
 ) -> str:
     """
     Generate a response with expert intervention using KV caching.
+
+    Supports two intervention modes:
+    1. Discrete: layer_interventions dict specifies which experts to suppress by alpha
+    2. Continuous: intervention_tensor provides per-expert weights, scaled by alpha
 
     Args:
         model: The MoE model
@@ -147,6 +219,8 @@ def generate_with_intervention(
         max_new_tokens: Maximum tokens to generate
         temperature: Sampling temperature
         top_p: Nucleus sampling probability threshold
+        intervention_tensor: Optional (L, E) tensor where L = num router layers.
+            If provided, router logits are modified by: logits -= alpha * intervention_tensor[layer]
 
     Returns:
         Generated response string
@@ -166,9 +240,13 @@ def generate_with_intervention(
     eos_token_id = tokenizer.eos_token_id
     user_turn_patterns = ["<|user|>", "<|User|>", "User:", "\nUser:"]
 
-    # Pre-sort intervention layers for efficient lookup
+    # Determine intervention mode
+    use_tensor_intervention = intervention_tensor is not None
+    layers_with_routers = list(model.layers_with_routers)
+
+    # Pre-sort intervention layers for efficient lookup (discrete mode only)
     intervention_layers = sorted(layer_interventions.keys())
-    has_interventions = len(intervention_layers) > 0
+    has_interventions = len(intervention_layers) > 0 or use_tensor_intervention
 
     for step in range(max_new_tokens):
         # Build batch with KV cache
@@ -187,7 +265,18 @@ def generate_with_intervention(
         with model.trace(batch):
             # Only intervene on layers that have interventions
             if has_interventions:
-                for layer_idx in intervention_layers:
+                # Determine which layers to iterate over
+                if use_tensor_intervention:
+                    # Tensor mode: iterate all router layers
+                    layers_to_process = list(enumerate(layers_with_routers))
+                else:
+                    # Discrete mode: only layers with specified experts
+                    layers_to_process = [
+                        (layers_with_routers.index(layer_idx), layer_idx)
+                        for layer_idx in intervention_layers
+                    ]
+
+                for layer_position, layer_idx in layers_to_process:
                     router_output = model.routers_output[layer_idx]
 
                     # Handle different router output formats
@@ -230,13 +319,22 @@ def generate_with_intervention(
                         router_scores = cast("th.Tensor", router_output.save())
                         router_logits = router_scores.reshape(1, seq_len, -1)
 
-                    # Subtract alpha from only the specific expert logits
-                    # Only modify the last token's logits
+                    # Apply intervention to the last token's logits
                     modified_logits = router_logits.clone()
-                    expert_indices = th.tensor(
-                        layer_interventions[layer_idx], device=modified_logits.device
-                    )
-                    modified_logits[:, -1, expert_indices] -= alpha
+
+                    if use_tensor_intervention:
+                        # Continuous mode: subtract scaled intervention vector
+                        layer_intervention = intervention_tensor[layer_position].to(
+                            device=modified_logits.device, dtype=modified_logits.dtype
+                        )
+                        modified_logits[:, -1, :] -= alpha * layer_intervention
+                    else:
+                        # Discrete mode: subtract alpha from specific expert logits
+                        expert_indices = th.tensor(
+                            layer_interventions[layer_idx],
+                            device=modified_logits.device,
+                        )
+                        modified_logits[:, -1, expert_indices] -= alpha
 
                     if router_output_is_tuple and router_output_len == 3:
                         # Recompute top-k weights and indices
@@ -316,13 +414,21 @@ def generate_with_intervention(
     return response.strip()
 
 
-def print_welcome_message(experts: list[ExpertSpec], alpha: float) -> None:
+def print_welcome_message(
+    experts: list[ExpertSpec],
+    alpha: float,
+    intervention_path: str | None = None,
+) -> None:
     """Print welcome message with intervention info."""
     print("\n" + "=" * 60)
     print("🧠 MoE Expert Intervention Chat")
     print("=" * 60)
 
-    if experts:
+    if intervention_path:
+        print(f"📌 Intervention path loaded: {intervention_path}")
+        print(f"📊 Alpha (intervention strength): {alpha}")
+        print("\nRouter logits will be modified by: logits -= alpha * path")
+    elif experts:
         experts_str = ", ".join(str(e) for e in experts)
         print(f"📌 Active interventions: {experts_str}")
         print(f"📊 Alpha (intervention strength): {alpha}")
@@ -342,6 +448,7 @@ def capital_country_chat(
     model_name: str = "olmoe-i",
     model_dtype: str = "bf16",
     experts: str = "",
+    intervention_path: str = "",
     alpha: float = 1.0,
     max_new_tokens: int = 512,
     temperature: float = 0.7,
@@ -357,6 +464,7 @@ def capital_country_chat(
         model_name: Name of the model to use (olmoe-i, q3, etc.)
         model_dtype: Data type for model weights
         experts: Comma-separated list of experts to suppress (e.g., "L12E45,L14E2")
+        intervention_path: Path to a .pt file with intervention tensor (mutually exclusive with experts)
         alpha: Scaling factor for intervention (higher = stronger suppression)
         max_new_tokens: Maximum tokens to generate per response
         temperature: Sampling temperature (higher = more random)
@@ -370,7 +478,17 @@ def capital_country_chat(
     logger.add(sys.stderr, level=log_level)
     logger.info(f"Running capital_country_chat with log level: {log_level}")
 
-    # Parse expert specifications
+    # Validate mutual exclusivity of experts and intervention_path
+    has_experts = experts.strip() != ""
+    has_intervention_path = intervention_path.strip() != ""
+
+    if has_experts and has_intervention_path:
+        raise ValueError(
+            "Cannot specify both --experts and --intervention-path. "
+            "Please provide only one intervention method."
+        )
+
+    # Parse expert specifications (if provided)
     expert_specs = parse_experts(experts)
     if expert_specs:
         logger.info(f"Parsed {len(expert_specs)} expert specifications")
@@ -412,17 +530,37 @@ def capital_country_chat(
     logger.info(f"Number of experts per layer: {num_experts}")
     logger.info(f"Top-k: {top_k}")
 
+    # Load intervention tensor (if provided)
+    intervention_tensor: th.Tensor | None = None
+    if has_intervention_path:
+        print(f"⏳ Loading intervention path from {intervention_path}...")
+        intervention_tensor = load_intervention_path(
+            intervention_path,
+            layers_with_routers,
+            num_experts,
+            model.device,
+        )
+        logger.info(
+            f"Loaded intervention tensor with shape {intervention_tensor.shape}"
+        )
+        print("✅ Intervention path loaded!")
+
     # Build efficient layer -> experts mapping (only layers with interventions)
     layer_interventions = build_layer_interventions(
         expert_specs, layers_with_routers, num_experts
     )
-    logger.info(
-        f"Interventions on {len(layer_interventions)} layers: "
-        f"{dict(layer_interventions)}"
-    )
+    if layer_interventions:
+        logger.info(
+            f"Interventions on {len(layer_interventions)} layers: "
+            f"{dict(layer_interventions)}"
+        )
 
     # Print welcome message
-    print_welcome_message(expert_specs, alpha)
+    print_welcome_message(
+        expert_specs,
+        alpha,
+        intervention_path if has_intervention_path else None,
+    )
 
     # Initialize conversation
     conversation: list[dict[str, str]] = []
@@ -471,6 +609,7 @@ def capital_country_chat(
                 max_new_tokens=max_new_tokens,
                 temperature=temperature,
                 top_p=top_p,
+                intervention_tensor=intervention_tensor,
             )
 
             print(response)
