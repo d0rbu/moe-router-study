@@ -170,9 +170,6 @@ def generate_with_intervention(
     intervention_layers = sorted(layer_interventions.keys())
     has_interventions = len(intervention_layers) > 0
 
-    logger.info(f"Interventions: {layer_interventions}")
-    logger.info(f"Has interventions: {has_interventions}")
-
     for step in range(max_new_tokens):
         # Build batch with KV cache
         batch = {
