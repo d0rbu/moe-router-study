@@ -75,36 +75,43 @@ def parse_experts(experts_str: str) -> list[ExpertSpec]:
     return experts
 
 
-def create_intervention_path(
+def build_layer_interventions(
     experts: list[ExpertSpec],
-    num_layers: int,
+    layers_with_routers: list[int],
     num_experts: int,
-) -> th.Tensor:
+) -> dict[int, list[int]]:
     """
-    Create an intervention path tensor from expert specifications.
+    Build a mapping from layer index to list of expert indices to intervene on.
+
+    Only includes layers that have interventions, making iteration efficient.
 
     Args:
         experts: List of expert specifications
-        num_layers: Number of layers with routers
+        layers_with_routers: List of layer indices that have routers
         num_experts: Number of experts per layer
 
     Returns:
-        Tensor of shape (L, E) with 1.0 at specified experts, 0.0 elsewhere
+        Dict mapping layer_idx -> list of expert_idx to suppress
     """
-    path = th.zeros((num_layers, num_experts), dtype=th.float32)
+    layer_to_experts: dict[int, list[int]] = {}
+
     for expert in experts:
-        if expert.layer_idx >= num_layers:
+        if expert.layer_idx not in layers_with_routers:
             raise ValueError(
-                f"Layer index {expert.layer_idx} is out of range "
-                f"(model has {num_layers} layers with routers)"
+                f"Layer index {expert.layer_idx} does not have a router. "
+                f"Valid layers: {layers_with_routers}"
             )
         if expert.expert_idx >= num_experts:
             raise ValueError(
                 f"Expert index {expert.expert_idx} is out of range "
                 f"(model has {num_experts} experts per layer)"
             )
-        path[expert.layer_idx, expert.expert_idx] = 1.0
-    return path
+
+        if expert.layer_idx not in layer_to_experts:
+            layer_to_experts[expert.layer_idx] = []
+        layer_to_experts[expert.layer_idx].append(expert.expert_idx)
+
+    return layer_to_experts
 
 
 def format_chat_prompt(
@@ -121,7 +128,7 @@ def format_chat_prompt(
 def generate_with_intervention(
     model: StandardizedTransformer,
     prompt: str,
-    intervention_path: th.Tensor,  # (L, E)
+    layer_interventions: dict[int, list[int]],  # layer_idx -> list of expert_idx
     alpha: float,
     top_k: int,
     max_new_tokens: int = 512,
@@ -129,12 +136,12 @@ def generate_with_intervention(
     top_p: float = 0.9,
 ) -> str:
     """
-    Generate a response with expert intervention.
+    Generate a response with expert intervention using KV caching.
 
     Args:
         model: The MoE model
         prompt: Formatted prompt string
-        intervention_path: Tensor of shape (L, E) with intervention weights
+        layer_interventions: Dict mapping layer_idx -> list of expert indices to suppress
         alpha: Scaling factor for intervention
         top_k: Number of top experts selected by the router
         max_new_tokens: Maximum tokens to generate
@@ -145,109 +152,120 @@ def generate_with_intervention(
         Generated response string
     """
     tokenizer = model.tokenizer
-    layers_with_routers = list(model.layers_with_routers)
 
     # Tokenize the prompt
     input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
-    prompt_length = input_ids.shape[1]
 
-    # Move intervention path to device
-    intervention_path_device = intervention_path.to(
-        device=model.device, dtype=th.float32
-    )
-
-    # Generation state
-    generated_ids = input_ids.clone()
+    # Generation state with KV cache
+    current_input_ids = input_ids
     attention_mask = th.ones_like(input_ids, dtype=th.bool)
+    past_key_values = None
+    generated_token_ids: list[int] = []
 
     # Stop tokens/patterns
     eos_token_id = tokenizer.eos_token_id
-    # Check for patterns that indicate user turn start
     user_turn_patterns = ["<|user|>", "<|User|>", "User:", "\nUser:"]
 
-    for _ in range(max_new_tokens):
+    # Pre-sort intervention layers for efficient lookup
+    intervention_layers = sorted(layer_interventions.keys())
+    has_interventions = len(intervention_layers) > 0
+
+    for step in range(max_new_tokens):
+        # Build batch with KV cache
         batch = {
-            "input_ids": generated_ids,
+            "input_ids": current_input_ids,
             "attention_mask": attention_mask,
+            "use_cache": True,
         }
-        seq_len = generated_ids.shape[1]
+        if past_key_values is not None:
+            batch["past_key_values"] = past_key_values
 
-        # Forward pass with intervention
+        # Current sequence length (1 for subsequent tokens due to KV cache)
+        seq_len = current_input_ids.shape[1]
+
+        # Forward pass with intervention (only on layers that need it)
         with model.trace(batch):
-            for i, layer_idx in enumerate(layers_with_routers):
-                router_output = model.routers_output[layer_idx]
+            # Only intervene on layers that have interventions
+            if has_interventions:
+                for layer_idx in intervention_layers:
+                    expert_indices = layer_interventions[layer_idx]
+                    router_output = model.routers_output[layer_idx]
 
-                # Handle different router output formats
-                router_output_is_tuple = isinstance(router_output, tuple)
-                router_output_len = len(router_output) if router_output_is_tuple else 0
+                    # Handle different router output formats
+                    router_output_is_tuple = isinstance(router_output, tuple)
+                    router_output_len = (
+                        len(router_output) if router_output_is_tuple else 0
+                    )
 
-                if router_output_is_tuple:
-                    if router_output_len == 2:
-                        raise ValueError(
-                            "Cannot run intervention on a model whose routers "
-                            "do not return raw logits (got 2-tuple instead of 3-tuple)"
-                        )
-                    elif router_output_len == 3:
-                        (
-                            original_router_logits,
-                            original_router_weights,
-                            original_router_indices,
-                        ) = router_output
+                    if router_output_is_tuple:
+                        if router_output_len == 2:
+                            raise ValueError(
+                                "Cannot run intervention on a model whose routers "
+                                "do not return raw logits (got 2-tuple)"
+                            )
+                        elif router_output_len == 3:
+                            (
+                                original_router_logits,
+                                original_router_weights,
+                                original_router_indices,
+                            ) = router_output
 
-                        router_logits = cast("th.Tensor", original_router_logits.save())
-                        router_logits = router_logits.reshape(1, seq_len, -1)
-                        router_weights = cast(
-                            "th.Tensor", original_router_weights.save()
-                        )
-                        router_weights = router_weights.reshape(1, seq_len, -1)
-                        router_indices = cast(
-                            "th.Tensor", original_router_indices.save()
-                        )
-                        router_indices = router_indices.reshape(1, seq_len, -1)
+                            router_logits = cast(
+                                "th.Tensor", original_router_logits.save()
+                            )
+                            router_logits = router_logits.reshape(1, seq_len, -1)
+                            router_weights = cast(
+                                "th.Tensor", original_router_weights.save()
+                            )
+                            router_weights = router_weights.reshape(1, seq_len, -1)
+                            router_indices = cast(
+                                "th.Tensor", original_router_indices.save()
+                            )
+                            router_indices = router_indices.reshape(1, seq_len, -1)
+                        else:
+                            raise ValueError(
+                                f"Unexpected router output tuple length "
+                                f"{router_output_len} at layer {layer_idx}"
+                            )
                     else:
-                        raise ValueError(
-                            f"Unexpected router output tuple length {router_output_len} "
-                            f"at layer {layer_idx}"
+                        router_scores = cast("th.Tensor", router_output.save())
+                        router_logits = router_scores.reshape(1, seq_len, -1)
+
+                    # Subtract alpha from only the specific expert logits
+                    # Only modify the last token's logits
+                    modified_logits = router_logits.clone()
+                    for expert_idx in expert_indices:
+                        modified_logits[:, -1, expert_idx] -= alpha
+
+                    if router_output_is_tuple and router_output_len == 3:
+                        # Recompute top-k weights and indices
+                        new_weights, new_indices = th.topk(
+                            modified_logits[:, -1, :], k=top_k, dim=-1
                         )
-                else:
-                    router_scores = cast("th.Tensor", router_output.save())
-                    router_logits = router_scores.reshape(1, seq_len, -1)
+                        new_weights = F.softmax(new_weights, dim=-1)
 
-                # Apply intervention to the last token's logits only
-                # Use the layer's intervention vector (already on correct device)
-                layer_intervention = intervention_path_device[i]  # (E,)
+                        # Update only the last token
+                        modified_weights = router_weights.clone()
+                        modified_weights[:, -1, :] = new_weights
+                        modified_indices = router_indices.clone()
+                        modified_indices[:, -1, :] = new_indices
 
-                # Clone logits and modify only the last token
-                modified_logits = router_logits.clone()
-                modified_logits[:, -1, :] = (
-                    modified_logits[:, -1, :] - alpha * layer_intervention
-                )
+                        model.routers_output[layer_idx] = (
+                            modified_logits.reshape(-1, modified_logits.shape[-1]),
+                            modified_weights.reshape(-1, modified_weights.shape[-1]),
+                            modified_indices.reshape(-1, modified_indices.shape[-1]),
+                        )
+                    else:
+                        model.routers_output[layer_idx] = modified_logits.reshape(
+                            -1, modified_logits.shape[-1]
+                        )
 
-                if router_output_is_tuple and router_output_len == 3:
-                    # Recompute top-k weights and indices based on modified logits
-                    new_weights, new_indices = th.topk(
-                        modified_logits[:, -1, :], k=top_k, dim=-1
-                    )
-                    new_weights = F.softmax(new_weights, dim=-1)
-
-                    # Create modified weights/indices by copying original and updating last token
-                    modified_weights = router_weights.clone()
-                    modified_weights[:, -1, :] = new_weights
-                    modified_indices = router_indices.clone()
-                    modified_indices[:, -1, :] = new_indices
-
-                    model.routers_output[layer_idx] = (
-                        modified_logits.reshape(-1, modified_logits.shape[-1]),
-                        modified_weights.reshape(-1, modified_weights.shape[-1]),
-                        modified_indices.reshape(-1, modified_indices.shape[-1]),
-                    )
-                else:
-                    model.routers_output[layer_idx] = modified_logits.reshape(
-                        -1, modified_logits.shape[-1]
-                    )
-
-            # Get next token logits
+            # Get next token logits and KV cache
             lm_logits = model.lm_head.output.save()
+            model_output = model.output.save()
+
+        # Update KV cache for next iteration
+        past_key_values = model_output.past_key_values
 
         # Sample next token with temperature and top-p
         next_token_logits = lm_logits[:, -1, :] / temperature
@@ -257,45 +275,43 @@ def generate_with_intervention(
         sorted_probs, sorted_indices = th.sort(probs, dim=-1, descending=True)
         cumulative_probs = sorted_probs.cumsum(dim=-1)
         mask = cumulative_probs > top_p
-        # Shift mask to include the first token that exceeds threshold
         shifted_mask = th.zeros_like(mask)
         shifted_mask[..., 1:] = mask[..., :-1]
 
-        # Zero out probabilities below threshold
         unsorted_mask = th.zeros_like(probs, dtype=th.bool)
         unsorted_mask.scatter_(-1, sorted_indices, shifted_mask)
         probs = probs.masked_fill(unsorted_mask, 0.0)
         probs = probs / probs.sum(dim=-1, keepdim=True)
 
-        # Sample
         next_token = th.multinomial(probs, num_samples=1)
-
-        # Append to generated sequence
-        generated_ids = th.cat([generated_ids, next_token], dim=1)
-        attention_mask = th.cat(
-            [attention_mask, th.ones_like(next_token, dtype=th.bool)], dim=1
-        )
+        next_token_id = next_token.item()
+        generated_token_ids.append(next_token_id)
 
         # Check for EOS
-        if eos_token_id is not None and next_token.item() == eos_token_id:
+        if eos_token_id is not None and next_token_id == eos_token_id:
             break
 
-        # Check for user turn patterns in recent generation
-        # Decode only the generated portion to check
-        generated_text = tokenizer.decode(
-            generated_ids[0, prompt_length:], skip_special_tokens=False
+        # Update for next iteration - only pass the new token (KV cache handles history)
+        current_input_ids = next_token
+        attention_mask = th.cat(
+            [attention_mask, th.ones((1, 1), dtype=th.bool, device=model.device)],
+            dim=1,
         )
-        if any(pattern in generated_text for pattern in user_turn_patterns):
-            # Truncate at the pattern
-            for pattern in user_turn_patterns:
-                if pattern in generated_text:
-                    generated_text = generated_text.split(pattern)[0]
-                    break
-            return generated_text.strip()
+
+        # Check for user turn patterns periodically (every 10 tokens to avoid overhead)
+        if step % 10 == 9:
+            generated_text = tokenizer.decode(
+                generated_token_ids, skip_special_tokens=False
+            )
+            if any(pattern in generated_text for pattern in user_turn_patterns):
+                for pattern in user_turn_patterns:
+                    if pattern in generated_text:
+                        generated_text = generated_text.split(pattern)[0]
+                        break
+                return generated_text.strip()
 
     # Return the generated response
-    response_ids = generated_ids[0, prompt_length:]
-    response = tokenizer.decode(response_ids, skip_special_tokens=True)
+    response = tokenizer.decode(generated_token_ids, skip_special_tokens=True)
     return response.strip()
 
 
@@ -387,16 +403,21 @@ def capital_country_chat(
     model_config_hf = model.config
     num_experts = model_config_hf.num_experts
     top_k = model_config_hf.num_experts_per_tok
-    num_layers = len(model.layers_with_routers)
+    layers_with_routers = list(model.layers_with_routers)
 
-    logger.info(f"Number of layers with routers: {num_layers}")
+    logger.info(f"Number of layers with routers: {len(layers_with_routers)}")
+    logger.info(f"Layers with routers: {layers_with_routers}")
     logger.info(f"Number of experts per layer: {num_experts}")
     logger.info(f"Top-k: {top_k}")
 
-    # Create intervention path
-    intervention_path = create_intervention_path(expert_specs, num_layers, num_experts)
-    intervention_strength = intervention_path.sum().item()
-    logger.info(f"Intervention path has {int(intervention_strength)} active experts")
+    # Build efficient layer -> experts mapping (only layers with interventions)
+    layer_interventions = build_layer_interventions(
+        expert_specs, layers_with_routers, num_experts
+    )
+    logger.info(
+        f"Interventions on {len(layer_interventions)} layers: "
+        f"{dict(layer_interventions)}"
+    )
 
     # Print welcome message
     print_welcome_message(expert_specs, alpha)
@@ -442,7 +463,7 @@ def capital_country_chat(
             response = generate_with_intervention(
                 model=model,
                 prompt=prompt,
-                intervention_path=intervention_path,
+                layer_interventions=layer_interventions,
                 alpha=alpha,
                 top_k=top_k,
                 max_new_tokens=max_new_tokens,
