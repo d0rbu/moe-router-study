@@ -310,6 +310,21 @@ def tokenizer_worker(
     if completed_batches is None:
         completed_batches = set()
 
+    # Helper to check if a batch should be skipped
+    def will_skip_batch(idx: int) -> bool:
+        return idx in completed_batches or idx % world_size != rank
+
+    # Determine if we should start in fast-skip mode (don't store tokens, just count)
+    # We're accumulating for batch 0 initially
+    use_fast_skip_mode = will_skip_batch(0)
+
+    if use_fast_skip_mode and completed_batches:
+        max_completed = max(completed_batches)
+        logger.info(
+            f"Fast-skip mode enabled. Will skip storing tokens until we reach a batch we need. "
+            f"Max completed batch: {max_completed}"
+        )
+
     batch_skip_progress_bar = tqdm(
         desc="Skipping batches",
         leave=False,
@@ -322,15 +337,24 @@ def tokenizer_worker(
             if stop_event.is_set():
                 break
 
-            # Tokenize text
-            tokens = tokenizer.tokenize(text)
-            count = len(tokens)
+            if use_fast_skip_mode:
+                # Fast path: just count tokens without storing them
+                # Using encode() is efficient since we only need the count
+                count = len(tokenizer.encode(text, add_special_tokens=False))
 
-            if text_idx % 1000 == 0:
-                logger.debug(f"Tokenized text {text_idx} into {count} tokens")
+                if text_idx % 10000 == 0:
+                    logger.debug(
+                        f"Fast-skip: processed text {text_idx}, {count} tokens, batch {batch_idx}"
+                    )
+            else:
+                # Normal path: full tokenization with storage
+                tokens = tokenizer.tokenize(text)
+                count = len(tokens)
+                buffer.append((text, tokens))
 
-            # Add to buffer
-            buffer.append((text, tokens))
+                if text_idx % 1000 == 0:
+                    logger.debug(f"Tokenized text {text_idx} into {count} tokens")
+
             buffer_token_count += count
             total_tokens += count
 
@@ -339,6 +363,21 @@ def tokenizer_worker(
                 current_buffer_token_count = buffer_token_count
                 buffer_token_count = 0
                 batch_idx += 1
+
+                if use_fast_skip_mode:
+                    # We were in fast-skip mode, just update progress
+                    batch_skip_progress_bar.update(1)
+                    if batch_idx % 100 == 0:
+                        log_queue.put({"tokenizer/skipping_batches": batch_idx})
+
+                    # Check if we should continue fast-skipping for the next batch
+                    use_fast_skip_mode = will_skip_batch(batch_idx + 1)
+                    if not use_fast_skip_mode:
+                        logger.info(
+                            f"Exiting fast-skip mode at batch {batch_idx}. "
+                            f"Next batch {batch_idx + 1} will be processed."
+                        )
+                    continue
 
                 # skip if this batch is already completed or if this batch is not for this rank
                 if batch_idx in completed_batches or batch_idx % world_size != rank:
