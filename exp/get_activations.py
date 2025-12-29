@@ -143,7 +143,7 @@ def process_batch(
 
     for minibatch_idx in tqdm(
         range(num_minibatches),
-        desc=f"Batch {batch_idx}",
+        desc=f"Batch {batch_idx} (worker {rank})",
         total=num_minibatches,
         leave=False,
         position=rank * 2,
@@ -420,8 +420,22 @@ def multiplexer_worker(
     logger.info("Starting multiplexer worker")
     try:
         while not stop_event.is_set():
-            # Get batch from main queue
-            item = main_queue.get(block=True)
+            # Get batch from main queue with timeout for logging
+            logger.debug(
+                f"Multiplexer waiting for batch (main_queue qsize={main_queue.qsize()})"
+            )
+            item = None
+            get_attempts = 0
+            while item is None and not stop_event.is_set():
+                try:
+                    item = main_queue.get(block=True, timeout=60.0)
+                except queue.Empty:
+                    get_attempts += 1
+                    logger.warning(
+                        f"Multiplexer waiting for batch for {get_attempts * 60}s "
+                        f"(main_queue qsize={main_queue.qsize()}). Tokenizer may be stuck."
+                    )
+
             if item is None:
                 break
 
@@ -430,7 +444,9 @@ def multiplexer_worker(
             total_tokens += tokens_count
 
             # Find GPU with smallest queue, considering if they're busy
-            logger.debug("Finding GPU with smallest queue")
+            logger.debug(
+                f"Multiplexer received batch {batch_idx}, finding GPU with smallest queue"
+            )
             queue_sizes = []
             for i, q in enumerate(gpu_queues):
                 size = q.qsize()
@@ -440,11 +456,28 @@ def multiplexer_worker(
 
             min_queue_idx = th.argmin(th.tensor(queue_sizes)).item()
 
-            # Put batch in the selected GPU queue
-            logger.debug(f"Putting batch {batch_idx} in GPU {min_queue_idx} queue")
-            gpu_queues[min_queue_idx].put(
-                (batch_idx, encoded_batch, batch_tokens, tokens_count), block=True
+            # Put batch in the selected GPU queue with timeout
+            logger.debug(
+                f"Putting batch {batch_idx} in GPU {min_queue_idx} queue "
+                f"(qsize={gpu_queues[min_queue_idx].qsize()})"
             )
+            logger.trace(f"Queue sizes: {queue_sizes}")
+            put_attempts = 0
+            while not stop_event.is_set():
+                try:
+                    gpu_queues[min_queue_idx].put(
+                        (batch_idx, encoded_batch, batch_tokens, tokens_count),
+                        block=True,
+                        timeout=30.0,
+                    )
+                    break
+                except queue.Full:
+                    put_attempts += 1
+                    logger.warning(
+                        f"Multiplexer GPU queue {min_queue_idx} full after {put_attempts * 30}s "
+                        f"for batch {batch_idx} (qsize={gpu_queues[min_queue_idx].qsize()}). "
+                        f"GPU worker may be stuck."
+                    )
 
             # Update batch count for this GPU
             logger.debug(f"Updating batch count for GPU {min_queue_idx}")
@@ -594,15 +627,32 @@ def gpu_worker(
         # Signal that we're ready for a new batch
         gpu_busy[rank] = False
 
-        # Get batch from queue
-        item = gpu_queue.get(block=True)
+        # Get batch from queue with timeout for logging
+        logger.debug(
+            f"Rank {rank} waiting for batch (gpu_queue qsize={gpu_queue.qsize()})"
+        )
+        item = None
+        get_attempts = 0
+        while item is None and not stop_event.is_set():
+            try:
+                item = gpu_queue.get(block=True, timeout=60.0)
+            except queue.Empty:
+                get_attempts += 1
+                logger.warning(
+                    f"Rank {rank} waiting for batch for {get_attempts * 60}s "
+                    f"(gpu_queue qsize={gpu_queue.qsize()}). Multiplexer may be stuck."
+                )
+
+        if item is None:
+            logger.info(f"Rank {rank} received stop signal while waiting")
+            break
 
         logger.debug(f"Rank {rank} picked up batch from queue")
 
         # Signal that we're busy processing
         gpu_busy[rank] = True
 
-        # Check if we're done
+        # Check if we're done (sentinel value)
         if item is None:
             break
 
@@ -633,6 +683,15 @@ def gpu_worker(
 
         logger.debug(f"Rank {rank} processed batch {batch_idx}")
 
+        # Log activation sizes for debugging
+        activation_sizes = {
+            key: sum(sum(t.numel() for t in layer_list) for layer_list in layer_lists)
+            for key, layer_lists in activations_raw.items()
+        }
+        logger.debug(
+            f"Rank {rank} batch {batch_idx} activation sizes (elements): {activation_sizes}"
+        )
+
         # Put results in output queue for disk worker
         output = {
             "batch_idx": batch_idx,
@@ -642,10 +701,13 @@ def gpu_worker(
             "router_layers": sorted(layers_with_routers),
             "activations_raw": activations_raw,
         }
-        logger.debug(f"Rank {rank} putting batch {batch_idx} in output queue")
+        logger.debug(
+            f"Rank {rank} putting batch {batch_idx} in output queue (qsize={output_queue.qsize()})"
+        )
 
         # Use timeout to detect queue bottleneck and log warnings
         put_attempts = 0
+        put_start_time = time.time()
         while True:
             try:
                 output_queue.put(output, block=True, timeout=30.0)
@@ -663,6 +725,12 @@ def gpu_worker(
                     raise RuntimeError(
                         "Output queue blocked for too long, possible deadlock"
                     ) from err
+
+        put_elapsed = time.time() - put_start_time
+        logger.debug(
+            f"Rank {rank} successfully put batch {batch_idx} in output queue "
+            f"(took {put_elapsed:.2f}s, qsize now={output_queue.qsize()})"
+        )
 
         # Update statistics
         batch_time = time.time() - batch_start
@@ -691,7 +759,12 @@ def gpu_worker(
         )
 
 
-async def stack_list_of_list_of_tensors(data: list[list[th.Tensor]]) -> th.Tensor:
+async def stack_list_of_list_of_tensors(
+    data: list[list[th.Tensor]], activation_key: str = "unknown"
+) -> th.Tensor:
+    num_layers_with_data = sum(1 for layer_list in data if len(layer_list) > 0)
+    logger.debug(f"Stacking {activation_key}: {num_layers_with_data} layers with data")
+
     awaitable_concatenated_tensors = [
         asyncio.to_thread(th.cat, layer_activations, dim=0)
         for layer_activations in data
@@ -699,7 +772,10 @@ async def stack_list_of_list_of_tensors(data: list[list[th.Tensor]]) -> th.Tenso
     ]
     concatenated_tensors = await asyncio.gather(*awaitable_concatenated_tensors)
 
-    return th.stack(concatenated_tensors, dim=1)
+    logger.debug(f"Stacking {activation_key}: concatenation complete, now stacking")
+    result = th.stack(concatenated_tensors, dim=1)
+    logger.debug(f"Stacking {activation_key}: complete, shape={result.shape}")
+    return result
 
 
 async def disk_worker_async(
@@ -725,7 +801,26 @@ async def disk_worker_async(
     logger.info("Starting disk worker")
 
     while not stop_event.is_set():
-        output = output_queue.get(block=True)
+        logger.debug(
+            f"Disk worker waiting for next batch (qsize={output_queue.qsize()})"
+        )
+
+        # Use timeout to detect if we're stuck waiting
+        get_attempts = 0
+        output = None
+        while output is None and not stop_event.is_set():
+            try:
+                output = output_queue.get(block=True, timeout=60.0)
+            except queue.Empty:
+                get_attempts += 1
+                logger.warning(
+                    f"Disk worker waiting for batch for {get_attempts * 60}s "
+                    f"(qsize={output_queue.qsize()}). GPU workers may be stuck."
+                )
+
+        if output is None:
+            logger.info("Disk worker received stop signal while waiting")
+            break
 
         # Check if we're done
         if output is None:
@@ -734,12 +829,18 @@ async def disk_worker_async(
         batch_idx = output.pop("batch_idx")
         activations_raw = output.pop("activations_raw")
 
-        logger.debug(f"Disk worker processing batch {batch_idx}")
+        logger.debug(
+            f"Disk worker received batch {batch_idx}, starting tensor stacking"
+        )
 
         # Stack activations asynchronously
         stacked_activation_keys = list(activations_raw.keys())
+        stack_start_time = time.time()
+
         stacked_activation_awaitables = [
-            stack_list_of_list_of_tensors(activations_raw[activation_key])
+            stack_list_of_list_of_tensors(
+                activations_raw[activation_key], activation_key=activation_key
+            )
             for activation_key in stacked_activation_keys
         ]
         stacked_activation_tensors = await asyncio.gather(
@@ -749,12 +850,23 @@ async def disk_worker_async(
             zip(stacked_activation_keys, stacked_activation_tensors, strict=True)
         )
 
+        stack_elapsed = time.time() - stack_start_time
+        logger.debug(
+            f"Disk worker stacked tensors for batch {batch_idx} in {stack_elapsed:.2f}s"
+        )
+
         # Save results
         output_path = os.path.join(activations_dir, f"{batch_idx}.pt")
         output.update(stacked_activations)
 
+        save_start_time = time.time()
         logger.debug(f"Disk worker saving batch {batch_idx} to {output_path}")
         th.save(output, output_path)
+        save_elapsed = time.time() - save_start_time
+        logger.debug(
+            f"Disk worker saved batch {batch_idx} in {save_elapsed:.2f}s "
+            f"(stack: {stack_elapsed:.2f}s, save: {save_elapsed:.2f}s)"
+        )
 
         # Update statistics
         total_batches += 1
