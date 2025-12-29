@@ -11,7 +11,6 @@ import re
 import sys
 import time
 from typing import Any
-import warnings
 
 import arguably
 from loguru import logger
@@ -432,6 +431,10 @@ def tokenizer_worker(
                     }
                 )
     finally:
+        logger.info(
+            f"Tokenizer worker finished. Processed {total_tokens} tokens in {batch_idx + 1} batches. "
+            f"Sending shutdown signal."
+        )
         main_queue.put(None)
 
 
@@ -463,11 +466,13 @@ def multiplexer_worker(
             logger.debug(
                 f"Multiplexer waiting for batch (main_queue qsize={main_queue.qsize()})"
             )
-            item = None
             get_attempts = 0
-            while item is None and not stop_event.is_set():
+            got_item = False
+            item = None
+            while not got_item and not stop_event.is_set():
                 try:
                     item = main_queue.get(block=True, timeout=60.0)
+                    got_item = True
                 except queue.Empty:
                     get_attempts += 1
                     logger.warning(
@@ -475,7 +480,8 @@ def multiplexer_worker(
                         f"(main_queue qsize={main_queue.qsize()}). Tokenizer may be stuck."
                     )
 
-            if item is None:
+            if not got_item or item is None:
+                logger.info("Multiplexer received stop signal, shutting down")
                 break
 
             batch_idx, encoded_batch, batch_tokens, tokens_count = item
@@ -670,11 +676,13 @@ def gpu_worker(
         logger.debug(
             f"Rank {rank} waiting for batch (gpu_queue qsize={gpu_queue.qsize()})"
         )
-        item = None
         get_attempts = 0
-        while item is None and not stop_event.is_set():
+        got_item = False
+        item = None
+        while not got_item and not stop_event.is_set():
             try:
                 item = gpu_queue.get(block=True, timeout=60.0)
+                got_item = True
             except queue.Empty:
                 get_attempts += 1
                 logger.warning(
@@ -682,18 +690,14 @@ def gpu_worker(
                     f"(gpu_queue qsize={gpu_queue.qsize()}). Multiplexer may be stuck."
                 )
 
-        if item is None:
-            logger.info(f"Rank {rank} received stop signal while waiting")
+        if not got_item or item is None:
+            logger.info(f"Rank {rank} received stop signal, shutting down")
             break
 
         logger.debug(f"Rank {rank} picked up batch from queue")
 
         # Signal that we're busy processing
         gpu_busy[rank] = True
-
-        # Check if we're done (sentinel value)
-        if item is None:
-            break
 
         # Process batch
         batch_idx, encoded_batch, batch_tokens, tokens_count = item
@@ -846,10 +850,12 @@ async def disk_worker_async(
 
         # Use timeout to detect if we're stuck waiting
         get_attempts = 0
+        got_item = False
         output = None
-        while output is None and not stop_event.is_set():
+        while not got_item and not stop_event.is_set():
             try:
                 output = output_queue.get(block=True, timeout=60.0)
+                got_item = True
             except queue.Empty:
                 get_attempts += 1
                 logger.warning(
@@ -857,12 +863,8 @@ async def disk_worker_async(
                     f"(qsize={output_queue.qsize()}). GPU workers may be stuck."
                 )
 
-        if output is None:
-            logger.info("Disk worker received stop signal while waiting")
-            break
-
-        # Check if we're done
-        if output is None:
+        if not got_item or output is None:
+            logger.info("Disk worker received stop signal, shutting down")
             break
 
         batch_idx = output.pop("batch_idx")
@@ -1254,20 +1256,23 @@ def get_router_activations(
                 log = log_queue.get(block=True, timeout=10.0)
                 wandb.log(log)
             except queue.Empty:
-                warnings.warn(
-                    "No logs received from log queue after 10 seconds", stacklevel=2
-                )
+                logger.warning("No logs received from log queue after 10 seconds")
 
             processes_are_running = any(proc.is_alive() for proc in processes)
+        else:
+            logger.info("No processes are running, exiting main loop")
     except KeyboardInterrupt:
         logger.info("Keyboard interrupt detected, stopping all processes...")
-        stop_event.set()
 
-        # Wait for processes to terminate
-        for proc in processes:
-            proc.join(timeout=10)
-            if proc.is_alive():
-                proc.terminate()
+    stop_event.set()
+
+    # Wait for processes to terminate
+    for proc in processes:
+        proc.join(timeout=120)
+        if proc.is_alive():
+            proc.terminate()
+
+    logger.info("goodbye!")
 
 
 if __name__ == "__main__":
