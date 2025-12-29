@@ -35,6 +35,6 @@ cd $SCRATCH/moe-router-study
 
 # Run the capital country generate path experiment with identity postprocessor
 # Adjust target-country as needed
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run python -m exp.capital_country_generate_path --model-name olmoe-i --target-country "South Korea" --batch-size 5000 --postprocessor identity --log-level INFO
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run python -m exp.capital_country_generate_path capital-country-generate-path --model-name olmoe-i --target-country "South Korea" --batch-size 5000 --postprocessor identity --log-level INFO
 
 
