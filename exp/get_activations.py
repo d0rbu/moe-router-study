@@ -37,7 +37,7 @@ CONFIG_FILENAME = "config.yaml"
 # within-node parallelism constants
 MAIN_QUEUE_MAXSIZE = 16
 GPU_QUEUE_MAXSIZE = 8
-OUTPUT_QUEUE_MAXSIZE = 3
+OUTPUT_QUEUE_MAXSIZE = 5
 
 
 def save_config(config: dict, experiment_dir: str) -> None:
@@ -643,7 +643,26 @@ def gpu_worker(
             "activations_raw": activations_raw,
         }
         logger.debug(f"Rank {rank} putting batch {batch_idx} in output queue")
-        output_queue.put(output, block=True)
+
+        # Use timeout to detect queue bottleneck and log warnings
+        put_attempts = 0
+        while True:
+            try:
+                output_queue.put(output, block=True, timeout=30.0)
+                break
+            except queue.Full as err:
+                put_attempts += 1
+                logger.warning(
+                    f"Rank {rank} output_queue full after {put_attempts * 30}s waiting for batch {batch_idx}. "
+                    f"Queue size: {output_queue.qsize()}. Disk worker may be slow."
+                )
+                if put_attempts >= 10:  # 5 minutes total
+                    logger.error(
+                        f"Rank {rank} giving up on batch {batch_idx} after {put_attempts * 30}s"
+                    )
+                    raise RuntimeError(
+                        "Output queue blocked for too long, possible deadlock"
+                    ) from err
 
         # Update statistics
         batch_time = time.time() - batch_start
