@@ -535,7 +535,7 @@ SAMPLE_PROMPT_TEMPLATE: frozenset[tuple[frozendict[str, str], ...]] = frozenset(
                     "role": "user",
                     "content": "Complete the following sentence: The capital of {country} is ",
                 },
-                {"role": "assistant", "content": ""},
+                {"role": "assistant", "content": "The"},
             ],
         ]
     )
