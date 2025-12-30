@@ -219,6 +219,7 @@ def gpu_worker(
                 use_wandb=False,
                 save_dir=os.path.join(OUTPUT_DIR, batch.sae_experiment_name),
                 normalize_activations=True,
+                device="cuda:0",
                 autocast_dtype=dtype,
                 tqdm_kwargs={"position": get_rank() * (num_gpus + 1) + device_idx + 1},
             )
@@ -480,10 +481,20 @@ def run_sae_training(
         f"Number of iterations: {math.ceil(len(hparam_sweep_iterator) / (trainers_per_gpu * num_gpus * get_world_size()))}"
     )
 
+    gpus_that_have_seen_a_batch = [False] * num_gpus
+
     for trainer_batch_idx, trainer_batch in enumerate(
         concurrent_trainer_batched_iterator
     ):
-        device_idx, gpu_queue = select_least_loaded_gpu(gpu_queues)
+        if all(gpus_that_have_seen_a_batch):
+            device_idx, gpu_queue = select_least_loaded_gpu(gpu_queues)
+        else:
+            device_idx = gpus_that_have_seen_a_batch.index(False)
+            gpu_queue = gpu_queues[device_idx]
+
+            gpus_that_have_seen_a_batch[device_idx] = True
+
+        logger.debug(f"Selected GPU {device_idx} for trainer batch {trainer_batch_idx}")
 
         trainer_cfgs = []
         trainer_names = []
