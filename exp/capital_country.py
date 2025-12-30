@@ -1757,7 +1757,7 @@ def extract_topk_predictions_across_alphas(
     layers_with_routers = list(model.layers_with_routers)
     device = next(model.parameters()).device
 
-    logger.trace(f"Prompt: {prompt.formatted_text}")
+    logger.trace(f"Prompt: {_sanitize_string_for_display(prompt.formatted_text)}")
     logger.trace(f"Intervention path: {intervention_path.shape}")
     logger.trace(f"Alphas: {alphas}")
 
@@ -1853,9 +1853,9 @@ def extract_topk_predictions_across_alphas(
     return predictions
 
 
-def _sanitize_token_for_display(token: str) -> str:
+def _sanitize_string_for_display(string: str) -> str:
     """
-    Sanitize a token string for display in matplotlib.
+    Sanitize a string for display in matplotlib.
 
     Handles:
     - Control characters and non-printable characters
@@ -1864,7 +1864,7 @@ def _sanitize_token_for_display(token: str) -> str:
     - Whitespace characters (made visible)
 
     Args:
-        token: Raw token string from tokenizer
+        string: Raw string to sanitize
 
     Returns:
         A display-safe version of the token
@@ -1878,7 +1878,7 @@ def _sanitize_token_for_display(token: str) -> str:
         "\ufffd": "<?>",  # Unicode replacement character (diamond with ?)
     }
 
-    result = token
+    result = string
     for old, new in replacements.items():
         result = result.replace(old, new)
 
@@ -1978,7 +1978,7 @@ def plot_topk_grid(
             if alpha_idx == 0:
                 cell_texts[token_idx] = [""] * num_alphas
             # Sanitize token for display
-            cell_texts[token_idx][alpha_idx] = _sanitize_token_for_display(token)
+            cell_texts[token_idx][alpha_idx] = _sanitize_string_for_display(token)
             cell_colors[token_idx, alpha_idx] = prob
 
     # Create custom colormap (white to blue, with green highlight for correct)
@@ -2015,7 +2015,7 @@ def plot_topk_grid(
             ax.text(
                 alpha_idx,
                 token_idx,
-                f"{token}\n{prob:.2%}",
+                f"{_sanitize_string_for_display(token)}\n{prob:.2%}",
                 ha="center",
                 va="center",
                 color=text_color,
@@ -2042,7 +2042,7 @@ def plot_topk_grid(
     # Add prompt text below the plot
     # Sanitize and truncate if too long
     max_prompt_len = 120
-    sanitized_prompt = _sanitize_token_for_display(prompt_text)
+    sanitized_prompt = _sanitize_string_for_display(prompt_text)
     display_prompt = (
         sanitized_prompt
         if len(sanitized_prompt) <= max_prompt_len
