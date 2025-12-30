@@ -531,7 +531,10 @@ SAMPLE_PROMPT_TEMPLATE: frozenset[tuple[frozendict[str, str], ...]] = frozenset(
     deepfreeze(
         [
             [
-                {"role": "user", "content": "What is the capital of {country}?"},
+                {
+                    "role": "user",
+                    "content": "Complete the following sentence: The capital of {country} is ",
+                },
                 {"role": "assistant", "content": "The capital of {country} is "},
             ],
         ]
