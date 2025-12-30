@@ -110,11 +110,11 @@ SINGLE_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
             # Direct questions with varied responses
             [
                 {"role": "user", "content": "What is the capital of {country}?"},
-                {"role": "assistant", "content": "The capital of {country} is "},
+                {"role": "assistant", "content": "The capital of {country} is"},
             ],
             [
                 {"role": "user", "content": "What city is the capital of {country}?"},
-                {"role": "assistant", "content": "{country}'s capital city is "},
+                {"role": "assistant", "content": "{country}'s capital city is"},
             ],
             [
                 {
@@ -123,71 +123,59 @@ SINGLE_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                 },
                 {
                     "role": "assistant",
-                    "content": "The city that serves as {country}'s capital is ",
+                    "content": "The city that serves as {country}'s capital is",
                 },
             ],
             [
                 {"role": "user", "content": "Name the capital of {country}."},
-                {"role": "assistant", "content": "{country}'s capital is "},
+                {"role": "assistant", "content": "{country}'s capital is"},
             ],
             # Alternative question phrasings
             [
                 {"role": "user", "content": "Tell me the capital of {country}."},
-                {"role": "assistant", "content": "It's "},
+                {"role": "assistant", "content": "It's"},
             ],
             [
                 {
                     "role": "user",
                     "content": "Can you tell me what the capital of {country} is?",
                 },
-                {"role": "assistant", "content": "Sure! {country}'s capital is "},
+                {"role": "assistant", "content": "Sure! {country}'s capital is"},
             ],
             [
                 {"role": "user", "content": "{country}'s capital city?"},
-                {"role": "assistant", "content": "That would be "},
-            ],
-            [
-                {"role": "user", "content": "Capital of {country}?"},
-                {"role": "assistant", "content": ""},
+                {"role": "assistant", "content": "That would be"},
             ],
             # Conversational style
             [
                 {"role": "user", "content": "I need to know the capital of {country}."},
-                {"role": "assistant", "content": "The capital you're looking for is "},
+                {"role": "assistant", "content": "The capital you're looking for is"},
             ],
             [
                 {"role": "user", "content": "Do you know the capital of {country}?"},
-                {"role": "assistant", "content": "Yes, it's "},
+                {"role": "assistant", "content": "Yes, it's"},
             ],
             [
                 {
                     "role": "user",
                     "content": "I'm trying to remember the capital of {country}.",
                 },
-                {"role": "assistant", "content": "The capital of {country} is "},
+                {"role": "assistant", "content": "The capital of {country} is"},
             ],
             [
                 {
                     "role": "user",
                     "content": "Quick question: what's {country}'s capital?",
                 },
-                {"role": "assistant", "content": ""},
+                {"role": "assistant", "content": "It's"},
             ],
             # Fill-in-the-blank / completion style
-            [
-                {"role": "user", "content": "The capital of {country} is..."},
-                {"role": "assistant", "content": ""},
-            ],
-            [
-                {"role": "user", "content": "{country} - capital:"},
-                {"role": "assistant", "content": ""},
-            ],
             [
                 {
                     "role": "user",
                     "content": "Complete this: The capital city of {country} is ___",
                 },
-                {"role": "assistant", "content": "The capital city of {country} is "},
+                {"role": "assistant", "content": "The capital city of {country} is"},
             ],
             # Quiz / trivia style
             [
@@ -195,21 +183,21 @@ SINGLE_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                     "role": "user",
                     "content": "Geography quiz: What is the capital of {country}?",
                 },
-                {"role": "assistant", "content": "The answer is "},
+                {"role": "assistant", "content": "The answer is"},
             ],
             [
                 {
                     "role": "user",
                     "content": "Trivia question: Name {country}'s capital city.",
                 },
-                {"role": "assistant", "content": "{country}'s capital city is "},
+                {"role": "assistant", "content": "{country}'s capital city is"},
             ],
             [
                 {
                     "role": "user",
                     "content": "For a geography test, I need to know: what is the capital of {country}?",
                 },
-                {"role": "assistant", "content": "The capital of {country} is "},
+                {"role": "assistant", "content": "The capital of {country} is"},
             ],
             # Indirect / contextual questions
             [
@@ -217,7 +205,7 @@ SINGLE_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                     "role": "user",
                     "content": "If I wanted to visit the capital of {country}, which city would I go to?",
                 },
-                {"role": "assistant", "content": "You would visit "},
+                {"role": "assistant", "content": "You would visit"},
             ],
             [
                 {
@@ -226,7 +214,7 @@ SINGLE_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                 },
                 {
                     "role": "assistant",
-                    "content": "The government of {country} is located in ",
+                    "content": "The government of {country} is located in",
                 },
             ],
             [
@@ -236,7 +224,7 @@ SINGLE_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                 },
                 {
                     "role": "assistant",
-                    "content": "The seat of government in {country} is ",
+                    "content": "The seat of government in {country} is",
                 },
             ],
             [
@@ -246,7 +234,7 @@ SINGLE_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                 },
                 {
                     "role": "assistant",
-                    "content": "The political center of {country} is ",
+                    "content": "The political center of {country} is",
                 },
             ],
             # Formal / educational style
@@ -255,37 +243,37 @@ SINGLE_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                     "role": "user",
                     "content": "Please state the capital city of {country}.",
                 },
-                {"role": "assistant", "content": "The capital city of {country} is "},
+                {"role": "assistant", "content": "The capital city of {country} is"},
             ],
             [
                 {
                     "role": "user",
                     "content": "What is the official capital of {country}?",
                 },
-                {"role": "assistant", "content": "{country}'s official capital is "},
+                {"role": "assistant", "content": "{country}'s official capital is"},
             ],
             [
                 {
                     "role": "user",
                     "content": "Identify the capital of {country}.",
                 },
-                {"role": "assistant", "content": ""},
+                {"role": "assistant", "content": "The capital of {country} is"},
             ],
             # Casual / informal style
             [
                 {"role": "user", "content": "Hey, what's the capital of {country}?"},
-                {"role": "assistant", "content": "It's "},
+                {"role": "assistant", "content": "It's"},
             ],
             [
                 {"role": "user", "content": "So what's {country}'s capital again?"},
-                {"role": "assistant", "content": "{country}'s capital is "},
+                {"role": "assistant", "content": "{country}'s capital is"},
             ],
             [
                 {
                     "role": "user",
                     "content": "Remind me, what's the capital of {country}?",
                 },
-                {"role": "assistant", "content": "The capital is "},
+                {"role": "assistant", "content": "The capital is"},
             ],
             # Comparative / relative questions
             [
@@ -293,14 +281,14 @@ SINGLE_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                     "role": "user",
                     "content": "In {country}, which city is the capital?",
                 },
-                {"role": "assistant", "content": "In {country}, the capital is "},
+                {"role": "assistant", "content": "In {country}, the capital is"},
             ],
             [
                 {
                     "role": "user",
                     "content": "Among all cities in {country}, which one is the capital?",
                 },
-                {"role": "assistant", "content": "The capital of {country} is "},
+                {"role": "assistant", "content": "The capital of {country} is"},
             ],
         ]
     )
@@ -315,7 +303,7 @@ MULTI_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                 {"role": "user", "content": "I'm learning about {country}."},
                 {"role": "assistant", "content": "Great! What would you like to know?"},
                 {"role": "user", "content": "What's the capital?"},
-                {"role": "assistant", "content": "The capital of {country} is "},
+                {"role": "assistant", "content": "The capital of {country} is"},
             ],
             [
                 {"role": "user", "content": "Let's talk about {country}."},
@@ -324,7 +312,7 @@ MULTI_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                     "content": "Sure, what would you like to know about {country}?",
                 },
                 {"role": "user", "content": "Start with the capital."},
-                {"role": "assistant", "content": "{country}'s capital is "},
+                {"role": "assistant", "content": "{country}'s capital is"},
             ],
             [
                 {"role": "user", "content": "I'm studying geography."},
@@ -333,7 +321,7 @@ MULTI_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                     "content": "That's great! Which region are you focusing on?",
                 },
                 {"role": "user", "content": "{country}. What's the capital?"},
-                {"role": "assistant", "content": "The capital of {country} is "},
+                {"role": "assistant", "content": "The capital of {country} is"},
             ],
             # Travel planning context
             [
@@ -343,7 +331,7 @@ MULTI_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                     "role": "user",
                     "content": "I want to visit the capital. What city is that?",
                 },
-                {"role": "assistant", "content": "The capital of {country} is "},
+                {"role": "assistant", "content": "The capital of {country} is"},
             ],
             [
                 {"role": "user", "content": "I want to travel to {country} next year."},
@@ -352,7 +340,7 @@ MULTI_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                     "content": "That sounds wonderful! What would you like to know about {country}?",
                 },
                 {"role": "user", "content": "First, what's the capital city?"},
-                {"role": "assistant", "content": "{country}'s capital city is "},
+                {"role": "assistant", "content": "{country}'s capital city is"},
             ],
             [
                 {"role": "user", "content": "I've never been to {country}."},
@@ -361,14 +349,14 @@ MULTI_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                     "content": "It's a beautiful country! Are you planning to visit?",
                 },
                 {"role": "user", "content": "Maybe. What's the capital?"},
-                {"role": "assistant", "content": "The capital is "},
+                {"role": "assistant", "content": "The capital is"},
             ],
             # Quiz / game context
             [
                 {"role": "user", "content": "Let's play a geography quiz."},
                 {"role": "assistant", "content": "Sure, I'd love to! Ask me anything."},
                 {"role": "user", "content": "What is the capital of {country}?"},
-                {"role": "assistant", "content": "The capital of {country} is "},
+                {"role": "assistant", "content": "The capital of {country} is"},
             ],
             [
                 {"role": "user", "content": "Test my geography knowledge."},
@@ -380,7 +368,7 @@ MULTI_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                     "role": "user",
                     "content": "Actually, you answer. Capital of {country}?",
                 },
-                {"role": "assistant", "content": ""},
+                {"role": "assistant", "content": "Answer:"},
             ],
             [
                 {"role": "user", "content": "I'm preparing for a trivia night."},
@@ -392,7 +380,7 @@ MULTI_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                     "role": "user",
                     "content": "World capitals. What's {country}'s capital?",
                 },
-                {"role": "assistant", "content": "{country}'s capital is "},
+                {"role": "assistant", "content": "{country}'s capital is"},
             ],
             # Homework / research context
             [
@@ -402,7 +390,7 @@ MULTI_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                     "content": "I can help! What do you need to know?",
                 },
                 {"role": "user", "content": "What is the capital city?"},
-                {"role": "assistant", "content": "The capital city of {country} is "},
+                {"role": "assistant", "content": "The capital city of {country} is"},
             ],
             [
                 {"role": "user", "content": "I'm writing a report about {country}."},
@@ -411,7 +399,7 @@ MULTI_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                     "content": "That's interesting! What aspects are you covering?",
                 },
                 {"role": "user", "content": "Basic facts. Capital?"},
-                {"role": "assistant", "content": "The capital is "},
+                {"role": "assistant", "content": "The capital is"},
             ],
             [
                 {
@@ -423,7 +411,7 @@ MULTI_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                     "content": "Of course! What kind of facts do you need?",
                 },
                 {"role": "user", "content": "Start with the capital."},
-                {"role": "assistant", "content": "{country}'s capital is "},
+                {"role": "assistant", "content": "{country}'s capital is"},
             ],
             # Clarification context
             [
@@ -436,7 +424,7 @@ MULTI_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                     "content": "Not always! In many countries the capital and largest city differ.",
                 },
                 {"role": "user", "content": "So what IS the capital of {country}?"},
-                {"role": "assistant", "content": "The capital of {country} is "},
+                {"role": "assistant", "content": "The capital of {country} is"},
             ],
             [
                 {"role": "user", "content": "I always confuse {country}'s cities."},
@@ -445,14 +433,14 @@ MULTI_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                     "content": "I understand, it can be tricky! What do you need help with?",
                 },
                 {"role": "user", "content": "Just tell me the capital."},
-                {"role": "assistant", "content": "The capital of {country} is "},
+                {"role": "assistant", "content": "The capital of {country} is"},
             ],
             # General curiosity context
             [
                 {"role": "user", "content": "Tell me something about {country}."},
                 {"role": "assistant", "content": "Sure! What would you like to know?"},
                 {"role": "user", "content": "The capital."},
-                {"role": "assistant", "content": ""},
+                {"role": "assistant", "content": "{country}'s capital is"},
             ],
             [
                 {"role": "user", "content": "I'm curious about {country}."},
@@ -461,7 +449,7 @@ MULTI_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                     "content": "What aspect of {country} interests you?",
                 },
                 {"role": "user", "content": "What's the capital city called?"},
-                {"role": "assistant", "content": "The capital city is called "},
+                {"role": "assistant", "content": "The capital city is called"},
             ],
             [
                 {"role": "user", "content": "Do you know much about {country}?"},
@@ -470,7 +458,7 @@ MULTI_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                     "content": "Yes, I know quite a bit! What would you like to learn?",
                 },
                 {"role": "user", "content": "What's the capital?"},
-                {"role": "assistant", "content": "The capital of {country} is "},
+                {"role": "assistant", "content": "The capital of {country} is"},
             ],
             # Work / professional context
             [
@@ -483,7 +471,7 @@ MULTI_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                     "role": "user",
                     "content": "Yes. Where's the capital? That's where I'm going.",
                 },
-                {"role": "assistant", "content": "The capital of {country} is "},
+                {"role": "assistant", "content": "The capital of {country} is"},
             ],
             [
                 {"role": "user", "content": "My company is expanding to {country}."},
@@ -492,7 +480,7 @@ MULTI_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                     "content": "Congratulations! How can I help with the expansion?",
                 },
                 {"role": "user", "content": "Basic info first. What's the capital?"},
-                {"role": "assistant", "content": "{country}'s capital is "},
+                {"role": "assistant", "content": "{country}'s capital is"},
             ],
             # News / current events context
             [
@@ -505,7 +493,7 @@ MULTI_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                     "role": "user",
                     "content": "I realized I don't know the capital. What is it?",
                 },
-                {"role": "assistant", "content": "The capital of {country} is "},
+                {"role": "assistant", "content": "The capital of {country} is"},
             ],
             [
                 {
@@ -517,7 +505,7 @@ MULTI_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                     "content": "I see! What would you like to know about {country}?",
                 },
                 {"role": "user", "content": "Where's the capital located?"},
-                {"role": "assistant", "content": "The capital of {country} is "},
+                {"role": "assistant", "content": "The capital of {country} is"},
             ],
         ]
     )
@@ -1058,7 +1046,7 @@ def run_intervention(
     capital_token_ids: th.Tensor = th.empty(num_prompts, dtype=th.long)
     for prompt_idx, prompt in enumerate(prompts):
         capital_tokens = model.tokenizer(
-            prompt.capital, add_special_tokens=False
+            f" {prompt.capital}", add_special_tokens=False
         ).input_ids
         assert isinstance(capital_tokens, list) and capital_tokens, (
             f"Capital '{prompt.capital}' not found in tokenizer"
