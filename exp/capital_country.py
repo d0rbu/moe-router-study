@@ -2168,29 +2168,29 @@ def capital_country(
 
     alphas = frozenset(th.linspace(alpha_min, alpha_max, alpha_steps).tolist())
 
+    # Step 1: Extract router paths for all prompts
+    # (prompts are generated and cached internally by generate_prompts)
+    logger.info("=" * 80)
+    logger.info("STEP 1: Extracting router paths")
+    logger.info("=" * 80)
+
+    country_paths = extract_router_paths(
+        model,
+        top_k=top_k,
+        batch_size=router_path_batch_size,
+        postprocessor=postprocessor_enum,
+        templates=templates,
+    )
+
+    # Step 2: Compute average paths
+    logger.info("=" * 80)
+    logger.info("STEP 2: Computing average paths")
+    logger.info("=" * 80)
+
+    avg_paths = compute_average_paths(country_paths)
+    logger.info(f"Computed average paths for {len(avg_paths)} countries")
+
     if not topk_only:
-        # Step 1: Extract router paths for all prompts
-        # (prompts are generated and cached internally by generate_prompts)
-        logger.info("=" * 80)
-        logger.info("STEP 1: Extracting router paths")
-        logger.info("=" * 80)
-
-        country_paths = extract_router_paths(
-            model,
-            top_k=top_k,
-            batch_size=router_path_batch_size,
-            postprocessor=postprocessor_enum,
-            templates=templates,
-        )
-
-        # Step 2: Compute average paths
-        logger.info("=" * 80)
-        logger.info("STEP 2: Computing average paths")
-        logger.info("=" * 80)
-
-        avg_paths = compute_average_paths(country_paths)
-        logger.info(f"Computed average paths for {len(avg_paths)} countries")
-
         # Step 3: Run intervention experiments
         logger.info("=" * 80)
         logger.info("STEP 3: Running intervention experiments")
