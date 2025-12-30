@@ -2083,7 +2083,7 @@ def capital_country(
     postprocessor: str = "masks",
     router_path_batch_size: int = 128,
     intervention_batch_size: int = 8,
-    sample_only: bool = True,
+    sample_only: bool = False,
     topk_only: bool = False,
     topk_num_tokens: int = 10,
     seed: int = 0,
