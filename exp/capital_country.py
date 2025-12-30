@@ -2015,7 +2015,7 @@ def plot_topk_grid(
             ax.text(
                 alpha_idx,
                 token_idx,
-                f"{_sanitize_string_for_display(token)}\n{prob:.2%}",
+                f"{token}\n{prob:.2%}",
                 ha="center",
                 va="center",
                 color=text_color,
@@ -2166,6 +2166,8 @@ def capital_country(
         templates = frozenset(PROMPT_TEMPLATES)
         logger.info(f"Using all {len(templates)} prompt templates")
 
+    alphas = frozenset(th.linspace(alpha_min, alpha_max, alpha_steps).tolist())
+
     if not topk_only:
         # Step 1: Extract router paths for all prompts
         # (prompts are generated and cached internally by generate_prompts)
@@ -2193,8 +2195,6 @@ def capital_country(
         logger.info("=" * 80)
         logger.info("STEP 3: Running intervention experiments")
         logger.info("=" * 80)
-
-        alphas = set(th.linspace(alpha_min, alpha_max, alpha_steps).tolist())
         logger.info(f"Testing alphas: {alphas}")
 
         results = run_intervention_experiment(
@@ -2225,7 +2225,7 @@ def capital_country(
                     f"Expected ExperimentResults for {country}, got {type(country_results)}"
                 )
 
-                alphas = sorted(
+                country_alphas = sorted(
                     specificity_score.alpha
                     for specificity_score in country_results.specificity_scores
                 )
@@ -2234,7 +2234,7 @@ def capital_country(
                 other_forgetfulness: list[float] = []
                 other_average_forgetfulness: list[float] = []
                 specificity_scores: list[float] = []
-                for alpha in alphas:
+                for alpha in country_alphas:
                     target_results_for_alpha = {
                         result
                         for result in country_results.target_results
@@ -2283,7 +2283,7 @@ def capital_country(
                 results_dict = {
                     "target_country": country,
                     "target_capital": COUNTRY_TO_CAPITAL[country],
-                    "alphas": alphas,
+                    "alphas": country_alphas,
                     "target_forgetfulness": target_forgetfulness,
                     "other_average_forgetfulness": other_average_forgetfulness,
                     "specificity_scores": specificity_scores,
