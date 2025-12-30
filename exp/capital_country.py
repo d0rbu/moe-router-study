@@ -2000,7 +2000,13 @@ def plot_topk_grid(
             text_color = "white" if prob > 0.5 else "black"
 
             # Check if this is the correct capital (case-insensitive, handle tokenization variations)
-            is_correct = correct_capital.lower().startswith(token.lower().strip())
+            is_correct = correct_capital.lower().startswith(
+                token.lower()
+                .replace("␣", "")
+                .replace("<nl>", "")
+                .replace("<cr>", "")
+                .replace("<tab>", "")
+            )
             if is_correct:
                 # Add green background for correct capital
                 ax.add_patch(
