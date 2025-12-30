@@ -204,6 +204,14 @@ def run_sae_training(
     device_type: DeviceType = "cuda",
 ) -> None:
     """Train autoencoders to sweep over the given hyperparameter sets."""
+    # Set multiprocessing start method to 'spawn' for CUDA compatibility
+    # CUDA contexts cannot be forked, so we must use spawn
+    try:
+        mp.set_start_method("spawn", force=True)
+    except RuntimeError as e:
+        # Start method already set, which is fine
+        logger.error(f"Multiprocessing start method already set: {e}")
+
     assert "moe" not in architecture, (
         "MoE is not supported for SAE training, use kmeans.py instead."
     )
