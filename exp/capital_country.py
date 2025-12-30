@@ -1849,6 +1849,48 @@ def extract_topk_predictions_across_alphas(
     return predictions
 
 
+def _sanitize_token_for_display(token: str) -> str:
+    """
+    Sanitize a token string for display in matplotlib.
+
+    Handles:
+    - Control characters and non-printable characters
+    - Unicode characters that may not render in all fonts
+    - Special tokenizer markers
+
+    Args:
+        token: Raw token string from tokenizer
+
+    Returns:
+        A display-safe version of the token
+    """
+    # Replace common special tokens
+    replacements = {
+        "\n": "\\n",
+        "\r": "\\r",
+        "\t": "\\t",
+        "\x00": "",
+        "Ġ": " ",  # GPT-2 style space marker
+        "▁": " ",  # SentencePiece space marker
+        "Ċ": "\\n",  # GPT-2 style newline
+    }
+
+    result = token
+    for old, new in replacements.items():
+        result = result.replace(old, new)
+
+    # Replace any remaining non-printable characters with their repr
+    sanitized = []
+    for char in result:
+        if char.isprintable() or char == " ":
+            sanitized.append(char)
+        else:
+            # Use Unicode escape for non-printable characters
+            sanitized.append(f"\\x{ord(char):02x}")
+
+    return "".join(sanitized).strip()
+
+
 def plot_topk_grid(
     predictions: list[TopKPrediction],
     target_country: str,
@@ -1872,6 +1914,14 @@ def plot_topk_grid(
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Configure matplotlib to use a font with good Unicode coverage
+    plt.rcParams["font.family"] = [
+        "DejaVu Sans",
+        "Noto Sans",
+        "Arial Unicode MS",
+        "sans-serif",
+    ]
+
     num_alphas = len(predictions)
     num_tokens = len(predictions[0].tokens) if predictions else 0
 
@@ -1894,7 +1944,8 @@ def plot_topk_grid(
         ):
             if alpha_idx == 0:
                 cell_texts[token_idx] = [""] * num_alphas
-            cell_texts[token_idx][alpha_idx] = token.strip()
+            # Sanitize token for display
+            cell_texts[token_idx][alpha_idx] = _sanitize_token_for_display(token)
             cell_colors[token_idx, alpha_idx] = prob
 
     # Create custom colormap (white to blue, with green highlight for correct)
@@ -1956,12 +2007,13 @@ def plot_topk_grid(
     )
 
     # Add prompt text below the plot
-    # Truncate if too long and wrap
+    # Sanitize and truncate if too long
     max_prompt_len = 120
+    sanitized_prompt = _sanitize_token_for_display(prompt_text)
     display_prompt = (
-        prompt_text
-        if len(prompt_text) <= max_prompt_len
-        else prompt_text[:max_prompt_len] + "..."
+        sanitized_prompt
+        if len(sanitized_prompt) <= max_prompt_len
+        else sanitized_prompt[:max_prompt_len] + "..."
     )
     fig.text(
         0.5,
