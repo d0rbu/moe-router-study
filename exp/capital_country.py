@@ -2082,6 +2082,7 @@ def capital_country(
     router_path_batch_size: int = 128,
     intervention_batch_size: int = 8,
     sample_only: bool = True,
+    topk_only: bool = False,
     topk_num_tokens: int = 10,
     seed: int = 0,
     hf_token: str = "",
@@ -2102,6 +2103,7 @@ def capital_country(
         router_path_batch_size: Batch size for router path extraction
         intervention_batch_size: Batch size for intervention experiments
         sample_only: If True (default), use only the sample prompt template. If False, use all templates.
+        topk_only: If True, skip steps 1-4 and only generate top-k prediction visualizations. Default False.
         topk_num_tokens: Number of top tokens to show in top-k visualization
         seed: Random seed for reproducibility
         hf_token: Hugging Face API token
@@ -2164,138 +2166,141 @@ def capital_country(
         templates = frozenset(PROMPT_TEMPLATES)
         logger.info(f"Using all {len(templates)} prompt templates")
 
-    # Step 1: Extract router paths for all prompts
-    # (prompts are generated and cached internally by generate_prompts)
-    logger.info("=" * 80)
-    logger.info("STEP 1: Extracting router paths")
-    logger.info("=" * 80)
+    if not topk_only:
+        # Step 1: Extract router paths for all prompts
+        # (prompts are generated and cached internally by generate_prompts)
+        logger.info("=" * 80)
+        logger.info("STEP 1: Extracting router paths")
+        logger.info("=" * 80)
 
-    country_paths = extract_router_paths(
-        model,
-        top_k=top_k,
-        batch_size=router_path_batch_size,
-        postprocessor=postprocessor_enum,
-        templates=templates,
-    )
+        country_paths = extract_router_paths(
+            model,
+            top_k=top_k,
+            batch_size=router_path_batch_size,
+            postprocessor=postprocessor_enum,
+            templates=templates,
+        )
 
-    # Step 2: Compute average paths
-    logger.info("=" * 80)
-    logger.info("STEP 2: Computing average paths")
-    logger.info("=" * 80)
+        # Step 2: Compute average paths
+        logger.info("=" * 80)
+        logger.info("STEP 2: Computing average paths")
+        logger.info("=" * 80)
 
-    avg_paths = compute_average_paths(country_paths)
-    logger.info(f"Computed average paths for {len(avg_paths)} countries")
+        avg_paths = compute_average_paths(country_paths)
+        logger.info(f"Computed average paths for {len(avg_paths)} countries")
 
-    # Step 3: Run intervention experiments
-    logger.info("=" * 80)
-    logger.info("STEP 3: Running intervention experiments")
-    logger.info("=" * 80)
+        # Step 3: Run intervention experiments
+        logger.info("=" * 80)
+        logger.info("STEP 3: Running intervention experiments")
+        logger.info("=" * 80)
 
-    alphas = set(th.linspace(alpha_min, alpha_max, alpha_steps).tolist())
-    logger.info(f"Testing alphas: {alphas}")
+        alphas = set(th.linspace(alpha_min, alpha_max, alpha_steps).tolist())
+        logger.info(f"Testing alphas: {alphas}")
 
-    results = run_intervention_experiment(
-        model,
-        avg_paths,
-        alphas,
-        top_k,
-        batch_size=intervention_batch_size,
-        templates=templates,
-    )
+        results = run_intervention_experiment(
+            model,
+            avg_paths,
+            alphas,
+            top_k,
+            batch_size=intervention_batch_size,
+            templates=templates,
+        )
 
-    # Save results
-    for experiment_type, all_results in results.items():
-        for country in COUNTRY_TO_CAPITAL:
-            all_country_results = {
-                result for result in all_results if result.target_country == country
-            }
-            results_dir = output_path / country.lower()
-            results_dir.mkdir(parents=True, exist_ok=True)
-            results_file = results_dir / f"{experiment_type.value}.yaml"
-
-            assert len(all_country_results) == 1, (
-                f"Expected 1 country result for {country}, got {len(all_country_results)}"
-            )
-            country_results = next(iter(all_country_results))
-
-            assert isinstance(country_results, ExperimentResults), (
-                f"Expected ExperimentResults for {country}, got {type(country_results)}"
-            )
-
-            alphas = sorted(
-                specificity_score.alpha
-                for specificity_score in country_results.specificity_scores
-            )
-
-            target_forgetfulness: list[float] = []
-            other_forgetfulness: list[float] = []
-            other_average_forgetfulness: list[float] = []
-            specificity_scores: list[float] = []
-            for alpha in alphas:
-                target_results_for_alpha = {
-                    result
-                    for result in country_results.target_results
-                    if result.forgetfulness.alpha == alpha
+        # Save results
+        for experiment_type, all_results in results.items():
+            for country in COUNTRY_TO_CAPITAL:
+                all_country_results = {
+                    result for result in all_results if result.target_country == country
                 }
-                other_results_for_alpha = {
-                    result
-                    for result in country_results.other_results
-                    if result.forgetfulness.alpha == alpha
-                }
-                other_results_averaged_for_alpha = {
-                    result
-                    for result in country_results.other_results_averaged
-                    if result.forgetfulness.alpha == alpha
-                }
-                specificity_scores_for_alpha = {
-                    specificity_score
+                results_dir = output_path / country.lower()
+                results_dir.mkdir(parents=True, exist_ok=True)
+                results_file = results_dir / f"{experiment_type.value}.yaml"
+
+                assert len(all_country_results) == 1, (
+                    f"Expected 1 country result for {country}, got {len(all_country_results)}"
+                )
+                country_results = next(iter(all_country_results))
+
+                assert isinstance(country_results, ExperimentResults), (
+                    f"Expected ExperimentResults for {country}, got {type(country_results)}"
+                )
+
+                alphas = sorted(
+                    specificity_score.alpha
                     for specificity_score in country_results.specificity_scores
-                    if specificity_score.alpha == alpha
+                )
+
+                target_forgetfulness: list[float] = []
+                other_forgetfulness: list[float] = []
+                other_average_forgetfulness: list[float] = []
+                specificity_scores: list[float] = []
+                for alpha in alphas:
+                    target_results_for_alpha = {
+                        result
+                        for result in country_results.target_results
+                        if result.forgetfulness.alpha == alpha
+                    }
+                    other_results_for_alpha = {
+                        result
+                        for result in country_results.other_results
+                        if result.forgetfulness.alpha == alpha
+                    }
+                    other_results_averaged_for_alpha = {
+                        result
+                        for result in country_results.other_results_averaged
+                        if result.forgetfulness.alpha == alpha
+                    }
+                    specificity_scores_for_alpha = {
+                        specificity_score
+                        for specificity_score in country_results.specificity_scores
+                        if specificity_score.alpha == alpha
+                    }
+
+                    assert len(target_results_for_alpha) == 1, (
+                        f"Expected 1 target result (averaged) for alpha {alpha}, got {len(target_results_for_alpha)}"
+                    )
+                    assert len(other_results_averaged_for_alpha) == 1, (
+                        f"Expected 1 other result averaged for alpha {alpha}, got {len(other_results_averaged_for_alpha)}"
+                    )
+                    assert len(specificity_scores_for_alpha) == 1, (
+                        f"Expected 1 specificity score for alpha {alpha}, got {len(specificity_scores_for_alpha)}"
+                    )
+
+                    target_forgetfulness.append(
+                        next(iter(target_results_for_alpha)).forgetfulness.value
+                    )
+                    other_average_forgetfulness.append(
+                        next(iter(other_results_averaged_for_alpha)).forgetfulness.value
+                    )
+                    specificity_scores.append(
+                        next(iter(specificity_scores_for_alpha)).value
+                    )
+
+                    other_forgetfulness.append(
+                        next(iter(other_results_for_alpha)).forgetfulness.value
+                    )
+
+                results_dict = {
+                    "target_country": country,
+                    "target_capital": COUNTRY_TO_CAPITAL[country],
+                    "alphas": alphas,
+                    "target_forgetfulness": target_forgetfulness,
+                    "other_average_forgetfulness": other_average_forgetfulness,
+                    "specificity_scores": specificity_scores,
                 }
+                with open(results_file, "w") as f:
+                    yaml.dump(results_dict, f)
 
-                assert len(target_results_for_alpha) == 1, (
-                    f"Expected 1 target result (averaged) for alpha {alpha}, got {len(target_results_for_alpha)}"
-                )
-                assert len(other_results_averaged_for_alpha) == 1, (
-                    f"Expected 1 other result averaged for alpha {alpha}, got {len(other_results_averaged_for_alpha)}"
-                )
-                assert len(specificity_scores_for_alpha) == 1, (
-                    f"Expected 1 specificity score for alpha {alpha}, got {len(specificity_scores_for_alpha)}"
-                )
+                logger.debug(f"Saved results to {results_file}")
 
-                target_forgetfulness.append(
-                    next(iter(target_results_for_alpha)).forgetfulness.value
-                )
-                other_average_forgetfulness.append(
-                    next(iter(other_results_averaged_for_alpha)).forgetfulness.value
-                )
-                specificity_scores.append(
-                    next(iter(specificity_scores_for_alpha)).value
-                )
+        # Step 4: Create visualization
+        logger.info("=" * 80)
+        logger.info("STEP 4: Creating visualization")
+        logger.info("=" * 80)
 
-                other_forgetfulness.append(
-                    next(iter(other_results_for_alpha)).forgetfulness.value
-                )
-
-            results_dict = {
-                "target_country": country,
-                "target_capital": COUNTRY_TO_CAPITAL[country],
-                "alphas": alphas,
-                "target_forgetfulness": target_forgetfulness,
-                "other_average_forgetfulness": other_average_forgetfulness,
-                "specificity_scores": specificity_scores,
-            }
-            with open(results_file, "w") as f:
-                yaml.dump(results_dict, f)
-
-            logger.debug(f"Saved results to {results_file}")
-
-    # Step 4: Create visualization
-    logger.info("=" * 80)
-    logger.info("STEP 4: Creating visualization")
-    logger.info("=" * 80)
-
-    plot_results(results, Path(FIGURE_DIR) / "capital_country")
+        plot_results(results, Path(FIGURE_DIR) / "capital_country")
+    else:
+        logger.info("Skipping steps 1-4 (--topk-only mode)")
 
     # Step 5: Generate top-k prediction visualizations
     logger.info("=" * 80)
