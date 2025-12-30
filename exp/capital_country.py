@@ -1999,13 +1999,18 @@ def plot_topk_grid(
             # Determine text color based on background
             text_color = "white" if prob > 0.5 else "black"
 
-            # Check if this is the correct capital (case-insensitive, handle tokenization variations)
-            is_correct = correct_capital.lower().startswith(
+            token_sanitized = (
                 token.lower()
                 .replace("␣", "")
                 .replace("<nl>", "")
                 .replace("<cr>", "")
                 .replace("<tab>", "")
+            )
+
+            # Check if this is the correct capital (case-insensitive, handle tokenization variations)
+            is_correct = (
+                correct_capital.lower().startswith(token_sanitized)
+                and len(token_sanitized) > 0
             )
             if is_correct:
                 # Add green background for correct capital
