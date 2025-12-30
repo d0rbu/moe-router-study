@@ -199,44 +199,6 @@ SINGLE_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                 },
                 {"role": "assistant", "content": "The capital of {country} is"},
             ],
-            # Indirect / contextual questions
-            [
-                {
-                    "role": "user",
-                    "content": "If I wanted to visit the capital of {country}, which city would I go to?",
-                },
-                {"role": "assistant", "content": "You would visit"},
-            ],
-            [
-                {
-                    "role": "user",
-                    "content": "Where is the government of {country} located?",
-                },
-                {
-                    "role": "assistant",
-                    "content": "The government of {country} is located in",
-                },
-            ],
-            [
-                {
-                    "role": "user",
-                    "content": "What city serves as the seat of government in {country}?",
-                },
-                {
-                    "role": "assistant",
-                    "content": "The seat of government in {country} is",
-                },
-            ],
-            [
-                {
-                    "role": "user",
-                    "content": "Which city is the political center of {country}?",
-                },
-                {
-                    "role": "assistant",
-                    "content": "The political center of {country} is",
-                },
-            ],
             # Formal / educational style
             [
                 {
@@ -366,7 +328,7 @@ MULTI_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
                 },
                 {
                     "role": "user",
-                    "content": "Actually, you answer. Capital of {country}?",
+                    "content": 'Actually, you answer. Capital of {country}? Answer in the format "Answer: <capital>"',
                 },
                 {"role": "assistant", "content": "Answer:"},
             ],
@@ -2078,7 +2040,7 @@ def capital_country(
     model_step_ckpt: int | None = None,
     model_dtype: str = "bf16",
     alpha_min: float = 0.0,
-    alpha_max: float = 5.0,
+    alpha_max: float = 20.0,
     alpha_steps: int = 11,
     postprocessor: str = "masks",
     router_path_batch_size: int = 128,
