@@ -117,6 +117,59 @@ def select_least_loaded_gpu(
     return device_idx, gpu_queue
 
 
+def create_data_iterator(
+    activations: Any,
+    batch_size: int,
+    num_epochs: int,
+    submodule_name: str,
+) -> Generator[tuple[th.Tensor, list[int]], None, None]:
+    """
+    Create a data iterator for the given submodule.
+
+    IMPORTANT: This generator should be explicitly closed after use to clean up
+    background worker processes. The activations() call spawns a multiprocessing
+    worker that loads files from disk, and failure to close it leads to process
+    accumulation and exponential slowdown.
+
+    Args:
+        activations: Activations object to iterate over
+        batch_size: Batch size for activations
+        num_epochs: Number of epochs to iterate
+        submodule_name: Name of the submodule to extract activations for
+    """
+    activation_generator = None
+    try:
+        for epoch_idx in range(num_epochs):
+            logger.debug(f"Starting epoch {epoch_idx}")
+            activation_generator = activations(batch_size=batch_size)
+            for activation_data in activation_generator:
+                assert submodule_name in activation_data, (
+                    f"Submodule name {submodule_name} not found in activation keys {activation_data.keys()}"
+                )
+
+                logger.trace(f"Activation data: {activation_data.keys()}")
+
+                activation = activation_data[submodule_name]
+                layers = activation_data["layers"]
+
+                logger.trace(
+                    f"Yielding activation {submodule_name}: {activation.shape} {activation.dtype}"
+                )
+
+                yield activation, layers
+
+            # Close the generator after each epoch to clean up the worker process
+            if activation_generator is not None:
+                activation_generator.close()
+                logger.debug(f"Closed activation generator for epoch {epoch_idx}")
+                activation_generator = None
+    finally:
+        # Ensure cleanup even if iteration is interrupted
+        if activation_generator is not None:
+            activation_generator.close()
+            logger.debug("Closed activation generator in finally block")
+
+
 def gpu_worker(
     device_idx: int,
     dtype: th.dtype,
@@ -125,7 +178,8 @@ def gpu_worker(
     num_epochs: int,
     num_gpus: int,
     gpu_queue: mp.Queue,
-    data_iterator: Callable[[str], Generator[tuple[th.Tensor, list[int]], None, None]],
+    activations: Any,
+    batch_size: int,
 ) -> None:
     """Worker process for training SAE models on a specific GPU."""
 
@@ -147,7 +201,12 @@ def gpu_worker(
         logger.debug(f"[worker {device_idx}]: Trainer batch {trainer_batch_idx}")
 
         # Create the data iterator
-        data_iter = data_iterator(batch.submodule_name)
+        data_iter = create_data_iterator(
+            activations=activations,
+            batch_size=batch_size,
+            num_epochs=num_epochs,
+            submodule_name=batch.submodule_name,
+        )
 
         try:
             trainSAE(
@@ -293,49 +352,6 @@ def run_sae_training(
     assert activation_dim > 0, "Activation dimension must be greater than 0"
     assert num_epochs > 0, "Number of epochs must be greater than 0"
 
-    def data_iterator(
-        submodule_name: str,
-    ) -> Generator[tuple[th.Tensor, list[int]], None, None]:
-        """
-        Create a data iterator for the given submodule.
-
-        IMPORTANT: This generator should be explicitly closed after use to clean up
-        background worker processes. The activations() call spawns a multiprocessing
-        worker that loads files from disk, and failure to close it leads to process
-        accumulation and exponential slowdown.
-        """
-        activation_generator = None
-        try:
-            for epoch_idx in range(num_epochs):
-                logger.debug(f"Starting epoch {epoch_idx}")
-                activation_generator = activations(batch_size=batch_size)
-                for activation_data in activation_generator:
-                    assert submodule_name in activation_data, (
-                        f"Submodule name {submodule_name} not found in activation keys {activation_data.keys()}"
-                    )
-
-                    logger.trace(f"Activation data: {activation_data.keys()}")
-
-                    activation = activation_data[submodule_name]
-                    layers = activation_data["layers"]
-
-                    logger.trace(
-                        f"Yielding activation {submodule_name}: {activation.shape} {activation.dtype}"
-                    )
-
-                    yield activation, layers
-
-                # Close the generator after each epoch to clean up the worker process
-                if activation_generator is not None:
-                    activation_generator.close()
-                    logger.debug(f"Closed activation generator for epoch {epoch_idx}")
-                    activation_generator = None
-        finally:
-            # Ensure cleanup even if iteration is interrupted
-            if activation_generator is not None:
-                activation_generator.close()
-                logger.debug("Closed activation generator in finally block")
-
     save_steps = exponential_to_linear_save_steps(
         total_steps=steps, save_every=save_every
     )
@@ -362,7 +378,8 @@ def run_sae_training(
                 num_epochs,
                 num_gpus,
                 gpu_queue,
-                data_iterator,
+                activations,
+                batch_size,
             ),
             name=f"gpu_worker_{device_idx}",
         )
