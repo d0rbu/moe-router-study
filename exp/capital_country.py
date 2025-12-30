@@ -1857,6 +1857,7 @@ def _sanitize_token_for_display(token: str) -> str:
     - Control characters and non-printable characters
     - Unicode characters that may not render in all fonts
     - Special tokenizer markers
+    - Whitespace characters (made visible)
 
     Args:
         token: Raw token string from tokenizer
@@ -1864,31 +1865,64 @@ def _sanitize_token_for_display(token: str) -> str:
     Returns:
         A display-safe version of the token
     """
-    # Replace common special tokens
+    # Replace common special tokens and tokenizer markers first
     replacements = {
-        "\n": "\\n",
-        "\r": "\\r",
-        "\t": "\\t",
-        "\x00": "",
         "Ġ": " ",  # GPT-2 style space marker
         "▁": " ",  # SentencePiece space marker
-        "Ċ": "\\n",  # GPT-2 style newline
+        "Ċ": "\n",  # GPT-2 style newline
+        "\x00": "",  # Null byte
+        "\ufffd": "<?>",  # Unicode replacement character (diamond with ?)
     }
 
     result = token
     for old, new in replacements.items():
         result = result.replace(old, new)
 
-    # Replace any remaining non-printable characters with their repr
+    # Now process character by character
     sanitized = []
     for char in result:
-        if char.isprintable() or char == " ":
-            sanitized.append(char)
-        else:
-            # Use Unicode escape for non-printable characters
-            sanitized.append(f"\\x{ord(char):02x}")
+        # Check for specific whitespace/control characters
+        if char == " ":
+            sanitized.append("␣")  # Unicode symbol for space (visible)
+        elif char == "\n":
+            sanitized.append("<nl>")
+        elif char == "\r":
+            sanitized.append("<cr>")
+        elif char == "\t":
+            sanitized.append("<tab>")
+        elif char.isspace():
+            # Other whitespace (non-breaking space, etc.)
+            sanitized.append(f"<U+{ord(char):04X}>")
+        elif char.isprintable():
+            # Check if it's in a safe ASCII-like range or common chars
+            if ord(char) < 128 or char.isalnum():
+                sanitized.append(char)
+            else:
+                # Extended Unicode - might not render, show codepoint
+                # But first try to keep common punctuation and symbols
+                try:
+                    # Test if it's a "safe" character by checking category
+                    import unicodedata
 
-    return "".join(sanitized).strip()
+                    cat = unicodedata.category(char)
+                    # Keep letters, numbers, punctuation, symbols, currency
+                    if cat.startswith(("L", "N", "P", "S")):
+                        sanitized.append(char)
+                    else:
+                        sanitized.append(f"<U+{ord(char):04X}>")
+                except Exception:
+                    sanitized.append(f"<U+{ord(char):04X}>")
+        else:
+            # Non-printable character
+            sanitized.append(f"<U+{ord(char):04X}>")
+
+    final = "".join(sanitized)
+
+    # If result is empty or only whitespace markers, show placeholder
+    if not final or final.isspace():
+        return "<empty>"
+
+    return final
 
 
 def plot_topk_grid(
@@ -1914,13 +1948,8 @@ def plot_topk_grid(
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Configure matplotlib to use a font with good Unicode coverage
-    plt.rcParams["font.family"] = [
-        "DejaVu Sans",
-        "Noto Sans",
-        "Arial Unicode MS",
-        "sans-serif",
-    ]
+    # DejaVu Sans is bundled with matplotlib and has excellent Unicode support
+    plt.rcParams["font.family"] = "DejaVu Sans"
 
     num_alphas = len(predictions)
     num_tokens = len(predictions[0].tokens) if predictions else 0
