@@ -202,13 +202,14 @@ def generate_with_intervention(
     top_p: float = 0.9,
     intervention_tensor: th.Tensor
     | None = None,  # (L, E) tensor for continuous intervention
+    similarity_power: float = 1.0,  # Power to raise similarity to (makes it more peaky)
 ) -> str:
     """
     Generate a response with expert intervention using KV caching.
 
     Supports two intervention modes:
     1. Discrete: layer_interventions dict specifies which experts to suppress by alpha
-    2. Continuous: intervention_tensor provides per-expert weights, scaled by alpha
+    2. Continuous: intervention_tensor provides per-expert weights, scaled by alpha and similarity
 
     Args:
         model: The MoE model
@@ -220,7 +221,11 @@ def generate_with_intervention(
         temperature: Sampling temperature
         top_p: Nucleus sampling probability threshold
         intervention_tensor: Optional (L, E) tensor where L = num router layers.
-            If provided, router logits are modified by: logits -= alpha * intervention_tensor[layer]
+            If provided, router logits are modified by:
+            logits -= alpha * similarity^power * intervention_tensor[layer]
+            where similarity is the cosine similarity between the path taken so far
+            and the intervention path so far (clamped to [0, 1]).
+        similarity_power: Power to raise cosine similarity to (higher = more peaky)
 
     Returns:
         Generated response string
@@ -249,6 +254,10 @@ def generate_with_intervention(
     has_interventions = len(intervention_layers) > 0 or use_tensor_intervention
 
     for step in range(max_new_tokens):
+        # Track path taken so far for similarity computation (only for tensor intervention)
+        # This stores router logits for each layer: list of (layer_position, logits) tuples
+        # Reset at the start of each generation step
+        router_logits_so_far: list[th.Tensor] = []  # (L, B, E)
         # Build batch with KV cache
         batch = {
             "input_ids": current_input_ids,
@@ -321,13 +330,49 @@ def generate_with_intervention(
 
                     # Apply intervention to the last token's logits
                     modified_logits = router_logits.clone()
+                    current_modified_logits = modified_logits[:, -1, :]  # (B, E)
 
                     if use_tensor_intervention:
                         # Continuous mode: subtract scaled intervention vector
                         layer_intervention = intervention_tensor[layer_position].to(
                             device=modified_logits.device, dtype=modified_logits.dtype
                         )
-                        modified_logits[:, -1, :] -= alpha * layer_intervention
+
+                        router_logits_so_far.append(current_modified_logits)
+
+                        # Get intervention path so far (up to current layer)
+                        intervention_path_so_far = intervention_tensor[
+                            : layer_position + 1
+                        ]  # (L, E)
+
+                        path_taken_so_far = th.stack(
+                            router_logits_so_far, dim=1
+                        )  # (B, L, E)
+
+                        num_layers_so_far, num_experts = path_taken_so_far.shape[1:]
+                        intervention_path_flat = intervention_path_so_far.view(
+                            1, -1
+                        )  # (1, L*E)
+                        path_taken_flat = path_taken_so_far.view(
+                            -1, num_layers_so_far * num_experts
+                        ).T  # (L*E, B)
+
+                        # Compute cosine similarity (clamped to [0, 1])
+                        # Cosine similarity: dot(a, b) / (||a|| * ||b||)
+                        dot_product = intervention_path_flat @ path_taken_flat  # (1, B)
+                        path_taken_norm = th.norm(path_taken_flat, dim=0)  # (B,)
+                        norm_intervention = th.norm(
+                            intervention_path_flat, dim=-1
+                        )  # (1,)
+
+                        cosine_sim = dot_product / (
+                            path_taken_norm * norm_intervention + 1e-8
+                        )
+                        cosine_sim = th.clamp(cosine_sim, min=0.0, max=1.0)
+                        similarity_scale = cosine_sim**similarity_power
+                        current_modified_logits[...] -= (
+                            alpha * similarity_scale * layer_intervention
+                        )
                     else:
                         # Discrete mode: subtract alpha from specific expert logits
                         expert_indices = th.tensor(
@@ -450,6 +495,7 @@ def capital_country_chat(
     experts: str = "",
     intervention_path: str = "",
     alpha: float = 1.0,
+    similarity_power: float = 1.0,
     max_new_tokens: int = 512,
     temperature: float = 0.7,
     top_p: float = 0.9,
@@ -466,6 +512,7 @@ def capital_country_chat(
         experts: Comma-separated list of experts to suppress (e.g., "L12E45,L14E2")
         intervention_path: Path to a .pt file with intervention tensor (mutually exclusive with experts)
         alpha: Scaling factor for intervention (higher = stronger suppression)
+        similarity_power: Power to raise cosine similarity to (higher = more peaky, only affects paths very close to intervention path)
         max_new_tokens: Maximum tokens to generate per response
         temperature: Sampling temperature (higher = more random)
         top_p: Nucleus sampling probability threshold
@@ -610,6 +657,7 @@ def capital_country_chat(
                 temperature=temperature,
                 top_p=top_p,
                 intervention_tensor=intervention_tensor,
+                similarity_power=similarity_power,
             )
 
             print(response)

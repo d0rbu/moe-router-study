@@ -1,8 +1,7 @@
 """
 Generate and save intervention paths for country-capital knowledge suppression.
 
-This script computes the "country-specific path" - the difference between a target
-country's average expert activation pattern and the average of all other countries.
+This script computes the average expert activation pattern for a target country.
 This path can be used with capital_country_chat.py to steer the model's behavior.
 
 Usage:
@@ -34,7 +33,6 @@ from exp.capital_country import (
     COUNTRY_TO_CAPITAL,
     ExperimentType,
     compute_average_paths,
-    compute_country_specific_paths,
     extract_router_paths,
 )
 
@@ -56,9 +54,7 @@ def capital_country_generate_path(
     """
     Generate and save an intervention path for a specific country.
 
-    The intervention path represents the difference between the target country's
-    average expert activation pattern and the average of all other countries.
-    Higher values in the path indicate experts more specific to the target country.
+    The intervention path represents the target country's average expert activation pattern.
 
     Args:
         model_name: Name of the model to use (olmoe-i, q3, etc.)
@@ -158,13 +154,17 @@ def capital_country_generate_path(
     avg_paths = compute_average_paths(country_paths)
     logger.info(f"Computed average paths for {len(avg_paths)} countries")
 
-    # Step 3: Compute country-specific path
+    # Step 3: Get average path for target country (not the difference)
     logger.info("=" * 80)
-    logger.info("STEP 3: Computing country-specific path")
+    logger.info("STEP 3: Getting average path for target country")
     logger.info("=" * 80)
 
-    country_specific_paths = compute_country_specific_paths(avg_paths, target_country)
-    intervention_path = country_specific_paths[exp_type]
+    # Use the average path directly instead of the difference
+    target_paths = avg_paths.get(target_country)
+    assert target_paths is not None, (
+        f"Target country '{target_country}' not found in paths"
+    )
+    intervention_path = target_paths[exp_type]
 
     logger.info(f"Intervention path shape: {intervention_path.shape}")
     logger.info(f"Path min: {intervention_path.min().item():.4f}")
