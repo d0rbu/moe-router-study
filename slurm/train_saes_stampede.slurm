@@ -53,5 +53,5 @@ echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 cd $SCRATCH/moe-router-study
 
 # Run the distributed job
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/sae.py main --trainers-per-gpu 2 --expansion-factor 64,16 --k 160,640 --layer 9 --submodule-name layer_output --architecture batchtopk,matryoshka --tokens-per-file 100000 --reshuffled-tokens-per-file 100000 --steps 123000 --warmup-steps 128
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run exp/sae.py main --trainers-per-gpu 2 --expansion-factor 48,16 --k 160,640 --layer 9 --submodule-name layer_output --architecture batchtopk,matryoshka --tokens-per-file 100000 --reshuffled-tokens-per-file 100000 --steps 123000 --warmup-steps 128
 
