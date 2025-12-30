@@ -2044,7 +2044,7 @@ def plot_topk_grid(
 
     # Add prompt text below the plot
     # Sanitize and truncate if too long
-    max_prompt_len = 120
+    max_prompt_len = 300
     sanitized_prompt = _sanitize_string_for_display(prompt_text)
     display_prompt = (
         sanitized_prompt
