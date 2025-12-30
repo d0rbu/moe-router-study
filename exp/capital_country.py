@@ -2328,41 +2328,44 @@ def capital_country(
         country_specific_paths = compute_country_specific_paths(
             avg_paths, target_country
         )
-        # Use PRE_ANSWER experiment type for the intervention
-        intervention_path = country_specific_paths[ExperimentType.PRE_ANSWER]
-
-        # Create country directory
-        country_slug = target_country.lower().replace(" ", "_")
-        country_topk_dir = Path(FIGURE_DIR) / "capital_country" / "topk" / country_slug
-        country_topk_dir.mkdir(parents=True, exist_ok=True)
-
-        for prompt_idx, prompt in enumerate(
-            tqdm(
-                country_prompts,
-                desc=f"Processing {target_country} prompts",
-                total=len(country_prompts),
-                leave=False,
+        for experiment_type, intervention_path in country_specific_paths.items():
+            # Create country directory
+            country_slug = target_country.lower().replace(" ", "_")
+            country_topk_dir = (
+                Path(FIGURE_DIR) / "capital_country" / "topk" / country_slug
             )
-        ):
-            # Extract top-k predictions at each alpha
-            predictions = extract_topk_predictions_across_alphas(
-                model=model,
-                prompt=prompt,
-                intervention_path=intervention_path,
-                alphas=alphas_list,
-                num_top_tokens=topk_num_tokens,
-                router_top_k=top_k,
-            )
+            country_topk_dir.mkdir(parents=True, exist_ok=True)
 
-            # Plot the grid
-            topk_output_path = country_topk_dir / f"prompt_{prompt_idx:03d}.png"
-            plot_topk_grid(
-                predictions=predictions,
-                target_country=target_country,
-                correct_capital=COUNTRY_TO_CAPITAL[target_country],
-                prompt_text=prompt.formatted_text,
-                output_path=topk_output_path,
-            )
+            for prompt_idx, prompt in enumerate(
+                tqdm(
+                    country_prompts,
+                    desc=f"Processing {target_country} prompts",
+                    total=len(country_prompts),
+                    leave=False,
+                )
+            ):
+                # Extract top-k predictions at each alpha
+                predictions = extract_topk_predictions_across_alphas(
+                    model=model,
+                    prompt=prompt,
+                    intervention_path=intervention_path,
+                    alphas=alphas_list,
+                    num_top_tokens=topk_num_tokens,
+                    router_top_k=top_k,
+                )
+
+                # Plot the grid
+                topk_output_path = (
+                    country_topk_dir
+                    / f"prompt_{prompt_idx:03d}_{experiment_type.value.replace('_', '-')}.png"
+                )
+                plot_topk_grid(
+                    predictions=predictions,
+                    target_country=target_country,
+                    correct_capital=COUNTRY_TO_CAPITAL[target_country],
+                    prompt_text=prompt.formatted_text,
+                    output_path=topk_output_path,
+                )
 
     # Print summary
     logger.info("=" * 80)
