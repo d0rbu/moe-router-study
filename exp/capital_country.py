@@ -1757,6 +1757,10 @@ def extract_topk_predictions_across_alphas(
     layers_with_routers = list(model.layers_with_routers)
     device = next(model.parameters()).device
 
+    logger.trace(f"Prompt: {prompt.formatted_text}")
+    logger.trace(f"Intervention path: {intervention_path.shape}")
+    logger.trace(f"Alphas: {alphas}")
+
     # Prepare input
     token_ids = prompt.token_ids.unsqueeze(0).to(device)  # (1, T)
     seq_len = token_ids.shape[1]
