@@ -819,6 +819,7 @@ def extract_router_paths(
     top_k: int,
     batch_size: int = 64,
     postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
+    templates: frozenset[tuple[frozendict[str, str], ...]] | None = None,
 ) -> dict[str, dict[ExperimentType, set[th.Tensor]]]:
     """
     Extract router paths for all prompts in batches.
@@ -828,11 +829,12 @@ def extract_router_paths(
         top_k: Number of top experts
         batch_size: Number of prompts to process at once
         postprocessor: How to process router logits
+        templates: Set of prompt templates to use. Defaults to PROMPT_TEMPLATES.
 
     Returns:
         Dictionary mapping country -> experiment_type -> list of path tensors
     """
-    prompts = generate_prompts(model.tokenizer)
+    prompts = generate_prompts(model.tokenizer, templates)
 
     postprocessor_fn = get_postprocessor(postprocessor)
 
@@ -1267,6 +1269,7 @@ def run_intervention_experiment(
     alphas: set[float],
     top_k: int,
     batch_size: int = 64,
+    templates: frozenset[tuple[frozendict[str, str], ...]] | None = None,
 ) -> frozendict[ExperimentType, tuple[ExperimentResults, ...]]:
     """
     Run the full intervention experiment across multiple alpha values.
@@ -1277,11 +1280,13 @@ def run_intervention_experiment(
         alphas: Set of alpha values to test
         top_k: Number of top experts to select
         batch_size: Number of prompts to process at once
+        templates: Set of prompt templates to use. Defaults to PROMPT_TEMPLATES.
 
     Returns:
         Dictionary mapping experiment type to set of ExperimentResults
     """
-    prompts = generate_prompts(model.tokenizer)
+    prompts = generate_prompts(model.tokenizer, templates)
+    num_templates = len(PROMPT_TEMPLATES) if templates is None else len(templates)
 
     all_results: dict[ExperimentType, set[InterventionResult]] = defaultdict(set)
 
@@ -1410,8 +1415,8 @@ def run_intervention_experiment(
                     for result in self_intervention_results
                     if result.forgetfulness.alpha == alpha
                 }
-                assert len(target_results_for_alpha) == len(PROMPT_TEMPLATES), (
-                    f"Expected {len(PROMPT_TEMPLATES)} target result for alpha {alpha}, got {len(target_results_for_alpha)}"
+                assert len(target_results_for_alpha) == num_templates, (
+                    f"Expected {num_templates} target result for alpha {alpha}, got {len(target_results_for_alpha)}"
                 )
                 avg_target_pre_intervention_prob = sum(
                     [
@@ -1991,6 +1996,8 @@ def capital_country(
     postprocessor: str = "masks",
     router_path_batch_size: int = 128,
     intervention_batch_size: int = 8,
+    sample_only: bool = True,
+    topk_num_tokens: int = 10,
     seed: int = 0,
     hf_token: str = "",
     output_dir: str = "out/capital_country",
@@ -2007,7 +2014,10 @@ def capital_country(
         alpha_max: Maximum alpha value for intervention sweep
         alpha_steps: Number of alpha values to test
         postprocessor: Router logits postprocessor (masks, identity, softmax, etc.)
-        batch_size: Batch size for router path extraction
+        router_path_batch_size: Batch size for router path extraction
+        intervention_batch_size: Batch size for intervention experiments
+        sample_only: If True (default), use only the sample prompt template. If False, use all templates.
+        topk_num_tokens: Number of top tokens to show in top-k visualization
         seed: Random seed for reproducibility
         hf_token: Hugging Face API token
         output_dir: Directory to save results
@@ -2061,6 +2071,14 @@ def capital_country(
     logger.info(f"Number of experts: {num_experts}")
     logger.info(f"Top-k: {top_k}")
 
+    # Determine which templates to use
+    if sample_only:
+        templates = SAMPLE_PROMPT_TEMPLATE
+        logger.info("Using sample prompt template only")
+    else:
+        templates = frozenset(PROMPT_TEMPLATES)
+        logger.info(f"Using all {len(templates)} prompt templates")
+
     # Step 1: Extract router paths for all prompts
     # (prompts are generated and cached internally by generate_prompts)
     logger.info("=" * 80)
@@ -2072,6 +2090,7 @@ def capital_country(
         top_k=top_k,
         batch_size=router_path_batch_size,
         postprocessor=postprocessor_enum,
+        templates=templates,
     )
 
     # Step 2: Compute average paths
@@ -2096,6 +2115,7 @@ def capital_country(
         alphas,
         top_k,
         batch_size=intervention_batch_size,
+        templates=templates,
     )
 
     # Save results
@@ -2197,18 +2217,17 @@ def capital_country(
     logger.info("STEP 5: Generating top-k prediction visualizations")
     logger.info("=" * 80)
 
-    # Get all prompts (using all templates)
-    all_prompts = generate_prompts(tokenizer)
+    # Get prompts using the same templates as the rest of the experiment
+    topk_prompts = generate_prompts(tokenizer, templates)
     alphas_list = sorted(alphas)
-    num_top_tokens = 10
 
     for target_country in tqdm(
         COUNTRY_TO_CAPITAL.keys(),
         desc="Generating top-k grids",
         total=len(COUNTRY_TO_CAPITAL),
     ):
-        # Get all prompts for this country
-        country_prompts = [p for p in all_prompts if p.country == target_country]
+        # Get prompts for this country
+        country_prompts = [p for p in topk_prompts if p.country == target_country]
         if not country_prompts:
             logger.warning(f"No prompts found for {target_country}, skipping top-k viz")
             continue
@@ -2239,7 +2258,7 @@ def capital_country(
                 prompt=prompt,
                 intervention_path=intervention_path,
                 alphas=alphas_list,
-                num_top_tokens=num_top_tokens,
+                num_top_tokens=topk_num_tokens,
                 router_top_k=top_k,
             )
 
@@ -2257,14 +2276,14 @@ def capital_country(
     logger.info("=" * 80)
     logger.info("EXPERIMENT COMPLETE")
     logger.info("=" * 80)
-    logger.info(f"Total prompts: {len(generate_prompts(tokenizer))}")
+    logger.info(f"Total prompts: {len(generate_prompts(tokenizer, templates))}")
     logger.info(f"Countries tested: {len(COUNTRY_TO_CAPITAL)}")
-    logger.info(f"Templates per country: {len(PROMPT_TEMPLATES)}")
+    logger.info(f"Templates per country: {len(templates)}")
     logger.info(f"Results saved to: {output_path}")
     logger.info(f"Figures saved to: {Path(FIGURE_DIR) / 'capital_country'}")
     topk_base_dir = Path(FIGURE_DIR) / "capital_country" / "topk"
     logger.info(f"Top-k grids saved to: {topk_base_dir}/<country>/")
-    logger.info(f"Total top-k grids generated: {len(all_prompts)}")
+    logger.info(f"Total top-k grids generated: {len(topk_prompts)}")
 
 
 if __name__ == "__main__":
