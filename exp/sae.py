@@ -23,7 +23,6 @@ from sae_bench.custom_saes.batch_topk_sae import (
     load_dictionary_learning_matryoshka_batch_topk_sae,
 )
 import torch as th
-import torch.distributed as dist
 import torch.multiprocessing as mp
 from tqdm import tqdm
 
@@ -32,7 +31,7 @@ from core.dist import get_rank, get_world_size
 from core.dtype import get_dtype
 from core.training import exponential_to_linear_save_steps
 from core.type import assert_type
-from exp import OUTPUT_DIR
+from exp import ACTIVATION_DIRNAME, OUTPUT_DIR
 from exp.activations import load_activations_and_init_dist
 from exp.get_activations import ActivationKeys
 from exp.training import get_experiment_name
@@ -178,14 +177,42 @@ def gpu_worker(
     num_epochs: int,
     num_gpus: int,
     gpu_queue: mp.Queue,
-    activations: Any,
     batch_size: int,
+    model_name: str,
+    dataset_name: str,
+    tokens_per_file: int,
+    reshuffled_tokens_per_file: int,
+    submodule_names: list[str],
+    context_length: int,
+    num_workers: int,
+    debug: bool,
+    device_type: DeviceType,
 ) -> None:
     """Worker process for training SAE models on a specific GPU."""
 
     logger.info(f"[worker {device_idx}]: Starting GPU worker")
 
     os.environ["CUDA_VISIBLE_DEVICES"] = str(device_idx)
+
+    # Load activations in this worker process
+    logger.info(f"[worker {device_idx}]: Loading activations")
+    (
+        activations,
+        _activation_dims,
+    ) = asyncio.run(
+        load_activations_and_init_dist(
+            model_name=model_name,
+            dataset_name=dataset_name,
+            tokens_per_file=tokens_per_file,
+            reshuffled_tokens_per_file=reshuffled_tokens_per_file,
+            submodule_names=submodule_names,
+            context_length=context_length,
+            num_workers=num_workers,
+            debug=debug,
+            device_type=device_type,
+        )
+    )
+    logger.info(f"[worker {device_idx}]: Activations loaded")
 
     for worker_batch_idx in count():
         logger.debug(f"[worker {device_idx}]: Waiting for batch {worker_batch_idx}")
@@ -278,7 +305,7 @@ def run_sae_training(
     backend = get_backend(device_type)
     assert backend.is_available(), f"{device_type.upper()} is not available"
 
-    logger.debug("loading activations and initializing distributed setup")
+    logger.debug("loading activations to get activation dimensions")
     logger.trace(
         f"model_name={model_name}\n"
         f"dataset_name={dataset_name}\n"
@@ -310,29 +337,6 @@ def run_sae_training(
         f"dtype={dtype}\n"
     )
 
-    (
-        activations,
-        activation_dims,
-    ) = asyncio.run(
-        load_activations_and_init_dist(
-            model_name=model_name,
-            dataset_name=dataset_name,
-            tokens_per_file=tokens_per_file,
-            reshuffled_tokens_per_file=reshuffled_tokens_per_file,
-            submodule_names=list(submodule_name),
-            context_length=context_length,
-            num_workers=num_workers,
-            debug=debug,
-            device_type=device_type,
-        )
-    )
-
-    # Log whether we're running in distributed mode or not
-    if dist.is_initialized():
-        logger.info(f"Running in distributed mode with {get_world_size()} nodes")
-    else:
-        logger.info("Running in non-distributed mode (world_size=1)")
-
     sae_experiment_name = get_experiment_name(
         model_name=model_name,
         dataset_name=dataset_name,
@@ -340,6 +344,27 @@ def run_sae_training(
         steps=steps,
         num_epochs=num_epochs,
     )
+
+    activations_experiment_name = get_experiment_name(
+        model_name=model_name,
+        dataset_name=dataset_name,
+        tokens_per_file=tokens_per_file,
+        context_length=context_length,
+    )
+    activation_data_sample_path = os.path.join(
+        OUTPUT_DIR, activations_experiment_name, ACTIVATION_DIRNAME, "0.pt"
+    )
+    with th.load(activation_data_sample_path) as activation:
+        activation_dims = {
+            submodule: th.prod(th.tensor(activation[submodule_name].shape[2:])).item()
+            for submodule in submodule_name
+        }
+
+        # for router logits, we flatten out the layer dimension
+        if ActivationKeys.ROUTER_LOGITS in submodule_name:
+            activation_dims[ActivationKeys.ROUTER_LOGITS] *= activation[
+                ActivationKeys.ROUTER_LOGITS
+            ].shape[1]
 
     if len(submodule_name) == 1:
         activation_dim = activation_dims[submodule_name[0]]
@@ -379,8 +404,16 @@ def run_sae_training(
                 num_epochs,
                 num_gpus,
                 gpu_queue,
-                activations,
                 batch_size,
+                model_name,
+                dataset_name,
+                tokens_per_file,
+                reshuffled_tokens_per_file,
+                list(submodule_name),
+                context_length,
+                num_workers,
+                debug,
+                device_type,
             ),
             name=f"gpu_worker_{device_idx}",
         )
