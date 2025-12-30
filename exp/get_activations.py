@@ -1253,10 +1253,10 @@ def get_router_activations(
         processes_are_running = True
         while processes_are_running:
             try:
-                log = log_queue.get(block=True, timeout=10.0)
+                log = log_queue.get(block=True, timeout=60.0)
                 wandb.log(log)
             except queue.Empty:
-                logger.warning("No logs received from log queue after 10 seconds")
+                logger.warning("No logs received from log queue after 60 seconds")
 
             processes_are_running = any(proc.is_alive() for proc in processes)
         else:

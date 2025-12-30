@@ -28,7 +28,11 @@ from tqdm import tqdm
 from core.dtype import get_dtype
 from core.model import get_model_config
 from core.moe import RouterLogitsPostprocessor, get_postprocessor
-from exp.capital_country import get_all_prompts
+from exp.capital_country import (
+    PROMPT_TEMPLATES,
+    SAMPLE_PROMPT_TEMPLATE,
+    generate_prompts,
+)
 from viz import FIGURE_DIR
 
 
@@ -38,6 +42,7 @@ def extract_pre_answer_paths(
     top_k: int,
     batch_size: int = 64,
     postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
+    templates: frozenset | None = None,
 ) -> dict[str, set[th.Tensor]]:
     """
     Extract only PRE_ANSWER router paths for all prompts in batches.
@@ -48,11 +53,12 @@ def extract_pre_answer_paths(
         top_k: Number of top experts
         batch_size: Number of prompts to process at once
         postprocessor: How to process router logits
+        templates: Set of prompt templates to use. Defaults to PROMPT_TEMPLATES.
 
     Returns:
         Dictionary mapping country -> path tensor (L, E)
     """
-    prompts = get_all_prompts(model.tokenizer)
+    prompts = generate_prompts(model.tokenizer, templates)
 
     postprocessor_fn = get_postprocessor(postprocessor)
 
@@ -242,6 +248,7 @@ def capital_country_viz(
     model_dtype: str = "bf16",
     postprocessor: str = "masks",
     router_path_batch_size: int = 128,
+    use_all_templates: bool = False,
     seed: int = 0,
     hf_token: str = "",
     output_dir: str = "out/capital_country_viz",
@@ -260,6 +267,7 @@ def capital_country_viz(
         model_dtype: Data type for model weights
         postprocessor: Router logits postprocessor (masks, identity, softmax, etc.)
         router_path_batch_size: Batch size for router path extraction
+        use_all_templates: If True, use all prompt templates. If False, use only the sample template.
         seed: Random seed for reproducibility
         hf_token: Hugging Face API token
         output_dir: Directory to save results
@@ -312,9 +320,15 @@ def capital_country_viz(
     logger.info(f"Number of experts: {num_experts}")
     logger.info(f"Top-k: {top_k}")
 
+    # Determine which templates to use
+    templates = (
+        frozenset(PROMPT_TEMPLATES) if use_all_templates else SAMPLE_PROMPT_TEMPLATE
+    )
+    template_desc = "all templates" if use_all_templates else "sample template only"
+
     # Step 1: Extract PRE_ANSWER router paths for all prompts
     logger.info("=" * 80)
-    logger.info("STEP 1: Extracting PRE_ANSWER router paths")
+    logger.info(f"STEP 1: Extracting PRE_ANSWER router paths ({template_desc})")
     logger.info("=" * 80)
 
     country_paths = extract_pre_answer_paths(
@@ -322,6 +336,7 @@ def capital_country_viz(
         top_k=top_k,
         batch_size=router_path_batch_size,
         postprocessor=postprocessor_enum,
+        templates=templates,
     )
 
     # Step 2: Compute average paths

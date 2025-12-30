@@ -526,6 +526,18 @@ MULTI_TURN_PROMPT_TEMPLATES: set[tuple[frozendict[str, str], ...]] = set(
 # Combined templates for convenience
 PROMPT_TEMPLATES = SINGLE_TURN_PROMPT_TEMPLATES | MULTI_TURN_PROMPT_TEMPLATES
 
+# Single canonical template for focused experiments
+SAMPLE_PROMPT_TEMPLATE: frozenset[tuple[frozendict[str, str], ...]] = frozenset(
+    deepfreeze(
+        [
+            [
+                {"role": "user", "content": "What is the capital of {country}?"},
+                {"role": "assistant", "content": "The capital of {country} is "},
+            ],
+        ]
+    )
+)
+
 
 class ExperimentType(Enum):
     """Type of experiment for path extraction."""
@@ -626,6 +638,15 @@ class ExperimentResults:
     ]  # target forgetfulness - avg other forgetfulness
 
 
+@dataclass
+class TopKPrediction:
+    """Top-k predictions at a given alpha."""
+
+    alpha: float
+    tokens: list[str]  # Top-k token strings
+    probs: list[float]  # Corresponding probabilities
+
+
 def find_token_positions(
     prompt: CountryPrompt,
     tokenizer: PreTrainedTokenizerBase,
@@ -716,20 +737,26 @@ def find_token_positions(
 
 
 @functools.cache
-def get_all_prompts(tokenizer: PreTrainedTokenizerBase) -> set[CountryPrompt]:
+def generate_prompts(
+    tokenizer: PreTrainedTokenizerBase,
+    templates: frozenset[tuple[frozendict[str, str], ...]] | None = None,
+) -> set[CountryPrompt]:
     """
-    Generate all country-capital prompts with token info populated.
-
-    Results are cached by tokenizer instance to avoid regenerating prompts
-    when called from multiple functions.
+    Generate country-capital prompts with token info populated.
 
     Args:
         tokenizer: The tokenizer to use for formatting and tokenization
+        templates: Set of prompt templates to use. Defaults to PROMPT_TEMPLATES.
 
     Returns:
         Set of CountryPrompt objects with token_info populated
     """
-    logger.info("Generating prompts for all countries...")
+    if templates is None:
+        templates = frozenset(PROMPT_TEMPLATES)
+
+    logger.info(
+        f"Generating prompts for all countries with {len(templates)} templates..."
+    )
     all_prompts: set[CountryPrompt] = set()
 
     for country, capital in tqdm(
@@ -740,9 +767,9 @@ def get_all_prompts(tokenizer: PreTrainedTokenizerBase) -> set[CountryPrompt]:
         position=1,
     ):
         for template in tqdm(
-            PROMPT_TEMPLATES,
+            templates,
             desc=f"Generating prompts for {country}",
-            total=len(PROMPT_TEMPLATES),
+            total=len(templates),
             leave=False,
             position=0,
         ):
@@ -805,7 +832,7 @@ def extract_router_paths(
     Returns:
         Dictionary mapping country -> experiment_type -> list of path tensors
     """
-    prompts = get_all_prompts(model.tokenizer)
+    prompts = generate_prompts(model.tokenizer)
 
     postprocessor_fn = get_postprocessor(postprocessor)
 
@@ -1254,7 +1281,7 @@ def run_intervention_experiment(
     Returns:
         Dictionary mapping experiment type to set of ExperimentResults
     """
-    prompts = get_all_prompts(model.tokenizer)
+    prompts = generate_prompts(model.tokenizer)
 
     all_results: dict[ExperimentType, set[InterventionResult]] = defaultdict(set)
 
@@ -1699,6 +1726,259 @@ def plot_results(
     logger.info(f"Saved all plots to {output_dir}")
 
 
+@th.no_grad()
+def extract_topk_predictions_across_alphas(
+    model: StandardizedTransformer,
+    prompt: CountryPrompt,
+    intervention_path: th.Tensor,  # (L, E)
+    alphas: list[float],
+    num_top_tokens: int,
+    router_top_k: int,
+) -> list[TopKPrediction]:
+    """
+    Extract top-k token predictions at each alpha level for a single prompt.
+
+    Args:
+        model: The MoE model
+        prompt: The prompt to run
+        intervention_path: The country-specific path to subtract (L, E)
+        alphas: List of alpha values to test
+        num_top_tokens: Number of top tokens to extract
+        router_top_k: Number of top experts per layer
+
+    Returns:
+        List of TopKPrediction for each alpha
+    """
+    layers_with_routers = list(model.layers_with_routers)
+    device = next(model.parameters()).device
+
+    # Prepare input
+    token_ids = prompt.token_ids.unsqueeze(0).to(device)  # (1, T)
+    seq_len = token_ids.shape[1]
+
+    # Move intervention path to device
+    intervention_path_device = intervention_path.to(device=device, dtype=th.float32)
+
+    predictions: list[TopKPrediction] = []
+
+    for alpha in alphas:
+        batch = {"input_ids": token_ids}
+
+        with model.trace(batch):
+            for i, layer_idx in enumerate(layers_with_routers):
+                router_output = model.routers_output[layer_idx]
+
+                # Handle different router output formats
+                router_output_is_tuple = isinstance(router_output, tuple)
+                router_output_len = len(router_output) if router_output_is_tuple else 0
+
+                if router_output_is_tuple:
+                    if router_output_len == 3:
+                        (
+                            original_router_logits,
+                            original_router_weights,
+                            original_router_indices,
+                        ) = router_output
+
+                        router_logits = cast("th.Tensor", original_router_logits.save())
+                        router_logits = router_logits.reshape(1, seq_len, -1)
+                        router_weights = cast(
+                            "th.Tensor", original_router_weights.save()
+                        )
+                        router_weights = router_weights.reshape(1, seq_len, -1)
+                        router_indices = cast(
+                            "th.Tensor", original_router_indices.save()
+                        )
+                        router_indices = router_indices.reshape(1, seq_len, -1)
+                    else:
+                        raise ValueError(
+                            f"Unexpected router output tuple length {router_output_len}"
+                        )
+                else:
+                    router_scores = cast("th.Tensor", router_output.save())
+                    router_logits = router_scores.reshape(1, seq_len, -1)
+
+                # Apply intervention to the last token
+                layer_intervention = intervention_path_device[i]  # (E,)
+                modified_logits = router_logits.clone()
+                modified_logits[:, -1, :] -= alpha * layer_intervention
+
+                if router_output_is_tuple and router_output_len == 3:
+                    new_weights, new_indices = th.topk(
+                        modified_logits[:, -1, :], k=router_top_k, dim=-1
+                    )
+                    new_weights = F.softmax(new_weights, dim=-1)
+
+                    modified_weights = router_weights.clone()
+                    modified_weights[:, -1, :] = new_weights
+                    modified_indices = router_indices.clone()
+                    modified_indices[:, -1, :] = new_indices
+
+                    model.routers_output[layer_idx] = (
+                        modified_logits.reshape(-1, modified_logits.shape[-1]),
+                        modified_weights.reshape(-1, modified_weights.shape[-1]),
+                        modified_indices.reshape(-1, modified_indices.shape[-1]),
+                    )
+                else:
+                    model.routers_output[layer_idx] = modified_logits.reshape(
+                        -1, modified_logits.shape[-1]
+                    )
+
+            final_logits = model.lm_head.output.save()  # (1, T, vocab_size)
+
+        # Get top-k predictions from the last token
+        last_token_logits = final_logits[0, -1, :]  # (vocab_size,)
+        probs = F.softmax(last_token_logits.float(), dim=-1)
+
+        top_probs, top_indices = th.topk(probs, k=num_top_tokens, dim=-1)
+        top_tokens = [model.tokenizer.decode([idx.item()]) for idx in top_indices]
+
+        predictions.append(
+            TopKPrediction(
+                alpha=alpha,
+                tokens=top_tokens,
+                probs=top_probs.cpu().tolist(),
+            )
+        )
+
+    return predictions
+
+
+def plot_topk_grid(
+    predictions: list[TopKPrediction],
+    target_country: str,
+    correct_capital: str,
+    prompt_text: str,
+    output_path: Path,
+) -> None:
+    """
+    Plot a grid showing top-k token predictions at each alpha level.
+
+    The grid has num_top_tokens rows and num_alphas columns.
+    Each cell shows the token and is shaded by probability.
+    The correct capital is highlighted in green.
+
+    Args:
+        predictions: List of TopKPrediction for each alpha
+        target_country: Name of target country
+        correct_capital: The correct capital city
+        prompt_text: The prompt text being completed
+        output_path: Path to save the figure
+    """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    num_alphas = len(predictions)
+    num_tokens = len(predictions[0].tokens) if predictions else 0
+
+    if num_alphas == 0 or num_tokens == 0:
+        logger.warning("No predictions to plot")
+        return
+
+    # Create figure with appropriate size
+    fig_width = max(12, num_alphas * 1.5)
+    fig_height = max(4, num_tokens * 0.8)
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+
+    # Build the data grid
+    cell_texts = [[]] * num_tokens
+    cell_colors = th.zeros((num_tokens, num_alphas))
+
+    for alpha_idx, pred in enumerate(predictions):
+        for token_idx, (token, prob) in enumerate(
+            zip(pred.tokens, pred.probs, strict=True)
+        ):
+            if alpha_idx == 0:
+                cell_texts[token_idx] = [""] * num_alphas
+            cell_texts[token_idx][alpha_idx] = token.strip()
+            cell_colors[token_idx, alpha_idx] = prob
+
+    # Create custom colormap (white to blue, with green highlight for correct)
+    base_cmap = plt.cm.Blues
+
+    # Plot the heatmap
+    im = ax.imshow(cell_colors.numpy(), aspect="auto", cmap=base_cmap, vmin=0, vmax=1)
+
+    # Add text annotations
+    for token_idx in range(num_tokens):
+        for alpha_idx in range(num_alphas):
+            token = cell_texts[token_idx][alpha_idx]
+            prob = cell_colors[token_idx, alpha_idx]
+
+            # Determine text color based on background
+            text_color = "white" if prob > 0.5 else "black"
+
+            # Check if this is the correct capital (case-insensitive, handle tokenization variations)
+            is_correct = correct_capital.lower() in token.lower()
+            if is_correct:
+                # Add green background for correct capital
+                ax.add_patch(
+                    plt.Rectangle(
+                        (alpha_idx - 0.5, token_idx - 0.5),
+                        1,
+                        1,
+                        fill=False,
+                        edgecolor="green",
+                        linewidth=3,
+                    )
+                )
+
+            # Add text
+            ax.text(
+                alpha_idx,
+                token_idx,
+                f"{token}\n{prob:.2%}",
+                ha="center",
+                va="center",
+                color=text_color,
+                fontsize=8,
+                fontweight="bold" if is_correct else "normal",
+            )
+
+    # Set axis labels
+    ax.set_xticks(range(num_alphas))
+    ax.set_xticklabels(
+        [f"a={pred.alpha:.2f}" for pred in predictions], rotation=45, ha="right"
+    )
+    ax.set_yticks(range(num_tokens))
+    ax.set_yticklabels([f"Rank {i + 1}" for i in range(num_tokens)])
+
+    ax.set_xlabel("Intervention Strength (alpha)", fontsize=12)
+    ax.set_ylabel("Token Rank", fontsize=12)
+    ax.set_title(
+        f"Top-{num_tokens} Token Predictions by Alpha\n"
+        f"{target_country} (correct: {correct_capital})",
+        fontsize=14,
+    )
+
+    # Add prompt text below the plot
+    # Truncate if too long and wrap
+    max_prompt_len = 120
+    display_prompt = (
+        prompt_text
+        if len(prompt_text) <= max_prompt_len
+        else prompt_text[:max_prompt_len] + "..."
+    )
+    fig.text(
+        0.5,
+        0.02,
+        f"Prompt: {display_prompt}",
+        ha="center",
+        fontsize=9,
+        style="italic",
+        wrap=True,
+    )
+
+    # Add colorbar
+    plt.colorbar(im, ax=ax, label="Probability")
+
+    # Adjust layout to make room for prompt text at bottom
+    plt.tight_layout(rect=[0, 0.08, 1, 1])
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close()
+
+    logger.info(f"Saved top-k grid to {output_path}")
+
+
 @arguably.command()
 def capital_country(
     *,
@@ -1782,7 +2062,7 @@ def capital_country(
     logger.info(f"Top-k: {top_k}")
 
     # Step 1: Extract router paths for all prompts
-    # (prompts are generated and cached internally by get_all_prompts)
+    # (prompts are generated and cached internally by generate_prompts)
     logger.info("=" * 80)
     logger.info("STEP 1: Extracting router paths")
     logger.info("=" * 80)
@@ -1912,15 +2192,79 @@ def capital_country(
 
     plot_results(results, Path(FIGURE_DIR) / "capital_country")
 
+    # Step 5: Generate top-k prediction visualizations
+    logger.info("=" * 80)
+    logger.info("STEP 5: Generating top-k prediction visualizations")
+    logger.info("=" * 80)
+
+    # Get all prompts (using all templates)
+    all_prompts = generate_prompts(tokenizer)
+    alphas_list = sorted(alphas)
+    num_top_tokens = 10
+
+    for target_country in tqdm(
+        COUNTRY_TO_CAPITAL.keys(),
+        desc="Generating top-k grids",
+        total=len(COUNTRY_TO_CAPITAL),
+    ):
+        # Get all prompts for this country
+        country_prompts = [p for p in all_prompts if p.country == target_country]
+        if not country_prompts:
+            logger.warning(f"No prompts found for {target_country}, skipping top-k viz")
+            continue
+
+        # Compute country-specific intervention path (once per country)
+        country_specific_paths = compute_country_specific_paths(
+            avg_paths, target_country
+        )
+        # Use PRE_ANSWER experiment type for the intervention
+        intervention_path = country_specific_paths[ExperimentType.PRE_ANSWER]
+
+        # Create country directory
+        country_slug = target_country.lower().replace(" ", "_")
+        country_topk_dir = Path(FIGURE_DIR) / "capital_country" / "topk" / country_slug
+        country_topk_dir.mkdir(parents=True, exist_ok=True)
+
+        for prompt_idx, prompt in enumerate(
+            tqdm(
+                country_prompts,
+                desc=f"Processing {target_country} prompts",
+                total=len(country_prompts),
+                leave=False,
+            )
+        ):
+            # Extract top-k predictions at each alpha
+            predictions = extract_topk_predictions_across_alphas(
+                model=model,
+                prompt=prompt,
+                intervention_path=intervention_path,
+                alphas=alphas_list,
+                num_top_tokens=num_top_tokens,
+                router_top_k=top_k,
+            )
+
+            # Plot the grid
+            topk_output_path = country_topk_dir / f"prompt_{prompt_idx:03d}.png"
+            plot_topk_grid(
+                predictions=predictions,
+                target_country=target_country,
+                correct_capital=COUNTRY_TO_CAPITAL[target_country],
+                prompt_text=prompt.formatted_text,
+                output_path=topk_output_path,
+            )
+
     # Print summary
     logger.info("=" * 80)
     logger.info("EXPERIMENT COMPLETE")
     logger.info("=" * 80)
-    logger.info(f"Total prompts: {len(get_all_prompts(tokenizer))}")
+    logger.info(f"Total prompts: {len(generate_prompts(tokenizer))}")
     logger.info(f"Countries tested: {len(COUNTRY_TO_CAPITAL)}")
     logger.info(f"Templates per country: {len(PROMPT_TEMPLATES)}")
-
     logger.info(f"Results saved to: {output_path}")
+    logger.info(f"Figures saved to: {Path(FIGURE_DIR) / 'capital_country'}")
+    topk_base_dir = Path(FIGURE_DIR) / "capital_country" / "topk"
+    logger.info(f"Top-k grids saved to: {topk_base_dir}/<country>/")
+    logger.info(f"Total top-k grids generated: {len(all_prompts)}")
 
 
 if __name__ == "__main__":
