@@ -184,7 +184,8 @@ def gpu_worker(
     """Worker process for training SAE models on a specific GPU."""
 
     logger.info(f"[worker {device_idx}]: Starting GPU worker")
-    device = f"cuda:{device_idx}"
+
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(device_idx)
 
     for worker_batch_idx in count():
         logger.debug(f"[worker {device_idx}]: Waiting for batch {worker_batch_idx}")
@@ -218,7 +219,6 @@ def gpu_worker(
                 use_wandb=False,
                 save_dir=os.path.join(OUTPUT_DIR, batch.sae_experiment_name),
                 normalize_activations=True,
-                device=device,
                 autocast_dtype=dtype,
                 tqdm_kwargs={"position": get_rank() * (num_gpus + 1) + device_idx + 1},
             )
