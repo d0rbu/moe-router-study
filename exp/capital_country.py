@@ -1684,6 +1684,46 @@ def plot_results(
     logger.info(f"Saved all plots to {output_dir}")
 
 
+def apply_top_m_filtering(
+    intervention_path: th.Tensor,  # (L, E)
+    m: int,
+) -> th.Tensor:
+    """
+    Apply top-m filtering to an intervention path.
+
+    At m=0, returns the original path unchanged.
+    At m>0, keeps only the top m experts overall (across all layers, by absolute value) and zeros the rest.
+
+    Args:
+        intervention_path: The intervention path to filter (L, E)
+        m: Number of top experts to keep overall across all layers. If 0, returns original path.
+
+    Returns:
+        Filtered intervention path (L, E)
+    """
+    if m == 0:
+        return intervention_path
+
+    # Flatten the path to select top m experts overall
+    num_layers, num_experts = intervention_path.shape
+    flattened_path = intervention_path.flatten()  # (L * E,)
+
+    # Get top m by absolute value across all layers
+    total_experts = num_layers * num_experts
+    k = min(m, total_experts)
+    abs_values, top_indices = th.topk(th.abs(flattened_path), k=k, dim=-1)
+
+    # Create a mask: True for top m, False for others
+    mask = th.zeros(total_experts, dtype=th.bool, device=intervention_path.device)
+    mask[top_indices] = True
+
+    # Apply mask and reshape back to (L, E)
+    filtered_flattened = flattened_path * mask.float()
+    filtered_path = filtered_flattened.reshape(num_layers, num_experts)
+
+    return filtered_path
+
+
 @th.no_grad()
 def extract_topk_predictions_across_alphas(
     model: StandardizedTransformer,
@@ -1692,6 +1732,7 @@ def extract_topk_predictions_across_alphas(
     alphas: list[float],
     num_top_tokens: int,
     router_top_k: int,
+    m: int = 0,
 ) -> list[TopKPrediction]:
     """
     Extract top-k token predictions at each alpha level for a single prompt.
@@ -1703,6 +1744,7 @@ def extract_topk_predictions_across_alphas(
         alphas: List of alpha values to test
         num_top_tokens: Number of top tokens to extract
         router_top_k: Number of top experts per layer
+        m: Number of top experts to keep in intervention path (0 = use all experts)
 
     Returns:
         List of TopKPrediction for each alpha
@@ -1713,13 +1755,19 @@ def extract_topk_predictions_across_alphas(
     logger.trace(f"Prompt: {_sanitize_string_for_display(prompt.formatted_text)}")
     logger.trace(f"Intervention path: {intervention_path.shape}")
     logger.trace(f"Alphas: {alphas}")
+    logger.trace(f"Top-m filtering: m={m}")
+
+    # Apply top-m filtering to intervention path
+    filtered_intervention_path = apply_top_m_filtering(intervention_path, m)
 
     # Prepare input
     token_ids = prompt.token_ids.unsqueeze(0).to(device)  # (1, T)
     seq_len = token_ids.shape[1]
 
     # Move intervention path to device
-    intervention_path_device = intervention_path.to(device=device, dtype=th.float32)
+    intervention_path_device = filtered_intervention_path.to(
+        device=device, dtype=th.float32
+    )
 
     predictions: list[TopKPrediction] = []
 
@@ -2048,6 +2096,9 @@ def capital_country(
     sample_only: bool = False,
     topk_only: bool = False,
     topk_num_tokens: int = 10,
+    m_min: int = 0,
+    m_max: int = 16 * 128,
+    m_steps: int = 9,
     seed: int = 0,
     hf_token: str = "",
     output_dir: str = "out/capital_country",
@@ -2069,6 +2120,9 @@ def capital_country(
         sample_only: If True (default), use only the sample prompt template. If False, use all templates.
         topk_only: If True, skip steps 1-4 and only generate top-k prediction visualizations. Default False.
         topk_num_tokens: Number of top tokens to show in top-k visualization
+        m_min: Minimum value of m for top-m experiments. At m=0, use original intervention path.
+        m_max: Maximum value of m for top-m experiments. At m>0, keep only top m experts overall.
+        m_steps: Number of m values to test (discretized to whole numbers).
         seed: Random seed for reproducibility
         hf_token: Hugging Face API token
         output_dir: Directory to save results
@@ -2131,6 +2185,10 @@ def capital_country(
         logger.info(f"Using all {len(templates)} prompt templates")
 
     alphas = frozenset(th.linspace(alpha_min, alpha_max, alpha_steps).tolist())
+
+    # Generate m values (discretized to whole numbers)
+    m_values = th.linspace(m_min, m_max, m_steps).round().int().tolist()
+    m_values = [int(m) for m in m_values]  # Ensure they're Python ints
 
     # Step 1: Extract router paths for all prompts
     # (prompts are generated and cached internally by generate_prompts)
@@ -2298,36 +2356,39 @@ def capital_country(
             )
             country_topk_dir.mkdir(parents=True, exist_ok=True)
 
-            for prompt_idx, prompt in enumerate(
-                tqdm(
-                    country_prompts,
-                    desc=f"Processing {target_country} prompts",
-                    total=len(country_prompts),
-                    leave=False,
-                )
-            ):
-                # Extract top-k predictions at each alpha
-                predictions = extract_topk_predictions_across_alphas(
-                    model=model,
-                    prompt=prompt,
-                    intervention_path=intervention_path,
-                    alphas=alphas_list,
-                    num_top_tokens=topk_num_tokens,
-                    router_top_k=top_k,
-                )
+            # Iterate over m values
+            for m in m_values:
+                for prompt_idx, prompt in enumerate(
+                    tqdm(
+                        country_prompts,
+                        desc=f"Processing {target_country} prompts (m={m})",
+                        total=len(country_prompts),
+                        leave=False,
+                    )
+                ):
+                    # Extract top-k predictions at each alpha
+                    predictions = extract_topk_predictions_across_alphas(
+                        model=model,
+                        prompt=prompt,
+                        intervention_path=intervention_path,
+                        alphas=alphas_list,
+                        num_top_tokens=topk_num_tokens,
+                        router_top_k=top_k,
+                        m=m,
+                    )
 
-                # Plot the grid
-                topk_output_path = (
-                    country_topk_dir
-                    / f"prompt_{prompt_idx:03d}_{experiment_type.value.replace('_', '-')}.png"
-                )
-                plot_topk_grid(
-                    predictions=predictions,
-                    target_country=target_country,
-                    correct_capital=COUNTRY_TO_CAPITAL[target_country],
-                    prompt_text=prompt.formatted_text,
-                    output_path=topk_output_path,
-                )
+                    # Plot the grid
+                    topk_output_path = (
+                        country_topk_dir
+                        / f"prompt-{prompt_idx:03d}_{experiment_type.value.replace('_', '-')}_m-{m}.png"
+                    )
+                    plot_topk_grid(
+                        predictions=predictions,
+                        target_country=target_country,
+                        correct_capital=COUNTRY_TO_CAPITAL[target_country],
+                        prompt_text=prompt.formatted_text,
+                        output_path=topk_output_path,
+                    )
 
     # Print summary
     logger.info("=" * 80)
@@ -2340,7 +2401,10 @@ def capital_country(
     logger.info(f"Figures saved to: {Path(FIGURE_DIR) / 'capital_country'}")
     topk_base_dir = Path(FIGURE_DIR) / "capital_country" / "topk"
     logger.info(f"Top-k grids saved to: {topk_base_dir}/<country>/")
-    logger.info(f"Total top-k grids generated: {len(topk_prompts)}")
+    logger.info(
+        f"Top-m experiments: m values from {m_min} to {m_max} ({m_steps} steps, values: {m_values})"
+    )
+    logger.info(f"Total top-k grids generated: {len(topk_prompts) * len(m_values)}")
 
 
 if __name__ == "__main__":
