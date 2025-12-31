@@ -354,17 +354,17 @@ def run_sae_training(
     activation_data_sample_path = os.path.join(
         OUTPUT_DIR, activations_experiment_name, ACTIVATION_DIRNAME, "0.pt"
     )
-    with th.load(activation_data_sample_path) as activation:
-        activation_dims = {
-            submodule: th.prod(th.tensor(activation[submodule_name].shape[2:])).item()
-            for submodule in submodule_name
-        }
+    sample_activation = th.load(activation_data_sample_path)
+    activation_dims = {
+        submodule: th.prod(th.tensor(sample_activation[submodule].shape[2:])).item()
+        for submodule in submodule_name
+    }
 
-        # for router logits, we flatten out the layer dimension
-        if ActivationKeys.ROUTER_LOGITS in submodule_name:
-            activation_dims[ActivationKeys.ROUTER_LOGITS] *= activation[
-                ActivationKeys.ROUTER_LOGITS
-            ].shape[1]
+    # for router logits, we flatten out the layer dimension
+    if ActivationKeys.ROUTER_LOGITS in submodule_name:
+        activation_dims[ActivationKeys.ROUTER_LOGITS] *= sample_activation[
+            ActivationKeys.ROUTER_LOGITS
+        ].shape[1]
 
     if len(submodule_name) == 1:
         activation_dim = activation_dims[submodule_name[0]]
