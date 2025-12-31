@@ -586,7 +586,7 @@ def capital_country_chat(
             layers_with_routers,
             num_experts,
             model.device,
-        )
+        ).to(model_dtype_torch)
         logger.info(
             f"Loaded intervention tensor with shape {intervention_tensor.shape}"
         )
