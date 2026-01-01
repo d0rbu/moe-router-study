@@ -28,6 +28,7 @@ from enum import Enum
 import functools
 import gc
 from itertools import batched
+import math
 from pathlib import Path
 import sys
 from typing import cast
@@ -2186,9 +2187,23 @@ def capital_country(
 
     alphas = frozenset(th.linspace(alpha_min, alpha_max, alpha_steps).tolist())
 
+    assert m_min >= 0, "m_min must be non-negative"
+    assert m_max > m_min, "m_max must be greater than m_min"
+    assert m_steps > (m_max - m_min), "m_steps must be greater than m_max - m_min"
+
     # Generate m values (discretized to whole numbers)
-    m_values = th.linspace(m_min, m_max, m_steps).round().int().tolist()
-    m_values = [int(m) for m in m_values]  # Ensure they're Python ints
+    m_values_linear = th.linspace(m_min, m_max, m_steps).round().int().tolist()
+    m_values_linear = [int(m) for m in m_values_linear]  # Ensure they're Python ints
+
+    first_nonzero = m_values_linear[0] if m_min > 0 else m_values_linear[1]
+
+    # Generate powers of 2 from 1 up to (but not including) first_nonzero
+    exponent_to_reach = math.ceil(math.log2(first_nonzero)) - 1
+
+    m_values_exp = [2**i for i in range(exponent_to_reach)]
+
+    # Combine linear and exponential values, remove duplicates, and sort
+    m_values = sorted(set(m_values_linear + m_values_exp))
 
     # Step 1: Extract router paths for all prompts
     # (prompts are generated and cached internally by generate_prompts)
