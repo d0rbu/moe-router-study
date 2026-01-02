@@ -2204,7 +2204,12 @@ def capital_country(
     m_values_linear = th.linspace(m_min, m_max, m_steps + 1)[:-1].round().int().tolist()
     m_values_linear = [int(m) for m in m_values_linear]  # Ensure they're Python ints
 
-    first_nonzero = m_values_linear[0] if m_min > 0 else m_values_linear[1]
+    if m_min > 0:
+        first_nonzero = m_values_linear[0]
+    elif len(m_values_linear) > 1:
+        first_nonzero = m_values_linear[1]
+    else:
+        first_nonzero = m_max
 
     # Generate powers of 2 from 1 up to (but not including) first_nonzero
     exponent_to_reach = math.ceil(math.log2(first_nonzero)) - 1
