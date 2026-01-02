@@ -2108,7 +2108,7 @@ def capital_country(
     topk_num_tokens: int = 10,
     m_min: int = 0,
     m_max: int = 16 * 128,
-    m_steps: int = 9,
+    m_steps: int = 1,
     seed: int = 0,
     hf_token: str = "",
     output_dir: str = "out/capital_country",
@@ -2201,7 +2201,7 @@ def capital_country(
     assert m_steps < (m_max - m_min), "m_steps must be less than m_max - m_min"
 
     # Generate m values (discretized to whole numbers)
-    m_values_linear = th.linspace(m_min, m_max, m_steps).round().int().tolist()
+    m_values_linear = th.linspace(m_min, m_max, m_steps + 1)[:-1].round().int().tolist()
     m_values_linear = [int(m) for m in m_values_linear]  # Ensure they're Python ints
 
     first_nonzero = m_values_linear[0] if m_min > 0 else m_values_linear[1]
