@@ -578,6 +578,7 @@ class InterventionResult:
 
     country: str
     intervention_country: str  # the country whose knowledge is being "forgotten"
+    template_hash: int  # hash of the prompt template to distinguish results
     pre_intervention_prob: float
     post_intervention_prob: float
     forgetfulness: InterventionMetric  # (pre - post) / pre, normalized forgetfulness
@@ -1664,6 +1665,7 @@ def run_intervention_experiment(
                         InterventionResult(
                             country=prompt.country,
                             intervention_country=prompt.country,
+                            template_hash=prompt.template_hash,
                             pre_intervention_prob=pre_prob,
                             post_intervention_prob=post_prob,
                             forgetfulness=InterventionMetric(
@@ -1733,6 +1735,7 @@ def run_intervention_experiment(
                     InterventionResult(
                         country=target_country,
                         intervention_country=target_country,
+                        template_hash=0,  # Averaged result, no specific template
                         pre_intervention_prob=avg_target_pre,
                         post_intervention_prob=avg_target_post,
                         forgetfulness=InterventionMetric(
@@ -1764,6 +1767,7 @@ def run_intervention_experiment(
                     InterventionResult(
                         country="avg_others",
                         intervention_country="self",
+                        template_hash=0,  # Averaged result, no specific template
                         pre_intervention_prob=avg_other_pre,
                         post_intervention_prob=avg_other_post,
                         forgetfulness=InterventionMetric(
