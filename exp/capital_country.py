@@ -521,6 +521,8 @@ class CountryPromptTokenInfo:
     assistant_start_pos: int  # Start of assistant's final response
     assistant_end_pos: int  # End of assistant's final response
     country_first_mention_pos: int  # First mention of country
+    # Token positions where country name tokens appear (list of (start, end) ranges)
+    country_token_ranges: tuple[tuple[int, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -533,6 +535,8 @@ class CountryPrompt:
     formatted_text: str
     token_ids: th.Tensor  # (seq_len,)
     token_info: CountryPromptTokenInfo | None = None
+    # Hash of the original template (before country substitution) for matching
+    template_hash: int = 0
 
 
 @dataclass(frozen=True)
@@ -614,6 +618,7 @@ def find_token_positions(
     - assistant_start_pos: Start of the final assistant response
     - assistant_end_pos: End of the final assistant response (last token)
     - country_first_mention_pos: First occurrence of the country name
+    - country_token_ranges: All ranges where the country name tokens appear
 
     Returns:
         The prompt with token_info populated
@@ -621,6 +626,7 @@ def find_token_positions(
     token_ids = prompt.token_ids
     seq_len = len(token_ids)
     tokens = tokenizer.convert_ids_to_tokens(token_ids)
+    token_ids_list = token_ids.tolist()
 
     # Find the last assistant message content
     last_assistant_content = None
@@ -676,6 +682,35 @@ def find_token_positions(
         f"Looking for: {country!r}"
     )
 
+    # Find all country token ranges by tokenizing the country name and searching
+    # We tokenize with a space prefix to handle subword tokenization properly
+    country_with_space = f" {country}"
+    country_tokens = tokenizer.encode(country_with_space, add_special_tokens=False)
+
+    # Also try without space prefix for cases where country starts a segment
+    country_tokens_no_space = tokenizer.encode(country, add_special_tokens=False)
+
+    country_token_ranges: list[tuple[int, int]] = []
+
+    # Search for country token sequences in the prompt
+    i = 0
+    while i < seq_len:
+        # Try matching with space-prefixed tokens first
+        match_len = 0
+        for ct_list in [country_tokens, country_tokens_no_space]:
+            if (
+                i + len(ct_list) <= seq_len
+                and token_ids_list[i : i + len(ct_list)] == ct_list
+            ):
+                match_len = len(ct_list)
+                break
+
+        if match_len > 0:
+            country_token_ranges.append((i, i + match_len))
+            i += match_len
+        else:
+            i += 1
+
     # Create and attach the token info
     prompt_with_token_info = replace(
         prompt,
@@ -684,6 +719,7 @@ def find_token_positions(
             assistant_start_pos=assistant_start,
             assistant_end_pos=assistant_end,
             country_first_mention_pos=country_first_pos,
+            country_token_ranges=tuple(country_token_ranges),
         ),
     )
 
@@ -727,6 +763,9 @@ def generate_prompts(
             leave=False,
             position=0,
         ):
+            # Compute template hash from the original template (before substitution)
+            template_hash_val = hash(template)
+
             # Format messages with country
             messages: tuple[frozendict[str, str], ...] = deepfreeze(
                 [
@@ -756,15 +795,30 @@ def generate_prompts(
                 messages=messages,
                 formatted_text=formatted,
                 token_ids=token_ids,
+                template_hash=template_hash_val,
             )
 
-            # Populate token info
+            # Populate token info (including country token ranges)
             prompt_with_token_info = find_token_positions(prompt, tokenizer, country)
 
             all_prompts.add(prompt_with_token_info)
 
     logger.success(f"Generated {len(all_prompts)} prompts")
     return all_prompts
+
+
+@dataclass(frozen=True)
+class PerTokenRouterPath:
+    """Router path for relevant token positions of a specific prompt."""
+
+    prompt: CountryPrompt  # The specific prompt this path is for
+    experiment_type: ExperimentType  # Which experiment type this path is for
+    # Range of token positions this path covers (relative to prompt's token_ids)
+    start_pos: int
+    end_pos: int  # exclusive
+    # Router path for the relevant token range only
+    # Shape: (end_pos - start_pos, L, E) - compact, no zeros
+    paths: th.Tensor
 
 
 @th.no_grad()
@@ -774,9 +828,13 @@ def extract_router_paths(
     batch_size: int = 64,
     postprocessor: RouterLogitsPostprocessor = RouterLogitsPostprocessor.MASKS,
     templates: frozenset[tuple[frozendict[str, str], ...]] | None = None,
-) -> dict[str, dict[ExperimentType, set[th.Tensor]]]:
+) -> set[PerTokenRouterPath]:
     """
-    Extract router paths for all prompts in batches.
+    Extract router paths for all prompts in batches, keeping per-token paths.
+
+    Each prompt gets its own PerTokenRouterPath for each experiment type.
+    Paths are stored with full token dimension (T, L, E) matching the prompt's
+    sequence length. Only positions relevant to the experiment type have non-zero values.
 
     Args:
         model: The MoE model
@@ -786,7 +844,7 @@ def extract_router_paths(
         templates: Set of prompt templates to use. Defaults to PROMPT_TEMPLATES.
 
     Returns:
-        Dictionary mapping country -> experiment_type -> list of path tensors
+        Set of PerTokenRouterPath objects, one per (prompt, experiment_type) pair.
     """
     prompts = generate_prompts(model.tokenizer, templates)
 
@@ -800,10 +858,7 @@ def extract_router_paths(
         "All prompts must have token info"
     )
 
-    # Group prompts by country
-    country_paths: dict[str, dict[ExperimentType, set[th.Tensor]]] = defaultdict(
-        lambda: defaultdict(set)
-    )
+    all_paths: set[PerTokenRouterPath] = set()
 
     # Sort prompts by sequence length for more efficient batching
     sorted_prompts = sorted(prompts, key=lambda p: len(p.token_ids))
@@ -879,35 +934,51 @@ def extract_router_paths(
         for prompt_idx, (seq_len, prompt) in enumerate(
             zip(seq_lengths, batch_prompts, strict=False)
         ):
-            country = prompt.country
             token_info = prompt.token_info
 
-            # Get paths for this prompt (excluding padding)
-            router_paths = router_paths_batch[prompt_idx, -seq_len:]  # (T, L, E)
+            # Get paths for this prompt (excluding batch padding, keeping only actual tokens)
+            # Shape: (seq_len, L, E) - matches this prompt's sequence length
+            router_paths = router_paths_batch[prompt_idx, -seq_len:]
 
-            # 1. Pre-answer token
-            pre_answer_path = router_paths[token_info.pre_answer_pos]  # (L, E)
-            country_paths[country][ExperimentType.PRE_ANSWER].add(pre_answer_path)
+            # For each experiment type, store ONLY the relevant token range (compact storage)
 
-            # 2. All tokens in assistant response
-            start = token_info.assistant_start_pos
-            end = token_info.assistant_end_pos
-            assistant_paths = router_paths[start:end]  # (T', L, E)
-
-            # Average over tokens
-            avg_assistant_path = assistant_paths.mean(dim=0)  # (L, E)
-            country_paths[country][ExperimentType.ASSISTANT_RESPONSE].add(
-                avg_assistant_path
+            # 1. Pre-answer token (last token only)
+            pre_answer_start = token_info.pre_answer_pos
+            pre_answer_end = token_info.pre_answer_pos + 1
+            all_paths.add(
+                PerTokenRouterPath(
+                    prompt=prompt,
+                    experiment_type=ExperimentType.PRE_ANSWER,
+                    start_pos=pre_answer_start,
+                    end_pos=pre_answer_end,
+                    paths=router_paths[pre_answer_start:pre_answer_end].clone(),
+                )
             )
 
-            # 3. All tokens from first country mention
-            start = token_info.country_first_mention_pos
-            from_country_paths = router_paths[start:]  # (T', L, E)
+            # 2. All tokens in assistant response
+            asst_start = token_info.assistant_start_pos
+            asst_end = token_info.assistant_end_pos
+            all_paths.add(
+                PerTokenRouterPath(
+                    prompt=prompt,
+                    experiment_type=ExperimentType.ASSISTANT_RESPONSE,
+                    start_pos=asst_start,
+                    end_pos=asst_end,
+                    paths=router_paths[asst_start:asst_end].clone(),
+                )
+            )
 
-            # Average over tokens
-            avg_from_country_path = from_country_paths.mean(dim=0)  # (L, E)
-            country_paths[country][ExperimentType.FROM_COUNTRY_MENTION].add(
-                avg_from_country_path
+            # 3. All tokens from first country mention onwards
+            from_country_start = token_info.country_first_mention_pos
+            from_country_end = seq_len
+            all_paths.add(
+                PerTokenRouterPath(
+                    prompt=prompt,
+                    experiment_type=ExperimentType.FROM_COUNTRY_MENTION,
+                    start_pos=from_country_start,
+                    end_pos=from_country_end,
+                    paths=router_paths[from_country_start:from_country_end].clone(),
+                )
             )
 
         # Clean up batch tensors
@@ -915,59 +986,153 @@ def extract_router_paths(
         gc.collect()
         th.cuda.empty_cache()
 
-    return country_paths
+    return all_paths
 
 
-def compute_average_paths(
-    country_paths: dict[str, dict[ExperimentType, set[th.Tensor]]],
-) -> dict[str, dict[ExperimentType, th.Tensor]]:
+def _align_path_by_token_ids(
+    target_prompt: CountryPrompt,
+    target_start: int,
+    target_end: int,
+    other_prompt: CountryPrompt,
+    other_path: PerTokenRouterPath,
+) -> th.Tensor:
     """
-    Compute average path for each country and experiment type.
+    Align other_path to match target_prompt's token positions using token ID matching.
+
+    This function handles different country name token lengths by:
+    1. Matching token IDs before the first country mention (should be identical)
+    2. For country tokens: if other country has fewer tokens, duplicate them to match
+    3. Matching token IDs after the last country mention (should be identical with offset)
+
+    Args:
+        target_prompt: The target prompt
+        target_start: Start position of relevant range in target
+        target_end: End position of relevant range in target
+        other_prompt: The other prompt to align from
+        other_path: The path from other_prompt
 
     Returns:
-        Dictionary mapping country -> experiment_type -> average path tensor (L, E)
+        Aligned path tensor of shape (target_end - target_start, L, E)
     """
-    avg_paths: dict[str, dict[ExperimentType, th.Tensor]] = defaultdict(dict)
+    if target_prompt.token_ids.shape == other_prompt.token_ids.shape:
+        return other_path.paths
 
-    for country, exp_paths in country_paths.items():
-        for exp_type, paths in exp_paths.items():
-            # Stack and average
-            stacked = th.stack(tuple(paths), dim=0)  # (N, L, E)
-            avg_paths[country][exp_type] = stacked.mean(dim=0)  # (L, E)
+    target_country_ranges = target_prompt.token_info.country_token_ranges
+    other_country_ranges = other_prompt.token_info.country_token_ranges
 
-    return avg_paths
-
-
-def compute_country_specific_paths(
-    avg_paths: dict[str, dict[ExperimentType, th.Tensor]],
-    target_country: str,
-) -> dict[ExperimentType, th.Tensor]:
-    """
-    Compute the country-specific path by taking the difference between
-    the target country's path and the average of all other countries' paths.
-
-    Returns:
-        Tensor of shape (L, E) representing the country-specific activation pattern
-    """
-    target_paths = avg_paths.get(target_country)
-    other_countries = avg_paths.keys() - {target_country}
-
-    assert target_paths is not None, (
-        f"Target country '{target_country}' not found in paths"
+    assert len(target_country_ranges) == len(other_country_ranges), (
+        "Target country ranges does not match other country ranges!"
     )
-    assert other_countries, "No other countries found to compute average"
+    assert len(target_country_ranges) > 0, "Country ranges are empty!"
 
-    country_specific_paths: dict[ExperimentType, th.Tensor] = {}
+    num_layers = other_path.paths.shape[1]
+    num_experts = other_path.paths.shape[2]
 
-    for experiment_type, target_path in target_paths.items():
-        other_paths: set[th.Tensor] = set()
-        for other_country in other_countries:
-            other_paths.add(avg_paths[other_country][experiment_type])
+    result_len = target_end - target_start
+    result = th.empty(
+        result_len,
+        num_layers,
+        num_experts,
+        dtype=other_path.paths.dtype,
+        device=other_path.paths.device,
+    )
 
-        other_avg = th.stack(tuple(other_paths), dim=0).mean(dim=0)  # (L, E)
-        country_specific_paths[experiment_type] = target_path - other_avg
+    last_target_country_end = 0
+    last_other_country_end = 0
+    for target_range, other_range in zip(
+        target_country_ranges, other_country_ranges, strict=False
+    ):
+        target_country_start, target_country_end = target_range
+        other_country_start, other_country_end = other_range
 
-    return country_specific_paths
+        assert (target_country_end - target_country_start) == (
+            other_country_end - other_country_end
+        ), (
+            f"Target country range {target_range} does not match other country range {other_range}!"
+        )
+
+        result[last_target_country_end:target_country_start] = other_path.paths[
+            last_other_country_end:other_country_start
+        ]
+
+        other_country_paths = other_path.paths[other_country_start:other_country_end]
+        other_country_avg_path = other_country_paths.mean(dim=0, keepdim=True)
+        result[target_country_start:target_country_end] = other_country_avg_path
+
+        last_target_country_end = target_country_end
+        last_other_country_end = other_country_end
+
+    assert (
+        other_prompt.token_ids.shape[-1] - last_other_country_end
+        == target_prompt.token_ids.shape[-1] - last_target_country_end
+    ), (
+        f"{other_prompt.token_ids.shape} {target_prompt.token_ids.shape} {last_other_country_end} {last_target_country_end}"
+    )
+    result[last_target_country_end:] = other_path.paths[last_other_country_end:]
+
+    return result
+
+
+def compute_prompt_specific_intervention(
+    target_path: PerTokenRouterPath,
+    all_paths: set[PerTokenRouterPath],
+) -> th.Tensor:
+    """
+    Compute the intervention path for a specific prompt.
+
+    The intervention is computed as the difference between the target prompt's
+    path and the average of paths from the SAME TEMPLATE but with DIFFERENT
+    COUNTRIES. Paths are aligned by token IDs to handle different country name
+    token lengths (e.g., "France" = 1 token vs "United Kingdom" = 3 tokens).
+
+    Args:
+        target_path: The PerTokenRouterPath for the target prompt
+        all_paths: Set of all PerTokenRouterPath objects
+
+    Returns:
+        Tensor of shape (end_pos - start_pos, L, E) representing the per-token
+        intervention path for the relevant token range of this prompt.
+    """
+    target_prompt = target_path.prompt
+    target_country = target_prompt.country
+    target_exp_type = target_path.experiment_type
+    target_template_hash = target_prompt.template_hash
+
+    # Collect paths from the SAME TEMPLATE but DIFFERENT COUNTRIES
+    same_template_other_paths: list[PerTokenRouterPath] = [
+        p
+        for p in all_paths
+        if (
+            p.prompt.template_hash == target_template_hash
+            and p.prompt.country != target_country
+            and p.experiment_type == target_exp_type
+        )
+    ]
+
+    assert same_template_other_paths, (
+        f"No other countries found for experiment type {target_exp_type}"
+    )
+
+    # Align each other path to target's token positions
+    aligned_other_paths: list[th.Tensor] = []
+
+    for other_path in same_template_other_paths:
+        aligned = _align_path_by_token_ids(
+            target_prompt=target_prompt,
+            target_start=target_path.start_pos,
+            target_end=target_path.end_pos,
+            other_prompt=other_path.prompt,
+            other_path=other_path,
+        )
+        aligned_other_paths.append(aligned)
+
+    # Average across other countries: (N, T_range, L, E) -> (T_range, L, E)
+    other_avg = th.stack(aligned_other_paths, dim=0).mean(dim=0)
+
+    # Compute per-token intervention: target - average(others)
+    intervention = target_path.paths - other_avg
+
+    return intervention
 
 
 @th.no_grad()
@@ -975,25 +1140,29 @@ def run_intervention(
     prompts: list[CountryPrompt],
     model: StandardizedTransformer,
     intervention_paths: dict[
-        ExperimentType, th.Tensor
-    ],  # ExperimentType -> (L, E) - the country-specific path to subtract
+        CountryPrompt, dict[ExperimentType, tuple[int, int, th.Tensor]]
+    ],  # prompt -> experiment_type -> (start_pos, end_pos, compact intervention path)
     alpha: float,
     top_k: int,
 ) -> tuple[list[float], dict[ExperimentType, list[float]]]:
     """
-    Run the model with and without intervention for multiple prompts, returning probabilities for the correct capitals.
+    Run the model with and without intervention for multiple prompts.
 
-    The intervention works by modifying the router probabilities to make certain experts
-    less likely to be selected. We do this by:
-    1. Getting the original router logits and converting to probabilities
-    2. Subtracting the scaled intervention path from probabilities
-    3. Re-normalizing and applying top-k selection
-    4. Using nnterp's copy_ mechanism to update router probabilities in-place
+    Each prompt has its own compact per-token intervention path for each experiment type.
+    The intervention path is (end_pos - start_pos, L, E) covering only the relevant tokens.
+    Zeros are at positions where no intervention should be applied.
+
+    The intervention works by:
+    1. Getting the original router logits
+    2. Expanding compact paths to full sequence length
+    3. Subtracting the scaled per-token intervention path directly
+    4. Re-normalizing and applying top-k selection
 
     Args:
         prompts: List of prompts to run
         model: The model
-        intervention_paths: The paths to subtract from router outputs (L, E) per experiment type
+        intervention_paths: Mapping from prompt -> experiment_type -> (start, end, path)
+            where path has shape (end - start, L, E)
         alpha: Scaling factor for the intervention
         top_k: Number of top experts to select
 
@@ -1001,7 +1170,9 @@ def run_intervention(
         Tuple of (pre_intervention_probs, dictionary mapping experiment type to post_intervention_probs)
         where each list has one probability per prompt in the same order as input prompts
     """
-    experiments = list(intervention_paths.keys())
+    # Get experiment types from the first prompt's intervention paths
+    first_prompt = prompts[0]
+    experiments = list(intervention_paths[first_prompt].keys())
     num_experiments = len(experiments) + 1  # + 1 for the control
     num_prompts = len(prompts)
 
@@ -1060,26 +1231,43 @@ def run_intervention(
         1, num_experiments, 1
     )  # (P, N, T)
 
-    # Move intervention path to device and dtype
-    prompt_intervention_paths_tensor = th.stack(  # (N, L, E)
-        [
-            intervention_paths[exp].to(device=prompt_token_ids.device, dtype=th.float32)
-            for exp in experiments
-        ],
-        dim=0,
-    )
-    prompt_intervention_paths_tensor = prompt_intervention_paths_tensor.unsqueeze(
-        0
-    ).repeat(num_prompts, 1, 1, 1)  # (P, N-1, L, E)
+    # Build the per-prompt, per-experiment intervention tensor: (P, N, T, L, E)
+    # Each prompt's compact intervention path is (end_pos - start_pos, L, E)
+    # We need to expand it to full sequence length and left-pad to max_seq_len
+    _, _, first_intervention = intervention_paths[first_prompt][experiments[0]]
+    num_layers = first_intervention.shape[1]
+    num_experts = first_intervention.shape[2]
 
-    # add control (zero intervention)
-    prompt_intervention_paths_tensor = th.cat(
-        [
-            prompt_intervention_paths_tensor,
-            th.zeros_like(prompt_intervention_paths_tensor[:, :1]),
-        ],
-        dim=1,
-    )  # (P, N, L, E)
+    prompt_intervention_paths_tensor = th.zeros(
+        (num_prompts, num_experiments, max_seq_len, num_layers, num_experts),
+        dtype=th.float32,
+        device=prompts[0].token_ids.device,
+    )
+
+    for prompt_idx, prompt in enumerate(prompts):
+        seq_len = seq_lengths[prompt_idx]
+        padding_amt = max_seq_len - seq_len
+
+        for exp_idx, exp_type in enumerate(experiments):
+            # Get the compact per-token intervention path for this prompt and experiment
+            start_pos, end_pos, compact_path = intervention_paths[prompt][
+                exp_type
+            ]  # (end-start, L, E)
+
+            # Calculate the position in the padded tensor
+            # Original position in unpadded: [start_pos, end_pos)
+            # Position in padded: [padding_amt + start_pos, padding_amt + end_pos)
+            padded_start = padding_amt + start_pos
+            padded_end = padding_amt + end_pos
+
+            # Place the compact path at the correct position
+            prompt_intervention_paths_tensor[
+                prompt_idx, exp_idx, padded_start:padded_end
+            ] = compact_path.to(
+                device=prompt_intervention_paths_tensor.device, dtype=th.float32
+            )
+
+        # Control experiment (last one) stays all zeros
 
     # Run with interventions using nnterp's router_probabilities mechanism
     layers_with_routers = list(model.layers_with_routers)
@@ -1090,9 +1278,10 @@ def run_intervention(
         "input_ids": token_ids,
         "attention_mask": attn_mask,
     }
+    # Reshape to (P*N, T, L, E)
     intervention_paths_tensor = prompt_intervention_paths_tensor.view(
-        -1, *prompt_intervention_paths_tensor.shape[2:]
-    )  # (P*N, L, E)
+        -1, max_seq_len, num_layers, num_experts
+    )
 
     with model.trace(batch):
         for i, layer_idx in enumerate(layers_with_routers):
@@ -1146,30 +1335,42 @@ def run_intervention(
                     *token_ids.shape, -1
                 )  # (P*N, T, E)
 
-            # Apply intervention to the last token's probabilities
-            # Subtract the intervention path (scaled by alpha) from probabilities
+            # Apply per-token intervention directly (no mask needed)
+            # intervention_paths_tensor is (P*N, T, L, E), we need layer i: (P*N, T, E)
             intervention_paths_tensor = intervention_paths_tensor.to(
                 device=router_logits.device
             )
-
-            layer_intervention = intervention_paths_tensor[:, i]  # (P*N, E)
+            layer_intervention = intervention_paths_tensor[:, :, i, :]  # (P*N, T, E)
 
             modified_logits = router_logits.clone()
-            modified_logits[:, -1] -= alpha * layer_intervention
+            modified_logits -= alpha * layer_intervention
 
             if router_output_is_tuple:
                 if router_output_len == 3:
-                    new_weights, new_indices = th.topk(
-                        modified_logits[:, -1, :], k=top_k, dim=-1
-                    )
-                    new_weights = F.softmax(
-                        new_weights, dim=-1, dtype=new_weights.dtype
+                    # Recompute topk for all positions
+                    all_new_weights, all_new_indices = th.topk(
+                        modified_logits, k=top_k, dim=-1
+                    )  # (P*N, T, top_k)
+                    all_new_weights = F.softmax(
+                        all_new_weights, dim=-1, dtype=all_new_weights.dtype
                     )
 
-                    modified_weights = cast("th.Tensor", router_weights.save())
-                    modified_weights[:, -1, :] = new_weights
-                    modified_indices = cast("th.Tensor", router_indices.save())
-                    modified_indices[:, -1, :] = new_indices
+                    # Update weights and indices where intervention is non-zero
+                    # Since intervention_paths already has zeros at non-intervention positions,
+                    # we can check if any expert has non-zero intervention to create a mask
+                    intervention_nonzero = (
+                        layer_intervention.abs().sum(dim=-1) > 0
+                    )  # (P*N, T)
+                    mask_topk = intervention_nonzero.unsqueeze(-1).expand_as(
+                        router_weights
+                    )  # (P*N, T, top_k)
+
+                    modified_weights = th.where(
+                        mask_topk, all_new_weights, router_weights
+                    )
+                    modified_indices = th.where(
+                        mask_topk, all_new_indices, router_indices
+                    )
 
                     model.routers_output[layer_idx] = (
                         modified_logits.reshape(-1, modified_logits.shape[-1]),
@@ -1187,7 +1388,7 @@ def run_intervention(
 
         final_logits = model.lm_head.output.save()  # (P*N, T, vocab_size)
 
-    # Extract control probabilities (last N-1 experiment, i.e., last P elements in batch)
+    # Extract control probabilities (last experiment, i.e., every num_experiments-th element)
     final_prompt_logits = final_logits.view(
         num_prompts, num_experiments, -1, final_logits.shape[-1]
     )  # (P, N, T, vocab_size)
@@ -1219,7 +1420,7 @@ def run_intervention(
 
 def run_intervention_experiment(
     model: StandardizedTransformer,
-    avg_paths: dict[str, dict[ExperimentType, th.Tensor]],
+    all_paths: set[PerTokenRouterPath],
     alphas: set[float],
     top_k: int,
     batch_size: int = 64,
@@ -1229,9 +1430,12 @@ def run_intervention_experiment(
     """
     Run the full intervention experiment across multiple alpha values.
 
+    Each prompt gets its own per-token intervention path computed by comparing
+    its router path to the average of other countries' paths.
+
     Args:
         model: The MoE model
-        avg_paths: Average paths per country and experiment type
+        all_paths: Set of PerTokenRouterPath objects for all prompts
         alphas: Set of alpha values to test
         top_k: Number of top experts to select
         batch_size: Number of prompts to process at once
@@ -1244,65 +1448,82 @@ def run_intervention_experiment(
     prompts = generate_prompts(model.tokenizer, templates)
     num_templates = len(PROMPT_TEMPLATES) if templates is None else len(templates)
 
+    # Pre-compute per-prompt intervention paths for all prompts
+    # Organized as: prompt -> experiment_type -> (start_pos, end_pos, intervention tensor)
+    prompt_interventions: dict[
+        CountryPrompt, dict[ExperimentType, tuple[int, int, th.Tensor]]
+    ] = defaultdict(dict)
+
+    logger.info("Pre-computing per-prompt intervention paths...")
+    for path_obj in tqdm(
+        all_paths, desc="Computing interventions", total=len(all_paths)
+    ):
+        intervention = compute_prompt_specific_intervention(path_obj, all_paths)
+
+        # Apply top-m filtering if requested
+        if m > 0:
+            intervention = apply_top_m_filtering(intervention, m)
+
+        # Store with position info for later expansion
+        prompt_interventions[path_obj.prompt][path_obj.experiment_type] = (
+            path_obj.start_pos,
+            path_obj.end_pos,
+            intervention,
+        )
+
     all_results: dict[ExperimentType, set[InterventionResult]] = defaultdict(set)
 
     for alpha in tqdm(
         alphas, desc="Testing alpha values", total=len(alphas), position=3
     ):
-        for target_country in tqdm(
-            COUNTRY_TO_CAPITAL,
-            desc="Testing target countries",
-            total=len(COUNTRY_TO_CAPITAL),
-            position=2,
+        # Process prompts in batches
+        prompts_list = list(prompts)
+        prompt_batches = list(batched(prompts_list, batch_size))
+
+        for batch_prompts in tqdm(
+            prompt_batches,
+            desc="Testing prompt batches",
+            total=len(prompt_batches),
+            position=1,
             leave=False,
         ):
-            country_specific_paths = compute_country_specific_paths(
-                avg_paths, target_country
+            batch_prompts_list = list(batch_prompts)
+
+            # Build intervention paths dict for this batch
+            batch_intervention_paths: dict[
+                CountryPrompt, dict[ExperimentType, tuple[int, int, th.Tensor]]
+            ] = {prompt: prompt_interventions[prompt] for prompt in batch_prompts_list}
+
+            pre_probs, post_probs_dict = run_intervention(
+                batch_prompts_list, model, batch_intervention_paths, alpha, top_k
             )
 
-            # Apply top-m filtering to intervention paths
-            if m > 0:
-                country_specific_paths = {
-                    exp_type: apply_top_m_filtering(path, m)
-                    for exp_type, path in country_specific_paths.items()
-                }
-
-            # Process prompts in batches
-            prompt_batches = list(batched(prompts, batch_size))
-            for batch_prompts in tqdm(
-                prompt_batches,
-                desc="Testing prompt batches",
-                total=len(prompt_batches),
-                position=1,
-                leave=False,
-            ):
-                batch_prompts_list = list(batch_prompts)
-                pre_probs, post_probs_dict = run_intervention(
-                    batch_prompts_list, model, country_specific_paths, alpha, top_k
-                )
-
-                # Process results for each prompt in the batch
-                for prompt_idx, prompt in enumerate(batch_prompts_list):
-                    pre_prob = pre_probs[prompt_idx]
-                    for experiment_type, post_probs in post_probs_dict.items():
-                        post_prob = post_probs[prompt_idx]
-                        # Calculate normalized forgetfulness: (pre - post) / pre
-                        # 1.0 = full forgetting, 0.0 = no change, -1.0 = doubling
-                        normalized_forgetfulness = (
-                            (pre_prob - post_prob) / pre_prob if pre_prob > 0 else 0.0
+            # Process results for each prompt in the batch
+            for prompt_idx, prompt in enumerate(batch_prompts_list):
+                pre_prob = pre_probs[prompt_idx]
+                for experiment_type, post_probs in post_probs_dict.items():
+                    post_prob = post_probs[prompt_idx]
+                    # Calculate normalized forgetfulness: (pre - post) / pre
+                    # 1.0 = full forgetting, 0.0 = no change, -1.0 = doubling
+                    normalized_forgetfulness = (
+                        (pre_prob - post_prob) / pre_prob if pre_prob > 0 else 0.0
+                    )
+                    # For per-prompt interventions, the "intervention_country" is the prompt's own country
+                    all_results[experiment_type].add(
+                        InterventionResult(
+                            country=prompt.country,
+                            intervention_country=prompt.country,
+                            pre_intervention_prob=pre_prob,
+                            post_intervention_prob=post_prob,
+                            forgetfulness=InterventionMetric(
+                                alpha=alpha, value=normalized_forgetfulness
+                            ),
                         )
-                        all_results[experiment_type].add(
-                            InterventionResult(
-                                country=prompt.country,
-                                intervention_country=target_country,
-                                pre_intervention_prob=pre_prob,
-                                post_intervention_prob=post_prob,
-                                forgetfulness=InterventionMetric(
-                                    alpha=alpha, value=normalized_forgetfulness
-                                ),
-                            )
-                        )
+                    )
 
+    # Structure results by country
+    # In the per-prompt intervention approach, each prompt intervenes on itself
+    # So we group by country and compute average forgetfulness across templates
     structured_results: dict[ExperimentType, set[ExperimentResults]] = defaultdict(set)
 
     for experiment_type, results in tqdm(
@@ -1318,113 +1539,101 @@ def run_intervention_experiment(
             position=1,
             leave=False,
         ):
-            relevant_results = {
-                result
-                for result in results
-                if result.intervention_country == target_country
-            }
-            self_intervention_results = {
-                result
-                for result in relevant_results
-                if result.country == target_country
-            }
-            other_intervention_results = {
-                result
-                for result in relevant_results
-                if result.country != target_country
+            # Get all results for this country (each prompt intervenes on itself)
+            country_results = {
+                result for result in results if result.country == target_country
             }
 
-            other_results_averaged = set()
+            # Get results for other countries (for comparison/specificity)
+            other_country_results = {
+                result for result in results if result.country != target_country
+            }
+
             target_results_averaged = set()
+            other_results_averaged = set()
             specificity_scores = set()
+
             for alpha in alphas:
-                other_results_for_alpha = {
-                    result
-                    for result in other_intervention_results
-                    if result.forgetfulness.alpha == alpha
-                }
-                avg_pre_intervention_prob = sum(
-                    [result.pre_intervention_prob for result in other_results_for_alpha]
-                ) / len(other_results_for_alpha)
-                avg_post_intervention_prob = sum(
-                    [
-                        result.post_intervention_prob
-                        for result in other_results_for_alpha
-                    ]
-                ) / len(other_results_for_alpha)
-                # Calculate normalized forgetfulness: (pre - post) / pre
-                # 1.0 = full forgetting, 0.0 = no change, -1.0 = doubling
-                avg_forgetfulness = (
-                    (avg_pre_intervention_prob - avg_post_intervention_prob)
-                    / avg_pre_intervention_prob
-                    if avg_pre_intervention_prob > 0
-                    else 0.0
-                )
-
-                other_results_averaged.add(
-                    InterventionResult(
-                        country="avg",
-                        intervention_country=target_country,
-                        pre_intervention_prob=avg_pre_intervention_prob,
-                        post_intervention_prob=avg_post_intervention_prob,
-                        forgetfulness=InterventionMetric(
-                            alpha=alpha, value=avg_forgetfulness
-                        ),
-                    )
-                )
-
+                # Target country results for this alpha
                 target_results_for_alpha = {
                     result
-                    for result in self_intervention_results
+                    for result in country_results
                     if result.forgetfulness.alpha == alpha
                 }
+
                 assert len(target_results_for_alpha) == num_templates, (
-                    f"Expected {num_templates} target result for alpha {alpha}, got {len(target_results_for_alpha)}"
+                    f"Expected {num_templates} target results for alpha {alpha}, "
+                    f"got {len(target_results_for_alpha)}"
                 )
-                avg_target_pre_intervention_prob = sum(
-                    [
-                        result.pre_intervention_prob
-                        for result in target_results_for_alpha
-                    ]
+
+                avg_target_pre = sum(
+                    r.pre_intervention_prob for r in target_results_for_alpha
                 ) / len(target_results_for_alpha)
-                avg_target_post_intervention_prob = sum(
-                    [
-                        result.post_intervention_prob
-                        for result in target_results_for_alpha
-                    ]
+                avg_target_post = sum(
+                    r.post_intervention_prob for r in target_results_for_alpha
                 ) / len(target_results_for_alpha)
-                # Calculate normalized forgetfulness: (pre - post) / pre
-                # 1.0 = full forgetting, 0.0 = no change, -1.0 = doubling
                 avg_target_forgetfulness = (
-                    (
-                        avg_target_pre_intervention_prob
-                        - avg_target_post_intervention_prob
-                    )
-                    / avg_target_pre_intervention_prob
-                    if avg_target_pre_intervention_prob > 0
+                    (avg_target_pre - avg_target_post) / avg_target_pre
+                    if avg_target_pre > 0
                     else 0.0
                 )
-                specificity_scores.add(
-                    InterventionMetric(
-                        alpha=alpha, value=avg_target_forgetfulness - avg_forgetfulness
-                    )
-                )
+
                 target_results_averaged.add(
                     InterventionResult(
                         country=target_country,
                         intervention_country=target_country,
-                        pre_intervention_prob=avg_target_pre_intervention_prob,
-                        post_intervention_prob=avg_target_post_intervention_prob,
+                        pre_intervention_prob=avg_target_pre,
+                        post_intervention_prob=avg_target_post,
                         forgetfulness=InterventionMetric(
                             alpha=alpha, value=avg_target_forgetfulness
                         ),
                     )
                 )
+
+                # Other countries' results for this alpha (for specificity comparison)
+                other_results_for_alpha = {
+                    result
+                    for result in other_country_results
+                    if result.forgetfulness.alpha == alpha
+                }
+
+                avg_other_pre = sum(
+                    r.pre_intervention_prob for r in other_results_for_alpha
+                ) / len(other_results_for_alpha)
+                avg_other_post = sum(
+                    r.post_intervention_prob for r in other_results_for_alpha
+                ) / len(other_results_for_alpha)
+                avg_other_forgetfulness = (
+                    (avg_other_pre - avg_other_post) / avg_other_pre
+                    if avg_other_pre > 0
+                    else 0.0
+                )
+
+                other_results_averaged.add(
+                    InterventionResult(
+                        country="avg_others",
+                        intervention_country="self",
+                        pre_intervention_prob=avg_other_pre,
+                        post_intervention_prob=avg_other_post,
+                        forgetfulness=InterventionMetric(
+                            alpha=alpha, value=avg_other_forgetfulness
+                        ),
+                    )
+                )
+
+                # Specificity: how much more does target country forget vs others
+                specificity_scores.add(
+                    InterventionMetric(
+                        alpha=alpha,
+                        value=avg_target_forgetfulness - avg_other_forgetfulness,
+                    )
+                )
+
             structured_results[experiment_type].add(
                 ExperimentResults(
                     target_country=target_country,
                     target_results=tuple(target_results_averaged),
-                    other_results=tuple(other_intervention_results),
+                    other_results=tuple(other_country_results),
                     other_results_averaged=tuple(other_results_averaged),
                     specificity_scores=tuple(specificity_scores),
                 )
@@ -1695,41 +1904,43 @@ def plot_results(
 
 
 def apply_top_m_filtering(
-    intervention_path: th.Tensor,  # (L, E)
+    intervention_path: th.Tensor,  # (T, L, E) or (L, E)
     m: int,
 ) -> th.Tensor:
     """
     Apply top-m filtering to an intervention path.
 
     At m=0, returns the original path unchanged.
-    At m>0, keeps only the top m experts overall (across all layers, by absolute value) and zeros the rest.
+    At m>0, keeps only the top m experts overall (across all tokens and layers,
+    by absolute value) and zeros the rest.
 
     Args:
-        intervention_path: The intervention path to filter (L, E)
-        m: Number of top experts to keep overall across all layers. If 0, returns original path.
+        intervention_path: The intervention path to filter (T, L, E) or (L, E)
+        m: Number of top experts to keep overall. If 0, returns original path.
 
     Returns:
-        Filtered intervention path (L, E)
+        Filtered intervention path with same shape as input
     """
     if m == 0:
         return intervention_path
 
-    # Flatten the path to select top m experts overall
-    num_layers, num_experts = intervention_path.shape
-    flattened_path = intervention_path.flatten()  # (L * E,)
+    original_shape = intervention_path.shape
 
-    # Get top m by absolute value across all layers
-    total_experts = num_layers * num_experts
-    k = min(m, total_experts)
-    abs_values, top_indices = th.topk(th.abs(flattened_path), k=k, dim=-1)
+    # Flatten the path to select top m experts overall
+    flattened_path = intervention_path.flatten()
+    total_elements = flattened_path.numel()
+
+    # Get top m by absolute value
+    k = min(m, total_elements)
+    _, top_indices = th.topk(th.abs(flattened_path), k=k, dim=-1)
 
     # Create a mask: True for top m, False for others
-    mask = th.zeros(total_experts, dtype=th.bool, device=intervention_path.device)
+    mask = th.zeros(total_elements, dtype=th.bool, device=intervention_path.device)
     mask[top_indices] = True
 
-    # Apply mask and reshape back to (L, E)
+    # Apply mask and reshape back to original shape
     filtered_flattened = flattened_path * mask.float()
-    filtered_path = filtered_flattened.reshape(num_layers, num_experts)
+    filtered_path = filtered_flattened.reshape(original_shape)
 
     return filtered_path
 
@@ -1738,7 +1949,7 @@ def apply_top_m_filtering(
 def extract_topk_predictions_across_alphas(
     model: StandardizedTransformer,
     prompt: CountryPrompt,
-    intervention_path: th.Tensor,  # (L, E)
+    intervention_path_info: tuple[int, int, th.Tensor],  # (start, end, compact path)
     alphas: list[float],
     num_top_tokens: int,
     router_top_k: int,
@@ -1747,10 +1958,14 @@ def extract_topk_predictions_across_alphas(
     """
     Extract top-k token predictions at each alpha level for a single prompt.
 
+    The intervention path is compact (end - start, L, E) and covers only
+    the relevant token positions [start, end).
+
     Args:
         model: The MoE model
         prompt: The prompt to run
-        intervention_path: The country-specific path to subtract (L, E)
+        intervention_path_info: Tuple of (start_pos, end_pos, compact_path)
+            where compact_path has shape (end - start, L, E)
         alphas: List of alpha values to test
         num_top_tokens: Number of top tokens to extract
         router_top_k: Number of top experts per layer
@@ -1762,22 +1977,35 @@ def extract_topk_predictions_across_alphas(
     layers_with_routers = list(model.layers_with_routers)
     device = next(model.parameters()).device
 
+    # Unpack compact path info
+    start_pos, end_pos, compact_path = intervention_path_info
+
     logger.trace(f"Prompt: {_sanitize_string_for_display(prompt.formatted_text)}")
-    logger.trace(f"Intervention path: {intervention_path.shape}")
+    logger.trace(f"Intervention path: {compact_path.shape} at [{start_pos}, {end_pos})")
     logger.trace(f"Alphas: {alphas}")
     logger.trace(f"Top-m filtering: m={m}")
-
-    # Apply top-m filtering to intervention path
-    filtered_intervention_path = apply_top_m_filtering(intervention_path, m)
 
     # Prepare input
     token_ids = prompt.token_ids.unsqueeze(0).to(device)  # (1, T)
     seq_len = token_ids.shape[1]
 
-    # Move intervention path to device
-    intervention_path_device = filtered_intervention_path.to(
+    # Apply top-m filtering to compact intervention path
+    filtered_compact_path = apply_top_m_filtering(compact_path, m)
+
+    # Expand compact path to full sequence length
+    num_layers = filtered_compact_path.shape[1]
+    num_experts = filtered_compact_path.shape[2]
+    full_intervention_path = th.zeros(
+        (seq_len, num_layers, num_experts),
+        dtype=th.float32,
+        device=device,
+    )
+    full_intervention_path[start_pos:end_pos] = filtered_compact_path.to(
         device=device, dtype=th.float32
     )
+
+    # Move intervention path to device: (T, L, E)
+    intervention_path_device = full_intervention_path
 
     predictions: list[TopKPrediction] = []
 
@@ -1818,21 +2046,37 @@ def extract_topk_predictions_across_alphas(
                     router_scores = cast("th.Tensor", router_output.save())
                     router_logits = router_scores.reshape(1, seq_len, -1)
 
-                # Apply intervention to the last token
-                layer_intervention = intervention_path_device[i]  # (E,)
+                # Apply per-token intervention directly (no mask needed)
+                # intervention_path_device is (T, L, E), we need layer i: (T, E)
+                layer_intervention = intervention_path_device[:, i, :]  # (T, E)
+
                 modified_logits = router_logits.clone()
-                modified_logits[:, -1, :] -= alpha * layer_intervention
+                # Apply intervention: (1, T, E) -= alpha * (T, E) -> broadcast works
+                modified_logits -= alpha * layer_intervention.unsqueeze(0)
 
                 if router_output_is_tuple and router_output_len == 3:
-                    new_weights, new_indices = th.topk(
-                        modified_logits[:, -1, :], k=router_top_k, dim=-1
-                    )
-                    new_weights = F.softmax(new_weights, dim=-1)
+                    # Recompute topk for all positions
+                    all_new_weights, all_new_indices = th.topk(
+                        modified_logits, k=router_top_k, dim=-1
+                    )  # (1, T, top_k)
+                    all_new_weights = F.softmax(all_new_weights, dim=-1)
 
-                    modified_weights = router_weights.clone()
-                    modified_weights[:, -1, :] = new_weights
-                    modified_indices = router_indices.clone()
-                    modified_indices[:, -1, :] = new_indices
+                    # Update weights and indices where intervention is non-zero
+                    intervention_nonzero = (
+                        layer_intervention.abs().sum(dim=-1) > 0
+                    )  # (T,)
+                    mask_topk = (
+                        intervention_nonzero.unsqueeze(0)
+                        .unsqueeze(-1)
+                        .expand_as(router_weights)
+                    )  # (1, T, top_k)
+
+                    modified_weights = th.where(
+                        mask_topk, all_new_weights, router_weights
+                    )
+                    modified_indices = th.where(
+                        mask_topk, all_new_indices, router_indices
+                    )
 
                     model.routers_output[layer_idx] = (
                         modified_logits.reshape(-1, modified_logits.shape[-1]),
@@ -2222,29 +2466,22 @@ def capital_country(
     # Step 1: Extract router paths for all prompts
     # (prompts are generated and cached internally by generate_prompts)
     logger.info("=" * 80)
-    logger.info("STEP 1: Extracting router paths")
+    logger.info("STEP 1: Extracting per-token router paths")
     logger.info("=" * 80)
 
-    country_paths = extract_router_paths(
+    all_paths = extract_router_paths(
         model,
         top_k=top_k,
         batch_size=router_path_batch_size,
         postprocessor=postprocessor_enum,
         templates=templates,
     )
-
-    # Step 2: Compute average paths
-    logger.info("=" * 80)
-    logger.info("STEP 2: Computing average paths")
-    logger.info("=" * 80)
-
-    avg_paths = compute_average_paths(country_paths)
-    logger.info(f"Computed average paths for {len(avg_paths)} countries")
+    logger.info(f"Extracted {len(all_paths)} per-token router paths")
 
     if not topk_only:
-        # Step 3: Run intervention experiments
+        # Step 2: Run intervention experiments
         logger.info("=" * 80)
-        logger.info("STEP 3: Running intervention experiments")
+        logger.info("STEP 2: Running intervention experiments")
         logger.info("=" * 80)
         logger.info(f"Testing alphas: {alphas}")
         logger.info(f"Testing m values: {m_values}")
@@ -2259,7 +2496,7 @@ def capital_country(
             logger.info(f"Running intervention experiments with m={m}")
             results = run_intervention_experiment(
                 model,
-                avg_paths,
+                all_paths,
                 alphas,
                 top_k,
                 batch_size=intervention_batch_size,
@@ -2364,53 +2601,74 @@ def capital_country(
     else:
         logger.info("Skipping steps 1-4 (--topk-only mode)")
 
-    # Step 5: Generate top-k prediction visualizations
+    # Step 3: Generate top-k prediction visualizations
     logger.info("=" * 80)
-    logger.info("STEP 5: Generating top-k prediction visualizations")
+    logger.info("STEP 3: Generating top-k prediction visualizations")
     logger.info("=" * 80)
 
-    # Get prompts using the same templates as the rest of the experiment
-    topk_prompts = generate_prompts(tokenizer, templates)
     alphas_list = sorted(alphas)
+
+    # Group paths by prompt for efficient lookup
+    paths_by_prompt: dict[CountryPrompt, dict[ExperimentType, PerTokenRouterPath]] = (
+        defaultdict(dict)
+    )
+    for path_obj in all_paths:
+        paths_by_prompt[path_obj.prompt][path_obj.experiment_type] = path_obj
 
     for target_country in tqdm(
         COUNTRY_TO_CAPITAL.keys(),
         desc="Generating top-k grids",
         total=len(COUNTRY_TO_CAPITAL),
     ):
-        # Get prompts for this country
-        country_prompts = [p for p in topk_prompts if p.country == target_country]
-        if not country_prompts:
-            logger.warning(f"No prompts found for {target_country}, skipping top-k viz")
+        # Get paths for this country's prompts
+        country_path_objs = [
+            path_obj
+            for path_obj in all_paths
+            if path_obj.prompt.country == target_country
+        ]
+        if not country_path_objs:
+            logger.warning(f"No paths found for {target_country}, skipping top-k viz")
             continue
 
-        # Compute country-specific intervention path (once per country)
-        country_specific_paths = compute_country_specific_paths(
-            avg_paths, target_country
-        )
-        for experiment_type, intervention_path in country_specific_paths.items():
-            # Create country directory
-            country_slug = target_country.lower().replace(" ", "_")
-            country_topk_dir = (
-                Path(FIGURE_DIR) / "capital_country" / "topk" / country_slug
-            )
-            country_topk_dir.mkdir(parents=True, exist_ok=True)
+        # Create country directory
+        country_slug = target_country.lower().replace(" ", "_")
+        country_topk_dir = Path(FIGURE_DIR) / "capital_country" / "topk" / country_slug
+        country_topk_dir.mkdir(parents=True, exist_ok=True)
 
-            # Iterate over m values
-            for m in m_values:
-                for prompt_idx, prompt in enumerate(
-                    tqdm(
-                        country_prompts,
-                        desc=f"Processing {target_country} prompts (m={m})",
-                        total=len(country_prompts),
-                        leave=False,
+        # Group by prompt
+        prompts_for_country = list({path_obj.prompt for path_obj in country_path_objs})
+
+        # Iterate over m values
+        for m in m_values:
+            for prompt_idx, prompt in enumerate(
+                tqdm(
+                    prompts_for_country,
+                    desc=f"Processing {target_country} prompts (m={m})",
+                    total=len(prompts_for_country),
+                    leave=False,
+                )
+            ):
+                # Get paths for this prompt
+                prompt_paths = paths_by_prompt[prompt]
+
+                for experiment_type, path_obj in prompt_paths.items():
+                    # Compute prompt-specific intervention (compact format)
+                    intervention_path = compute_prompt_specific_intervention(
+                        path_obj, all_paths
                     )
-                ):
+
+                    # Bundle position info with the intervention path
+                    intervention_path_info = (
+                        path_obj.start_pos,
+                        path_obj.end_pos,
+                        intervention_path,
+                    )
+
                     # Extract top-k predictions at each alpha
                     predictions = extract_topk_predictions_across_alphas(
                         model=model,
                         prompt=prompt,
-                        intervention_path=intervention_path,
+                        intervention_path_info=intervention_path_info,
                         alphas=alphas_list,
                         num_top_tokens=topk_num_tokens,
                         router_top_k=top_k,
@@ -2434,7 +2692,9 @@ def capital_country(
     logger.info("=" * 80)
     logger.info("EXPERIMENT COMPLETE")
     logger.info("=" * 80)
-    logger.info(f"Total prompts: {len(generate_prompts(tokenizer, templates))}")
+    num_prompts = len(generate_prompts(tokenizer, templates))
+    logger.info(f"Total prompts: {num_prompts}")
+    logger.info(f"Total per-token paths: {len(all_paths)}")
     logger.info(f"Countries tested: {len(COUNTRY_TO_CAPITAL)}")
     logger.info(f"Templates per country: {len(templates)}")
     logger.info(f"Results saved to: {output_path}")
@@ -2444,7 +2704,9 @@ def capital_country(
     logger.info(
         f"Top-m experiments: m values from {m_min} to {m_max} ({m_steps} steps, values: {m_values})"
     )
-    logger.info(f"Total top-k grids generated: {len(topk_prompts) * len(m_values)}")
+    logger.info(
+        f"Total top-k grids generated: {num_prompts * len(m_values) * 3}"
+    )  # 3 experiment types
 
 
 if __name__ == "__main__":
