@@ -234,6 +234,11 @@ class Activations:
                                     )
                                 else:
                                     current_batch[key] = value
+                            case tuple():
+                                if key in current_batch:
+                                    current_batch[key] = (*current_batch[key], *value)
+                                else:
+                                    current_batch[key] = value
                             case _:
                                 if key in current_batch:
                                     assert current_batch[key] == value, (
@@ -285,6 +290,11 @@ class Activations:
                                     assert current_batch[key] == value, (
                                         f"Inconsistent value for {key}: {current_batch[key]} != {value}"
                                     )
+                                else:
+                                    current_batch[key] = value
+                            case tuple():
+                                if key in current_batch:
+                                    current_batch[key] = (*current_batch[key], *value)
                                 else:
                                     current_batch[key] = value
                             case _:

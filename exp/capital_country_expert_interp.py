@@ -248,7 +248,9 @@ def compute_expert_importance_and_routing_masks(
     num_layers = len(layers_with_routers)
 
     # (T, L, E) binary mask of experts pre-intervention
-    baseline_mask: th.Tensor = th.zeros(seq_len, num_layers, num_experts, dtype=th.bool)
+    baseline_mask: th.Tensor = th.zeros(
+        seq_len, num_layers, num_experts, dtype=th.bool, device=model.device
+    )
     # Get baseline logits and routing pattern
     with model.trace(batch):
         # Capture routing pattern
@@ -301,14 +303,19 @@ def compute_expert_importance_and_routing_masks(
         intervention_mask = th.zeros(
             processing_batch_size, seq_len, num_layers, num_experts, dtype=th.bool
         )
-        for batch_idx, (token_idx, layer_idx, expert_idx) in token_layer_expert_batch:
-            intervention_mask[batch_idx, token_idx, layer_idx, expert_idx] = True
+        for relative_batch_idx, (
+            _batch_idx,
+            (token_idx, layer_idx, expert_idx),
+        ) in enumerate(token_layer_expert_batch):
+            intervention_mask[relative_batch_idx, token_idx, layer_idx, expert_idx] = (
+                True
+            )
 
         # (B, T, L, E) -> (B*T, L, E)
         intervention_mask_flat = intervention_mask.view(-1, num_layers, num_experts)
         # (B,)
         intervention_batch_indices = th.tensor(
-            batch_idx for batch_idx, _ in token_layer_expert_batch
+            [batch_idx for batch_idx, _ in token_layer_expert_batch],
         )
 
         with model.trace(current_batch):
@@ -410,7 +417,12 @@ def run_incremental_ablations(
     # Build intervention masks for each ablation level
     # intervention_mask[i] ablates the top-(i+1) experts
     intervention_mask = th.zeros(
-        max_experts_to_ablate, seq_len, num_layers, num_experts, dtype=th.bool
+        max_experts_to_ablate,
+        seq_len,
+        num_layers,
+        num_experts,
+        dtype=th.bool,
+        device=model.device,
     )  # (B, T, L, E)
     new_routing_pattern = intervention_mask.clone()
 
@@ -587,7 +599,7 @@ def search_similar_activations_batched(
         )
         for target_batch in target_batches
     ]
-    target_pattern_indices = batched(range(num_targets), target_batch_size)
+    target_pattern_indices = tuple(batched(range(num_targets), target_batch_size))
 
     # Initialize per-target heaps to track top-k
     # Each entry is (top-k similarity scores, top-k similar activations)
@@ -614,7 +626,7 @@ def search_similar_activations_batched(
 
         num_documents = len(batch_tokens)
         document_lengths = th.tensor(
-            (len(tokens) for tokens in batch_tokens), dtype=th.long
+            [len(tokens) for tokens in batch_tokens], dtype=th.long
         )
         total_document_length = document_lengths.sum()
         document_start_indices = th.cat(
@@ -625,12 +637,12 @@ def search_similar_activations_batched(
         document_idx = document_start_mask.cumsum(dim=0) - 1
 
         document_idx_mask = th.zeros(
-            num_documents, total_document_length, dtype=th.long
+            num_documents, total_document_length, dtype=th.bool
         )
-        document_idx_mask.scatter_(0, document_idx, 1)
+        document_idx_mask.scatter_(0, document_idx.unsqueeze(0), 1)
 
         relative_token_idx_per_document = (
-            th.arange(document_lengths.sum()).unsqueeze(0).expand(num_documents, -1)
+            th.arange(document_lengths.sum()).unsqueeze(0).repeat(num_documents, 1)
         )
         relative_token_idx_per_document -= document_start_indices.unsqueeze(1)
         relative_token_idx_per_document[~document_idx_mask] = 0
@@ -690,9 +702,12 @@ def search_similar_activations_batched(
                         sample_tokens_prefix = sample_tokens[:activating_token_idx]
                         sample_tokens_suffix = sample_tokens[activating_token_idx + 1 :]
 
-                        text_passages = tokenizer.decode_batch(
-                            [sample_tokens, sample_tokens_prefix, sample_tokens_suffix],
-                            skip_special_tokens=True,
+                        text_passage = tokenizer.convert_tokens_to_string(sample_tokens)
+                        text_passage_prefix = tokenizer.convert_tokens_to_string(
+                            sample_tokens_prefix
+                        )
+                        text_passage_suffix = tokenizer.convert_tokens_to_string(
+                            sample_tokens_suffix
                         )
 
                         current_similarities[top_k_idx] = new_similarity_score
@@ -701,10 +716,10 @@ def search_similar_activations_batched(
                         current_activations[top_k_idx] = SimilarActivation(
                             similarity_score=new_similarity_score.item(),
                             routing_mask=routing_mask_reshaped,
-                            text_passage=text_passages[0],
+                            text_passage=text_passage,
                             activating_sample_slice=(
-                                len(text_passages[1]),
-                                len(text_passages[0]) - len(text_passages[2]),
+                                len(text_passage_prefix),
+                                len(text_passage) - len(text_passage_suffix),
                             ),
                         )
                     else:
@@ -809,6 +824,7 @@ def capital_country_expert_interp(
         device_map="auto",
         torch_dtype=model_dtype_torch,
         token=hf_token,
+        dispatch=True,
     )
     tokenizer = model.tokenizer
 

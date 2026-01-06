@@ -8,11 +8,11 @@ TARGET_COUNTRY=${1:-"France"}
 MODEL_NAME=${2:-"olmoe-i"}
 MAX_EXPERTS_TO_ABLATE=${3:-16}
 TOP_K_SIMILAR=${4:-10}
-LOG_LEVEL=${5:-"INFO"}
+LOG_LEVEL=${5:-"DEBUG"}
 
 # Optional parameters with defaults
 DATASET_NAME=${6:-"lmsys"}
-MAX_SAMPLES_TO_SEARCH=${7:-100000}
+MAX_SAMPLES_TO_SEARCH=${7:-500000}
 PROCESSING_BATCH_SIZE=${8:-32}
 ACTIVATION_BATCH_SIZE=${9:-4096}
 SIMILARITY_METHOD=${10:-"jaccard"}
@@ -30,7 +30,7 @@ echo "Similarity method: $SIMILARITY_METHOD"
 echo "Log level: $LOG_LEVEL"
 
 # Run the capital country expert interpretability experiment
-uv run python -m exp.capital_country_expert_interp \
+uv run python -m pdb -c continue exp/capital_country_expert_interp.py capital-country-expert-interp \
     --model-name "$MODEL_NAME" \
     --dataset-name "$DATASET_NAME" \
     --target-country "$TARGET_COUNTRY" \
