@@ -152,6 +152,15 @@ class SimilarActivation:
     text_passage: str
     activating_sample_slice: tuple[int, int]
 
+    def highlighted_text_passage(self) -> str:
+        """Highlight the text passage with the activating sample slice."""
+        start, end = self.activating_sample_slice
+        highlighted_token = self.text_passage[start:end]
+        prefix = self.text_passage[:start]
+        suffix = self.text_passage[end:]
+
+        return f"{prefix}<<{highlighted_token}>>{suffix}"
+
 
 @dataclass
 class InterpretabilityResult:
@@ -238,7 +247,7 @@ def compute_expert_importance_and_routing_masks(
     num_experts = len(model.layers[layers_with_routers[0]].mlp.experts)
     num_layers = len(layers_with_routers)
 
-    # (1, T, L, E) binary mask of experts pre-intervention
+    # (T, L, E) binary mask of experts pre-intervention
     baseline_mask: th.Tensor = th.zeros(seq_len, num_layers, num_experts, dtype=th.bool)
     # Get baseline logits and routing pattern
     with model.trace(batch):
@@ -573,10 +582,7 @@ def search_similar_activations_batched(
     target_batches = batched(target_patterns, target_batch_size)
     target_patterns_flat = [
         th.stack(
-            [
-                convert_router_logits_to_paths(pattern, router_top_k).flatten().cpu()
-                for pattern in target_batch
-            ],
+            [pattern.flatten().cpu() for pattern in target_batch],
             dim=0,
         )
         for target_batch in target_batches
@@ -624,7 +630,7 @@ def search_similar_activations_batched(
         document_idx_mask.scatter_(0, document_idx, 1)
 
         relative_token_idx_per_document = (
-            th.range(document_lengths.sum()).unsqueeze(0).expand(num_documents, -1)
+            th.arange(document_lengths.sum()).unsqueeze(0).expand(num_documents, -1)
         )
         relative_token_idx_per_document -= document_start_indices.unsqueeze(1)
         relative_token_idx_per_document[~document_idx_mask] = 0
@@ -632,9 +638,10 @@ def search_similar_activations_batched(
         relative_token_idx = relative_token_idx_per_document.sum(dim=0)
 
         batch_size, num_layers, num_experts = router_logits.shape
-        router_masks_flat = convert_router_logits_to_paths(
+        router_masks = convert_router_logits_to_paths(
             router_logits, router_top_k
-        ).view(batch_size, -1)  # (B, L*E)
+        )  # (B, L, E)
+        router_masks_flat = router_masks.view(batch_size, -1)  # (B, L*E)
 
         for target_indices, target_masks_flat in zip(
             target_pattern_indices, target_patterns_flat, strict=True
@@ -689,9 +696,11 @@ def search_similar_activations_batched(
                         )
 
                         current_similarities[top_k_idx] = new_similarity_score
+                        # Reshape flat mask back to (L, E) for SimilarActivation
+                        routing_mask_reshaped = router_masks[batch_idx].cpu()  # (L, E)
                         current_activations[top_k_idx] = SimilarActivation(
-                            similarity_score=new_similarity_score,
-                            routing_mask=router_masks_flat[new_similarity_idx],
+                            similarity_score=new_similarity_score.item(),
+                            routing_mask=routing_mask_reshaped,
                             text_passage=text_passages[0],
                             activating_sample_slice=(
                                 len(text_passages[1]),
@@ -916,8 +925,8 @@ def capital_country_expert_interp(
     # Batch all patterns together: baseline (for pre) + all intervention patterns (for post)
     # We search for baseline once and reuse it for all interventions
     # Pattern order: [baseline, intervention_0, intervention_1, ..., intervention_N-1]
-    all_patterns = [baseline_routing.mask] + [
-        result.routing_pattern.mask for result in intervention_results
+    all_patterns = [baseline_routing] + [
+        result.routing_pattern for result in intervention_results
     ]
     final_token_patterns = [pattern[-1] for pattern in all_patterns]
 
@@ -979,13 +988,17 @@ def capital_country_expert_interp(
     output_file = output_path / f"{country_slug}.yaml"
 
     # Convert to serializable format
+    # baseline_routing_pattern is (T, L, E), extract last token pattern (L, E)
+    baseline_routing_last_token = (
+        output.baseline_routing_pattern[-1].cpu().numpy()
+    )  # (L, E)
+
     save_data = {
         "target_country": output.target_country,
         "target_capital": output.target_capital,
         "prompt": output.prompt,
         "baseline_prob": output.baseline_prob,
-        "baseline_routing_mask": output.baseline_routing_pattern.mask,
-        "baseline_routing_indices": output.baseline_routing_pattern.top_k_indices,
+        "baseline_routing_mask": baseline_routing_last_token.tolist(),
         "expert_importances": [
             {
                 "token_idx": exp.location.token_idx,
@@ -1009,25 +1022,31 @@ def capital_country_expert_interp(
                 "pre_intervention_prob": ir.intervention.pre_intervention_prob,
                 "post_intervention_prob": ir.intervention.post_intervention_prob,
                 "prob_change": ir.intervention.prob_change,
-                "routing_mask": ir.intervention.routing_pattern.mask,
-                "routing_indices": ir.intervention.routing_pattern.top_k_indices,
+                # routing_pattern is (T, L, E) or (L, E), extract last token if needed
+                "routing_mask": (
+                    ir.intervention.routing_pattern[-1].cpu().numpy().tolist()
+                    if ir.intervention.routing_pattern.ndim == 3
+                    else ir.intervention.routing_pattern.cpu().numpy().tolist()
+                ),
                 "generated_token": ir.intervention.generated_token,
                 "generated_token_prob": ir.intervention.generated_token_prob,
                 "similar_pre": [
                     {
-                        "similarity_score": sa.similarity_score,
-                        "routing_mask": sa.routing_mask,
-                        "file_idx": sa.file_idx,
-                        "sample_idx": sa.sample_idx,
+                        "similarity_score": float(sa.similarity_score),
+                        "routing_mask": sa.routing_mask.cpu().numpy().tolist(),
+                        "text_passage": sa.text_passage,
+                        "activating_sample_slice": list(sa.activating_sample_slice),
+                        "highlighted_text_passage": sa.highlighted_text_passage(),
                     }
                     for sa in ir.similar_activations_pre
                 ],
                 "similar_post": [
                     {
-                        "similarity_score": sa.similarity_score,
-                        "routing_mask": sa.routing_mask,
-                        "file_idx": sa.file_idx,
-                        "sample_idx": sa.sample_idx,
+                        "similarity_score": float(sa.similarity_score),
+                        "routing_mask": sa.routing_mask.cpu().numpy().tolist(),
+                        "text_passage": sa.text_passage,
+                        "activating_sample_slice": list(sa.activating_sample_slice),
+                        "highlighted_text_passage": sa.highlighted_text_passage(),
                     }
                     for sa in ir.similar_activations_post
                 ],
