@@ -342,7 +342,7 @@ def compute_expert_importance_and_routing_masks(
         ):
             # Compute mean change across all correct answer tokens
             changes = [
-                probs[token_idx] - baseline_probs[token_idx]
+                (probs[token_idx] - baseline_probs[token_idx]).item()
                 for token_idx in correct_answer_tokens.values()
             ]
 
@@ -564,7 +564,7 @@ def search_similar_activations_batched(
     target_batch_size: int = 17,
     activation_batch_size: int = 4096,
     router_top_k: int = 8,
-    activation_context_length: int = 32,
+    activation_context_length: int = 48,
     similarity_method: Literal["jaccard", "cosine", "hamming"] = "jaccard",
 ) -> list[list[SimilarActivation]]:
     """
@@ -652,7 +652,7 @@ def search_similar_activations_batched(
         batch_size, num_layers, num_experts = router_logits.shape
         router_masks = convert_router_logits_to_paths(
             router_logits, router_top_k
-        )  # (B, L, E)
+        ).bool()  # (B, L, E)
         router_masks_flat = router_masks.view(batch_size, -1)  # (B, L*E)
 
         for target_indices, target_masks_flat in zip(
@@ -868,6 +868,9 @@ def capital_country_expert_interp(
     # Create ordered dictionary
     correct_answer_tokens = {token: token_id for token, token_id, _ in token_distances}
 
+    # Only take the first one (the closest token)
+    correct_answer_tokens = {token_distances[0][0]: token_distances[0][1]}
+
     logger.info(
         f"Correct answer tokens (ordered by edit distance): {correct_answer_tokens}"
     )
@@ -1001,7 +1004,8 @@ def capital_country_expert_interp(
     output_path.mkdir(parents=True, exist_ok=True)
 
     country_slug = target_country.lower().replace(" ", "_")
-    output_file = output_path / f"{country_slug}.yaml"
+    output_file = output_path / f"{country_slug}_raw.yaml"
+    readable_output_file = output_path / f"{country_slug}.json"
 
     # Convert to serializable format
     # baseline_routing_pattern is (T, L, E), extract last token pattern (L, E)
@@ -1073,7 +1077,60 @@ def capital_country_expert_interp(
 
     with open(output_file, "w") as f:
         yaml.dump(save_data, f)
-    logger.info(f"Saved results to {output_file}")
+    logger.info(f"Saved raw results to {output_file}")
+
+    readable_data = {
+        "target_country": output.target_country,
+        "target_capital": output.target_capital,
+        "prompt": output.prompt,
+        "baseline_prob": output.baseline_prob,
+        "expert_importances": [
+            {
+                "token_idx": exp.location.token_idx,
+                "layer_idx": exp.location.layer_idx,
+                "expert_idx": exp.location.expert_idx,
+                "importance": exp.importance,
+            }
+            for exp in output.expert_importances[:max_experts_to_ablate]
+        ],
+        "intervention_results": [
+            {
+                "num_experts_ablated": ir.intervention.num_experts_ablated,
+                "ablated_experts": [
+                    {
+                        "token_idx": loc.token_idx,
+                        "layer_idx": loc.layer_idx,
+                        "expert_idx": loc.expert_idx,
+                    }
+                    for loc in ir.intervention.ablated_experts
+                ],
+                "pre_intervention_prob": ir.intervention.pre_intervention_prob,
+                "post_intervention_prob": ir.intervention.post_intervention_prob,
+                "prob_change": ir.intervention.prob_change,
+                "generated_token": ir.intervention.generated_token,
+                "generated_token_prob": ir.intervention.generated_token_prob,
+                "similar_pre": [
+                    {
+                        "similarity_score": float(sa.similarity_score),
+                        "highlighted_text_passage": sa.highlighted_text_passage(),
+                    }
+                    for sa in ir.similar_activations_pre
+                ],
+                "similar_post": [
+                    {
+                        "similarity_score": float(sa.similarity_score),
+                        "highlighted_text_passage": sa.highlighted_text_passage(),
+                    }
+                    for sa in ir.similar_activations_post
+                ],
+            }
+            for ir in output.intervention_results
+        ],
+    }
+
+    with open(readable_output_file, "w") as f:
+        yaml.dump(readable_data, f)
+    logger.info(f"Saved readable results to {readable_output_file}")
 
     # Print summary
     logger.info("=" * 80)
