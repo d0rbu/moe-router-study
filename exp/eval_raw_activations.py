@@ -19,7 +19,6 @@ from sae_bench.custom_saes.run_all_evals_dictionary_learning_saes import (
     output_folders as EVAL_DIRS,
 )
 from sae_bench.evals.autointerp.eval_config import AutoInterpEvalConfig
-from sae_bench.evals.sparse_probing.eval_config import SparseProbingEvalConfig
 from sae_bench.sae_bench_utils import general_utils
 from transformers import AutoConfig
 
@@ -27,7 +26,6 @@ from core.dtype import get_dtype
 from core.model import get_model_config
 from exp import OUTPUT_DIR
 from exp.eval_raw_activations_autointerp import run_eval as run_autointerp_eval
-from exp.eval_raw_activations_sparse_probing import run_eval as run_sparse_probing_eval
 from exp.get_activations import ActivationKeys
 
 load_dotenv()
@@ -175,7 +173,6 @@ def eval_raw_activations(
     ctxlen: int = 256,
     load_in_8bit: bool = False,
     saebench_batchsize: int = 8,
-    lower_sparse_probing_vram_usage: bool = False,
     n_tokens: int = 10_000_000,
     batchsize: int = 512,
     n_latents: int = 1000,
@@ -200,15 +197,13 @@ def eval_raw_activations(
     log_level: str = "INFO",
     skip_intruder: bool = False,
     skip_autointerp: bool = False,
-    skip_sparse_probing: bool = False,
 ) -> None:
     """
-    Evaluate raw model activations using all three evaluation types.
+    Evaluate raw model activations using intruder and autointerp evaluations.
 
     This unified script runs:
     1. Intruder detection evaluation
     2. SAEBench autointerp evaluation
-    3. SAEBench sparse probing evaluation
 
     Args:
         model_name: Model name to evaluate
@@ -242,7 +237,6 @@ def eval_raw_activations(
         log_level: Logging level
         skip_intruder: Skip intruder evaluation
         skip_autointerp: Skip autointerp evaluation
-        skip_sparse_probing: Skip sparse probing evaluation
     """
     logger.remove()
     logger.add(sys.stderr, level=log_level)
@@ -251,9 +245,7 @@ def eval_raw_activations(
     activation_key = ActivationKeys(activation_key)
 
     # Ensure at least one evaluation is enabled
-    assert not (skip_intruder and skip_autointerp and skip_sparse_probing), (
-        "Cannot skip all evaluations"
-    )
+    assert not (skip_intruder and skip_autointerp), "Cannot skip all evaluations"
 
     th_dtype = get_dtype(dtype)
     str_dtype = th_dtype.__str__().split(".")[-1]
@@ -287,7 +279,6 @@ def eval_raw_activations(
     results = {
         "intruder": None,
         "autointerp": None,
-        "sparse_probing": None,
     }
 
     # Run intruder evaluation
@@ -364,42 +355,6 @@ def eval_raw_activations(
             logger.error(f"❌ Autointerp evaluation failed: {e}")
             traceback.print_exc()
             results["autointerp"] = False
-
-    # Run sparse probing evaluation
-    if not skip_sparse_probing:
-        logger.info("=" * 80)
-        logger.info("Running sparse probing evaluation...")
-        logger.info("=" * 80)
-        try:
-            device = general_utils.setup_environment()
-            sparse_probing_eval_dir = EVAL_DIRS["sparse_probing"]
-            sparse_probing_eval_dir = os.path.join(OUTPUT_DIR, sparse_probing_eval_dir)
-            logger.trace(
-                f"Running sparse probing evaluation in {sparse_probing_eval_dir}"
-            )
-            run_sparse_probing_eval(
-                config=SparseProbingEvalConfig(
-                    model_name=model_name,
-                    random_seed=seed,
-                    llm_dtype=str_dtype,
-                    lower_vram_usage=lower_sparse_probing_vram_usage,
-                ),
-                activation_key=activation_key,
-                layers=layers_sorted,
-                device=device,
-                output_path=sparse_probing_eval_dir,
-                force_rerun=False,
-                clean_up_activations=False,
-                save_activations=True,
-                artifacts_path=artifacts_path,
-                log_level=log_level,
-            )
-            results["sparse_probing"] = True
-            logger.info("✅ Sparse probing evaluation complete")
-        except Exception as e:
-            logger.error(f"❌ Sparse probing evaluation failed: {e}")
-            traceback.print_exc()
-            results["sparse_probing"] = False
 
     # Print summary
     logger.info("=" * 80)

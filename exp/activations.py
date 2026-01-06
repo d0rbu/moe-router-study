@@ -108,15 +108,21 @@ class Activations:
         cls.device = device
 
         logger.trace(f"Loading or reshuffling activations from {activation_dir}")
-        cls.activation_filepaths = await cls.load_files(
-            activation_dir=activation_dir,
-            seed=seed,
-            tokens_per_file_in_reshuffled=tokens_per_file_in_reshuffled,
-            shuffle_batch_size=shuffle_batch_size,
-            debug=debug,
-            num_workers=num_workers,
-            device_type=device_type,
-        )
+        if tokens_per_file_in_reshuffled == 0:
+            cls.activation_filepaths = await cls.load_files(
+                activation_dir=activation_dir,
+                debug=debug,
+            )
+        else:
+            cls.activation_filepaths = await cls.load_reshuffled_files(
+                activation_dir=activation_dir,
+                seed=seed,
+                tokens_per_file_in_reshuffled=tokens_per_file_in_reshuffled,
+                shuffle_batch_size=shuffle_batch_size,
+                debug=debug,
+                num_workers=num_workers,
+                device_type=device_type,
+            )
 
         return cls(
             device=device,
@@ -338,6 +344,17 @@ class Activations:
 
     @classmethod
     async def load_files(
+        cls,
+        activation_dir: str,
+        debug: bool = False,
+    ) -> list[str]:
+        """Load unshuffled activation files from the activation directory."""
+        activation_filepaths = cls.get_activation_filepaths(activation_dir, debug=debug)
+        logger.trace(f"Found unshuffled activation files {activation_filepaths}")
+        return activation_filepaths
+
+    @classmethod
+    async def load_reshuffled_files(
         cls,
         activation_dir: str,
         seed: int = 0,

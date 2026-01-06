@@ -28,7 +28,6 @@ def eval_router_space(
     model_name: str = "olmoe-i",
     run_saebench: bool = True,
     skip_autointerp: bool = False,
-    skip_sparse_probing: bool = False,
     run_intruder: bool = True,
     saebench_batchsize: int = 64,
     intruder_batchsize: int = 32,
@@ -48,7 +47,6 @@ def eval_router_space(
         model_name: Model name to evaluate on
         run_saebench: Whether to run SAEBench evaluation
         skip_autointerp: Whether to skip autointerp evaluation
-        skip_sparse_probing: Whether to skip sparse probing evaluation
         run_intruder: Whether to run intruder evaluation
         saebench_batchsize: Batch size for SAEBench evaluation
         intruder_batchsize: Batch size for intruder evaluation
@@ -143,7 +141,7 @@ def eval_router_space(
         model_name=model_name,
         run_saebench=run_saebench,
         skip_autointerp=skip_autointerp,
-        skip_sparse_probing=skip_sparse_probing,
+        skip_sparse_probing=True,
         run_intruder=run_intruder,
         saebench_batchsize=saebench_batchsize,
         intruder_batchsize=intruder_batchsize,
