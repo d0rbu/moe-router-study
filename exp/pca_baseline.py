@@ -138,6 +138,7 @@ def create_pca_baseline(
         context_length,
         num_tokens,
         model.tokenizer,  # type: ignore
+        column_name="conversation",
     )
     logger.info(f"Loaded {len(tokens_BL)} sequences")
 
