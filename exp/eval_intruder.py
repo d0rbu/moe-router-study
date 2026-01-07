@@ -1164,6 +1164,7 @@ def eval_intruder(
     hookpoint_to_sparse_encode, top_k = load_hookpoints(
         root_dir, dtype=dtype_torch, metric=metric, metric_p=metric_p
     )
+    is_path_experiment = hookpoint_to_sparse_encode is not None
     hookpoints = list(hookpoint_to_sparse_encode.keys())
     if top_k is None:
         top_k = undispatched_model.config.num_experts_per_tok
@@ -1227,7 +1228,7 @@ def eval_intruder(
         if top_k is None:
             raise ValueError("top_k cannot be None when populating cache")
 
-        if use_multiprocess:
+        if use_multiprocess and is_path_experiment:
             logger.info(
                 f"Populating cache with {len(hookpoints)} hookpoints using {len(cache_gpu_ids)} GPUs"
             )
