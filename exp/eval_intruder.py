@@ -259,53 +259,67 @@ ACTIVATION_KEYS_TO_HOOKPOINT = {
 }
 
 
+def load_hookpoint_and_sae(
+    sae_dirpath: Path,
+    dtype: th.dtype,
+) -> tuple[str, Callable[[th.Tensor], th.Tensor]] | None:
+    if not sae_dirpath.is_dir():
+        return None
+
+    config_path = sae_dirpath / "config.json"
+    if not config_path.is_file():
+        return None
+
+    with open(config_path) as f:
+        config = json.load(f)
+
+    ae, _ = load_dictionary(str(sae_dirpath), device="cuda")
+    ae = ae.to(dtype)
+    trainer_config = config.get("trainer")
+    if trainer_config is None:
+        logger.trace(config)
+        raise ValueError(
+            f"Trainer config is not set in the config for SAE at {sae_dirpath}"
+        )
+
+    layer = trainer_config.get("layer")
+    if layer is None:
+        logger.trace(config)
+        raise ValueError(f"Layer is not set in the config for SAE at {sae_dirpath}")
+
+    layer = int(layer)
+
+    # i stored the activation key in the submodule_name field...
+    activation_key = trainer_config.get("submodule_name")
+    if activation_key is None:
+        logger.trace(config)
+        raise ValueError(
+            f"Submodule name is not set in the config for SAE at {sae_dirpath}"
+        )
+
+    hookpoint = ACTIVATION_KEYS_TO_HOOKPOINT[activation_key].format(layer=layer)
+    return hookpoint, ae.encode
+
+
 def load_hookpoints_and_saes(
     sae_base_path: Path,
     dtype: th.dtype,
 ) -> dict[str, Callable[[th.Tensor], th.Tensor]]:
     hookpoints_to_saes = {}
 
-    for sae_dirpath in sae_base_path.iterdir():
-        if not sae_dirpath.is_dir():
+    paths_to_check = [*list(sae_base_path.iterdir()), sae_base_path]
+
+    for sae_dirpath in paths_to_check:
+        loaded_hookpoint_and_sae = load_hookpoint_and_sae(sae_dirpath, dtype)
+        if loaded_hookpoint_and_sae is None:
             continue
 
-        config_path = sae_dirpath / "config.json"
-        if not config_path.is_file():
-            continue
-
-        with open(config_path) as f:
-            config = json.load(f)
-
-        ae, _ = load_dictionary(str(sae_dirpath), device="cuda")
-        ae = ae.to(dtype)
-        trainer_config = config.get("trainer")
-        if trainer_config is None:
-            logger.trace(config)
-            raise ValueError(
-                f"Trainer config is not set in the config for SAE at {sae_dirpath}"
-            )
-
-        layer = trainer_config.get("layer")
-        if layer is None:
-            logger.trace(config)
-            raise ValueError(f"Layer is not set in the config for SAE at {sae_dirpath}")
-
-        layer = int(layer)
-
-        # i stored the activation key in the submodule_name field...
-        activation_key = trainer_config.get("submodule_name")
-        if activation_key is None:
-            logger.trace(config)
-            raise ValueError(
-                f"Submodule name is not set in the config for SAE at {sae_dirpath}"
-            )
-
-        hookpoint = ACTIVATION_KEYS_TO_HOOKPOINT[activation_key].format(layer=layer)
+        hookpoint, sparse_encode = loaded_hookpoint_and_sae
 
         assert hookpoint not in hookpoints_to_saes, (
             f"Hookpoint {hookpoint} already exists in {hookpoints_to_saes.keys()}"
         )
-        hookpoints_to_saes[hookpoint] = ae.encode
+        hookpoints_to_saes[hookpoint] = sparse_encode
 
     logger.debug(
         f"Loaded {len(hookpoints_to_saes)} hookpoints and SAEs: {hookpoints_to_saes.keys()}"
