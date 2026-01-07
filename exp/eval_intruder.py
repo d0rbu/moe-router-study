@@ -1261,6 +1261,7 @@ def eval_intruder(
                 check_renaming=False,
                 revision=str(model_ckpt),
                 device_map={"": cache_device},
+                dispatch=True,
                 quantization_config=quantization_config,
                 torch_dtype=model_dtype_torch,
                 token=hf_token,
