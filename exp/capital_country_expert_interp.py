@@ -20,6 +20,7 @@ import asyncio
 from dataclasses import dataclass
 from itertools import batched, product
 from pathlib import Path
+import random
 import sys
 from typing import Literal
 
@@ -100,6 +101,35 @@ PROMPT_TEMPLATE = [
 NEGATIVE_INF = float("-inf")
 
 
+def compute_kl_divergence(
+    baseline_probs: th.Tensor,
+    modified_probs: th.Tensor,
+) -> float:
+    """
+    Compute KL divergence between baseline and modified probability distributions.
+
+    Args:
+        baseline_probs: Baseline probability distribution (vocab_size,)
+        modified_probs: Modified probability distribution (vocab_size,)
+
+    Returns:
+        KL divergence: KL(modified || baseline)
+    """
+    # Add small epsilon to avoid log(0)
+    eps = 1e-10
+    baseline_probs = baseline_probs + eps
+    modified_probs = modified_probs + eps
+
+    # Normalize to ensure they sum to 1
+    baseline_probs = baseline_probs / baseline_probs.sum()
+    modified_probs = modified_probs / modified_probs.sum()
+
+    # KL(modified || baseline) = sum(modified * log(modified / baseline))
+    kl_div = (modified_probs * th.log(modified_probs / baseline_probs)).sum().item()
+
+    return kl_div
+
+
 @dataclass(frozen=True)
 class ExpertLocation:
     """Location of an expert in the model."""
@@ -127,6 +157,9 @@ class ExpertImportance:
 
     location: ExpertLocation
     importance: float  # Negative = more important (reduces correct answer prob more)
+    base_prompt_difference: float  # Mean change in target prompt probability
+    mean_kl: float  # Average KL divergence across worst-case prompts
+    kl_weight: float  # Weight used for KL divergence term
 
 
 @dataclass
@@ -225,111 +258,129 @@ def compute_expert_importance_and_routing_masks(
     model: StandardizedTransformer,
     batch: dict[str, th.Tensor],
     correct_answer_tokens: dict[str, int],
+    other_batches: list[dict[str, th.Tensor]],
     processing_batch_size: int = 32,
     top_k: int = 8,
-    last_token_only: bool = True,
+    kl_weight: float = 1.0,
+    top_n_worst_prompts: int | None = None,
 ) -> tuple[list[ExpertImportance], th.Tensor, th.Tensor, th.Tensor]:
     """
     Compute importance scores for all experts by measuring intervention effects.
 
+    Importance is computed as: change_in_target_prob - kl_weight * avg_kl_divergence_worst_prompts
+    This rewards experts that:
+    - Decrease probability of correct answer in target prompt (negative change)
+    - Minimally change distribution in worst-case prompts (small KL divergence)
+
+    Only intervenes on the last token of each prompt, allowing prompts to have different lengths.
+
     Args:
         model: The MoE model
-        batch: Tokenized input batch
+        batch: Tokenized input batch for target prompt
         correct_answer_tokens: Dict mapping token strings to IDs for correct answer
+        other_batches: List of tokenized batches for other prompts (same template, different countries)
         processing_batch_size: Batch size for processing interventions
-        last_token_only: If True, only intervene on the last token
+        top_k: Number of top experts selected by router
+        kl_weight: Weight for KL divergence term in importance calculation
+        top_n_worst_prompts: Number of worst-case prompts to use for KL divergence (None = use all)
 
     Returns:
         Tuple of (sorted expert importances, baseline probs, baseline routing pattern, modified routing patterns)
     """
     layers_with_routers = model.layers_with_routers
-    seq_len = batch["input_ids"].shape[-1]
     num_experts = len(model.layers[layers_with_routers[0]].mlp.experts)
     num_layers = len(layers_with_routers)
 
-    # (T, L, E) binary mask of experts pre-intervention
+    # (L, E) binary mask of experts pre-intervention (only last token)
     baseline_mask: th.Tensor = th.zeros(
-        seq_len, num_layers, num_experts, dtype=th.bool, device=model.device
+        num_layers, num_experts, dtype=th.bool, device=model.device
     )
-    # Get baseline logits and routing pattern
+    # Get baseline logits and routing pattern for target prompt
     with model.trace(batch):
-        # Capture routing pattern
+        # Capture routing pattern for last token only
         for layer_idx in layers_with_routers:
-            router_output = model.routers_output[layer_idx].save()
-            _topk_weights, topk_indices = th.topk(router_output, k=top_k, dim=-1)
+            router_output = model.routers_output[layer_idx].save()  # (1*T, num_experts)
+            # Get routing for last token: index is (batch_idx * seq_len + token_idx) = token_idx
+            last_token_router_output = router_output[-1]
+            _topk_weights, topk_indices = th.topk(
+                last_token_router_output, k=top_k, dim=-1
+            )
 
-            baseline_mask[:, layer_idx, :].scatter_(-1, topk_indices, True)
+            baseline_mask[layer_idx, :].scatter_(-1, topk_indices, True)
 
         baseline_logits = model.lm_head.output.save()  # (1, T, vocab_size)
 
     # (vocab_size,)
     baseline_probs = F.softmax(baseline_logits[0, -1, :].float(), dim=-1)
 
+    # Get baseline distributions for other prompts (can have different lengths)
+    other_baseline_probs: list[th.Tensor] = []
+    for other_batch in other_batches:
+        with model.trace(other_batch):
+            other_baseline_logits = model.lm_head.output.save()  # (1, T, vocab_size)
+            other_baseline_probs.append(
+                F.softmax(other_baseline_logits[0, -1, :].float(), dim=-1)
+            )
+
     th.cuda.empty_cache()
 
     # Compute intervention effects
     intervention_effects: dict[ExpertLocation, float] = {}
 
-    # Determine which tokens to intervene on
-    token_indices = [seq_len - 1] if last_token_only else range(seq_len)
-
-    layer_token_expert_iterator = product(
-        token_indices, layers_with_routers, range(num_experts)
-    )
-    batch_layer_token_expert_iterator = enumerate(layer_token_expert_iterator)
+    layer_expert_iterator = product(layers_with_routers, range(num_experts))
+    batch_layer_expert_iterator = enumerate(layer_expert_iterator)
     batched_iterator = tuple(
-        batched(batch_layer_token_expert_iterator, processing_batch_size)
+        batched(batch_layer_expert_iterator, processing_batch_size)
     )
 
-    # (T*L*E, T, L, E) binary mask of experts post-intervention
+    # (L*E, L, E) binary mask of experts post-intervention (only last token)
     intervention_router_masks: th.Tensor = th.zeros(
-        seq_len * num_layers * num_experts,
-        seq_len,
+        num_layers * num_experts,
         num_layers,
         num_experts,
         dtype=th.bool,
     )
 
-    for token_layer_expert_batch in tqdm(
+    for layer_expert_batch in tqdm(
         batched_iterator,
         desc="Computing expert importance",
         total=len(batched_iterator),
     ):
-        current_batch = {
-            "input_ids": batch["input_ids"].expand(processing_batch_size, -1)
-        }
+        batch_size = len(layer_expert_batch)
 
-        # Create intervention mask: (B, T, L, E)
+        current_batch = {"input_ids": batch["input_ids"].expand(batch_size, -1)}
+
+        # Create intervention mask: (B, L, E) - only for last token
         intervention_mask = th.zeros(
-            processing_batch_size, seq_len, num_layers, num_experts, dtype=th.bool
+            batch_size,
+            num_layers,
+            num_experts,
+            dtype=th.bool,
+            device=model.device,
         )
         for relative_batch_idx, (
             _batch_idx,
-            (token_idx, layer_idx, expert_idx),
-        ) in enumerate(token_layer_expert_batch):
-            intervention_mask[relative_batch_idx, token_idx, layer_idx, expert_idx] = (
-                True
-            )
+            (layer_idx, expert_idx),
+        ) in enumerate(layer_expert_batch):
+            intervention_mask[relative_batch_idx, layer_idx, expert_idx] = True
 
-        # (B, T, L, E) -> (B*T, L, E)
-        intervention_mask_flat = intervention_mask.view(-1, num_layers, num_experts)
         # (B,)
         intervention_batch_indices = th.tensor(
-            [batch_idx for batch_idx, _ in token_layer_expert_batch],
+            [batch_idx for batch_idx, _ in layer_expert_batch],
         )
 
+        # Compute intervention effects on target prompt
         with model.trace(current_batch):
             for layer_idx in layers_with_routers:
-                layer_intervention_mask = intervention_mask_flat[:, layer_idx, :]
+                layer_intervention_mask = intervention_mask[:, layer_idx, :]
                 model.routers_output[layer_idx][layer_intervention_mask] = NEGATIVE_INF
 
                 router_output = model.routers_output[layer_idx].save()
                 _topk_weights, topk_indices = th.topk(router_output, k=top_k, dim=-1)
 
-                flat_relevant_intervention_router_masks = intervention_router_masks[
-                    intervention_batch_indices, :, layer_idx, :
-                ].view(-1, num_experts)
-                flat_relevant_intervention_router_masks[topk_indices] = True
+                intervention_router_masks[
+                    intervention_batch_indices, layer_idx, :
+                ].scatter_(-1, topk_indices, True)
 
             final_logits = model.lm_head.output.save()  # (B, T, vocab_size)
 
@@ -337,36 +388,120 @@ def compute_expert_importance_and_routing_masks(
             final_logits[:, -1, :].float(), dim=-1
         )  # (B, vocab_size)
 
-        for (_batch_idx, (token_idx, layer_idx, expert_idx)), probs in zip(
-            token_layer_expert_batch, final_probs, strict=False
-        ):
-            # Compute mean change across all correct answer tokens
+        # Compute intervention effects on other prompts
+        # For each other batch, we need to create an intervention mask targeting its last token
+        other_modified_probs_list: list[list[th.Tensor]] = []
+        for other_batch in other_batches:
+            other_current_batch = {
+                "input_ids": other_batch["input_ids"].expand(batch_size, -1)
+            }
+
+            # Create intervention mask: (B, L, E) - only for last token
+            other_intervention_mask = th.zeros(
+                batch_size,
+                num_layers,
+                num_experts,
+                dtype=th.bool,
+                device=model.device,
+            )
+            for relative_batch_idx, (
+                _batch_idx,
+                (layer_idx, expert_idx),
+            ) in enumerate(layer_expert_batch):
+                other_intervention_mask[relative_batch_idx, layer_idx, expert_idx] = (
+                    True
+                )
+
+            with model.trace(other_current_batch):
+                for layer_idx in layers_with_routers:
+                    layer_intervention_mask = other_intervention_mask[:, layer_idx, :]
+                    unflat_router_output = model.routers_output[layer_idx].view(
+                        batch_size, -1, num_experts
+                    )
+
+                    unflat_router_output[:, -1, :][layer_intervention_mask] = (
+                        NEGATIVE_INF
+                    )
+                other_final_logits = model.lm_head.output.save()  # (B, T, vocab_size)
+            other_modified_probs = F.softmax(
+                other_final_logits[:, -1, :].float(), dim=-1
+            )  # (B, vocab_size)
+            other_modified_probs_list.append(other_modified_probs)
+
+        for batch_idx, (
+            (_batch_idx, (layer_idx, expert_idx)),
+            probs,
+        ) in enumerate(zip(layer_expert_batch, final_probs, strict=False)):
+            # Compute mean change across all correct answer tokens for target prompt
             changes = [
                 (probs[token_idx] - baseline_probs[token_idx]).item()
                 for token_idx in correct_answer_tokens.values()
             ]
-
             mean_change = sum(changes) / len(changes)
 
+            # Compute KL divergence for all other prompts and select worst-case prompts
+            avg_kl_divergence = 0.0
+            if other_batches is not None and len(other_batches) > 0:
+                kl_divergences = []
+                for other_idx, other_baseline_prob in enumerate(other_baseline_probs):
+                    other_modified_prob = other_modified_probs_list[other_idx][
+                        batch_idx
+                    ]
+                    kl_div = compute_kl_divergence(
+                        other_baseline_prob, other_modified_prob
+                    )
+                    kl_divergences.append(kl_div)
+
+                # Select top N worst prompts (highest KL divergence)
+                if top_n_worst_prompts is not None and top_n_worst_prompts > 0:
+                    # Sort by KL divergence (descending) and take top N
+                    sorted_kl = sorted(kl_divergences, reverse=True)
+                    n_to_use = min(top_n_worst_prompts, len(sorted_kl))
+                    avg_kl_divergence = sum(sorted_kl[:n_to_use]) / n_to_use
+                else:
+                    # Use all prompts if top_n_worst_prompts is None or 0
+                    avg_kl_divergence = sum(kl_divergences) / len(kl_divergences)
+
+            # Combined importance score: negative change (reduction) is good, small KL is good
+            # So: importance = change - kl_weight * avg_kl_divergence
+            # More negative = more important (reduces target prob more, changes other probs less)
+            importance = mean_change - kl_weight * avg_kl_divergence
+
             location = ExpertLocation(
-                token_idx=token_idx,
+                token_idx=-1,  # Always the last token (not stored in tensors anymore)
                 layer_idx=layer_idx,
                 expert_idx=expert_idx,
             )
-            intervention_effects[location] = mean_change
+            intervention_effects[location] = (
+                importance,
+                mean_change,
+                avg_kl_divergence,
+                kl_weight,
+            )
 
         th.cuda.empty_cache()
 
     intervention_routing = intervention_router_masks.view(
-        seq_len, num_layers, num_experts, seq_len, num_layers, num_experts
+        num_layers, num_experts, num_layers, num_experts
     )
 
     # Sort by importance (most negative = most important)
-    sorted_experts = sorted(intervention_effects.items(), key=lambda x: x[1])
+    sorted_experts = sorted(intervention_effects.items(), key=lambda x: x[1][0])
 
     expert_importances = [
-        ExpertImportance(location=location, importance=effect)
-        for location, effect in sorted_experts
+        ExpertImportance(
+            location=location,
+            importance=importance,
+            base_prompt_difference=base_prompt_difference,
+            mean_kl=mean_kl,
+            kl_weight=kl_weight,
+        )
+        for location, (
+            importance,
+            base_prompt_difference,
+            mean_kl,
+            kl_weight,
+        ) in sorted_experts
     ]
 
     return expert_importances, baseline_probs, baseline_mask, intervention_routing
@@ -415,34 +550,33 @@ def run_incremental_ablations(
     current_batch = {"input_ids": batch["input_ids"].expand(max_experts_to_ablate, -1)}
 
     # Build intervention masks for each ablation level
-    # intervention_mask[i] ablates the top-(i+1) experts
+    # intervention_mask[i] ablates the top-(i+1) experts (only last token)
     intervention_mask = th.zeros(
         max_experts_to_ablate,
-        seq_len,
         num_layers,
         num_experts,
         dtype=th.bool,
         device=model.device,
-    )  # (B, T, L, E)
+    )  # (B, L, E)
     new_routing_pattern = intervention_mask.clone()
 
     for ablation_level in range(max_experts_to_ablate):
         expert = expert_importances[ablation_level]
-        token_idx = expert.location.token_idx
         layer_idx = expert.location.layer_idx
         expert_idx = expert.location.expert_idx
 
         # Ablation level i ablates experts 0..i (inclusive)
         # So mask[i:] has this expert ablated
-        intervention_mask[ablation_level:, token_idx, layer_idx, expert_idx] = True
+        intervention_mask[ablation_level:, layer_idx, expert_idx] = True
 
     with model.trace(current_batch):
         for layer_idx in layers_with_routers:
             # Apply ablation mask
-            local_mask = intervention_mask[:, :, layer_idx, :]  # (B, T, E)
-            local_mask_flat = local_mask.view(-1, num_experts)
-
-            model.routers_output[layer_idx][local_mask_flat] = NEGATIVE_INF
+            layer_intervention_mask = intervention_mask[:, layer_idx, :]
+            unflat_router_output = model.routers_output[layer_idx].view(
+                max_experts_to_ablate, seq_len, num_experts
+            )
+            unflat_router_output[:, -1, :][layer_intervention_mask] = NEGATIVE_INF
 
             router_output = (
                 model.routers_output[layer_idx]
@@ -450,13 +584,16 @@ def run_incremental_ablations(
                 .view(max_experts_to_ablate, seq_len, num_experts)
             )
 
+            # Get routing for last tokens only
+            last_token_router_output = router_output[:, -1, :]
+
             # Compute new top-k indices after ablation
             _, new_indices = th.topk(
-                router_output,
+                last_token_router_output,
                 k=top_k,
                 dim=-1,
             )
-            new_routing_pattern[:, :, layer_idx, :].scatter_(-1, new_indices, True)
+            new_routing_pattern[:, layer_idx, :].scatter_(-1, new_indices, True)
 
         final_logits = model.lm_head.output.save()  # (B, T, vocab_size)
 
@@ -504,7 +641,7 @@ def run_incremental_ablations(
 def compute_routing_similarity_batched(
     target_patterns: th.Tensor,
     candidate_patterns: th.Tensor,
-    method: Literal["jaccard", "cosine", "hamming"] = "jaccard",
+    method: Literal["jaccard", "cosine", "hamming"] = "cosine",
 ) -> th.Tensor:
     """
     Compute similarity between batches of routing patterns.
@@ -564,8 +701,9 @@ def search_similar_activations_batched(
     target_batch_size: int = 17,
     activation_batch_size: int = 4096,
     router_top_k: int = 8,
-    activation_context_length: int = 48,
-    similarity_method: Literal["jaccard", "cosine", "hamming"] = "jaccard",
+    activation_context_prefix_length: int = 192,
+    activation_context_suffix_length: int = 8,
+    similarity_method: Literal["jaccard", "cosine", "hamming"] = "cosine",
 ) -> list[list[SimilarActivation]]:
     """
     Search for similar routing patterns in the activation dataset for multiple targets.
@@ -578,7 +716,8 @@ def search_similar_activations_batched(
         max_samples: Maximum number of samples to search
         batch_size: Batch size for loading activations
         router_top_k: Number of top experts selected by router
-        activation_context_length: Context length for activations
+        activation_context_prefix_length: Context prefix length for activations
+        activation_context_suffix_length: Context suffix length for activations
         similarity_method: Method for computing similarity
 
     Returns:
@@ -587,8 +726,6 @@ def search_similar_activations_batched(
     num_targets = len(target_patterns)
     if num_targets == 0:
         return []
-
-    context_expansion_amount = activation_context_length // 2
 
     # Batch targets
     target_batches = batched(target_patterns, target_batch_size)
@@ -685,18 +822,21 @@ def search_similar_activations_batched(
                         sample_document_idx = document_idx[batch_idx].item()
                         sample_relative_token_idx = relative_token_idx[batch_idx].item()
                         context_start_idx = max(
-                            0, sample_relative_token_idx - context_expansion_amount
+                            0,
+                            sample_relative_token_idx
+                            - activation_context_prefix_length,
                         )
                         context_end_idx = min(
                             document_lengths[sample_document_idx].item(),
-                            sample_relative_token_idx + context_expansion_amount,
+                            sample_relative_token_idx
+                            + activation_context_suffix_length,
                         )
 
                         sample_tokens = batch_tokens[sample_document_idx][
                             context_start_idx:context_end_idx
                         ]
                         activating_token_idx = min(
-                            context_expansion_amount,
+                            activation_context_prefix_length,
                             sample_relative_token_idx,
                         )
                         sample_tokens_prefix = sample_tokens[:activating_token_idx]
@@ -764,12 +904,16 @@ def capital_country_expert_interp(
     target_batch_size: int = 17,
     activation_batch_size: int = 4096,
     processing_batch_size: int = 32,
-    similarity_method: str = "jaccard",
+    similarity_method: str = "cosine",
     context_length: int = 2048,
     tokens_per_file: int = 50_000,
     output_dir: str = "out/capital_country_expert_interp",
     log_level: str = "INFO",
     hf_token: str = "",
+    num_other_countries: int = 20,
+    kl_weight: float = 1.0,
+    top_n_worst_prompts: int | None = None,
+    seed: int = 0,
 ) -> ExperimentOutput:
     """
     Run expert interpretability experiment for capital-country knowledge.
@@ -791,6 +935,9 @@ def capital_country_expert_interp(
         output_dir: Output directory
         log_level: Logging level
         hf_token: HuggingFace token
+        num_other_countries: Number of other countries to use for KL divergence calculation
+        kl_weight: Weight for KL divergence term in importance calculation
+        top_n_worst_prompts: Number of worst-case prompts (highest KL divergence) to use for KL term (None = use all)
 
     Returns:
         ExperimentOutput with all results
@@ -875,6 +1022,39 @@ def capital_country_expert_interp(
         f"Correct answer tokens (ordered by edit distance): {correct_answer_tokens}"
     )
 
+    # Select other countries for KL divergence calculation
+    all_countries = list(COUNTRY_TO_CAPITAL.keys())
+    other_countries = [
+        country for country in all_countries if country != target_country
+    ]
+    # Randomly select num_other_countries, or use all if fewer available
+    random.seed(seed)  # For reproducibility
+    selected_other_countries = random.sample(
+        other_countries, min(num_other_countries, len(other_countries))
+    )
+    logger.info(
+        f"Using {len(selected_other_countries)} other countries for KL divergence: {selected_other_countries}"
+    )
+
+    # Create batches for other prompts
+    other_batches: list[dict[str, th.Tensor]] = []
+    for other_country in selected_other_countries:
+        other_messages = [
+            {
+                "role": msg["role"],
+                "content": msg["content"].format(country=other_country),
+            }
+            for msg in PROMPT_TEMPLATE
+        ]
+        other_formatted = tokenizer.apply_chat_template(
+            other_messages, tokenize=False, continue_final_message=True
+        )
+        other_batch = tokenizer(
+            other_formatted, return_tensors="pt", return_attention_mask=False
+        )
+        other_batch = {k: v.to(model.device) for k, v in other_batch.items()}
+        other_batches.append(other_batch)
+
     # Step 1: Compute expert importance
     logger.info("=" * 80)
     logger.info("Computing expert importance")
@@ -885,9 +1065,11 @@ def capital_country_expert_interp(
             model=model,
             batch=batch,
             correct_answer_tokens=correct_answer_tokens,
+            other_batches=other_batches,
             processing_batch_size=processing_batch_size,
             top_k=router_top_k,
-            last_token_only=True,
+            kl_weight=kl_weight,
+            top_n_worst_prompts=top_n_worst_prompts,
         )
     )
 
@@ -896,7 +1078,9 @@ def capital_country_expert_interp(
     for i, exp in enumerate(expert_importances[:10]):
         logger.info(
             f"  {i + 1}. Layer {exp.location.layer_idx}, Expert {exp.location.expert_idx}, "
-            f"Token {exp.location.token_idx}, Importance: {exp.importance:.6f}"
+            f"Token {exp.location.token_idx}, Importance: {exp.importance:.6f} "
+            f"(base_diff: {exp.base_prompt_difference:.6f}, mean_kl: {exp.mean_kl:.6f}, "
+            f"kl_weight: {exp.kl_weight:.6f})"
         )
 
     # Step 2: Run incremental ablations
@@ -944,17 +1128,17 @@ def capital_country_expert_interp(
     # Batch all patterns together: baseline (for pre) + all intervention patterns (for post)
     # We search for baseline once and reuse it for all interventions
     # Pattern order: [baseline, intervention_0, intervention_1, ..., intervention_N-1]
+    # All patterns are already (L, E) - no token dimension
     all_patterns = [baseline_routing] + [
         result.routing_pattern for result in intervention_results
     ]
-    final_token_patterns = [pattern[-1] for pattern in all_patterns]
 
     logger.info(
-        f"Searching for similar patterns for {len(final_token_patterns)} targets in one pass..."
+        f"Searching for similar patterns for {len(all_patterns)} targets in one pass..."
     )
 
     all_similar_results = search_similar_activations_batched(
-        target_patterns=final_token_patterns,
+        target_patterns=all_patterns,
         activations=activations,
         tokenizer=tokenizer,
         top_k=top_k_similar,
@@ -1005,12 +1189,12 @@ def capital_country_expert_interp(
 
     country_slug = target_country.lower().replace(" ", "_")
     output_file = output_path / f"{country_slug}_raw.yaml"
-    readable_output_file = output_path / f"{country_slug}.json"
+    readable_output_file = output_path / f"{country_slug}.yaml"
 
     # Convert to serializable format
-    # baseline_routing_pattern is (T, L, E), extract last token pattern (L, E)
+    # baseline_routing_pattern is already (L, E) - no token dimension
     baseline_routing_last_token = (
-        output.baseline_routing_pattern[-1].cpu().numpy()
+        output.baseline_routing_pattern.cpu().numpy()
     )  # (L, E)
 
     save_data = {
@@ -1025,6 +1209,9 @@ def capital_country_expert_interp(
                 "layer_idx": exp.location.layer_idx,
                 "expert_idx": exp.location.expert_idx,
                 "importance": exp.importance,
+                "base_prompt_difference": exp.base_prompt_difference,
+                "mean_kl": exp.mean_kl,
+                "kl_weight": exp.kl_weight,
             }
             for exp in output.expert_importances
         ],
@@ -1042,12 +1229,8 @@ def capital_country_expert_interp(
                 "pre_intervention_prob": ir.intervention.pre_intervention_prob,
                 "post_intervention_prob": ir.intervention.post_intervention_prob,
                 "prob_change": ir.intervention.prob_change,
-                # routing_pattern is (T, L, E) or (L, E), extract last token if needed
-                "routing_mask": (
-                    ir.intervention.routing_pattern[-1].cpu().numpy().tolist()
-                    if ir.intervention.routing_pattern.ndim == 3
-                    else ir.intervention.routing_pattern.cpu().numpy().tolist()
-                ),
+                # routing_pattern is (L, E) - no token dimension
+                "routing_mask": ir.intervention.routing_pattern.cpu().numpy().tolist(),
                 "generated_token": ir.intervention.generated_token,
                 "generated_token_prob": ir.intervention.generated_token_prob,
                 "similar_pre": [
@@ -1076,7 +1259,7 @@ def capital_country_expert_interp(
     }
 
     with open(output_file, "w") as f:
-        yaml.dump(save_data, f)
+        yaml.dump(save_data, f, allow_unicode=True)
     logger.info(f"Saved raw results to {output_file}")
 
     readable_data = {
@@ -1090,6 +1273,9 @@ def capital_country_expert_interp(
                 "layer_idx": exp.location.layer_idx,
                 "expert_idx": exp.location.expert_idx,
                 "importance": exp.importance,
+                "base_prompt_difference": exp.base_prompt_difference,
+                "mean_kl": exp.mean_kl,
+                "kl_weight": exp.kl_weight,
             }
             for exp in output.expert_importances[:max_experts_to_ablate]
         ],
@@ -1128,8 +1314,8 @@ def capital_country_expert_interp(
         ],
     }
 
-    with open(readable_output_file, "w") as f:
-        yaml.dump(readable_data, f)
+    with open(readable_output_file, "w", encoding="utf-8") as f:
+        yaml.dump(readable_data, f, allow_unicode=True)
     logger.info(f"Saved readable results to {readable_output_file}")
 
     # Print summary
