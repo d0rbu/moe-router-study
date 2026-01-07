@@ -73,7 +73,7 @@ def convert_pca_to_dictionary_format(
 def create_pca_baseline(
     *,
     model_name: str = "olmoe-i",
-    dataset_name: str = "lmsys",
+    dataset_name: str = "lmsys/lmsys-chat-1m",
     layer: int,
     submodule_name: str,
     context_length: int = 2048,
@@ -145,7 +145,7 @@ def create_pca_baseline(
     logger.info("Initializing PCA SAE...")
     pca = PCASAE(
         d_in=d_model,
-        model_name=model_name,
+        model_name=hf_name,
         hook_layer=layer,
         device=device,
         dtype=th_dtype,
@@ -187,7 +187,7 @@ def create_pca_baseline(
             "submodule_name": submodule_name,
             "dict_size": d_model,  # Full PCA uses all components
             "activation_dim": d_model,
-            "lm_name": model_name,
+            "lm_name": hf_name,
             "dict_class": "PCAAutoEncoder",
         },
         "pca_baseline": True,
