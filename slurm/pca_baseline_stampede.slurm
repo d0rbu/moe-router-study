@@ -56,5 +56,5 @@ echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 cd $SCRATCH/moe-router-study
 
 # Run the PCA baseline creation
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run python -m exp.pca_baseline --layer 9 --submodule-name layer_output --context-length 2048 --num-tokens 200000000 --llm-batch-size 128 --pca-batch-size 100000 --dtype bf16 --log-level INFO --use-gpu
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run python -m exp.pca_baseline --layer 9 --submodule-name layer_output --context-length 2048 --num-tokens 200000000 --llm-batch-size 64 --pca-batch-size 10000 --dtype bf16 --log-level INFO --use-gpu
 
