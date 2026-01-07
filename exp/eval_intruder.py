@@ -238,6 +238,7 @@ async def process_cache(
         cot=getattr(run_cfg, "cot", False),
         type=getattr(run_cfg, "intruder_type", "default"),
         seed=run_cfg.seed,
+        log_prob=run_cfg.log_probs,
     )
 
     pipeline = Pipeline(
