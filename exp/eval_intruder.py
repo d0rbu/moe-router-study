@@ -22,7 +22,6 @@ import torch.multiprocessing as mp
 from torch.multiprocessing import cpu_count
 from tqdm import tqdm
 from transformers import (
-    AutoTokenizer,
     BitsAndBytesConfig,
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
@@ -1150,14 +1149,26 @@ def eval_intruder(
     use_multiprocess = len(cache_gpu_ids) > 1
 
     # Load tokenizer (always needed)
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_config.hf_name, revision=str(model_ckpt), token=hf_token
+    undispatched_model = StandardizedTransformer(
+        model_config.hf_name,
+        check_attn_probs_with_trace=False,
+        check_renaming=False,
+        revision=str(model_ckpt),
+        dispatch=False,
+        quantization_config=quantization_config,
+        torch_dtype=model_dtype_torch,
+        token=hf_token,
     )
+    tokenizer = undispatched_model.tokenizer
 
     hookpoint_to_sparse_encode, top_k = load_hookpoints(
         root_dir, dtype=dtype_torch, metric=metric, metric_p=metric_p
     )
     hookpoints = list(hookpoint_to_sparse_encode.keys())
+    if top_k is None:
+        top_k = undispatched_model.config.num_experts_per_tok
+
+    del undispatched_model
 
     logger.debug(f"Hookpoints: {hookpoints}")
 
