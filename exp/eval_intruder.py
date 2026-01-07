@@ -1145,6 +1145,8 @@ def eval_intruder(
     )
     hookpoints = list(hookpoint_to_sparse_encode.keys())
 
+    logger.debug(f"Hookpoints: {hookpoints}")
+
     # Only load hookpoints if single-GPU mode
     if use_multiprocess:
         assert top_k is not None, "Multi-GPU not supported for SAE experiments"
