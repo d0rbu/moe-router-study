@@ -12,10 +12,10 @@ LOG_LEVEL=${5:-"INFO"}
 
 # Optional parameters with defaults
 DATASET_NAME=${6:-"lmsys"}
-MAX_SAMPLES_TO_SEARCH=${7:-500000}
+MAX_SAMPLES_TO_SEARCH=${7:-20000000}
 PROCESSING_BATCH_SIZE=${8:-32}
 ACTIVATION_BATCH_SIZE=${9:-4096}
-SIMILARITY_METHOD=${10:-"jaccard"}
+SIMILARITY_METHOD=${10:-"cosine"}
 
 echo "Running capital country expert interpretability experiment locally..."
 echo "Target country: $TARGET_COUNTRY"

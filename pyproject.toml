@@ -63,6 +63,7 @@ dependencies = [
     "openai>=1.109.1",
     "jupyterlab>=4.5.1",
     "ipywidgets>=8.1.7",
+    "cuml-cu12==25.12.*",
 ]
 
 [project.optional-dependencies]
