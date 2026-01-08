@@ -49,8 +49,8 @@ def main(
     if all(os.path.isdir(subdir) for subdir in subdirs):
         sae_locations = subdirs
     else:
-        experiment_dir_parts = experiment_dir.split("/")
-        experiment_dir_path = "/".join(experiment_dir_parts[:-1])
+        experiment_dir_parts = experiment_dir_path.split("/")
+        experiment_dir = "/".join(experiment_dir_parts[:-1])
         sae_locations = experiment_dir_parts[-1:]
 
     logger.info(f"Evaluating SAEs in {experiment_dir}")
