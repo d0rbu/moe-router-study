@@ -47,7 +47,7 @@ from delphi.config import (  # type: ignore
     RunConfig,
     SamplerConfig,
 )
-from delphi.latents import LatentDataset, LatentRecord  # type: ignore
+from delphi.latents import LatentDataset  # type: ignore
 from delphi.latents.cache import (  # type: ignore
     LatentCache,
     generate_statistics_cache,
@@ -186,16 +186,11 @@ def _log_worker(log_queue: mp.Queue, close_event: Event):
     close_event.wait()
 
 
-def dataset_postprocess(record: list[LatentRecord] | LatentRecord) -> LatentRecord:
-    while isinstance(record, list):
-        assert len(record) == 1, "Expected a single record"
-        record = record[0]
-
-    return record
-
-
 # Saves the score to a file
-def save_scorer_result_to_file(result: ScorerResult, score_dir: Path) -> None:
+def save_scorer_result_to_file(result: list[ScorerResult], score_dir: Path) -> None:
+    assert len(result) == 1, "Expected a single result"
+    result = result[0]
+
     safe_latent_name = str(result.record.latent).replace("/", "--")
 
     with open(score_dir / f"{safe_latent_name}.txt", "wb") as f:
@@ -247,7 +242,6 @@ async def process_cache(
 
     pipeline = Pipeline(
         dataset,
-        Pipe(dataset_postprocess),
         Pipe(intruder_scorer),
         Pipe(partial(save_scorer_result_to_file, score_dir=scores_path)),
     )
