@@ -187,9 +187,9 @@ def _log_worker(log_queue: mp.Queue, close_event: Event):
 
 
 def dataset_postprocess(record: list[LatentRecord] | LatentRecord) -> LatentRecord:
-    if isinstance(record, list):
+    while isinstance(record, list):
         assert len(record) == 1, "Expected a single record"
-        return record[0]
+        record = record[0]
 
     return record
 
