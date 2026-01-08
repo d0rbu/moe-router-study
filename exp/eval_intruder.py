@@ -186,7 +186,11 @@ def _log_worker(log_queue: mp.Queue, close_event: Event):
     close_event.wait()
 
 
-def dataset_postprocess(record: LatentRecord) -> LatentRecord:
+def dataset_postprocess(record: list[LatentRecord] | LatentRecord) -> LatentRecord:
+    if isinstance(record, list):
+        assert len(record) == 1, "Expected a single record"
+        return record[0]
+
     return record
 
 
