@@ -46,9 +46,7 @@ def main(
     experiment_dir_path = os.path.join(OUTPUT_DIR, experiment_dir)
     subdirs = os.listdir(experiment_dir_path)
 
-    if all(
-        os.path.isdir(os.path.join(experiment_dir_path, subdir)) for subdir in subdirs
-    ):
+    if all(os.path.isdir(subdir) for subdir in subdirs):
         sae_locations = subdirs
     else:
         sae_locations = [experiment_dir_path]
