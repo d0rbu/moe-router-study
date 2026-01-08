@@ -4,6 +4,7 @@ from functools import partial
 import gc
 import json
 from multiprocessing.synchronize import Event
+import os
 from pathlib import Path
 import queue
 import sys
@@ -193,7 +194,11 @@ def save_scorer_result_to_file(result: list[ScorerResult], score_dir: Path) -> N
 
     safe_latent_name = str(result.record.latent).replace("/", "--")
 
-    with open(score_dir / f"{safe_latent_name}.txt", "wb") as f:
+    output_path = score_dir / f"{safe_latent_name}.txt"
+
+    os.makedirs(output_path.parent, exist_ok=True)
+
+    with open(output_path, "wb") as f:
         f.write(orjson.dumps(result.score))
 
 
