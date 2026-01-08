@@ -234,11 +234,11 @@ async def process_cache(
         llm_client,
         verbose=run_cfg.verbose,
         n_examples_shown=run_cfg.num_examples_per_scorer_prompt,
+        log_probs=run_cfg.log_probs,
         temperature=getattr(run_cfg, "temperature", 0.0),
         cot=getattr(run_cfg, "cot", False),
         type=getattr(run_cfg, "intruder_type", "default"),
         seed=run_cfg.seed,
-        log_prob=run_cfg.log_probs,
     )
 
     pipeline = Pipeline(
