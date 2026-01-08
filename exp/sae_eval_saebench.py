@@ -44,7 +44,14 @@ def main(
     device = general_utils.setup_environment()
 
     experiment_dir_path = os.path.join(OUTPUT_DIR, experiment_dir)
-    sae_locations = os.listdir(experiment_dir_path)
+    subdirs = os.listdir(experiment_dir_path)
+
+    if all(
+        os.path.isdir(os.path.join(experiment_dir_path, subdir)) for subdir in subdirs
+    ):
+        sae_locations = subdirs
+    else:
+        sae_locations = [experiment_dir_path]
 
     logger.info(f"Evaluating SAEs in {experiment_dir}")
     logger.debug(f"SAE locations: {sae_locations}")
