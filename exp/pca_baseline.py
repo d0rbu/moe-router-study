@@ -146,7 +146,7 @@ def create_pca_baseline(
     logger.info("Initializing PCA SAE...")
     pca = PCASAE(
         d_in=d_model,
-        model_name=hf_name,
+        model_name=model_name,
         hook_layer=layer,
         device=device,
         dtype=th_dtype,
@@ -189,7 +189,7 @@ def create_pca_baseline(
             "submodule_name": submodule_name,
             "dict_size": d_model,  # Full PCA uses all components
             "activation_dim": d_model,
-            "lm_name": hf_name,
+            "lm_name": model_name,
             "dict_class": "PCAAutoEncoder",
         },
         "pca_baseline": True,
