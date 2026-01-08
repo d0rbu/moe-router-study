@@ -1196,6 +1196,7 @@ def eval_intruder(
             example_ctx_len=example_ctx_len,
             min_examples=min_examples,
             n_non_activating=num_non_activating,
+            center_examples=True,
             non_activating_source="random",
         ),
         sampler_cfg=SamplerConfig(
