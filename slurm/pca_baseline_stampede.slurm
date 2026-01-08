@@ -4,7 +4,7 @@
 #SBATCH -J pca_baseline         # Set the job name to "pca_baseline"
 #SBATCH -N 1                       # Number of nodes to request
 #SBATCH -n 1                       # Total number of tasks across all nodes
-#SBATCH -t 6:00:00                # Set the wall clock limit to 6 hours
+#SBATCH -t 14:00:00                # Set the wall clock limit to 14 hours
 #SBATCH -o pca_baseline-%j      # Send stdout/err to "pca_baseline.[jobID]"
 #SBATCH -e pca_baseline-%j.err  # Send stderr to separate file
 #SBATCH -p h100                    # Request the GPU partition/queue
