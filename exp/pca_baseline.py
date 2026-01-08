@@ -150,6 +150,7 @@ def create_pca_baseline(
         hook_layer=layer,
         device=device,
         dtype=th_dtype,
+        context_length=context_length,
     )
 
     # Fit PCA
