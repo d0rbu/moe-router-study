@@ -53,7 +53,7 @@ from delphi.latents.cache import (  # type: ignore
     generate_statistics_cache,
 )
 from delphi.log.result_analysis import log_results  # type: ignore
-from delphi.pipeline import Pipeline  # type: ignore
+from delphi.pipeline import Pipe, Pipeline  # type: ignore
 from delphi.scorers.classifier.intruder import IntruderScorer  # type: ignore
 from delphi.scorers.scorer import ScorerResult  # type: ignore
 from delphi.utils import load_tokenized_data  # type: ignore
@@ -243,9 +243,9 @@ async def process_cache(
 
     pipeline = Pipeline(
         dataset,
-        dataset_postprocess,
-        intruder_scorer,
-        partial(save_scorer_result_to_file, score_dir=scores_path),
+        Pipe(dataset_postprocess),
+        Pipe(intruder_scorer),
+        Pipe(partial(save_scorer_result_to_file, score_dir=scores_path)),
     )
 
     await pipeline.run(run_cfg.pipeline_num_proc)
