@@ -190,7 +190,7 @@ def create_pca_baseline(
             "dict_size": d_model,  # Full PCA uses all components
             "activation_dim": d_model,
             "lm_name": model_name,
-            "dict_class": "PCAAutoEncoder",
+            "dict_class": "AutoEncoder",
             "trainer_class": "PCASAE",
         },
         "pca_baseline": True,
