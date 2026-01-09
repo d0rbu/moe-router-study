@@ -1,3 +1,7 @@
 [submodule "delphi"]
 	path = delphi
 	url = https://github.com/d0rbu/delphi
+
+[submodule "CAA"]
+	path = CAA
+	url = https://github.com/nrimsky/CAA
