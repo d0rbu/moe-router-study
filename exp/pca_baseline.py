@@ -191,6 +191,7 @@ def create_pca_baseline(
             "activation_dim": d_model,
             "lm_name": model_name,
             "dict_class": "PCAAutoEncoder",
+            "trainer_class": "PCASAE",
         },
         "pca_baseline": True,
     }
