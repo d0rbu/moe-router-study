@@ -23,6 +23,40 @@ def calculate_accuracy(score_data: list[dict[str, Any]]) -> float | None:
     return correct / total
 
 
+def calculate_accuracy_by_quantile(
+    score_data: list[dict[str, Any]],
+) -> dict[int, dict[str, Any]]:
+    """Calculate accuracy grouped by quantile (0-9)."""
+    quantile_data: dict[int, list[dict[str, Any]]] = {q: [] for q in range(10)}
+
+    for item in score_data:
+        sample = item.get("sample", {})
+        quantile = sample.get("chosen_quantile")
+        if quantile is not None and 0 <= quantile <= 9:
+            quantile_data[quantile].append(item)
+
+    quantile_accuracies = {}
+    for quantile in range(10):
+        items = quantile_data[quantile]
+        if items:
+            correct = sum(item.get("correct", False) for item in items)
+            total = len(items)
+            accuracy = correct / total
+            quantile_accuracies[quantile] = {
+                "accuracy": accuracy,
+                "correct": correct,
+                "total": total,
+            }
+        else:
+            quantile_accuracies[quantile] = {
+                "accuracy": None,
+                "correct": 0,
+                "total": 0,
+            }
+
+    return quantile_accuracies
+
+
 def analyze_experiment(experiment_dir: Path) -> dict[str, Any]:
     """Analyze all latent score files in an experiment directory."""
     scores_dir = experiment_dir / "delphi" / "scores"
@@ -37,6 +71,7 @@ def analyze_experiment(experiment_dir: Path) -> dict[str, Any]:
     per_latent_accuracies = {}
     total_correct = 0
     total_samples = 0
+    all_score_data = []  # Collect all score data for quantile analysis
 
     print(f"Found {len(latent_files)} latent score files")
 
@@ -62,10 +97,14 @@ def analyze_experiment(experiment_dir: Path) -> dict[str, Any]:
 
         total_correct += num_correct
         total_samples += num_total
+        all_score_data.extend(score_data)
 
         print(f"  {latent_file.name}: {accuracy:.4f} ({num_correct}/{num_total})")
 
     overall_accuracy = total_correct / total_samples if total_samples > 0 else None
+
+    # Calculate accuracy by quantile
+    quantile_accuracies = calculate_accuracy_by_quantile(all_score_data)
 
     return {
         "per_latent": per_latent_accuracies,
@@ -75,6 +114,7 @@ def analyze_experiment(experiment_dir: Path) -> dict[str, Any]:
             "total_samples": total_samples,
             "num_latents": len(per_latent_accuracies),
         },
+        "by_quantile": quantile_accuracies,
     }
 
 
@@ -119,6 +159,20 @@ def main():
         )
     else:
         print("Overall accuracy: N/A")
+
+    print()
+    print("Accuracy by Quantile:")
+    print("-" * 60)
+    for quantile in range(10):
+        quantile_info = results["by_quantile"][quantile]
+        if quantile_info["accuracy"] is not None:
+            print(
+                f"  Quantile {quantile}: {quantile_info['accuracy']:.4f} "
+                f"({quantile_info['accuracy'] * 100:.2f}%) "
+                f"({quantile_info['correct']}/{quantile_info['total']})"
+            )
+        else:
+            print(f"  Quantile {quantile}: N/A (no samples)")
 
     if args.output:
         output_path = Path(args.output)
