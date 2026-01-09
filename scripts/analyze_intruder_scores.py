@@ -165,6 +165,23 @@ def main():
         print("Overall accuracy: N/A")
 
     print()
+    print("Latent Accuracies (sorted by accuracy, highest to lowest):")
+    print("-" * 60)
+    sorted_latents = sorted(
+        results["per_latent"].items(),
+        key=lambda x: x[1]["accuracy"] if x[1]["accuracy"] is not None else -1,
+        reverse=True,
+    )
+    for latent_name, latent_info in sorted_latents:
+        if latent_info["accuracy"] is not None:
+            print(
+                f"  {latent_name}: {latent_info['accuracy']:.4f} "
+                f"({latent_info['correct']}/{latent_info['total']})"
+            )
+        else:
+            print(f"  {latent_name}: N/A")
+
+    print()
     print("Accuracy by Quantile:")
     print("-" * 60)
     for quantile in range(10):
