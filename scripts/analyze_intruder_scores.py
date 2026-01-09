@@ -30,7 +30,11 @@ def calculate_accuracy_by_quantile(
     quantile_data: dict[int, list[dict[str, Any]]] = {q: [] for q in range(10)}
 
     for item in score_data:
-        sample = item.get("sample", {})
+        sample = item.get("sample")
+        if sample is None or not isinstance(sample, dict):
+            print(f"Invalid sample: {sample}")
+            continue
+
         quantile = sample.get("chosen_quantile")
         if quantile is not None and 0 <= quantile <= 9:
             quantile_data[quantile].append(item)
