@@ -128,31 +128,109 @@ def _gpu_worker(
         with model.trace(batch_tokens):
             for layer_idx in model.layers_with_routers:
                 out = model.routers_output[layer_idx]
-                router_paths.append(
-                    out[0].save() if isinstance(out, tuple) else out.save()
+                saved_tensor = out[0].save() if isinstance(out, tuple) else out.save()
+                # Debug: check saved tensor properties
+                log_queue.put(
+                    f"Worker {gpu_id}: saved_tensor layer {layer_idx} - "
+                    f"requires_grad={saved_tensor.requires_grad}, "
+                    f"is_leaf={saved_tensor.is_leaf}, "
+                    f"grad_fn={saved_tensor.grad_fn}, "
+                    f"shape={saved_tensor.shape}"
                 )
+                router_paths.append(saved_tensor)
 
         router_paths = th.stack(router_paths, dim=-2).detach()
+        log_queue.put(
+            f"Worker {gpu_id}: router_paths after stack+detach - "
+            f"requires_grad={router_paths.requires_grad}, "
+            f"is_leaf={router_paths.is_leaf}, "
+            f"grad_fn={router_paths.grad_fn}"
+        )
         sparse_paths = (
             postprocessor_fn(router_paths, top_k).to(dtype=centroid_dtype).detach()
+        )
+        log_queue.put(
+            f"Worker {gpu_id}: sparse_paths after postprocess+detach - "
+            f"requires_grad={sparse_paths.requires_grad}, "
+            f"is_leaf={sparse_paths.is_leaf}, "
+            f"grad_fn={sparse_paths.grad_fn}"
         )
         del router_paths
 
         router_paths_flat = sparse_paths.view(*batch_tokens.shape, -1).detach()
+        log_queue.put(
+            f"Worker {gpu_id}: router_paths_flat after view+detach - "
+            f"requires_grad={router_paths_flat.requires_grad}, "
+            f"is_leaf={router_paths_flat.is_leaf}, "
+            f"grad_fn={router_paths_flat.grad_fn}"
+        )
         del sparse_paths
 
         # Encode
         results = {}
         for hookpoint, encoder in hookpoint_to_sparse_encode.items():
             latents = encoder(router_paths_flat)
-            results[hookpoint] = (latents.cpu().detach(), latents.shape[2])
-            del latents
+            latents_cpu = latents.cpu().detach()
+            # Debug: check tensor properties
+            log_queue.put(
+                f"Worker {gpu_id}: latents for {hookpoint} - "
+                f"requires_grad={latents_cpu.requires_grad}, "
+                f"is_leaf={latents_cpu.is_leaf}, "
+                f"grad_fn={latents_cpu.grad_fn}, "
+                f"shape={latents_cpu.shape}"
+            )
+            results[hookpoint] = (latents_cpu, latents.shape[2])
+            del latents, latents_cpu
 
         del router_paths_flat
 
         log_queue.put(f"Worker {gpu_id}: submitting results for batch {batch_idx}")
 
-        result_queue.put((batch_idx, batch_tokens.cpu().detach(), results))
+        # Debug: check batch_tokens before putting in queue
+        batch_tokens_cpu = batch_tokens.cpu().detach()
+        log_queue.put(
+            f"Worker {gpu_id}: batch_tokens before result_queue - "
+            f"requires_grad={batch_tokens_cpu.requires_grad}, "
+            f"is_leaf={batch_tokens_cpu.is_leaf}, "
+            f"grad_fn={batch_tokens_cpu.grad_fn}, "
+            f"shape={batch_tokens_cpu.shape}"
+        )
+
+        # Debug: check each tensor in results
+        for hookpoint, (latents_tensor, _width) in results.items():
+            log_queue.put(
+                f"Worker {gpu_id}: results[{hookpoint}] tensor - "
+                f"requires_grad={latents_tensor.requires_grad}, "
+                f"is_leaf={latents_tensor.is_leaf}, "
+                f"grad_fn={latents_tensor.grad_fn}, "
+                f"shape={latents_tensor.shape}"
+            )
+
+        log_queue.put(
+            f"Worker {gpu_id}: About to put in result_queue for batch {batch_idx}"
+        )
+        try:
+            result_queue.put((batch_idx, batch_tokens_cpu, results))
+            log_queue.put(
+                f"Worker {gpu_id}: Successfully put in result_queue for batch {batch_idx}"
+            )
+        except RuntimeError as e:
+            log_queue.put(
+                f"Worker {gpu_id}: ERROR putting in result_queue for batch {batch_idx}: {e}"
+            )
+            # Try to identify which tensor is problematic
+            log_queue.put(f"Worker {gpu_id}: Checking batch_tokens_cpu properties...")
+            log_queue.put(
+                f"Worker {gpu_id}: batch_tokens_cpu - requires_grad={batch_tokens_cpu.requires_grad}, "
+                f"is_leaf={batch_tokens_cpu.is_leaf}, grad_fn={batch_tokens_cpu.grad_fn}"
+            )
+            for hookpoint, (latents_tensor, _width) in results.items():
+                log_queue.put(
+                    f"Worker {gpu_id}: Checking results[{hookpoint}]... "
+                    f"requires_grad={latents_tensor.requires_grad}, "
+                    f"is_leaf={latents_tensor.is_leaf}, grad_fn={latents_tensor.grad_fn}"
+                )
+            raise
         del batch_tokens, results
 
         gc.collect()
@@ -835,7 +913,26 @@ class MultiGPULatentPathsCache(LatentPathsCache):
             token_batches[start_batch_idx:], start=start_batch_idx
         ):
             # Detach tensor before putting in queue to avoid serialization issues
-            work_queue.put((batch_idx, batch_tokens.detach()))
+            batch_tokens_detached = batch_tokens.detach()
+            # Debug: check tensor properties before putting in work_queue
+            logger.debug(
+                f"Before work_queue.put batch {batch_idx} - "
+                f"requires_grad={batch_tokens_detached.requires_grad}, "
+                f"is_leaf={batch_tokens_detached.is_leaf}, "
+                f"grad_fn={batch_tokens_detached.grad_fn}, "
+                f"shape={batch_tokens_detached.shape}"
+            )
+            logger.debug(f"About to put batch {batch_idx} in work_queue")
+            try:
+                work_queue.put((batch_idx, batch_tokens_detached))
+                logger.debug(f"Successfully put batch {batch_idx} in work_queue")
+            except RuntimeError as e:
+                logger.error(
+                    f"ERROR putting batch {batch_idx} in work_queue: {e}\n"
+                    f"Tensor properties: requires_grad={batch_tokens_detached.requires_grad}, "
+                    f"is_leaf={batch_tokens_detached.is_leaf}, grad_fn={batch_tokens_detached.grad_fn}"
+                )
+                raise
 
         # Add shutdown signals
         for _ in self.gpu_ids:
