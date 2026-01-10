@@ -143,14 +143,14 @@ def _gpu_worker(
         results = {}
         for hookpoint, encoder in hookpoint_to_sparse_encode.items():
             latents = encoder(router_paths_flat)
-            results[hookpoint] = (latents.cpu(), latents.shape[2])
+            results[hookpoint] = (latents.detach().cpu(), latents.shape[2])
             del latents
 
         del router_paths_flat
 
         log_queue.put(f"Worker {gpu_id}: submitting results for batch {batch_idx}")
 
-        result_queue.put((batch_idx, batch_tokens.cpu(), results))
+        result_queue.put((batch_idx, batch_tokens.detach().cpu(), results))
         del batch_tokens, results
 
         gc.collect()
@@ -832,7 +832,8 @@ class MultiGPULatentPathsCache(LatentPathsCache):
         for batch_idx, batch_tokens in enumerate(
             token_batches[start_batch_idx:], start=start_batch_idx
         ):
-            work_queue.put((batch_idx, batch_tokens))
+            # Detach tensor before putting in queue to avoid serialization issues
+            work_queue.put((batch_idx, batch_tokens.detach()))
 
         # Add shutdown signals
         for _ in self.gpu_ids:
