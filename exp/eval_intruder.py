@@ -132,11 +132,13 @@ def _gpu_worker(
                     out[0].save() if isinstance(out, tuple) else out.save()
                 )
 
-        router_paths = th.stack(router_paths, dim=-2)
-        sparse_paths = postprocessor_fn(router_paths, top_k).to(dtype=centroid_dtype)
+        router_paths = th.stack(router_paths, dim=-2).detach()
+        sparse_paths = (
+            postprocessor_fn(router_paths, top_k).to(dtype=centroid_dtype).detach()
+        )
         del router_paths
 
-        router_paths_flat = sparse_paths.view(*batch_tokens.shape, -1)
+        router_paths_flat = sparse_paths.view(*batch_tokens.shape, -1).detach()
         del sparse_paths
 
         # Encode
