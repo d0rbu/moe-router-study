@@ -148,7 +148,7 @@ def eval_router_space(
         intruder_explainer_model=intruder_explainer_model,
         intruder_n_tokens=intruder_n_tokens,
         intruder_vllm_num_gpus=intruder_vllm_num_gpus,
-        intruder_cache_device_idx=intruder_cache_device_idx,
+        intruder_cache_start_gpu=intruder_cache_device_idx,
         dtype=dtype,
         seed=seed,
         log_level=log_level,

@@ -1099,9 +1099,40 @@ def eval_intruder(
     metric: str = "dot_product",
     metric_p: float = 2.0,
     n_splits: int = 500,
+    non_activating_source: str = "random",
+    non_activating_quantile: float = 0.1,
+    non_activating_threshold: float | None = None,
 ) -> None:
     logger.remove()
     logger.add(sys.stderr, level=log_level)
+
+    # Validate non-activating source parameters
+    if non_activating_source not in [
+        "random",
+        "neighbours",
+        "FAISS",
+        "quantile",
+        "threshold",
+    ]:
+        raise ValueError(
+            f"Invalid non_activating_source: {non_activating_source}. "
+            "Must be one of: random, neighbours, FAISS, quantile, threshold"
+        )
+    if non_activating_source == "quantile" and not (
+        0.0 < non_activating_quantile < 1.0
+    ):
+        raise ValueError(
+            f"non_activating_quantile must be between 0 and 1, got {non_activating_quantile}"
+        )
+    if (
+        non_activating_source == "threshold"
+        and non_activating_threshold is not None
+        and non_activating_threshold < 0
+    ):
+        logger.warning(
+            f"non_activating_threshold is negative ({non_activating_threshold}), "
+            "this may not select any windows"
+        )
 
     metric = CentroidMetric(metric)
 
@@ -1197,7 +1228,9 @@ def eval_intruder(
             min_examples=min_examples,
             n_non_activating=num_non_activating,
             center_examples=True,
-            non_activating_source="random",
+            non_activating_source=non_activating_source,
+            non_activating_quantile=non_activating_quantile,
+            non_activating_threshold=non_activating_threshold,
         ),
         sampler_cfg=SamplerConfig(
             n_examples_train=0,

@@ -55,5 +55,5 @@ echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 # Change to the project directory
 cd $SCRATCH/moe-router-study
 
-uv run exp/eval_intruder.py eval-intruder --experiment-dir pca_baseline/layer_9_layer_output --model-name olmoe-i --model-dtype bf16 --n-tokens 10000000 --batchsize 128 --n-latents 1000 --vllm-num-gpus 4 --seed 0 --n-splits 5
+uv run exp/eval_intruder.py eval-intruder --experiment-dir pca_baseline/layer_9_layer_output --model-name olmoe-i --model-dtype bf16 --n-tokens 10000000 --batchsize 128 --n-latents 1000 --vllm-num-gpus 4 --seed 0 --n-splits 5 --non-activating-source quantile --non-activating-quantile 0.1
 
