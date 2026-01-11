@@ -382,7 +382,6 @@ def collect_path_activations_parallel(
                 metric_p,
                 mask_bos_pad_eos_tokens,
             ),
-            daemon=True,
         )
         for gpu_id in gpu_ids
     ]
