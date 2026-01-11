@@ -212,6 +212,7 @@ def collect_path_activations(
     return all_path_acts_BTF
 
 
+@th.inference_mode()
 def _gpu_path_activation_worker(
     gpu_id: int,
     work_queue: mp.Queue,
@@ -500,6 +501,7 @@ def get_feature_activation_sparsity(
     return running_sum_F / total_tokens
 
 
+@th.inference_mode()
 def _gpu_sparsity_worker(
     gpu_id: int,
     work_queue: mp.Queue,
