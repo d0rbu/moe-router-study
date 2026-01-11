@@ -33,7 +33,7 @@ def eval_router_space(
     intruder_batchsize: int = 32,
     intruder_explainer_model: str = "ibnzterrell/Meta-Llama-3.3-70B-Instruct-AWQ-INT4",
     intruder_n_tokens: int = 10_000_000,
-    intruder_vllm_num_gpus: int = 3,
+    intruder_vllm_num_gpus: int = 1,
     intruder_cache_device_idx: int = 1,
     dtype: str = "bf16",
     seed: int = 0,
