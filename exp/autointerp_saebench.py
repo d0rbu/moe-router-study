@@ -217,6 +217,7 @@ def _gpu_path_activation_worker(
     gpu_id: int,
     work_queue: mp.Queue,
     result_queue: mp.Queue,
+    close_event: mp.Event,
     model_path: str,
     model_dtype: th.dtype,
     paths_data: th.Tensor,
@@ -309,6 +310,10 @@ def _gpu_path_activation_worker(
         result_queue.put((None, error_msg))
         raise
 
+    # Wait for main process to finish consuming all results before exiting
+    # This ensures shared memory file descriptors remain valid during deserialization
+    close_event.wait()
+
 
 def collect_path_activations_parallel(
     tokenized_dataset: th.Tensor,
@@ -350,6 +355,7 @@ def collect_path_activations_parallel(
     ctx = mp.get_context("spawn")
     work_queue: mp.Queue = ctx.Queue()
     result_queue: mp.Queue = ctx.Queue()
+    close_event: mp.Event = ctx.Event()
 
     # Split dataset into batches and fill work queue
     batches = list(th.split(tokenized_dataset, llm_batch_size, dim=0))
@@ -371,6 +377,7 @@ def collect_path_activations_parallel(
                 gpu_id,
                 work_queue,
                 result_queue,
+                close_event,
                 model_path,
                 model_dtype,
                 paths.data,
@@ -405,6 +412,9 @@ def collect_path_activations_parallel(
 
             results[batch_idx] = result
             pbar.update(1)
+
+    # Signal workers that all results have been consumed and they can exit
+    close_event.set()
 
     # Wait for workers to finish
     for worker in workers:
@@ -505,6 +515,7 @@ def _gpu_sparsity_worker(
     gpu_id: int,
     work_queue: mp.Queue,
     result_queue: mp.Queue,
+    close_event: mp.Event,
     model_path: str,
     model_dtype: th.dtype,
     tokens_path: str,
@@ -611,6 +622,10 @@ def _gpu_sparsity_worker(
         result_queue.put((None, error_msg))
         raise
 
+    # Wait for main process to finish consuming all results before exiting
+    # This ensures shared memory file descriptors remain valid during deserialization
+    close_event.wait()
+
 
 def get_feature_activation_sparsity_parallel(
     tokens_path: str,
@@ -647,6 +662,7 @@ def get_feature_activation_sparsity_parallel(
     ctx = mp.get_context("spawn")
     work_queue: mp.Queue = ctx.Queue()
     result_queue: mp.Queue = ctx.Queue()
+    close_event: mp.Event = ctx.Event()
 
     # Fill work queue with paths
     for path_idx, paths_obj in paths_list:
@@ -665,6 +681,7 @@ def get_feature_activation_sparsity_parallel(
                 gpu_id,
                 work_queue,
                 result_queue,
+                close_event,
                 model_path,
                 model_dtype,
                 tokens_path,
@@ -696,6 +713,9 @@ def get_feature_activation_sparsity_parallel(
 
             results[path_idx] = result
             pbar.update(1)
+
+    # Signal workers that all results have been consumed and they can exit
+    close_event.set()
 
     # Wait for workers to finish
     for worker in workers:
