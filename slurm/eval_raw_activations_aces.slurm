@@ -34,4 +34,4 @@ module load GCCcore/13.3.0 Python/3.12.3 WebProxy
 cd $SCRATCH/moe-router-study
 
 # Run the evaluation pipeline
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run python -m exp.eval_raw_activations eval-raw-activations --model-name olmoe-i --batchsize 64 --n-tokens 10000000 --explainer-model Qwen/Qwen3-32B-AWQ --log-level DEBUG
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run python -m exp.eval_raw_activations eval-raw-activations --model-name olmoe-i --batchsize 64 --n-tokens 10000000 --log-level DEBUG
