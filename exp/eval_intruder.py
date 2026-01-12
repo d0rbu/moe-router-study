@@ -569,7 +569,7 @@ class LatentPathsCache(LatentCache):
             self.cache.hookpoints,
             desc="Saving splits",
             total=len(self.cache.hookpoints),
-            position=1,
+            position=2,
         ):
             split_indices = width_splits[hookpoint]
 
@@ -587,26 +587,31 @@ class LatentPathsCache(LatentCache):
                 self.cache.iter_hookpoint_batches(hookpoint),
                 desc=f"Processing {hookpoint}",
                 leave=False,
-                position=0,
+                position=1,
             ):
                 tokens_list.append(batch_tokens)
                 latent_indices = batch_locations[:, 2]
 
-                for start, end in split_indices:
+                for start, end in tqdm(
+                    split_indices,
+                    desc="Splits",
+                    total=len(split_indices),
+                    leave=False,
+                    position=0,
+                ):
                     start_val, end_val = start.item(), end.item()
                     mask = (latent_indices >= start) & (latent_indices <= end)
 
                     if mask.any():
                         # Clone to avoid memory issues with sliced tensors
-                        masked_locs = batch_locations[mask].clone()
-                        masked_acts = batch_activations[mask].clone()
+                        masked_locs = batch_locations[mask]
+                        masked_acts = batch_activations[mask]
 
                         split_locations[(start_val, end_val)].append(masked_locs)
                         split_activations[(start_val, end_val)].append(masked_acts)
 
                 # Clear batch data to free memory
                 del batch_locations, batch_activations, batch_tokens, latent_indices
-                gc.collect()
 
             # Concatenate tokens once (they're the same across splits)
             if tokens_list:
