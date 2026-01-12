@@ -73,7 +73,7 @@ def eval_router_space(
         hf_name,
         check_attn_probs_with_trace=False,
         check_renaming=False,
-        device_map="cuda",
+        device_map={"": "meta"},
         torch_dtype=th_dtype,
     )
 
@@ -95,9 +95,8 @@ def eval_router_space(
         f"Architecture: {num_layers} layers, {num_experts} experts, top_k={top_k}"
     )
 
-    # Clean up model
+    # Clean up model (no GPU memory to clear since we used meta device)
     del model
-    th.cuda.empty_cache() if th.cuda.is_available() else None
 
     # Create synthetic experiment directory
     experiment_name = f"router_space_{model_name}"
