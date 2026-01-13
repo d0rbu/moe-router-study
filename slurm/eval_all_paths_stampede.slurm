@@ -63,5 +63,5 @@ if [ -z "$1" ]; then
 fi
 
 # Run the evaluation pipeline
-srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run python -m exp.eval_all_paths eval-all-paths --experiment-dir "$1" --saebench-batchsize 64 --intruder-batchsize 16 --intruder-n-tokens 10000000 --num-autointerp-latents 100 --intruder-vllm-num-gpus 4 --n-splits 5 --log-level DEBUG
+srun --ntasks=$SLURM_NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE uv run python -m exp.eval_all_paths eval-all-paths --experiment-dir "$1" --saebench-batchsize 64 --intruder-batchsize 16 --intruder-n-tokens 10000000 --num-autointerp-latents 100 --intruder-vllm-num-gpus 4 --log-level DEBUG
 
