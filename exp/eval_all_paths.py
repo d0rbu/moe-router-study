@@ -82,6 +82,7 @@ def run_intruder_eval(
     explainer_model_max_len: int,
     explainer_provider: str,
     explainer: str,
+    n_splits: int,
     filter_bos: bool,
     pipeline_num_proc: int,
     num_gpus: int,
@@ -120,6 +121,7 @@ def run_intruder_eval(
             explainer_model_max_len=explainer_model_max_len,
             explainer_provider=explainer_provider,
             explainer=explainer,
+            n_splits=n_splits,
             filter_bos=filter_bos,
             pipeline_num_proc=pipeline_num_proc,
             num_gpus=num_gpus,
@@ -173,6 +175,7 @@ def eval_all_paths(
     intruder_explainer_model_max_len: int = 5120,
     intruder_explainer_provider: str = "offline",
     intruder_explainer: str = "default",
+    intruder_n_splits: int = 5,
     intruder_filter_bos: bool = False,
     intruder_pipeline_num_proc: int = cpu_count() // 2,
     intruder_num_gpus: int | None = None,
@@ -213,6 +216,7 @@ def eval_all_paths(
         intruder_explainer_model_max_len: Max length for explainer model
         intruder_explainer_provider: Explainer provider for intruder evaluation
         intruder_explainer: Explainer type for intruder evaluation
+        intruder_n_splits: Number of splits for intruder evaluation
         intruder_filter_bos: Whether to filter BOS tokens for intruder evaluation
         intruder_pipeline_num_proc: Number of processes for intruder evaluation pipeline
         intruder_num_gpus: Number of GPUs for intruder evaluation (deprecated, use intruder_vllm_num_gpus)
@@ -290,6 +294,7 @@ def eval_all_paths(
             intruder_explainer_model_max_len,
             intruder_explainer_provider,
             intruder_explainer,
+            intruder_n_splits,
             intruder_filter_bos,
             intruder_pipeline_num_proc,
             intruder_num_gpus,
